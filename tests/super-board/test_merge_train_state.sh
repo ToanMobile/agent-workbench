@@ -58,12 +58,15 @@ export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" SB_GITHUB_HALT_FILE="$TMP/halt.json
 unset SB_MERGE_CALLER SB_MERGE_QUEUE SB_BOARD_WORKER
 CFG="$TMP/cfg.json"
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["true"]}\n' > "$CFG"
-STATE="$R/.git/super-board/merge-train.state"
+STATE=""   # start_train đặt: merge-train.<pid>.state (#676)
+CLAIM="$R/.git/super-board/merge-train.claim.7"
 
 wait_for() {  # wait_for <file> : tối đa 30 s
   local i=0; while [ ! -e "$1" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done; [ -e "$1" ]
 }
-start_train() { rm -f "$TMP/release" "$TMP/in-gate"; ( cd "$R" && exec bash "$TRAIN" --config "$CFG" --prs "7:$SHA" ) >"$TMP/train.log" 2>&1 & TRAIN_PID=$!; }
+# #676: state theo pid của train (merge-train.<pid>.state), nhiều train song song không ghi đè nhau.
+start_train() { rm -f "$TMP/release" "$TMP/in-gate"; ( cd "$R" && exec bash "$TRAIN" --config "$CFG" --prs "7:$SHA" ) >"$TMP/train.log" 2>&1 & TRAIN_PID=$!
+  STATE="$R/.git/super-board/merge-train.${TRAIN_PID}.state"; }
 
 # ── 1. Train đang chạy gate: file state có pid sống, step gate, dòng PR kèm sha và ref; xong thì file biến mất.
 start_train
@@ -77,6 +80,8 @@ else fail "state file wrong while gating: $(cat "$STATE" 2>/dev/null || echo '<m
 ( cd "$R" && bash "$TRAIN" --config "$CFG" --prs "7:$SHA" ) >"$TMP/train2.log" 2>&1; rc=$?
 [ "$rc" -eq 4 ] && ok "second train: exit 4 (lock busy)" || fail "second train: exit $rc: $(tail -3 "$TMP/train2.log")"
 [ -f "$STATE" ] && grep -q "^pid ${TRAIN_PID}\$" "$STATE" && ok "exit 4 left the running train's state file alone" || fail "exit 4 removed or changed the state file"
+[ "$(ls "$R/.git/super-board"/merge-train.*.state 2>/dev/null | wc -l | tr -d ' ')" = 1 ] && [ "$(cat "$CLAIM/pid" 2>/dev/null)" = "$TRAIN_PID" ] \
+  && ok "  … no second state file, and the PR claim still belongs to the running train" || fail "  … state files: $(ls "$R/.git/super-board") claim pid: $(cat "$CLAIM/pid" 2>/dev/null)"
 
 touch "$TMP/release"; wait "$TRAIN_PID"; rc=$?; TRAIN_PID=""
 [ "$rc" -eq 0 ] && ok "train finished: exit 0" || fail "train exit $rc: $(tail -5 "$TMP/train.log")"
@@ -87,6 +92,7 @@ start_train
 wait_for "$TMP/in-gate" >/dev/null; [ -f "$STATE" ] && ok "state file present before TERM" || fail "no state file before TERM"
 kill -TERM "$TRAIN_PID"; touch "$TMP/release"; wait "$TRAIN_PID" 2>/dev/null; TRAIN_PID=""
 [ ! -e "$STATE" ] && ok "state file removed after TERM" || fail "state file left behind after TERM"
+[ ! -e "$CLAIM" ] && ok "  … and its PR claim too" || fail "  … claim left behind after TERM: $(ls "$CLAIM" 2>/dev/null)"
 
 [ "$FAILS" -eq 0 ] && { echo "PASS test_merge_train_state"; exit 0; }
 echo "FAIL test_merge_train_state: $FAILS"; exit 1
