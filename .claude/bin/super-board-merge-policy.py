@@ -169,28 +169,89 @@ def added_text(diff: str) -> str:
     return " ".join(" ".join(out).lower().split())
 
 
+_C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def c_unquote(s: str):
+    """(tên, phần còn lại) khi s mở đầu bằng một tên C-quoted của git (`"..."`, core.quotePath: `\\ooo` là byte UTF-8 bát
+    phân, `\\t`… và `\\"` `\\\\`; INSTINCT-089); None khi s không mở bằng dấu nháy hoặc chuỗi hỏng."""
+    if not s.startswith('"'):
+        return None
+    out, i = bytearray(), 1
+    while i < len(s):
+        c = s[i]
+        if c == '"':
+            return out.decode("utf-8", "replace"), s[i + 1:]
+        if c != "\\":
+            out += c.encode("utf-8", "surrogateescape"); i += 1
+        elif s[i + 1:i + 2] in _C_ESCAPES:
+            out.append(_C_ESCAPES[s[i + 1]]); i += 2
+        elif re.fullmatch(r"[0-3][0-7]{2}", s[i + 1:i + 4]):
+            out.append(int(s[i + 1:i + 4], 8)); i += 4
+        else:
+            return None
+    return None
+
+
+def line_path(s: str, prefix: str):
+    """Đường dẫn trong giá trị của dòng `--- ` / `+++ ` / `rename from `: C-quoted hoặc thường (git thêm một tab sau tên
+    thường có khoảng trắng); bắt buộc có và bỏ `prefix` ("a/", "b/" hoặc ""). None khi không đọc được."""
+    s = s.rstrip("\r")
+    q = c_unquote(s)
+    if q is not None:
+        s = q[0] if not q[1].strip() else ""
+    elif s.startswith('"'):
+        return None
+    elif s.endswith("\t"):
+        s = s[:-1]
+    return s[len(prefix):] if s.startswith(prefix) and len(s) > len(prefix) else None
+
+
+def diff_git_paths(line: str):
+    """(cũ, mới) của header `diff --git a/<cũ> b/<mới>`, mỗi tên thường hoặc C-quoted; None khi không đọc được.
+
+    Hai tên thường mơ hồ khi tên chứa " b/": cùng một đường dẫn hai lần (mọi lần thêm, xoá, sửa) thì tách đúng giữa như git;
+    còn lại tách ở " b/" đầu tiên (đổi tên: dòng `rename from/to` đã nêu đường dẫn).
+    """
+    rest = line[len("diff --git "):].rstrip("\r")
+    q = c_unquote(rest)
+    if q is not None:   # tên cũ C-quoted, tên mới C-quoted hoặc thường
+        old, rest = q
+        new = line_path(rest[1:], "b/") if rest.startswith(" ") else None
+        return (old[2:], new) if old.startswith("a/") and len(old) > 2 and new else None
+    for i in [j for j in range(len(rest)) if rest.startswith(' "b/', j)]:   # tên cũ thường, tên mới C-quoted
+        nq = c_unquote(rest[i + 1:])
+        if nq is not None and not nq[1].strip():
+            old = line_path(rest[:i], "a/")
+            return (old, nq[0][2:]) if old and len(nq[0]) > 2 else None
+    n = (len(rest) - 1) // 2
+    if n > 2 and rest[n] == " " and rest.startswith("a/") and rest[n + 1:].startswith("b/") and rest[2:n] == rest[n + 3:]:
+        return rest[2:n], rest[2:n]
+    if not rest.startswith("a/") or " b/" not in rest:
+        return None
+    old, new = rest[2:].split(" b/", 1)
+    return (old, new) if old and new else None
+
+
 def deleted_paths(diff: str) -> list[str]:
     """Paths a unified git diff deletes: `deleted file mode`, `--- a/X` + `+++ /dev/null`, or `rename from X`.
 
-    Read from the diff headers, not `meta.files` (gh gives no change type there). A quoted path (special
-    characters) is unquoted only for the plain `"a/..."` form.
+    Read from the diff headers, not `meta.files` (gh gives no change type there). d1facdea5d: tên thường hoặc C-quoted
+    đều được giải mã; file rỗng bị xoá không có dòng `---`, chỉ có `diff --git` + `deleted file mode`; chỉ đọc phần header
+    trước `\\n@@` của từng mục để nội dung hunk không bao giờ giả được dòng xoá file. "" = một lần xoá không đọc được đường dẫn
+    (main() coi là chạm file bảo vệ: fail-closed).
     """
-    out, old, lines = [], None, diff.split("\n")
-    for i, line in enumerate(lines):
-        if line.startswith("diff --git "):
-            old = None
-        elif line.startswith("--- "):
-            old = line[4:].strip().strip('"')
-            old = old[2:] if old.startswith("a/") else None
-            if old and i + 1 < len(lines) and lines[i + 1].startswith("+++ /dev/null"):
-                out.append(old)
-        elif line.startswith("rename from "):
-            out.append(line[len("rename from "):].strip().strip('"'))
-        elif line.startswith("deleted file mode") and i > 0:
-            # header `diff --git a/X b/X` sits just above; `--- a/X` follows when the file had content.
-            head = next((h for h in reversed(lines[:i]) if h.startswith("diff --git ")), "")
-            if " b/" in head:
-                out.append(head[len("diff --git "):].split(" b/", 1)[0].strip('"').removeprefix("a/"))
+    out = []
+    for sec in re.split(r"(?m)^(?=diff --git )", diff):
+        hdr = sec.split("\n@@", 1)[0].split("\n")
+        for i, line in enumerate(hdr):
+            if line.startswith("--- ") and i + 1 < len(hdr) and hdr[i + 1].startswith("+++ /dev/null"):
+                out.append(line_path(line[4:], "a/") or "")
+            elif line.startswith("rename from "):
+                out.append(line_path(line[len("rename from "):], "") or "")
+            elif line.startswith("deleted file mode"):
+                head = next((h for h in reversed(hdr[:i]) if h.startswith("diff --git ")), "")
+                out.append((diff_git_paths(head) or ("",))[0])
     return list(dict.fromkeys(out))
 
 
@@ -276,13 +337,14 @@ def main() -> int:
     gone = {"delete-protected": None, "delete-reviewable": None}
     other = [x for x in protected if x not in REVIEWABLE_DELETE_GLOBS]
     for p in deleted_paths(diff):
-        g = matches(p, protected)
+        # "" = xoá một file không đọc được đường dẫn: coi như chạm file bảo vệ (fail-closed), trừ khi protected_paths tắt ([]).
+        g = matches(p, protected) if p else (protected and "an unreadable diff header")
         if not g:
             continue
         # Nhóm nhạy cảm so không phân biệt chữ hoa (Grok T0209): `.ENV`, `app.KEYSTORE` không được hạ xuống reviewable.
         cat = ("delete-reviewable" if matches(p, REVIEWABLE_DELETE_GLOBS) and not matches(p, other)
                and not matches(p.lower(), SENSITIVE_DELETE_GLOBS) else "delete-protected")
-        gone[cat] = gone[cat] or f"deletes {p} (matches {g})"
+        gone[cat] = gone[cat] or f"deletes {p or '<unreadable path>'} (matches {g})"
     human.extend({"category": c, "why": w} for c, w in gone.items() if w)
 
     run, needs = [], []
