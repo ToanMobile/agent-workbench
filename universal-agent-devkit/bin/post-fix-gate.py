@@ -520,10 +520,35 @@ def _blob_sha(ref: str, repo_path: str):
 
 
 def _absent(ref: str, repo_path: str) -> bool:
-    """True chỉ khi git xác nhận <ref> không có path đó (ls-tree rc 0, không dòng nào); git lỗi ⇒ False (không nới)."""
-    res = subprocess.run(["git", "-C", str(get_repo_root()), "ls-tree", "--name-only", ref, "--", repo_path],
+    """True chỉ khi git xác nhận <ref> không có path đó (ls-tree rc 0, không dòng nào); git lỗi ⇒ False (không nới).
+    --literal-pathspecs: path mở đầu bằng ':' hay có '*' là tên file, không phải pathspec magic/glob (review 6029b2f0 #834)."""
+    res = subprocess.run(["git", "--literal-pathspecs", "-C", str(get_repo_root()), "ls-tree", "--name-only", ref, "--", repo_path],
                          capture_output=True, text=True)
     return res.returncode == 0 and not res.stdout.strip()
+
+
+_TRUNK_DELETED = {}
+
+
+def _trunk_deleted(mb: str, ref: str) -> frozenset:
+    """Path (tính từ gốc repo) mà <ref> đã XOÁ THẬT so với <mb>: dòng D của `git diff --name-status -M -z --no-relative <mb> <ref>`.
+    Không pathspec: pathspec làm diff mất đích nên một lần chuyển (`git mv`) hiện thành D (review 6029b2f0 #834: path cũ vắng ở đầu
+    trunk không có nghĩa trunk đã xoá). Lần chuyển (R) không tính; git lỗi ⇒ rỗng (không nới). Cache theo (mb, ref).
+    ponytail: rename vượt diff.renameLimit hoặc độ giống < 50 % thì git không dò ra, hiện thành D và vẫn được nới — #839 nếu gặp thật."""
+    if (mb, ref) not in _TRUNK_DELETED:
+        res = subprocess.run(["git", "-C", str(get_repo_root()), "diff", "--name-status", "-M", "-z", "--no-relative", mb, ref],
+                             capture_output=True)
+        gone, parts, i = set(), res.stdout.decode("utf-8", errors="surrogateescape").split("\0") if res.returncode == 0 else [], 0
+        while i < len(parts):
+            status, i = parts[i], i + 1
+            if status[:1] in ("R", "C"):
+                i += 2
+            elif status:
+                if status == "D" and i < len(parts):
+                    gone.add(parts[i])
+                i += 1
+        _TRUNK_DELETED[(mb, ref)] = frozenset(gone)
+    return _TRUNK_DELETED[(mb, ref)]
 
 
 def _merge_base(a: str, b: str):
@@ -573,14 +598,16 @@ def since_test_weakened(since: str, repo_path: str, upstream=(), runner: bool = 
     # gate) VÀ bản ở <since> bằng bản ở merge-base(<since>, r) (ở mốc đã kiểm nhánh chưa sửa riêng). Không tin commit giữa chừng
     # trong lịch sử r (cha thứ nhất của merge foxtrot, commit WIP của PR, commit giữa của một lần push nhiều commit — audit T0004
     # #834): bản HEAD khớp chúng mà khác đầu r thì vẫn xét như cũ. Test bị xoá ở HEAD chỉ được nới khi git xác nhận cả HEAD lẫn đầu r
-    # đều không có nó (trunk đã xoá; review 76eee591: test đã xoá không duyệt được nên chặn oan là kẹt lane); git lỗi ⇒ không nới.
+    # đều không có nó VÀ r đã XOÁ THẬT nó kể từ merge-base (_trunk_deleted: dòng D, không phải path cũ của một lần `git mv` — review
+    # 6029b2f0; review 76eee591: test đã xoá không duyệt được nên chặn oan là kẹt lane); git lỗi ⇒ không nới.
     # ponytail: chỉ so với đầu r hiện tại; nhánh theo dõi trunk (@{u} = origin/main) đã pull bản test của trunk rồi fetch thấy trunk sửa
     # test đó lần nữa thì bị đòi duyệt (main không đòi vì tin commit của @{u}); pull/gộp r lần nữa là hết — #839 nếu gặp thật.
     mine, head = _blob_sha(since, repo_path), _blob_sha("HEAD", repo_path)
     gone = head is None and _absent("HEAD", repo_path)
     if mine is not None and (mine == head or (head is not None or gone) and any(
-            (head == _blob_sha(r, repo_path) if head is not None else _absent(r, repo_path))
-            and _merge_base(since, r) and mine == _blob_sha(_merge_base(since, r), repo_path)
+            _merge_base(since, r) and mine == _blob_sha(_merge_base(since, r), repo_path)
+            and (head == _blob_sha(r, repo_path) if head is not None
+                 else _absent(r, repo_path) and repo_path in _trunk_deleted(_merge_base(since, r), r))
             for r in landed)):
         return False                                  # chỉ nội dung đã landed
     res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",

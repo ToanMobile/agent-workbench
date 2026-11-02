@@ -26,6 +26,15 @@
 # Review Claude 76eee591 (chặn oan nhánh theo dõi origin/main; test đã xoá không duyệt được nên lane kẹt):
 #  15. nhánh lane có @{u} = origin/main, gộp origin/main đã xoá test_c -> không liệt kê, exit 0 (như main)
 #  15b. main theo origin/main, pull --ff-only kéo về việc xoá test_c -> exit 3 như main (không có gì để kiểm), không phải 2
+# Review 6029b2f0 (path cũ của một lần `git mv` trên trunk cũng vắng ở đầu trunk nhưng trunk không xoá test; ls-tree hiểu ':' là magic):
+#  16. trunk `git mv` test_c sang tests/unit/, nhánh (không @{u}) xoá path cũ -> liệt kê tests/test_c.sh, exit 2 như main
+#  16b. như 16 rồi gộp origin/main, giải rename/delete bằng xoá luôn bản đã chuyển -> liệt kê tests/test_c.sh, exit 2 như main
+#  17. nhánh gộp việc chuyển test_c của trunk rồi `git rm` bản đã chuyển -> liệt kê tests/test_c.sh, exit 2 như main
+#  17b. nhánh gộp việc chuyển rồi làm yếu bản đã chuyển -> exit 2 như main
+#  17c. đối chứng: nhánh gộp việc chuyển, không sửa gì test -> exit 0 như main
+#  18. nhánh xoá test ':qa/tests/test_q.sh' trunk vẫn còn -> liệt kê, exit 2 (path mở đầu ':' không phải pathspec magic)
+#  18b. lane @{u} = origin/main gộp việc trunk xoá ':qa/tests/test_q.sh' (cây còn qa/tests/test_q.sh) -> exit 0 như main
+#  19. nhánh tự xoá test_c, trunk biến path đó thành thư mục (dòng D nhưng đầu trunk vẫn có path) -> liệt kê, exit 2 như main
 # bash 3.2 compatible.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -287,6 +296,87 @@ git pull -q --ff-only || exit 1
 gate
 if [ "$RC" = 3 ]; then ok "15b: main pull --ff-only việc xoá test của đồng đội: exit 3 như main, không đòi duyệt"
 else bad "15b: rc=$RC tests_touched='$(touched)' (mong 3)"; show; fi
+
+# 16–17c. review 6029b2f0: trunk chuyển test_c sang tests/unit/ bằng `git mv`. Path cũ vắng ở đầu trunk nhưng trunk KHÔNG xoá test,
+#     nên nhánh xoá/làm yếu nó vẫn là việc của nhánh (main 704980ee liệt kê, exit 2); chỉ dòng D thật của trunk mới được nới.
+mv_seed() {   # mv_seed <tên>: origin có test_c, nhánh feat (không @{u}) đứng ở đó (BASE) + commit code; trunk rồi chuyển test_c
+  mk "$1"
+  mate_commit "printf '#!/bin/sh\n[ 7 = 7 ]\n[ 8 = 8 ]\n' > tests/test_c.sh"
+  git fetch -q origin && git merge -q --ff-only origin/main && BASE="$(git rev-parse HEAD)" || exit 1
+  printf 'def f():\n    return 2\n' > src/core.py && git commit -qam "feat: code" || exit 1
+  mate_commit "mkdir -p tests/unit && git mv tests/test_c.sh tests/unit/test_c.sh"
+}
+mv_seed c16
+git rm -q tests/test_c.sh && git commit -qm "feat: xoá test_c" && git fetch -q origin || exit 1
+gate
+if [ "$RC" = 2 ] && [ "$(touched)" = "tests/test_c.sh" ]; then ok "16: trunk chuyển test_c, nhánh xoá path cũ: vẫn liệt kê, exit 2"
+else bad "16: rc=$RC tests_touched='$(touched)' (mong 2, tests/test_c.sh)"; show; fi
+
+mv_seed c16b
+git rm -q tests/test_c.sh && git commit -qm "feat: xoá test_c" && git fetch -q origin || exit 1
+git merge -q --no-edit origin/main >/dev/null 2>&1   # rename/delete: xung đột, giải bằng xoá luôn bản đã chuyển
+git rm -q --ignore-unmatch tests/unit/test_c.sh tests/test_c.sh >/dev/null 2>&1; git commit -qm "merge: xoá cả hai" >/dev/null 2>&1
+[ "$(git rev-list --parents -1 HEAD | wc -w | tr -d ' ')" = 3 ] && [ -z "$(git ls-files tests/unit)" ] || exit 1
+gate
+if [ "$RC" = 2 ] && [ "$(touched)" = "tests/test_c.sh" ]; then ok "16b: gộp việc chuyển rồi xoá cả hai bản: vẫn liệt kê, exit 2"
+else bad "16b: rc=$RC tests_touched='$(touched)' (mong 2, tests/test_c.sh)"; show; fi
+
+mv_seed c17
+merge_main
+git rm -q tests/unit/test_c.sh && git commit -qm "feat: xoá bản đã chuyển" || exit 1
+gate
+if [ "$RC" = 2 ] && [ "$(touched)" = "tests/test_c.sh" ]; then ok "17: gộp việc chuyển rồi git rm bản đã chuyển: liệt kê, exit 2"
+else bad "17: rc=$RC tests_touched='$(touched)' (mong 2, tests/test_c.sh)"; show; fi
+
+mv_seed c17b
+merge_main
+printf '#!/bin/sh\ntrue\n' > tests/unit/test_c.sh && git commit -qam "feat: làm yếu bản đã chuyển" || exit 1
+gate
+if [ "$RC" = 2 ] && [ -n "$(touched)" ] && [ "$(touched)" != PARSE_ERROR ]; then ok "17b: gộp việc chuyển rồi làm yếu bản đã chuyển: liệt kê ($(touched)), exit 2"
+else bad "17b: rc=$RC tests_touched='$(touched)' (mong 2, không rỗng)"; show; fi
+
+mv_seed c17c
+merge_main
+gate
+if [ "$RC" = 0 ] && [ -n "$JSON" ] && [ -z "$(touched)" ]; then ok "17c: đối chứng gộp việc chuyển, không sửa test: exit 0"
+else bad "17c: rc=$RC tests_touched='$(touched)' (mong 0 và rỗng)"; show; fi
+
+# 18. path test mở đầu ':' (ls-tree hiểu là pathspec magic ⇒ ':qa/…' thành 'qa/…', không có ⇒ "vắng ở đầu trunk"): nhánh xoá test mà
+#     trunk vẫn còn -> liệt kê, exit 2
+mk c18
+mate_commit "mkdir -p ':qa/tests' && printf '#!/bin/sh\n[ 7 = 7 ]\n' > ':qa/tests/test_q.sh'"
+git fetch -q origin && git merge -q --ff-only origin/main && BASE="$(git rev-parse HEAD)" || exit 1
+git --literal-pathspecs rm -q ':qa/tests/test_q.sh' && printf 'def f():\n    return 2\n' > src/core.py && git commit -qam "feat: xoá :qa test + code" || exit 1
+git fetch -q origin
+gate
+if [ "$RC" = 2 ] && [ "$(touched)" = ":qa/tests/test_q.sh" ]; then ok "18: nhánh xoá test ':qa/…' trunk vẫn còn: liệt kê, exit 2"
+else bad "18: rc=$RC tests_touched='$(touched)' (mong 2, :qa/tests/test_q.sh)"; show; fi
+
+# 18b. chiều ngược: trunk xoá ':qa/tests/test_q.sh' thật, cây còn qa/tests/test_q.sh; lane @{u} = origin/main gộp vào -> exit 0 như main
+#      (ls-tree không --literal-pathspecs thấy qa/… nên coi ':qa/…' vẫn còn ở HEAD và chặn oan)
+mk c18b
+mate_commit "mkdir -p ':qa/tests' qa/tests && printf '#!/bin/sh\n[ 7 = 7 ]\n' > ':qa/tests/test_q.sh' && printf '#!/bin/sh\n[ 6 = 6 ]\n' > qa/tests/test_q.sh"
+git fetch -q origin && git branch -q --track lane origin/main && git switch -q lane && BASE="$(git rev-parse HEAD)" || exit 1
+printf 'def f():\n    return 2\n' > src/core.py && git commit -qam "lane: code" || exit 1
+mate_commit "git --literal-pathspecs rm -q ':qa/tests/test_q.sh'"
+merge_main
+[ -f qa/tests/test_q.sh ] && [ ! -e ':qa/tests/test_q.sh' ] || exit 1
+gate
+if [ "$RC" = 0 ] && [ -n "$JSON" ] && [ -z "$(touched)" ]; then ok "18b: lane gộp việc trunk xoá test ':qa/…': không liệt kê, exit 0"
+else bad "18b: rc=$RC tests_touched='$(touched)' (mong 0 và rỗng)"; show; fi
+
+# 19. nhánh (không @{u}) tự xoá test_c; trunk xoá file đó rồi tạo thư mục cùng tên: diff có dòng D nhưng đầu trunk vẫn có path (cây),
+#     nhánh không hội tụ về đầu trunk -> vẫn liệt kê, exit 2 như main (chốt chặn: D phải đi kèm path vắng ở đầu trunk)
+mk c19
+mate_commit "printf '#!/bin/sh\n[ 7 = 7 ]\n' > tests/test_c.sh"
+git fetch -q origin && git merge -q --ff-only origin/main && BASE="$(git rev-parse HEAD)" || exit 1
+git rm -q tests/test_c.sh && printf 'def f():\n    return 2\n' > src/core.py && git commit -qam "feat: xoá test_c + code" || exit 1
+mate_commit "git rm -q tests/test_c.sh && mkdir -p tests/test_c.sh && printf 'x\n' > tests/test_c.sh/keep.txt"
+git fetch -q origin
+[ "$(git cat-file -t origin/main:tests/test_c.sh)" = tree ] || exit 1
+gate
+if [ "$RC" = 2 ] && [ "$(touched)" = "tests/test_c.sh" ]; then ok "19: trunk biến test_c thành thư mục, nhánh tự xoá test: liệt kê, exit 2"
+else bad "19: rc=$RC tests_touched='$(touched)' (mong 2, tests/test_c.sh)"; show; fi
 
 [ "$FAILS" -eq 0 ] && { echo "gate since trunk merge: all passed"; exit 0; }
 echo "gate since trunk merge: $FAILS FAILED"; exit 1
