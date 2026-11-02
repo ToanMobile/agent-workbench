@@ -27,6 +27,7 @@ class InstallAutostart(unittest.TestCase):
             self.assertTrue(os.path.isdir(os.path.join(app_dir, "web")))
             # server import inbox_hook, và runner đọc hook hộp thư lệnh ở đúng chỗ này
             self.assertTrue(os.path.isfile(os.path.join(app_dir, "inbox_hook.py")))
+            self.assertTrue(os.path.isfile(os.path.join(app_dir, "gate_full_runner.py")), "server.py import gate_full_runner: thiếu là app cài sẵn chết ngay")
             self.assertEqual(plist["WorkingDirectory"], app_dir)
             self.assertEqual(plist["KeepAlive"], {"SuccessfulExit": False})
             # bản chép ở ~/.agent-office/app không nằm trong repo: server phải được chỉ tới ai-factory.sh thật,

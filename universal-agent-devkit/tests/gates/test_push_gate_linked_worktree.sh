@@ -333,9 +333,8 @@ cov22="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_ga
 [ "$cov22" = False ] && ok "L22: the merge gate's FAIL on the same content drops the worktree's receipt (it covers nothing any more)" \
   || bad "L22: after the merge gate's FAIL the worktree receipt still covers its HEAD ($cov22)"
 
-# L23 (principal review 21/10): the merge-check exemption is for the SAME content only — the worktree passed its --full on A, then
-#     committed B (an existing test edited again, never gated): the merge gate's exit 2 on B drops A's receipt as before, so the push
-#     from main is refused instead of riding A's receipt.
+# L23 (#486): --full passed on A, then B edits the same test again and is never gated. Finish must refuse
+#     (name the file, main unmoved, worktree kept). Merging B and only refusing the later push left ungated bytes on main.
 newrepo
 mkdir -p "$R/tests" && printf 'exit 0\n' > "$R/tests/test_core.sh" && git -C "$R" add tests/test_core.sh && git -C "$R" commit -qm "a test" \
   && git -C "$W" merge -q --ff-only main || bad "L23 setup: test on main failed"
@@ -344,12 +343,15 @@ CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.
   || bad "L23 setup: gate --full (cross-reviewed test) in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
 git -C "$W" commit -qam "gated work" || bad "L23 setup: commit A failed"
 printf 'exit 0 # v3 never gated\n' > "$W/tests/test_core.sh"; git -C "$W" commit -qam "test edited again, not gated" || bad "L23 setup: commit B failed"
-(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L23 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
-expect "L23: content changed after the worktree's --full, merge gate exit 2: the old receipt does not cover the push from main" 2
+l23_before=$(git -C "$R" rev-parse HEAD)
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) \
+  && bad "L23: finish fast-forwarded main with an ungated test edit"
+l23_after=$(git -C "$R" rev-parse HEAD)
+[ "$l23_before" = "$l23_after" ] && [ -d "$W" ] && grep -q "tests/test_core.sh" "$TMP/finish.out" \
+  && ok "L23: ungated test edit after --full: finish refuses, names the file, main unmoved" \
+  || bad "L23: finish did not refuse cleanly (before=$l23_before after=$l23_after): $(tail -3 "$TMP/finish.out")"
 
-# L24 (principal review 21/10, P2-1): as L23 but B only edits a golden fixture tests/fixtures/expected.md — a file push_gate's
-#     "needs no test" rule lets through on its own: only dropping A's receipt (different content) stops the push. The exemption keeps a
-#     receipt of the SAME content only; one that skipped the whole receipt write carried A's receipt into main and the push went through.
+# L24 (#486): as L23, but B only edits tests/fixtures/expected.md. Finish refuses and main keeps "expected v1".
 newrepo
 mkdir -p "$R/tests/fixtures" && printf 'exit 0\n' > "$R/tests/test_core.sh" && echo "expected v1" > "$R/tests/fixtures/expected.md" \
   && git -C "$R" add tests && git -C "$R" commit -qm "a test and its golden file" && git -C "$W" merge -q --ff-only main \
@@ -359,8 +361,14 @@ CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.
   || bad "L24 setup: gate --full (cross-reviewed test) in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
 git -C "$W" commit -qam "gated work" || bad "L24 setup: commit A failed"
 echo "expected v2, never gated" > "$W/tests/fixtures/expected.md"; git -C "$W" commit -qam "golden file changed, not gated" || bad "L24 setup: commit B failed"
-(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L24 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
-expect "L24: a golden file changed after the worktree's --full, merge gate exit 2: the receipt of A does not cover B's push" 2
+l24_before=$(git -C "$R" rev-parse HEAD)
+(cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) \
+  && bad "L24: finish fast-forwarded main with an ungated golden file"
+l24_after=$(git -C "$R" rev-parse HEAD)
+[ "$l24_before" = "$l24_after" ] && [ -d "$W" ] && grep -q "tests/fixtures/expected.md" "$TMP/finish.out" \
+  && [ "$(cat "$R/tests/fixtures/expected.md")" = "expected v1" ] \
+  && ok "L24: ungated golden file after --full: finish refuses, names the file, main keeps expected v1" \
+  || bad "L24: finish did not refuse cleanly (before=$l24_before after=$l24_after): $(tail -3 "$TMP/finish.out")"
 
 # L25 (#156, 21/10): repos that TRACK a hook the DevKit installer swaps for its kit link (GeelyEx2 / Goods / NFH / HvU:
 #     .claude/hooks/guard-protected-push.py, 100755). In the worktree backup_conflict moves the tracked file to the project tier

@@ -21,13 +21,17 @@ Quy ước in ra:
   mỗi ngày theo force_reason (bản ghi thiếu = unknown). Mọi bản ghi mode=full đều đếm, kể cả BUSY (lượt đã được gọi).
 - impacted_command used: lượt impacted (bỏ BUSY/REUSED/deferred) có impacted_run=true; chỉ suite matrix có impacted_command mới
   đặt cờ này, nên số này không đo việc thu hẹp test và không vào bảng trước/sau.
-- REG-DK-ALL-01: mọi lần suite đó có trong một lượt; p50/p90 trên các lần có số giây. Thêm thời gian lượt impacted (không
-  BUSY/REUSED/deferred, có ít nhất một suite có số giây) tách theo REG-DK-ALL-01 có số giây hay không.
+- REG-DK-ALL-01 (nhóm ALL, #651): mỗi lượt có nhóm là một lần. Lượt có REG-DK-ALL-01 dùng riêng nó (cả lượt chuyển tiếp
+  #646..#650 chạy song song 3 shard, để không đếm hai lần); lượt chỉ có shard REG-DK-ALL-{GATES,WORKTREE,REST}-01 thì cộng số
+  giây các shard có số giây (không có shard nào có số giây = lần không số giây) và lấy trạng thái xấu nhất (FAIL > TIMEOUT >
+  trạng thái khác > UNTESTED > PASS). REG-DK-ALL-SHARD-RULES-616-01 không thuộc nhóm. p50/p90 trên các lần có số giây. Thêm thời
+  gian lượt impacted (không BUSY/REUSED/deferred, có ít nhất một suite có số giây) tách theo nhóm ALL có số giây hay không.
 --baseline FILE: in thêm bảng | metric | baseline | current | delta | cho cùng cửa sổ --since/--until.
 """
 import argparse
 import collections
 import os
+import re
 import statistics
 import sys
 import time
@@ -38,6 +42,24 @@ import gate_runs_report as grr  # noqa: E402  (bộ đọc runs.jsonl của kit:
 
 MERGE_POINT_PREFIXES = (".integrate-scratch-", ".merge-scratch-", ".train-scratch-")
 ALL01 = "REG-DK-ALL-01"
+# nhóm ALL: REG-DK-ALL-01 cũ và các shard REG-DK-ALL-<TÊN>-01 (#616); không khớp REG-DK-ALL-SHARD-RULES-616-01
+ALL_GROUP = re.compile(r"^REG-DK-ALL-(?:[A-Z]+-)?01$")
+ALL_STATUS_RANK = {"FAIL": 0, "TIMEOUT": 1, "UNTESTED": 3, "PASS": 4}  # trạng thái khác = 2
+
+
+def all_group(r):
+    """(trạng thái, số giây hoặc None) của nhóm ALL trong lượt r; None khi lượt không có suite nào của nhóm."""
+    a = [s for s in r["suites"] if ALL_GROUP.match(str(s[0]))]
+    if not a:
+        return None
+    old = [s for s in a if s[0] == ALL01]
+    if old:
+        # lượt có REG-DK-ALL-01 (cũ hoặc chuyển tiếp cùng shard): chỉ tính nó, shard chạy cùng là cùng việc
+        s = old[0]
+        return str(s[1]), (grr.num(s[2]) if ran(s) else None)
+    status = min((str(s[1]) for s in a), key=lambda st: ALL_STATUS_RANK.get(st, 2))
+    secs = [grr.num(s[2]) for s in a if ran(s)]
+    return status, (sum(secs) if secs else None)
 
 
 def day_epoch(text):
@@ -144,15 +166,15 @@ def metrics(recs):
     m["full_reason_per_day"] = reasons if any(isinstance(r.get("force_reason"), str) and r["force_reason"] for r in full) else None
     m["full_merge_point"] = sum(v[0] for v in per_day.values())
     m["full_outside"] = sum(v[1] for v in per_day.values())
-    a = [s for r in recs for s in r["suites"] if s[0] == ALL01]
-    secs = [grr.num(s[2]) for s in a if ran(s)]
+    a = [g for g in (all_group(r) for r in recs) if g is not None]
+    secs = [g[1] for g in a if g[1] is not None]
     m["all01_n"] = len(a)
-    m["all01_status"] = collections.Counter(str(s[1]) for s in a)
+    m["all01_status"] = collections.Counter(g[0] for g in a)
     m["all01_p50_s"], m["all01_p90_s"] = pct_stats(secs)
-    # lượt impacted có chạy suite (ít nhất một suite có số giây), tách theo REG-DK-ALL-01 có số giây hay không
+    # lượt impacted có chạy suite (ít nhất một suite có số giây), tách theo nhóm ALL có số giây hay không
     for key, has in (("without", False), ("with", True)):
         walls = [wall_or_none(r) for r in ran_imp if any(ran(s) for s in r["suites"])
-                 and any(s[0] == ALL01 and ran(s) for s in r["suites"]) == has]
+                 and ((all_group(r) or (None, None))[1] is not None) == has]
         walls = [w for w in walls if w is not None]
         m["imp_%s_all01_n" % key] = len(walls)
         m["imp_%s_all01_p50_s" % key] = pct_stats(walls)[0]
@@ -198,6 +220,7 @@ def print_report(label, m, ignored, out):
     other = m["all01_n"] - sum(st[k] for k in ("PASS", "FAIL", "TIMEOUT", "UNTESTED"))
     w("%s: n=%d PASS=%d FAIL=%d TIMEOUT=%d UNTESTED=%d other=%d p50=%s p90=%s\n" % (
         ALL01, m["all01_n"], st["PASS"], st["FAIL"], st["TIMEOUT"], st["UNTESTED"], other, fmt_s(m["all01_p50_s"]), fmt_s(m["all01_p90_s"])))
+    w("note: %s = REG-DK-ALL-01, else REG-DK-ALL-{GATES,WORKTREE,REST}-01 summed per run (#651)\n" % ALL01)
     w("impacted without %s (impacted, not BUSY/REUSED/deferred, >=1 suite with seconds, %s without seconds): n=%d p50=%s; "
       "with %s: n=%d p50=%s\n" % (ALL01, ALL01, m["imp_without_all01_n"], fmt_s(m["imp_without_all01_p50_s"]), ALL01,
                                  m["imp_with_all01_n"], fmt_s(m["imp_with_all01_p50_s"])))

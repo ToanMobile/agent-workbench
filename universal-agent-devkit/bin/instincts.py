@@ -361,14 +361,18 @@ def cmd_archive(args) -> int:
         print(f"✖ {tr('nhật ký surfaced.jsonl chưa phủ đủ', 'surfaced.jsonl does not cover')} {args.days} {tr('ngày — không lưu trữ', 'days — nothing archived')}", file=sys.stderr)
         return 2
     young = time.strftime("%Y-%m-%d", time.localtime(cutoff))
-    stale = []
-    for chunk, inst_id in _entry_chunks(text):
-        if inst_id is None or inst_id in shown or KEEP_RE.search(chunk):
-            continue
-        found = FOUND_RE.search(chunk)
-        if found and found.group(1) > young:
-            continue
-        stale.append((inst_id, chunk))
+    def stale_of(src):
+        out = []
+        for chunk, inst_id in _entry_chunks(src):
+            if inst_id is None or inst_id in shown or KEEP_RE.search(chunk):
+                continue
+            found = FOUND_RE.search(chunk)
+            if found and found.group(1) > young:
+                continue
+            out.append((inst_id, chunk))
+        return out
+
+    stale = stale_of(text)
     for inst_id, chunk in stale:
         print(f"{'  ' if args.apply else '• '}{inst_id} {HEADING.match(chunk).group(2)}")
     print(tr(f"{len(stale)} mục không hiện trong {args.days} ngày", f"{len(stale)} entries not shown in {args.days} days")
@@ -376,18 +380,22 @@ def cmd_archive(args) -> int:
     if not args.apply or not stale:
         return 0
     archive = target.with_name("instincts-archive.md")
-    moved = {inst_id for inst_id, _ in stale}
     try:
-        with open(archive, "a+", encoding="utf-8") as af:   # archive first: a crash in between loses nothing
-            if fcntl is not None:
-                fcntl.flock(af, fcntl.LOCK_EX)
-            af.seek(0)
-            head = "" if af.read() else ARCHIVE_HEADER
-            af.write(head + "".join("\n---\n\n" + SEPARATOR_TAIL.sub("", chunk).rstrip() + "\n" for _, chunk in stale))
-        with open(target, "r+", encoding="utf-8") as f:   # same lock as append_lesson, rewritten in place
+        with open(target, "r+", encoding="utf-8") as f:   # same lock as append_lesson; stale is recomputed from the text read under it
             if fcntl is not None:
                 fcntl.flock(f, fcntl.LOCK_EX)
-            kept = "".join(c for c, i in _entry_chunks(f.read()) if i not in moved)
+            locked = f.read()
+            stale = stale_of(locked)
+            if not stale:
+                return 0
+            moved = {inst_id for inst_id, _ in stale}
+            with open(archive, "a+", encoding="utf-8") as af:   # archive first: a crash in between loses nothing
+                if fcntl is not None:
+                    fcntl.flock(af, fcntl.LOCK_EX)
+                af.seek(0)
+                head = "" if af.read() else ARCHIVE_HEADER
+                af.write(head + "".join("\n---\n\n" + SEPARATOR_TAIL.sub("", chunk).rstrip() + "\n" for _, chunk in stale))
+            kept = "".join(c for c, i in _entry_chunks(locked) if i not in moved)
             f.seek(0)
             f.truncate()
             f.write(SEPARATOR_TAIL.sub("\n", kept) if SEPARATOR_TAIL.search(kept) else kept)

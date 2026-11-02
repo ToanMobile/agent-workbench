@@ -220,10 +220,10 @@ grep -q "policy cleared" "$TMP/writes" && ! grep -q "trusted collaborator answer
   && ok "the comment states why (policy cleared), not a human done that did not happen" || fail "comment wording: $(grep -o 'Did:[^"]*' "$TMP/writes" | head -1)"
 
 # 24/10: preflight gets the board's own merge line cap (merge_policy.auto_max_lines, read as the merge gate reads it),
-# so a board with no cap never has a card held as too big. Unset → 400; 0, "0", -1, false → 0.
+# so a board with no cap never has a card held as too big. Unset, a word, or a fraction → 0; 0, "0", -1, false → 0.
 CFG_BASE='"repo":{"remote":"https://github.com/acme/widgets"}'
-# A value int() cannot read ("many", "1.5") is unreadable to the merge policy too: preflight keeps the 400 default.
-for spec in 'none:400' '0:0' '"0":0' '-1:0' 'false:0' '1500:1500' '"many":400' '"1.5":400' '1e17:1000000000'; do
+# A value int() cannot read ("many", "1.5") is unreadable: preflight uses 0, the same as an unset cap.
+for spec in 'none:0' '0:0' '"0":0' '-1:0' 'false:0' '1500:1500' '"1500":1500' '"many":0' '"1.5":0' '1e17:1000000000'; do
   val="${spec%:*}"; want="${spec##*:}"
   if [ "$val" = none ]; then echo "{$CFG_BASE}" > "$CONFIG_PATH"
   else echo "{$CFG_BASE,\"merge_policy\":{\"auto_max_lines\":$val}}" > "$CONFIG_PATH"; fi

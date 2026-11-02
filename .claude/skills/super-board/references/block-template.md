@@ -70,8 +70,8 @@ same rule: **prose above for the human, one parseable line below for the loop.**
   turns them into Ready + `waiting-on:#N`), the runner's suite fuse (`blocked-by: <kept card>`). A pre-flight
   `hold — in progress` duplicate waits like a sequence (run.md): `waiting-on:#N`, stays Ready. A new card that only waits for another card to close uses `waiting-on:#N`
   (stays Ready), never Blocked with this line.
-- `blocked-by: -` — nothing on this board clears it. It waits for a person, and the sweep leaves it
-  alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` and `🙋` block.
+- `blocked-by: -` — nothing on this board clears it. It waits for a person (unless the orchestrator's standing decision
+  answers it, run.md → "Owner's standing decision"), and the sweep leaves it alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` and `🙋` block.
 - `blocked-by: agent` — the runner parked it (a crashed build worker, a no-op worker): agent work, no person, nothing to wait
   for. Not human-gated, never swept (#529).
 
@@ -96,11 +96,17 @@ A board view shows no comments. A card that waits for a person carries the mark 
 `🙋 Cần bạn: <exactly what the person must do> · xong thì <what next>` comment. On 2026-10-19 about 25
 person-only cards were dragged to Ready by mistake because nothing on the card said so.
 
+**Owner's standing decision.** A valid `[orchestrator] [decision]` comment on the card settles the AC or blocker it
+names (what counts as valid: `.claude/skills/super-board/references/decision-policy.md` → "Máy đọc thế nào"; `.claude/bin/super-board-decision.py` is the only
+judge): treat that AC as handled and do not raise the same blocker again. Never post `[decision]` yourself for the
+card you work on, under any header: when a choice is needed, write the Block (this template) and let the
+orchestrator decide (run.md → "Owner's standing decision").
+
 Every Block whose `blocked-by:` is `-` because a person must act — reason tags 🙋 🧑 🔐 🔑 💳, and 🛡/❓ **only** when a human credential, external console login, legal identity, real-human playtest cohort, or physical hardware not replaceable by an emulator is genuinely required — runs this right after posting the Block comment:
 
 > **Iron Law of Autonomous Execution (`NEVER` mark `needs-you` for agent-doable work):**
 > `needs-you` is strictly reserved for steps an agent **cannot** perform without a human (missing passwords/API keys/secrets, Play Console / App Store / Supabase / `@BotFather` login, legal/company filings, live DB migrations outside `allowed_envs`, ≥5 real human playtesters, or physical car/hardware driving).
-> Agents MUST **NEVER** mark `needs-you` or move to `Blocked` for work agents can do themselves: testing a PR on a machine or Android/iOS emulator (`PhoneConnect`, Xcode Simulator), rerunning `post-fix-gate --full` or waiting for CPU load, a suite that keeps timing out (it hangs or the machine is loaded: find which test hangs — `PYTHONFAULTHANDLER=1` + `kill -ABRT` — fix it or file a card; never ask a person to raise the limit or accept evidence instead of exit 0), cleaning up dirty worktrees, auto-approving test/regression matrices (`AUTO-APPROVE`), making technical/UI/architecture/scope decisions ("Decide, don't ask"), splitting oversized tickets (`< 400` lines), or running local CLI / GitHub Actions workflows (`gh workflow run`, `kokoro_vi.py`, `chmod +x`). `super-board-needs-you.py mark` mechanically rejects these actions with exit `64`.
+> Agents MUST **NEVER** mark `needs-you` or move to `Blocked` for work agents can do themselves: testing a PR on a machine or Android/iOS emulator (`PhoneConnect`, Xcode Simulator), rerunning `post-fix-gate --full` or waiting for CPU load, a suite that keeps timing out (it hangs or the machine is loaded: find which test hangs — `PYTHONFAULTHANDLER=1` + `kill -ABRT` — fix it or file a card; never ask a person to raise the limit or accept evidence instead of exit 0), cleaning up dirty worktrees, auto-approving test/regression matrices (`AUTO-APPROVE`), making technical/UI/architecture/scope decisions ("Decide, don't ask"), asking a person to split or shrink a card because of line count (related work stays one card; a positive `auto_max_lines` is the only size gate), or running local CLI / GitHub Actions workflows (`gh workflow run`, `kokoro_vi.py`, `chmod +x`). `super-board-needs-you.py mark` mechanically rejects these actions with exit `64`.
 
 ```
 python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N> \
@@ -119,7 +125,8 @@ python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N
 - A 🙋 merge hold (merge gate exit 7 or 8): `--next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"` — never "drag to Ready": only an exact
   `done` comment resumes it (`super-board-approval.py` `DONE`), so "done rồi" or "xong" do nothing.
 - `--action` is one line of at most 500 characters: shorten long commands, the full ones stay in the Block comment.
-- Never unmark a card a lane may still do. The person who did the step removes the label, or runs
+- Never unmark a card a lane may still do. The person who did the step (or the orchestrator, after a standing
+  decision) removes the label, or runs
   `super-board-needs-you.py unmark --repo <owner/name> --issue <N>` (the comment, and the `🙋` line of a
   `## Cần người` body section, become ✅ notes).
 - Exit 1 = a gh call failed: retry once, then name it in the lane report. The Block still stands.

@@ -308,8 +308,9 @@ PINNED = ["## Lazy senior", "## Every prompt", "agent-kit worktree add", "agent-
           # step 5 + the old "Reports open with three lines" bullet
           "CHỜ DUYỆT", "AWAITING APPROVAL", "the next step", "Stay short", "ảnh: không cần", "Đã fix gì", "Chặn bug cũ", "Nguy cơ bug mới",
           "An toàn mã nguồn", "refuses the reply without all four",
-          # step 3 holds the task-receipt rule (26/10: a task runs the impacted gate, only the merge point runs --full)
-          "writes the task receipt", "A task never runs `--full`: only the merge point does", "handed to the merge point",
+          # step 3 holds the task-receipt rule (26/10: a task runs the impacted gate, only the merge point runs --full;
+          # #644 29/10: task, QA, merge queue and integrate run --scoped, --full belongs to the nightly gate-full skill)
+          "writes the task receipt", "Nobody runs `--full` by hand for a task", "handed to the merge point",
           # what Done means verified kept from its Stop-hook sentence
           "on the current code", "no hook takes the screenshot",
           # language: one line, every obligation of the old five
@@ -320,7 +321,7 @@ gone = [n for n in PINNED if n not in flat]
 say(not gone, "essentials: every pinned obligation is in the loaded block %s" % (gone or ""))
 gone = [n for n in ("CHỜ DUYỆT", "AWAITING APPROVAL", "the next step", "Stay short") if n not in every]
 say(not gone, "essentials: the status words, next step and stay-short live in 'Every prompt' step 5 %s" % (gone or ""))
-ONCE = ["≥3 files", "200 LOC", "plan_review", "only the merge point does", "CHỜ DUYỆT", "AWAITING APPROVAL", '"lang": "vi"', "95/100", "Trivia"]
+ONCE = ["≥3 files", "200 LOC", "plan_review", "Nobody runs `--full` by hand for a task", "CHỜ DUYỆT", "AWAITING APPROVAL", '"lang": "vi"', "95/100", "Trivia"]
 twice = ["%s x%d" % (n, flat.count(n)) for n in ONCE if flat.count(n) != 1]
 say(not twice, "essentials: each merged clause is stated once %s" % (twice or ""))
 # A ratchet, not a goal (25/10: 21449 bytes before the merge, 18.4 KB after): it fails when the essentials grow back.

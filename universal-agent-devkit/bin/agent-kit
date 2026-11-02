@@ -132,7 +132,9 @@ case "$CMD" in
     echo "  🧰 Running Installer & Gate Regression Tests..."
     echo "================================================================="
     rc=0; wait "$POOL_PID" || rc=$?; POOL_PID=""
-    cat "$TEST_TMP/pool.out"; cat "$TEST_TMP/pool.err" >&2
+    # #473: stderr first, without the `· start` / `· done` progress lines (they exist for the gate's log of a run it kills), then stdout:
+    # the ✔/✖ list is the end of the output, not buried under the progress lines.
+    grep -vE '^· (start|done) ' "$TEST_TMP/pool.err" >&2 || true; cat "$TEST_TMP/pool.out"
     [ "$rc" -eq 0 ] || exit 1
     ;;
   sync)
@@ -159,6 +161,10 @@ case "$CMD" in
   profile)
     shift || true
     python3 "$DEVKIT_ROOT/bin/agent-config.py" "$@"
+    ;;
+  parity)
+    shift || true
+    exec python3 "$DEVKIT_ROOT/bin/parity_check.py" "$@"
     ;;
   health|check-health)
     shift || true
@@ -344,6 +350,9 @@ Commands:
                       android | ios | web | backend | automotive | game | voice-assistant | universal
                       (case-insensitive; aliases e.g. xehoi, frontend, api)
   health              Run the health diagnostic
+  parity [path] [--fix]  List where the project differs from this kit (forbidden verify flags, broken links,
+                      unregistered hooks, stale super-board copies); exit 1 when it differs. --fix drops
+                      --full/--force-full/--auto-approve-tests from verify_commands (init runs it last)
   gate                Run the post-fix static diff gate on the current changes
                       (--staged: static checks on the staged content only)
   githooks [install|uninstall|status] [path]
@@ -466,8 +475,8 @@ Commands:
                       merges it. on/off: git config devkit.trunkMode + hooks in .claude/settings.local.json;
                       WORKTREE_TRUNK_MODE=0 turns it off everywhere (the user's switch)
   integrate [--if-due] [--dry-run]
-                      Trunk-push repo (no PR): main's commits not on origin are the queue. One gate --full on
-                      main's HEAD in a scratch worktree, then push when push_gate accepts its receipt; red: no
+                      Trunk-push repo (no PR): main's commits not on origin are the queue. One gate --scoped (never --full, #741)
+                      on main's HEAD in a scratch worktree, then push when push_gate accepts its receipt; red: no
                       push, the batch's commits listed. --if-due: only when due (git config
                       devkit.integrate.batchMax, default 6; devkit.integrate.maxWaitMin, default 60; or no
                       test_run.lock held). Origin diverged: stops before the gate. Busy lock: exit 0

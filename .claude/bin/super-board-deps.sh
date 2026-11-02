@@ -90,7 +90,7 @@ else
       repository(owner:$owner,name:$repo){
         issues(states:OPEN,first:100,after:$endCursor){
           pageInfo{ hasNextPage endCursor }
-          nodes{ number title body state labels(first:30){ nodes{ name } } comments(last:8){ nodes{ body } } }
+          nodes{ number title body state labels(first:30){ nodes{ name } } comments(last:8){ nodes{ body authorAssociation author{ login } } } }
         }
       }
     }' -F owner="${REPO%%/*}" -F repo="${REPO##*/}") || exit $?
@@ -103,7 +103,8 @@ APPROVAL_REPO="$REPO"
 # có trong checkout đó thì super-board-approval.py fetch refs/pull/<n>/head trước khi đối chiếu.
 APPROVAL_REPO_PATH=""
 [ -z "$CONFIG" ] || APPROVAL_REPO_PATH=$(jq -r '.repo.path // empty' "$CONFIG" 2>/dev/null) || APPROVAL_REPO_PATH=""
-echo "$ISSUES" | jq --arg only "$ONLY" '
+# #516: bộ đọc [decision] dùng chung gắn decisionValid lên từng comment; jq chỉ đọc cờ đó, không tự đoán lại luật.
+echo "$ISSUES" | python3 "$HERE/super-board-decision.py" annotate ${CONFIG:+--config "$CONFIG"} | jq --arg only "$ONLY" '
   # ---- the parser ---------------------------------------------------------
   # Everything after the LAST "## Blocked by" heading, stopping at the next
   # "## " heading so a following section is never swallowed.
@@ -144,24 +145,33 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
   # it — a credentials, permissions or product-decision block — so the card is
   # parseable AND deliberately not runnable. Only a person moves it.
   def comment_line:
-    [ (.comments.nodes // .comments // [])[]
+    [ (.comments.nodes // .comments // [])[] | select(.decisionValid != true)
       | (.body // "") | split("\n")[]
       | select(test("^[ \t]*blocked-by:"; "i")) ]
     | last // null;
 
-  def bodies: [ (.comments.nodes // .comments // [])[] | (.body // "") ];
+  def cms: (.comments.nodes // .comments // []);
+  # A valid [decision] is an answer, never a blocker, even when it quotes a Block comment as evidence (#516).
+  def bodies: [ (.comments.nodes // .comments // [])[] | if .decisionValid == true then "" else (.body // "") end ];
   def label_names: [ (.labels.nodes // .labels // [])[] | (.name // "") ];
-  # #112: a person finished the step (super-board-needs-you.py unmark rewrites its comment to the ✅ done marker). A ✅ newer
-  # than the comment holding the last `blocked-by:` line, with no needs-you label left, means that line is history, not a gate.
-  def person_done:
-    (label_names | index("needs-you") == null)
-    and ( bodies | to_entries
-          | ( [ .[] | select(.value | test("(^|\n)[ \t]*blocked-by:"; "i")) | .key ] | last ) as $blk
-          | $blk != null and any(.[]; .key > $blk and (.value | startswith("<!-- super-board:needs-you:done -->"))) );
   # Index of the newest 🙋 Block comment, or null.
   def needs_at: ( bodies | to_entries
                   | map(select(.value | test("Reason tag:[^\n]*🙋"))) | last | .key ) // null;
-  def needs_you: (label_names | index("needs-you") != null) or (needs_at != null);
+  # #112: a person finished the step (super-board-needs-you.py unmark rewrites its comment to the ✅ done marker). A ✅ newer
+  # than the comment holding the last `blocked-by:` line, with no needs-you label left, means that line is history, not a gate.
+  # #516: index of the newest valid `[orchestrator] [decision]` (super-board-decision.py), or null.
+  def decision_at: ( [ (.comments.nodes // .comments // []) | to_entries[] | select(.value.decisionValid == true) | .key ] | last ) // null;
+  def person_done:
+    . as $i
+    | (label_names | index("needs-you") == null)
+    and ( bodies | to_entries
+          | ( [ .[] | select(.value | test("(^|\n)[ \t]*blocked-by:"; "i")) | .key ] | last ) as $blk
+          | $blk != null and ( any(.[]; .key > $blk and (.value | startswith("<!-- super-board:needs-you:done -->")))
+                               or (($i | decision_at) as $d | $d != null and $d > $blk and ((($i | cms)[$blk].decisionStop // false) | not)
+                                                   and (($i | needs_at) as $n | $n == null or ($d > $n and ((($i | cms)[$n].decisionStop // false) | not)))) ) );
+  # The label is the live signal; an old 🙋 comment only counts while no valid decision is newer than it.
+  def needs_you: (label_names | index("needs-you") != null)
+                 or (needs_at != null and (decision_at == null or decision_at < needs_at or (cms[needs_at].decisionStop // false)));
 
 
   ( [ .[] | .number ] ) as $open

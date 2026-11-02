@@ -111,12 +111,40 @@ for f in $changed; do
   done < tests/impact_map.txt
 done
 selected="$(printf '%s\n' $tests | sort -u)"
+# #644: lượt `post-fix-gate.py --scoped` đặt DEVKIT_SCOPED_TESTS (có thể rỗng) = đúng các test bin/scoped_gate.py chọn (đồ thị import + smoke),
+# tương đối kit: chạy đúng chúng + repo consistency thay cho luật nhắc tên ở trên. Gate luôn tự đặt/gỡ biến này; đọc một lần rồi gỡ để test con
+# (test_run_impacted.sh chạy runner này trong repo nháp) không thừa hưởng. --all và --list giả lập của test_impact_map giữ như cũ.
+if [ "${DEVKIT_SCOPED_TESTS+set}" = set ] && [ "${1:-}" != "--all" ] && [ -z "${DEVKIT_IMPACT_TEST_CHANGED:-}" ]; then
+  selected="$(printf '%s\n' tests/verification/test_repo_consistency.sh $DEVKIT_SCOPED_TESTS | sort -u)"
+fi
+unset DEVKIT_SCOPED_TESTS
 # --all: every test. Finding none is an error — a glob that matches nothing must not pass. hooks/tests/test_*.sh too (5 of them ran
 # nowhere, 13/10); its *_test.sh contract files are not: `agent-kit test` runs them itself before this pool.
 if [ "${1:-}" = "--all" ]; then
   selected="$(ls tests/*/test_*.sh 2>/dev/null)"   # checked alone: the hooks tests must not hide a suite that vanished
   [ -n "$selected" ] || { echo "run_impacted --all: no tests found under tests/*/test_*.sh" >&2; exit 2; }
   selected="$selected $(ls hooks/tests/test_*.sh 2>/dev/null)"
+fi
+# #616 B: DEVKIT_IMPACTED_DIRS="a,b,!c" narrows the selection to a shard by the directory under tests/ (a = only a, b; !c = not c): REG-DK-ALL-01
+# alone hit its 900 s ceiling at load 80-130, so the matrix also lists the shards (GATES, WORKTREE, REST). Unset or empty: the whole selection.
+# A test outside tests/<dir>/ (hooks/tests) has no directory: no include token matches it, no exclude token drops it. Names are compared, never globbed.
+# The variable rides in the matrix command as a leading `DEVKIT_IMPACTED_DIRS=<value> ` (bin/suite_cache.py SELECTION_CMD reads it, so the key store still applies).
+if [ -n "${DEVKIT_IMPACTED_DIRS:-}" ]; then
+  inc=""; exc=""
+  for tok in $(printf '%s' "$DEVKIT_IMPACTED_DIRS" | tr ',' ' '); do
+    case "$tok" in '!'*) exc="$exc ${tok#!}" ;; *) inc="$inc $tok" ;; esac
+  done
+  keep=""
+  for t in $selected; do
+    top=""; case "$t" in tests/*/*) top="${t#tests/}"; top="${top%%/*}" ;; esac
+    if [ -n "$inc" ]; then
+      hit=0; for x in $inc; do [ "$top" = "$x" ] && hit=1; done
+      [ "$hit" = 1 ] || continue
+    fi
+    for x in $exc; do [ "$top" = "$x" ] && continue 2; done
+    keep="$keep $t"
+  done
+  selected="$keep"
 fi
 # post-fix-gate lists the test scripts it already ran in this gate (O2): not run twice.
 if [ -n "${DEVKIT_GATE_DONE:-}" ]; then
@@ -148,15 +176,33 @@ after="${DEVKIT_ALONE_AFTER_FILE:-}"; unset DEVKIT_ALONE_AFTER_FILE
 parent="$PPID"   # whoever started this run (agent-kit): the wait below ends when that process is gone, a SIGKILL leaves no trap to tell us
 out="$(mktemp -d "${TMPDIR:-/tmp}/dk-run-XXXXXX" 2>/dev/null)" && [ -n "$out" ] && [ -d "$out" ] \
   || { echo "run_impacted.sh: mktemp -d failed" >&2; exit 2; }
-trap 'rm -rf "$out"' EXIT
-trap 'rm -rf "$out"; trap - INT EXIT; kill -INT $$' INT
-trap 'rm -rf "$out"; trap - TERM EXIT; kill -TERM $$' TERM
-trap 'rm -rf "$out"; trap - HUP EXIT; kill -HUP $$' HUP
+# #559: trap EXIT xoá $out. Chép .log/.rc của bài rc khác 0 trước, nếu merge gate chỉ định thư mục giữ.
+dk_keep_failed_logs() {
+  local dest="${DEVKIT_KEEP_FAILED_LOGS_DIR:-}" rcfile base rc
+  [ -n "$dest" ] && [ -n "${out:-}" ] && [ -d "$out" ] || return 0
+  mkdir -p "$dest" 2>/dev/null || return 0
+  for rcfile in "$out"/*.rc; do
+    [ -f "$rcfile" ] || continue
+    rc=$(cat "$rcfile" 2>/dev/null || true)
+    case "$rc" in ''|0) continue ;; esac
+    base=$(basename "$rcfile" .rc)
+    cp -p "$rcfile" "$dest/$base.rc" 2>/dev/null || true
+    [ -f "$out/$base.log" ] && cp -p "$out/$base.log" "$dest/$base.log" 2>/dev/null || true
+  done
+}
+trap 'dk_keep_failed_logs; rm -rf "$out"' EXIT
+trap 'dk_keep_failed_logs; rm -rf "$out"; trap - INT EXIT; kill -INT $$' INT
+trap 'dk_keep_failed_logs; rm -rf "$out"; trap - TERM EXIT; kill -TERM $$' TERM
+trap 'dk_keep_failed_logs; rm -rf "$out"; trap - HUP EXIT; kill -HUP $$' HUP
 run_one() { # <test> <out dir>
   local o
   o="$2/$(printf '%s' "$1" | tr '/' '_')"
+  # #473: `· start` before the test runs, `· done` after: the gate names a hung suite's RUNNING tests (started, not done), not the last one
+  # that ended. Same line rules as `· done` below. A reader that is already gone: SIGPIPE here, the test is not started (nobody wants it).
+  printf '· start %s\n' "$1" >&2
   # Stop của Grok export GROK_HOOK_*; detect() coi mọi hook con là Grok và nhả phiên sau 3 lần chặn (exit 0).
-  # Bài thử nào cần Grok thì tự gán các biến đó. Không gỡ DEVKIT_GATE_DONE: gate truyền danh sách suite đã chạy.
+  # Bài thử nào cần Grok thì tự gán các biến đó. #660: DEVKIT_GATE_DONE (đã dùng ở trên để lọc pool này) cũng bị gỡ khỏi bài con: bài chạy
+  # `run_impacted.sh --list` bên trong sẽ bị lọc mất test của chính nó (impeccable/SKILL.md). Bài nào cần danh sách thì tự gán.
   # Slot riêng từng bài: --full của `sh`/`echo` không được chờ 2 slot Gradle/Unity của máy (Stop ngắt ở 600s).
   # Bài nào tự export SB_HEAVY_SLOT_DIR thì dùng dir của nó (test_heavy_slot.sh).
   # 24/10: mỗi bài chạy qua tests/lib/run_bounded.py: cả nhóm tiến trình của bài bị giết khi quá DEVKIT_TEST_TIMEOUT_S (mặc định
@@ -196,7 +242,7 @@ run_one() { # <test> <out dir>
   trap '_dk_clean_tdir; trap - TERM EXIT; kill -TERM $$' TERM
   trap '_dk_clean_tdir; trap - HUP EXIT; kill -HUP $$' HUP
   env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
-       -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC -u _DEVKIT_IN_MKTEMP_SHIM \
+       -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC -u _DEVKIT_IN_MKTEMP_SHIM -u DEVKIT_IMPACTED_DIRS -u DEVKIT_GATE_DONE \
        ${_dk_tdir:+TMPDIR="$_dk_tdir" PYTHONPYCACHEPREFIX="$_dk_tdir/pyc" PATH="$2/mkbin:$PATH"} \
        SB_HEAVY_SLOT_DIR="$o.slots" \
        ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
@@ -337,6 +383,13 @@ w=0; while [ -n "$after" ] && [ -n "$alone" ] && [ ! -e "$after" ] && [ "$w" -lt
   sleep 1; w=$((w + 1))
 done
 for t in $alone; do bash -c 'run_one "$1" "$2"' _ "$t" "$out"; done
+# #721: dòng hỏng của test đỏ (✖ ✘ ✗ ❌ FAIL not ok ở đầu dòng) nằm TRƯỚC 20 dòng đuôi in bên dưới. Gate-full 31/10:
+# test_game_blender_default.sh 'failures: 2' nhưng ✖ A33/A23 sớm hơn đuôi nên log không có. Tối đa 40; dòng đã ở trong đuôi không in lại.
+dk_fail_lines() { # <log>
+  LC_ALL=C awk -v cap=40 'NR == FNR { n++; next }
+    FNR <= n - 20 && /^[ \t]*(✖|✘|✗|❌|FAIL|not ok)/ { k++; if (k <= cap) print }
+    END { if (k > cap) printf "… còn %d dòng hỏng nữa\n", k - cap; if (k) print "… (20 dòng cuối)" }' "$1" "$1" </dev/null 2>/dev/null
+}   # </dev/null: awk giả đọc stdin (test_run_impacted_order.sh) không treo khi chạy tay ở terminal (T0183)
 rc=0; n_reuse=0; n_ran=0
 for t in $selected; do
   [ -f "$t" ] || continue
@@ -352,7 +405,7 @@ for t in $selected; do
   if [ "$(cat "$o.rc" 2>/dev/null)" = 0 ]; then
     echo "✔ $t"
   else
-    echo "✖ $t"; tail -n 20 "$o.log" 2>/dev/null | sed 's/^/    /'; rc=1
+    echo "✖ $t"; { dk_fail_lines "$o.log"; tail -n 20 "$o.log" 2>/dev/null; } | sed 's/^/    /'; rc=1
   fi
 done
 # #472 D: hit-rate của sổ per-test (post-fix-gate đọc dòng này ghi vào runs.jsonl); chỉ khi sổ bật

@@ -118,7 +118,7 @@ fake_session() {
 import json, os, sys, time
 sid, tp = sys.argv[1], sys.argv[2]
 iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
-now = time.time() + float(os.environ.get("SESSION_SHIFT") or 0)
+now = float(os.environ.get("FIXTURE_NOW") or time.time()) + float(os.environ.get("SESSION_SHIFT") or 0)   # #699: one shared FIXTURE_NOW per case when set
 recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now - 600), "message": {"role": "user", "content": "fix it"}},
         {"type": "assistant", "sessionId": sid, "timestamp": iso(now - 590), "message": {"content": [
             {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git status"}}]}}]
@@ -136,10 +136,10 @@ PY
 # ledger_window <sid> <tool-use-id> <start> <end> — offsets in seconds from now (negative = past)
 ledger_window() {
   mkdir -p .claude/audit-gate
-  python3 -c 'import sys,time; n=time.time(); s,t,a,b=sys.argv[1:]
+  python3 -c 'import os,sys,time; n=float(os.environ.get("FIXTURE_NOW") or time.time()); s,t,a,b=sys.argv[1:]
 print("%s\tstart\t%.3f\t%s\n%s\tend\t%.3f\t%s" % (s, n+float(a), t, s, n+float(b), t))' "$@" >> .claude/audit-gate/bash_write_ledger.tsv
 }
-set_mtime() { python3 -c 'import os,sys,time; t=time.time()+float(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"; }
+set_mtime() { python3 -c 'import os,sys,time; t=float(os.environ.get("FIXTURE_NOW") or time.time())+float(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"; }
 existing_test_repo() {
   make_repo "true"
   mkdir -p src/test && echo "assert(true)" > src/test/CoreTest.kt && git add -A && git commit -qm t
@@ -148,11 +148,12 @@ existing_test_repo() {
 other_edit() {
   mkdir -p "$(dirname "$1")"
   python3 - "$@" <<'PY'
-import json, sys, time
+import json, os, sys, time
 tp, sid, path, use = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
 res = sys.argv[5] if len(sys.argv) > 5 else "none"
 iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".%03dZ" % int((t % 1) * 1000)
-now = time.time()
+time.sleep(float(os.environ.get("POSTFIX_FIXTURE_DELAY_S") or 0))   # #699: simulates a slow CPU between set_mtime and this write
+now = float(os.environ.get("FIXTURE_NOW") or time.time())   # #699: the same instant set_mtime used
 recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now + use - 30), "message": {"role": "user", "content": "go"}},
         {"type": "assistant", "sessionId": sid, "timestamp": iso(now + use), "message": {"content": [
             {"type": "tool_use", "id": "o1", "name": "Edit", "input": {"file_path": path, "old_string": "a", "new_string": "b"}}]}}]
@@ -169,7 +170,9 @@ other_case() { # <name> <expected> — this session: no write of the test, windo
   out="$(run_gate --run-tests --session s-me --transcript "$P/s-me.jsonl")"; local rc=$?
   if [ "$2" = 0 ]; then check "$1" 0 "$rc" "$out"; else check "$1" 2 "$rc" "$out" "PASS —"; fi
 }
-fresh_other() { existing_test_repo; rm -rf "$P"; mkdir -p "$P"; set_mtime src/test/CoreTest.kt -120
+# #699: ONE `now` per case (FIXTURE_NOW) for the mtime, every ledger window and every transcript timestamp; two clocks drifted apart on a slow CPU
+fresh_other() { existing_test_repo; rm -rf "$P"; mkdir -p "$P"; FIXTURE_NOW="$(python3 -c 'import time; print(repr(time.time()))')"; export FIXTURE_NOW
+  set_mtime src/test/CoreTest.kt -120
   ledger_window s-me m1 -590 -589; fake_session s-me "$P/s-me.jsonl"; }
 other_session_repo() {
   make_repo "true"

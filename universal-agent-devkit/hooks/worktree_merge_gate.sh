@@ -558,27 +558,55 @@ if vanished:
         owed.discard(os.path.realpath(r["path"]))
         owners.pop(os.path.realpath(r["path"]), None)
 
-def open_pr_number(path, branch, budget_end):
-    """#571: number of the open PR whose head is `branch` (an open PR means it is published), else None. gh missing, failing, timing out or
-    printing something unreadable is None too (fail closed: the hold stays). `branch` comes from the inventory row: no extra git call here.
-    `budget_end` (time.time() value) is shared by every row: the calls are sequential and the alarm (13 s) passes the Stop, so they must end first."""
-    left = budget_end - time.time()
-    if not branch or left <= 0.2:
+def origin_slug():
+    """#708: `owner/repo` (`host/owner/repo` ngoài github.com) của remote origin, để `gh pr list --repo` không phụ thuộc cwd; None khi không có origin
+    hoặc URL không đọc được (khi đó gh tự suy repo từ cwd = main checkout, như trước)."""
+    url = re.sub(r"(?:\.git)?/?$", "", git("remote", "get-url", "origin") or "")   # bỏ đuôi .git và dấu / trước khi tách owner/repo
+    m = re.match(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://)?(?:[^@/\s]+@)?([^/:\s]+)(?::\d+)?[:/]([^/\s:]+(?:/[^/\s:]+)+)$", url)
+    if not m:
         return None
-    try:
-        r = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--limit", "1"],
-                           cwd=path, capture_output=True, text=True, timeout=min(5, left), stdin=subprocess.DEVNULL)
-        rows = json.loads(r.stdout) if r.returncode == 0 else []
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
-    num = rows[0].get("number") if rows and isinstance(rows[0], dict) else None
-    return num if isinstance(num, int) else None
+    return m.group(2) if m.group(1).lower() == "github.com" else m.group(1) + "/" + m.group(2)
 
-pr_budget_end = time.time() + 3   # all rows together: leaves the alarm's 13 s to the automerge step below
-for r in [r for r in pending if not r.get("reason") and os.path.isdir(r["path"])]:   # a published branch with an open PR reaches main through that PR
-    if wt is None or wt.unpushed_or_dirty(r["path"]):
-        continue   # an open PR proves the branch is published, not that this local work is on it: stays held
-    pr = open_pr_number(r["path"], r.get("branch"), pr_budget_end)
+def open_pr_map():
+    """#708: MỘT lần `gh pr list --repo <owner/repo> --state open --json number,headRefName --limit 200` cho cả lượt Stop (trước đây một lần
+    `--head <nhánh>` cho từng worktree, chung ngân sách 3 s: gh ~1 s/lần nên các dòng sau hết ngân sách, bị coi là "không có PR" và Stop bị giữ
+    dù PR đã mở). Trả (map headRefName -> số PR, None) hoặc ({}, lý do). gh thiếu, lỗi, quá thời gian hay JSON hỏng đều trả lý do (fail closed:
+    giữ Stop, và lời giữ nói gh hỏng chứ không nói "chưa có PR"). Ngân sách chỉ cho lệnh này, chừa alarm 13 s cho bước tự gộp phía sau."""
+    left = min(5.0, signal.getitimer(signal.ITIMER_REAL)[0] - 4.0)
+    if left < 0.5:
+        return {}, "gh quá thời gian: không còn ngân sách trước alarm của cổng"
+    slug = origin_slug()
+    cmd = ["gh", "pr", "list", *(["--repo", slug] if slug else []), "--state", "open", "--json", "number,headRefName", "--limit", "200"]
+    try:
+        r = subprocess.run(cmd, cwd=repo, capture_output=True, text=True, timeout=left, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return {}, f"gh quá thời gian (>{left:.0f} s)"
+    except (OSError, subprocess.SubprocessError) as e:
+        return {}, f"gh lỗi: không chạy được ({type(e).__name__})"
+    if r.returncode != 0:
+        return {}, f"gh lỗi (exit {r.returncode}): {' '.join(r.stderr.split())[:120]}".rstrip(": ")
+    try:
+        rows = json.loads(r.stdout)
+    except ValueError:
+        return {}, "gh lỗi: kết quả không phải JSON"
+    if not isinstance(rows, list):
+        return {}, "gh lỗi: kết quả không phải danh sách"
+    prs = {}
+    for row in rows:
+        if isinstance(row, dict) and isinstance(row.get("number"), int) and isinstance(row.get("headRefName"), str):
+            prs.setdefault(row["headRefName"], row["number"])   # gh liệt kê PR mới nhất trước: giữ cái đầu, như `--limit 1` trước đây
+    return prs, None
+
+# Một nhánh đã publish có PR đang mở thì vào main qua PR. Ứng viên = dòng sạch, đã push, có nhánh; chỉ khi có ứng viên mới gọi gh (một lần).
+pr_cands = [r for r in pending if not r.get("reason") and os.path.isdir(r["path"]) and r.get("branch")
+            and wt is not None and not wt.unpushed_or_dirty(r["path"])]   # an open PR proves the branch is published, not that this local work is on it: unpushed/dirty stays held
+pr_by_branch, gh_err = open_pr_map() if pr_cands else ({}, None)
+gh_failed = pr_cands if gh_err else []
+if gh_err:
+    pr_notes.append(f"⚠ không tra được danh sách PR đang mở ({gh_err}): {len(pr_cands)} worktree đã push bị giữ vì chưa biết nhánh đã có PR hay chưa "
+                    "(đây là lỗi gh, KHÔNG phải kết luận về PR); dừng lại lần nữa để tra lại")
+for r in ([] if gh_err else pr_cands):
+    pr = pr_by_branch.get(r["branch"])
     if pr is not None:
         pending.remove(r)
         owed.discard(os.path.realpath(r["path"]))
@@ -655,6 +683,10 @@ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != 
             else:
                 r["am"] = str(res.get("message") or res.get("status"))
                 r["am_status"] = res.get("status")
+
+for r in gh_failed:   # tự gộp báo "mở PR" cho nhánh đã push: sai khi gh hỏng (chưa biết có PR hay không), nên lời giữ nói lý do thật
+    if r in pending and r.get("am_status") == "blocked":
+        r["am"] = f"chưa biết nhánh đã có PR chưa, vì gh hỏng ({gh_err})"
 
 def merge_own(path):
     """W1 R1 v6: the session's own worktree into main with `automerge --keep` (the R3 gate runs, main fast-forwards, the worktree stays)
@@ -766,6 +798,11 @@ listing = "\n".join(line(r) for r in pending)
 could_not_run = any(r.get("reason") and r.get("kind") != "gone" for r in pending)   # "gone": checked, a commit is missing
 lock_note = ("⚠ session_lock.py không import được (" + type(lock_error).__name__ + "): khóa của phiên khác không thấy được, nên worktree của phiên khác có thể bị tính nhầm là của phiên này.\n"
              if session_lock is None else "")
+if d.get("stop_hook_active"):   # #708: Stop này đến ngay sau một lần chặn: không chặn vòng nữa, nói một dòng; việc còn nợ vẫn nhớ, không tính vào "Lần giữ N/3"
+    save()
+    print(json.dumps({"systemMessage": f"⚠ WORKTREE-MERGE GATE: stop_hook_active (Stop ngay sau một lần chặn) nên không chặn nữa; còn {len(pending)} worktree chưa về trunk "
+                      "(`agent-kit worktree status`), lần dừng sau sẽ nhắc lại"}, ensure_ascii=False))
+    sys.exit(0)
 if held >= 3:
     save()   # the debt survives the cap: the next session is held on it
     head = ("⚠ WORKTREE-MERGE GATE: cổng KHÔNG chạy được (lỗi nội bộ / không đọc được git dir) nên không biết worktree còn việc CHƯA về trunk hay không:\n"

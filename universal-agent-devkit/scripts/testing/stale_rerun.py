@@ -204,7 +204,7 @@ def _record_env(cmd: str) -> dict:
     """Môi trường suite của nightly (#427 vòng 2), như run_in_group + suite_env của post-fix-gate.py: chỉ lệnh run_impacted.sh chuẩn
     (SELECTION_CMD) nhận DEVKIT_PER_TEST_CACHE, và chỉ "record" — chạy MỌI test, ghi PASS từng test để gate trên đúng cây đó dùng lại
     ("1" có sẵn trong môi trường thì nightly bỏ qua test). Mọi suite khác chạy không có biến; người dùng đặt "0": tắt."""
-    env = {k: v for k, v in os.environ.items() if k != "DEVKIT_PER_TEST_CACHE"}
+    env = {k: v for k, v in os.environ.items() if k not in ("DEVKIT_PER_TEST_CACHE", "DEVKIT_IMPACTED_DIRS")}   # #616: shard chỉ từ tiền tố của lệnh ma trận
     try:
         mod = _gate_module().suite_cache_mod()
     except Exception as exc:  # noqa: BLE001 - sổ per-test chỉ là phần thêm: suite vẫn chạy, không ghi

@@ -22,6 +22,8 @@ commit and every file changed between them has, in the pushed commit, the blob t
 A commit that only rewords the gated one (`git commit --amend`, same tree) is covered too (2026-10-09).
 The receipt must be what the gate writes, for this repository (receipt_problem(); 2026-10-09: a
 hand-written {"exit": 0, "head": "<HEAD>"} passed): anything else counts as no receipt.
+#644: when full_pass.json is missing, invalid or does not cover the push, scoped_pass.json next to it (the receipt of a scoped gate run,
+"scope": "scoped", run-log line mode scoped) is checked by the same rules; a "task" receipt never opens a push.
 
 Only repos with an active regression matrix are checked: without one no receipt can exist.
 Files the gate itself writes after the run (tree_fp.EXCLUDE) are not compared.
@@ -685,9 +687,10 @@ def tested_fingerprint(top, project, head, dirty, rev, links=None):
     return hashlib.sha256(tree.encode()).hexdigest()[:24]
 
 
-def run_log_has(rp, receipt):
+def run_log_has(rp, receipt, mode="full"):
     """True when <git common dir>/postfix-gate/runs.jsonl (bin/post-fix-gate.py _log_gate_run, written right after the receipt) holds
-    the line of this full PASS: mode full, exit 0, verdict PASS or REUSED, same project name, logged 0-900 s after the receipt."""
+    the line of this full PASS: mode full, exit 0, verdict PASS or REUSED, same project name, logged 0-900 s after the receipt.
+    mode="scoped" (#644): dòng của lượt scoped cho biên nhận scoped_pass.json — dòng mode full không mở biên nhận scoped và ngược lại."""
     gdir = os.path.dirname(os.path.dirname(rp))
     parent = os.path.dirname(gdir)
     base = os.path.dirname(parent) if os.path.basename(parent) == "worktrees" else gdir   # as post-fix-gate _run_log_dir
@@ -717,13 +720,13 @@ def run_log_has(rp, receipt):
             continue
         if epoch < t - 60:
             return False   # older than the receipt: lines are appended in time order
-        if (epoch <= t + 900 and rec.get("mode") == "full" and rec.get("exit") == 0 and not isinstance(rec.get("exit"), bool)
+        if (epoch <= t + 900 and rec.get("mode") == mode and rec.get("exit") == 0 and not isinstance(rec.get("exit"), bool)
                 and rec.get("verdict") in ("PASS", "REUSED") and rec.get("project") == name):
             return True
     return False
 
 
-def receipt_problem(top, rp, receipt, rev="HEAD"):
+def receipt_problem(top, rp, receipt, rev="HEAD", scope="full"):
     """None when the full-pass receipt is what bin/post-fix-gate.py write_full_pass_receipt() writes on a full PASS of THIS
     repository - every field present with its type, `head` a commit here, `project` this repository, no failed suite, the
     fingerprint equal to that of head+dirty rebuilt from git, and the run-log line of that run present; else what is wrong.
@@ -731,11 +734,16 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     ponytail: the receipt and runs.jsonl are files this user can write: a forger who rebuilds the fingerprint the way
     tree_fp.py does and appends a run-log line still passes - or, since issue #5, sets `carried_from` to any worktree's name and
     `time` next to a real full PASS line of that worktree, no line appended; upgrade to a receipt signed with a key the agent cannot read
-    (the user's keychain / ssh-agent) if a forged receipt is ever seen."""
+    (the user's keychain / ssh-agent) if a forged receipt is ever seen.
+    scope="scoped" (#644): biên nhận scoped_pass.json của lượt gate scoped — cùng mọi kiểm tra trên, cộng `scope` đúng "scoped" (thiếu hay
+    "task" đều bị từ chối), các trường scoped_tests / reasons / base / tree đúng dạng, và dòng runs.jsonl mode scoped."""
     def number(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
     # T0061 Pha 1: biên nhận task (lượt --run-tests không --full) chỉ cho XONG của task, không bao giờ cho push (tests/gates/test_task_receipt_doors.sh ca 2)
-    if receipt.get("scope", "full") != "full":
+    if scope == "scoped":
+        if receipt.get("scope") != "scoped":
+            return "scoped_pass.json không mang scope scoped (scope %s)" % str(receipt.get("scope"))[:20]
+    elif receipt.get("scope", "full") != "full":
         return "biên nhận task (scope task, không phải biên nhận của điểm gộp)"
     if receipt.get("exit") != 0 or isinstance(receipt.get("exit"), bool):
         return "exit không phải 0"
@@ -744,8 +752,13 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
         return "head không phải một commit của repo này"
     missing = [k for k in ("time", "tested_at", "fingerprint", "project", "dirty", "tests", "result_format", "gate_sha",
                            "matrix_sha", "local_sha") if k not in receipt]
+    if scope == "scoped":
+        missing += [k for k in ("scoped_tests", "reasons", "base", "tree") if k not in receipt]
     if missing:
         return "thiếu " + ", ".join(missing)
+    if scope == "scoped" and not (all(isinstance(receipt[k], list) and all(isinstance(x, str) for x in receipt[k]) for k in ("scoped_tests", "reasons"))
+                                  and all(isinstance(receipt[k], str) and HEX_SHA.fullmatch(receipt[k]) for k in ("base", "tree"))):
+        return "scoped_tests / reasons / base / tree không đúng dạng"
     if not number(receipt["time"]) or not number(receipt["tested_at"]) or receipt["time"] > time.time() + 300:
         return "time / tested_at không phải mốc thời gian hợp lệ"
     project = receipt["project"]
@@ -773,8 +786,9 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     want = tested_fingerprint(top, project, head, dirty, rev, links)
     if want is not None and want != fp:
         return "fingerprint không khớp code head+dirty mà biên nhận ghi"
-    if not run_log_has(rp, receipt):
-        return "không có dòng runs.jsonl của lần chạy gate này (biên nhận không do post-fix-gate --full ghi)"
+    if not run_log_has(rp, receipt, mode=scope):
+        return ("không có dòng runs.jsonl mode scoped của lần chạy gate này (biên nhận không do lượt gate scoped ghi)" if scope == "scoped"
+                else "không có dòng runs.jsonl của lần chạy gate này (biên nhận không do post-fix-gate --full ghi)")
     return None
 
 
@@ -823,7 +837,74 @@ def _own_check(cwd, rev, tag_remote, linked):
         return (False, "linked worktree has no work tree") if linked else (True, "not a git repo")
     if tag_remote and on_remote_only(top, rev, tag_remote):
         return True, "a tag of commits the remote already has: nothing new is pushed"
-    rp = tree_fp.receipt_path(top)
+    rp, srp = tree_fp.receipt_path(top), tree_fp.scoped_receipt_path(top)
+    receipt = _read_receipt(rp)
+    # #644: biên nhận của lượt gate scoped (scoped_pass.json cạnh full_pass.json) chỉ được xét khi file có mặt; vắng thì mọi lời từ chối
+    # giữ nguyên từng chữ như trước
+    has_scoped = os.path.lexists(srp)
+    scoped = _read_receipt(srp) if has_scoped else None
+    # a project outside this repository is not this repository's (a forged one could name a directory with no matrix)
+    project = receipt.get("project") if receipt and _inside(receipt.get("project"), top) else top
+    sproject = scoped.get("project") if scoped and _inside(scoped.get("project"), top) else top
+    homes = [d for d in dict.fromkeys((project, sproject, top, os.path.abspath(cwd))) if os.path.isfile(os.path.join(d, MATRIX))]
+    if not homes:
+        # main có ma trận (nếu không thì main đã trả True); worktree không ma trận chưa chạy test hồi quy nào để bảo lãnh
+        return (False, "no regression matrix in this linked worktree") if linked else (True, "no regression matrix")
+    problem = None
+    if receipt is not None and receipt.get("exit") == 0 and receipt.get("head"):
+        problem = receipt_problem(top, rp, receipt, rev)
+    full_ok = not (receipt is None or problem or receipt.get("exit") != 0 or not receipt.get("head"))
+    if full_ok:
+        ok, full_why = _covered(top, rev, receipt, project, linked)
+        if ok or not has_scoped:
+            return ok, full_why
+    # biên nhận --full không có / không hợp lệ / không phủ rev: thử biên nhận scoped với CÙNG mọi kiểm tra (receipt_problem scope="scoped")
+    sproblem, scoped_why = None, None
+    if has_scoped:
+        if scoped is None or scoped.get("exit") != 0 or isinstance(scoped.get("exit"), bool) or not scoped.get("head"):
+            sproblem = "scoped_pass.json không phải biên nhận exit 0 (có head)"
+        else:
+            sproblem = receipt_problem(top, srp, scoped, rev, scope="scoped") or _scoped_base_problem(top, scoped)
+        if not sproblem:
+            ok, scoped_why = _covered(top, rev, scoped, sproject, linked)
+            if ok:
+                return True, "covered by the scoped gate receipt" if scoped_why == "covered" else scoped_why
+    if full_ok:
+        return False, f"{full_why}; biên nhận scoped: {sproblem or scoped_why}"
+    # không biên nhận nào dùng được (scoped hợp lệ mà không phủ rev cũng vậy: file scoped có mặt không được bỏ hai lối approved / docs-only dưới đây)
+    if linked:
+        return False, "no usable receipt in this linked worktree"
+    ok, why_not = approved(top, "@{u}.." + rev)
+    if ok:
+        return True, why_not
+    # --no-renames: a rename is also a delete of the old path (src/Foo.kt -> docs/Foo.md is code leaving)
+    rc, out = git(top, "diff", "--name-only", "--no-renames", "-z", "@{u}", rev)
+    if rc == 0 and untestable_only(top, homes[0], [p for p in out.split("\0") if p], rev=rev):
+        return True, "only files that need no test (docs / agent config), none watched by the matrix"
+    return False, ("chưa có biên nhận gate --full exit 0 (có head) cho code sắp push"
+                   + (f" (biên nhận hiện có không hợp lệ: {problem})" if problem else "") + (f"; {why_not}" if why_not else "")
+                   + (f"; biên nhận scoped không dùng được: {sproblem or scoped_why}" if has_scoped else ""))
+
+
+def _scoped_base_problem(top, receipt):
+    """None khi `base` của biên nhận scoped đã có trên remote: tổ tiên của @{u} hay origin/HEAD, origin/main, origin/master (nhánh PR gộp
+    origin/main rồi gate --diff origin/main: base là đỉnh origin/main, chưa trên @{u}); else lý do. Biên nhận scoped chỉ chứng minh
+    base..cây: base là commit chưa push thì commit giữa base và đích lên remote mà không test nào chạy."""
+    seen = []
+    for ref in ("@{u}", "refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"):
+        rc, sha = git(top, "rev-parse", "--verify", "-q", ref + "^{commit}")
+        if rc == 0 and sha.strip():
+            seen.append(ref)
+            if git(top, "merge-base", "--is-ancestor", receipt["base"], sha.strip())[0] == 0:
+                return None
+    if seen:
+        return (f"base {receipt['base'][:10]} của biên nhận scoped chưa có trên đích push ({', '.join(seen)}): "
+                "commit giữa base và đích chưa được test")
+    return "không có đích push (@{u} / origin/HEAD / origin/main / origin/master) để kiểm base của biên nhận scoped"
+
+
+def _read_receipt(rp):
+    """Biên nhận JSON (dict) ở rp, None khi thiếu / không đọc được / không phải object."""
     try:   # O_NONBLOCK + regular file only: a FIFO planted at the receipt blocked open() until the hook timed out (issues-bugs A.4)
         with os.fdopen(os.open(rp, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)), encoding="utf-8") as f:
             if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
@@ -831,29 +912,12 @@ def _own_check(cwd, rev, tag_remote, linked):
             receipt = json.load(f)
     except (TypeError, OSError, ValueError, RecursionError):
         receipt = None
-    if not isinstance(receipt, dict):
-        receipt = None
-    # a project outside this repository is not this repository's (a forged one could name a directory with no matrix)
-    project = receipt.get("project") if receipt and _inside(receipt.get("project"), top) else top
-    homes = [d for d in (project, top, os.path.abspath(cwd)) if os.path.isfile(os.path.join(d, MATRIX))]
-    if not homes:
-        # main có ma trận (nếu không thì main đã trả True); worktree không ma trận chưa chạy test hồi quy nào để bảo lãnh
-        return (False, "no regression matrix in this linked worktree") if linked else (True, "no regression matrix")
-    problem = None
-    if receipt is not None and receipt.get("exit") == 0 and receipt.get("head"):
-        problem = receipt_problem(top, rp, receipt, rev)
-    if receipt is None or problem or receipt.get("exit") != 0 or not receipt.get("head"):
-        if linked:
-            return False, "no usable receipt in this linked worktree"
-        ok, why_not = approved(top, "@{u}.." + rev)
-        if ok:
-            return True, why_not
-        # --no-renames: a rename is also a delete of the old path (src/Foo.kt -> docs/Foo.md is code leaving)
-        rc, out = git(top, "diff", "--name-only", "--no-renames", "-z", "@{u}", rev)
-        if rc == 0 and untestable_only(top, homes[0], [p for p in out.split("\0") if p], rev=rev):
-            return True, "only files that need no test (docs / agent config), none watched by the matrix"
-        return False, ("chưa có biên nhận gate --full exit 0 (có head) cho code sắp push"
-                       + (f" (biên nhận hiện có không hợp lệ: {problem})" if problem else "") + (f"; {why_not}" if why_not else ""))
+    return receipt if isinstance(receipt, dict) else None
+
+
+def _covered(top, rev, receipt, project, linked):
+    """(ok, reason): biên nhận đã qua receipt_problem có phủ những gì push `rev` gửi đi không (head là tổ tiên, mọi file đổi từ head đã được
+    test đúng blob). Tách khỏi _own_check (#644) để biên nhận --full và biên nhận scoped đi cùng một đường."""
     head = receipt["head"]
     if subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", head, rev],
                       capture_output=True, timeout=5).returncode != 0:
