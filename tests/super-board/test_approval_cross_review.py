@@ -352,7 +352,10 @@ class PolicyDeleteProtected(unittest.TestCase):
 
     def test_sensitive_file_inside_reviewable_dir_stays_human(self):
         # `**` của memory/rules cũng khớp file nhạy cảm nằm bên trong: nhóm nhạy cảm được xét trước nên vẫn chỉ người.
-        for path in (".agents/local/memory/" + DOT_ENV, ".agents/local/rules/release.keystore"):
+        # Grok (T0209): khớp không phân biệt chữ hoa, `.ENV` / `.KEYSTORE` / `.JKS` không được hạ xuống reviewable.
+        for path in (".agents/local/memory/" + DOT_ENV, ".agents/local/rules/release.keystore",
+                     ".agents/local/memory/" + DOT_ENV.upper(), ".agents/local/rules/app.KEYSTORE",
+                     ".agents/local/rules/upload.JKS", ".agents/local/memory/Google-Services.JSON"):
             plan = policy(self.CFG, [{"path": path, "additions": 0, "deletions": 1}], deletion(path))
             self.assertEqual(self.cats(plan), ["delete-protected"], (path, plan))
         # protected_paths tự khai chỉ gồm một glob reviewable: file nhạy cảm bên trong vẫn chỉ người.

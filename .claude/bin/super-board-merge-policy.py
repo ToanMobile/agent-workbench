@@ -279,8 +279,9 @@ def main() -> int:
         g = matches(p, protected)
         if not g:
             continue
+        # Nhóm nhạy cảm so không phân biệt chữ hoa (Grok T0209): `.ENV`, `app.KEYSTORE` không được hạ xuống reviewable.
         cat = ("delete-reviewable" if matches(p, REVIEWABLE_DELETE_GLOBS) and not matches(p, other)
-               and not matches(p, SENSITIVE_DELETE_GLOBS) else "delete-protected")
+               and not matches(p.lower(), SENSITIVE_DELETE_GLOBS) else "delete-protected")
         gone[cat] = gone[cat] or f"deletes {p} (matches {g})"
     human.extend({"category": c, "why": w} for c, w in gone.items() if w)
 
