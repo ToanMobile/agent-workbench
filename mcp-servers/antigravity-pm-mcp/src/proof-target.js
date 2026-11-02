@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { run, exists } from './util.js';
+import { WEB_PROVIDER_TYPES } from './policy.js';
 
 export function parseAdbDevices(text) {
   const out = [];
@@ -95,7 +96,7 @@ export function planCaptureTarget({ configured, devices, denied, provider, provi
   }
 
   const web = Object.entries(providers || {}).find(([, p]) =>
-    p && ['browser', 'qa-visual', 'playwright'].includes(p.type) && (p.url || p.start));
+    p && WEB_PROVIDER_TYPES.includes(p.type) && (p.url || p.start));
   if (web) {
     warnings.push(`Khong co thiet bi adb online, mo provider ${web[0]} (${web[1].type}).`);
     return { action: 'switch', providerName: web[0], warnings };

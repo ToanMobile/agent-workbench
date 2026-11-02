@@ -48,7 +48,10 @@ export const DEFAULT_MUST_HAVE = {
 export const PROOF_KINDS = ['device', 'browser', 'script'];
 // Provider duoc tinh cho task khong co thiet bi: van phai la LENH PM CHAY (browser headless / shell), KHONG phai
 // anh agent tu dua (file) — giu dung bat bien "anh agent dua khong duoc tinh".
-const PROVIDER_TYPE_KHONG_THIET_BI = ['browser', 'shell'];
+// Mot danh sach dung chung voi proof-target.js (quet critical 31/10: ben do qa-visual / playwright la provider web do PM chay,
+// nhung task browser/script chung minh bang chung lai bi tu choi o day).
+export const PROVIDER_TYPE_KHONG_THIET_BI = ['browser', 'shell', 'qa-visual', 'playwright'];
+export const WEB_PROVIDER_TYPES = ['browser', 'qa-visual', 'playwright'];
 
 
 export function mustHaveOf(cfg) {

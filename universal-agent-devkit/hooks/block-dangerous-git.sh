@@ -2343,15 +2343,20 @@ def analyse(text, depth=0, stripped=False, opened=False):
         # no return here (15/10 r4): an unclosed span (a lone backtick or $( in a prose body that stays in the scan) used to END the analysis, which
         # turned off every rule that RAW and SOLO_WORDS lack (DEVKIT_PRECOMMIT=0 git commit …). The text goes on to the word-by-word reading below.
     # Each reading of the text (shell_norm.readings) is read from where the command started; the verdicts are added: blocked when ANY blocks. The state a
-    # reader leaves behind (the directory after a cd) is the first reading, as before the second one existed.
+    # reader leaves behind (the directory after a cd, an export of DEVKIT_ALLOW_BRANCH) is the first reading, as before the second one existed (#844 review:
+    # the decoded reading of an export of $"DEVKIT_ALLOW_BRANCH=1" inside bash -c let a later git switch -c through).
     start_dir = first_dir = CUR_DIR[0]
+    start_allow = first_allow = ALLOW_BRANCH[0]
     for n, pre in enumerate(shell_norm.readings(drop_comments(text))):
         CUR_DIR[0] = start_dir if n else CUR_DIR[0]
+        ALLOW_BRANCH[0] = start_allow if n else ALLOW_BRANCH[0]
         reason = scan_words(pre, depth, opened)
         if reason:
             return reason
         first_dir = CUR_DIR[0] if n == 0 else first_dir
+        first_allow = ALLOW_BRANCH[0] if n == 0 else first_allow
     CUR_DIR[0] = first_dir
+    ALLOW_BRANCH[0] = first_allow
     return None
 
 # Only a cd BEFORE the last restore can move the paths it resolves (GeelyEx2 2026-09-27:

@@ -262,6 +262,21 @@
   // Blocked with `🛡 truth-check failed (confidence X/100)`. See §7.
   "truth_threshold": 70,
 
+  // Content-review sides per review tier (#858, DevKit core-rules §18). The tier
+  // is computed by `.claude/bin/super-board-review-plan.sh` (DevKit review_tier.py)
+  // once, on the first head the Reviewer reviews; the script prints the list for
+  // that tier. Names: claude (this Reviewer + truth-check), antigravity
+  // (pm_dispatch kind=audit), ocr (ocr-review), grok (read-only grok CLI).
+  // Optional. The owner's default shown here is a floor: a listed side is added to
+  // it, never removed. A list holding anything but those four names is ignored
+  // whole. The Antigravity audit that signs
+  // `approved-by` for the merge queue (#605) is not governed by this list.
+  "review_tiers": {
+    "S": ["claude"],
+    "M": ["claude", "antigravity"],
+    "L": ["claude", "antigravity", "ocr", "grok"]
+  },
+
   // Shell commands proving the branch still BUILDS against the base branch as it
   // is right now. Run by super-board-merge-gate.sh from the root of a scratch
   // worktree that already has the current base merged in, inside the merge lock,
