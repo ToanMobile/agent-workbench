@@ -330,6 +330,27 @@ sed -n '/x/p; /adb -s "" reboot/p' notes.txt
 sed -n "/adb -s ''/p;/adb -t 9/p" notes.txt
 CORPUS
 check 0 "$(printf '%s\n%s\n%s' "D=\$(date); cat <<'EOF' | wc -l" '1) adb reboot' 'EOF')"   # heredoc sau một lệnh con đã đóng
+# (02/11, r31adb3) L dòng…: các dòng nối bằng xuống dòng (một lệnh nhiều dòng)
+L() { printf '%s\n' "$@"; }
+echo "— thân \"data\" (git commit -m \"\$(cat <<'EOF' …)\") rồi một heredoc chữ khác tên: toán tử còn lại không được nuốt heredoc sau → cho qua"
+check 0 "$(L "git commit -m \"\$(cat <<'EOF'" 'fix: hook' 'EOF' ")\" && cat <<'X' | wc -l" 'adb -s "" reboot' 'X')"
+check 0 "$(L "git commit -m \"\$(cat <<'EOF'" 'fix: hook' 'EOF' ")\" && tee notes.md <<'X' >/dev/null" 'adb -s "" reboot' 'X')"
+check 0 "$(L "git commit -m \"\$(cat <<'EOF'" 'fix: hook' 'EOF' ")\" && git push && cat <<'X' | wc -l" "adb -s '' shell pm clear com.ecarx.launcher" 'X')"
+check 0 "$(L "git commit -m \"\$(cat <<'EOF'" 'fix: #829' 'EOF' ")\" && gh pr create --title \"fix #829\" --body-file - <<'EOF2'" 'Blocked `adb -s "" reboot` on denylist' 'EOF2')"
+check 0 "$(L "git commit -m \"\$(cat <<'EOF'" 'fix: #829' 'EOF' ")\" && cat > /tmp/pr.md <<'EOF2'" 'adb -s "" reboot' 'EOF2')"
+check 0 "$(L "gh issue comment 829 -b \"\$(cat <<'EOF'" 'note' 'EOF' ")\" && tee /tmp/notes.md <<'EOF2' >/dev/null" 'adb -s "" reboot' 'EOF2')"
+echo "— thân \"data\" rồi lệnh adb thật rồi heredoc cùng tên EOF: toán tử còn lại không được che lệnh adb giữa hai heredoc → chặn"
+check 2d "$(L "git commit -m \"\$(cat <<'EOF'" 'msg' 'EOF' ')"' "adb -s '' reboot" "cat <<'EOF' | wc -l" 'x' 'EOF')"
+check 2d "$(L "git commit -m \"\$(cat <<'EOF'" 'msg' 'EOF' ")\" && adb -s \"\" shell pm clear com.ecarx.launcher; cat <<'EOF' | wc -l" 'x' 'EOF')"
+check 2d "$(L "gh pr create --title t --body \"\$(cat <<'EOF'" 'body' 'EOF' ')"' 'adb -s "" shell rm -rf /sdcard/Download' "cat <<'EOF' | wc -l" 'x' 'EOF')"
+check 2d "$(L "git commit -m \"\$(cat <<'EOF'" 'msg' 'EOF' ")\" && adb -s '' reboot; cat <<'EOF'" 'x' 'EOF')"
+check 2d "$(L "git commit -m \"\$(cat <<'EOF'" 'msg' 'EOF' ")\" && adb -s '' reboot; bash <<'EOF'" 'echo hi' 'EOF')"
+check 2d "$(L "git commit -m \"\$(cat <<'EOF'" 'chore: msg' 'EOF' ")\" && bash <<'EOF'" 'adb -s "" reboot' 'EOF')"   # thân shell đọc
+echo "— nháy lẻ trong thân heredoc chữ (don't) và trong comment (# user's …): cắt thân trước khi bỏ comment → lệnh tìm kiếm cho qua"
+check 0 "$(L "cat > /tmp/notes.md <<'EOF'" "don't" 'EOF' "# user's search" "grep -E 'a|adb -s \"\" reboot|b' notes.txt")"
+check 0 "$(L "cat > /tmp/notes.md <<'EOF'" "don't" 'EOF' "# user's search" "rg 'a; adb -s \"\" reboot; b' universal-agent-devkit/")"
+check 0 "$(L "cat > /tmp/notes.md <<'EOF'" "don't" 'EOF' "# user's sed" "sed -n '/x/p; /adb -s \"\" reboot/p; /y/p' notes.txt")"
+check 2d "$(L "cat > /tmp/notes.md <<'EOF'" "don't" 'EOF' "# user's phone" 'adb -s "" reboot')"   # đối chứng: lệnh adb thật sau comment
 
 # adb giả chỉ được hỏi get-serialno: lệnh thật (reboot, shell …) không bao giờ chạy
 if grep -v 'get-serialno$' "$ADB_FAKE_LOG" | grep -q .; then

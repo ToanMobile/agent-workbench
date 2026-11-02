@@ -283,6 +283,10 @@ CMD_NOJOIN = shell_norm.strip_heredocs(cmd, lambda h: h.kind == "data", _DOCS) i
 # So every check reads the text joined AND as typed: TEXTS.
 CMD_LIVE = shell_norm.join_continuations(CMD_NOJOIN)
 TEXTS = [CMD_LIVE] + ([CMD_NOJOIN] if CMD_NOJOIN != CMD_LIVE else [])
+# (02/11, r31adb3) Bản đọc theo nháy của adb_calls đọc lệnh TRƯỚC khi cắt thân "data": strip_heredocs để lại toán tử <<EOF không thân,
+# shell_norm.heredocs đọc nó là heredoc chưa đóng nuốt heredoc chữ sau (cat <<X | wc -l), hay ghép với EOF của heredoc sau và che lệnh
+# adb giữa hai heredoc. cut_text_heredocs tự cắt mọi thân không phải "shell", nên thân "data" vẫn là chữ ở bản này.
+STRICT_SRC = {CMD_LIVE: shell_norm.join_continuations(cmd), CMD_NOJOIN: cmd}
 
 # Options adb/fastboot accept before the subcommand (with or without a value).
 ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+\S+|-[adeU]|--\S+(?:\s+\S+)?|wait-for-[\w-]+))*"   # wait-for-device remount (15/10)
@@ -2517,10 +2521,12 @@ def adb_calls(text, strict=True):
     # Bản đọc theo nháy đứng trước: lý do chặn nêu đúng chỗ không xác định được (adb $O reboot), không phải máy adb tự chọn.
     # Thân heredoc mà không shell nào đọc (cat <<EOF | wc -l, tee notes.md <<EOF, --body-file -) là chữ ở bản này; bản cắt thô vẫn
     # xét mọi thân như trước #829. Lệnh trong lệnh con cũng chạy: thân lệnh con có chữ adb được đọc theo nháy như lệnh ngoài.
+    # (02/11, r31adb3) Cắt thân heredoc TRƯỚC khi bỏ comment: nháy lẻ trong thân (don\x27t) không được ghép với nháy của comment
+    # sau nó (# user\x27s search), shell_norm.heredocs tự bỏ qua comment. TEXTS đến từ STRICT_SRC (lệnh trước khi cắt thân "data").
     readings = []
-    work = [text] if strict else []
+    work = [STRICT_SRC.get(text, text)] if strict else []
     while work:
-        clean = cut_text_heredocs(shell_norm.drop_comments(work.pop()), work)
+        clean = shell_norm.drop_comments(cut_text_heredocs(work.pop(), work))
         bodies = []
         for seg in quote_split(flat_substitutions(shell_norm.ansi_c_to_single(clean), bodies)):
             try:
