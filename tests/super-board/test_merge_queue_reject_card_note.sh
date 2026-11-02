@@ -36,8 +36,10 @@ QUEUE="$Q/super-board-merge-queue.sh"
 cat > "$Q/super-board-merge-train.sh" <<'SH'
 #!/usr/bin/env bash
 echo "train $*" >> "$FAKE/calls"
-[ -f "$FAKE/train.out" ] && cat "$FAKE/train.out"
-exit "$(cat "$FAKE/train.rc" 2>/dev/null || echo 0)"
+# #676 / #833: một train cho MỘT PR (chạy nền) — stub chỉ in dòng train-* của PR trong --prs; mã thoát train.rc.<N> nếu có, không thì train.rc
+n=""; prev=""; for a in "$@"; do [ "$prev" = --prs ] && n="${a%%:*}"; prev="$a"; done
+[ -f "$FAKE/train.out" ] && grep -E "^train-(result|detail|red): ${n}( |\$)" "$FAKE/train.out"
+exit "$(cat "$FAKE/train.rc.$n" 2>/dev/null || cat "$FAKE/train.rc" 2>/dev/null || echo 0)"
 SH
 cat > "$Q/super-board-card.sh" <<'SH'
 #!/usr/bin/env bash
@@ -122,7 +124,7 @@ PY
 chmod +x "$TMP/path/gh"
 export PATH="$TMP/path:$PATH" FAKE="$F" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_NOTIFY_SKIP=1
 unset SB_MERGE_QUEUE SB_MERGE_CALLER SB_GITHUB_READ_STRICT
-printf '{"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"worker_backend":"claude-p","rebuild_cap":2,"verify_commands":["true"],"merge_queue":{"enabled":true}}\n' > "$TMP/cfg.json"
+printf '{"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"worker_backend":"claude-p","rebuild_cap":2,"verify_commands":["true"],"merge_queue":{"enabled":true,"max_trains":50}}\n' > "$TMP/cfg.json"
 
 ago() { python3 -c 'import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 sha() { printf '%040d' "$1" | tr 0 "${2:-a}"; }
@@ -139,7 +141,7 @@ reset() {
   rm -rf "$F"; mkdir -p "$F/labeled"; PRS_ROWS=""; printf '[]\n' > "$F/prs.json"; : > "$F/writes"; : > "$F/calls"
   rm -f "$TMP/halt.json" "$ATT" "$COMMON"/super-board/merge-queue.*
 }
-run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" "$@" ) >"$TMP/out" 2>"$TMP/err"; }
+run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait "$@" ) >"$TMP/out" 2>"$TMP/err"; }   # #833: chờ train nền xong
 has_w() { grep -qF -- "$1" "$F/writes"; }
 note() { cat "$F/issue-comment-$1.txt" 2>/dev/null; }
 
