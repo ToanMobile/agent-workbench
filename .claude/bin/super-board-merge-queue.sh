@@ -23,7 +23,7 @@
 #                                 board, #637) không mang ac-open: đóng issue, card Done, comment ✅ merged <sha>
 #   red · gate-exit-11            thẻ về Ready với loop:rebuild-(K+1) (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn. gate-exit-11 = preflight
 #                                 (qa-report / AC) chặn trước khi dựng cây: comment nói nguồn đó, không nói verify đỏ (#639).
-#   conflict · gate-exit-2/5      thẻ về Ready với loop:rebase (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn
+#   conflict · gate-exit-2/5/14   thẻ về Ready với loop:rebase (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn
 #   gate-exit-7/8                 comment 🙋 chép nguyên văn dòng approval-request/human-gate/needs-you, needs-you mark, Blocked, một tin
 #                                 super-board-notify.py approve-button (cùng chữ ký merge gate dùng); gỡ nhãn
 #   gate-exit-3                   comment chép dòng của gate (GitHub từ chối merge / PR đóng), Blocked; gỡ nhãn
@@ -397,7 +397,7 @@ Did: merged through the merge queue (one verify for the batch)
           card_move "$k" Done || ok=1
         fi
       fi ;;
-    red|gate-exit-11|conflict|gate-exit-2|gate-exit-5|gate-exit-7|gate-exit-8|gate-exit-3)
+    red|gate-exit-11|conflict|gate-exit-2|gate-exit-5|gate-exit-14|gate-exit-7|gate-exit-8|gate-exit-3)
       # Phải biết chắc PR có thẻ trên board hay không trước mọi lệnh ghi PR/issue (cột u = chưa ghi gì, lượt sau đăng đủ comment + detail).
       if ! resolve_card "$p"; then
         CARD_UNKNOWN=1; ok=1
@@ -420,13 +420,16 @@ Did: ${did}${det:+
 ${det}}
 Next: back to Build${k:+ (card #$k)}" || true
             [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebuild "$why" "$tag" "$did" || ok=1 ;;
-          conflict|gate-exit-2|gate-exit-5)
+          conflict|gate-exit-2|gate-exit-5|gate-exit-14)
             # #775: train in gate-exit-5 kèm train-detail `merge-refused: …` từ note_refused (super-board-merge-train.sh; build_chain gọi
             # nó khi git merge thất bại mà `git diff --diff-filter=U` rỗng): chép các dòng đó, chữ "merge refused". gate-exit-5 không có
             # dòng mang tiền tố đó (gate tự thoát 5) và conflict giữ chữ cũ.
             det=$(detail_lines "$p")
             if [ "$res" = gate-exit-5 ] && grep -q '^merge-refused: ' <<<"$det"; then
               tag="merge refused"; why="${res} (a git hook or git refused the local merge commit; no conflicting file)"
+            elif [ "$res" = gate-exit-14 ]; then
+              # Gate thoát 14: GitHub báo CONFLICTING (driver gộp chỉ có ở local), không verify nào chạy.
+              tag="GitHub CONFLICTING"; why="${res} (GitHub reports the PR CONFLICTING with the base; nothing verified)"; det=""
             else
               tag=conflict; why="${res} (the base does not merge in cleanly)"; det=""
             fi
