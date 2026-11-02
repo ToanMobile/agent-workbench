@@ -161,7 +161,7 @@ release_all
 load 40; ntests 3; gate L5a 2.5 --run-tests --scoped; gate L5b 2.5 --run-tests --scoped
 if started_in L5a 6 && started_in L5b 6; then
   gate L5c 0.2 --run-tests --scoped
-  started_in L5c 8 >/dev/null; wait_job L5a; wait_job L5b; wait_job L5c
+  started_in L5c 8 >/dev/null; wait_job L5a; wait_job L5b; [ -s "${TMP}/L5c.start" ] && wait_job L5c   # L5c chưa chạy: release_all gom
   first_end="$(python3 -c 'import sys; print(min(float(sys.argv[1]), float(sys.argv[2])))' "$(val L5a.end)" "$(val L5b.end)")"
   if [ "$(val L5c.start)" != 0 ] && [ "$(val L5a.end)" != 0 ] && [ "$(val L5b.end)" != 0 ] && ! lt "$(val L5c.start)" "${first_end}"; then
     ok "5. tải 40: gate nhỏ thứ ba chờ slot (không vượt 2 slot)"
