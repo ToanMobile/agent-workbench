@@ -39,3 +39,10 @@ test('psTimeoutMs: mac dinh 5 s, env hop le duoc dung, gia tri qua lon bi kep o 
   process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS = '60000'; assert.equal(psTimeoutMs(), 7000);
   process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS = 'abc'; assert.equal(psTimeoutMs(), 5000);
 });
+
+test('psTimeoutMs: so thuc bi cat thanh so nguyen (execFileSync nem RangeError voi 1500.5), gia tri < 1 => mac dinh', (t) => {
+  const saved = process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS;
+  t.after(() => { if (saved === undefined) delete process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS; else process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS = saved; });
+  process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS = '1500.5'; assert.equal(psTimeoutMs(), 1500);
+  process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS = '0.5'; assert.equal(psTimeoutMs(), 5000);
+});

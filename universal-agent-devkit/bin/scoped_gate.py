@@ -13,10 +13,13 @@ Chỉ file code (và test) là NGUỒN cạnh: tài liệu, ma trận, checklist
 bao đóng nuốt mọi thứ. Tài liệu / dữ liệu (không phải code) mà test nhắc basename như chuỗi con (`grep -F` của run_impacted, "$P/DESIGN.md"):
 ngoài đồ thị, một bước — 1–4 test đọc ⇒ đúng các test đó; ≥ 5 ⇒ lõi (test-read-by, live + [core:auto]).
 
-decide(): (1) base sai / dựng đồ thị lỗi ⇒ full; (2) khớp lõi (`.agents/gate-core.txt` [core] ∪ [core:auto] ∪ fan-in live ≥ 5) ⇒ full;
-(3) needs_no_test ⇒ docs (vẫn cộng test trên map nếu có: bản chép super-board của post-fix-gate là "không cần test" nhưng có test thật);
-(4) có test trên map ⇒ tests; (5) không test nhưng khớp watch_files cụ thể của ma trận (không phải `*` / `<thư mục cấp 1>/*`) ⇒ ma trận
-phủ; (6) còn lại ⇒ unmapped ⇒ full (fail closed). File code bị xoá ⇒ full.
+decide() PHÂN LOẠI: (1) base sai / dựng đồ thị lỗi ⇒ full; (2) khớp lõi (`.agents/gate-core.txt` [core] ∪ [core:auto] ∪ fan-in live ≥ 5)
+⇒ full; (3) needs_no_test ⇒ docs (vẫn cộng test trên map nếu có: bản chép super-board của post-fix-gate là "không cần test" nhưng có test
+thật); (4) có test trên map ⇒ tests; (5) không test nhưng khớp watch_files cụ thể của ma trận (không phải `*` / `<thư mục cấp 1>/*`) ⇒ ma
+trận phủ; (6) còn lại ⇒ unmapped ⇒ full. File code bị xoá ⇒ full.
+no_full() (#741, anh Đạt 31/10): phạm vi gate PR / merge gate / post-fix-gate --scoped KHÔNG BAO GIỜ là full — test chạm tới diff (cả test
+của file lõi) + [smoke]; file không có test riêng (lõi không test, unmapped, code bị xoá) hay đồ thị lỗi ⇒ thêm [core-smoke]. Cả bộ suite
+chỉ chạy ở gate-full đêm 00:00 (bin/gate_full.py).
 
   scoped_gate.py decide --base REF [--project DIR] [--json]
   scoped_gate.py gen [--project DIR] [--write-core]    ghi <git common dir>/postfix-gate/gate-test-map.json; --write-core viết lại
@@ -44,6 +47,7 @@ CACHE_AFTER_S = 3.0
 CACHE_KEEP = 4
 SCAN_VER = "v2"                                             # đổi khi _scan đổi cách đọc (v2: import nhiều dòng): cache cũ bỏ
 CODE_EXT = (".sh", ".py", ".bash", ".mjs", ".js")          # đích của luật nhắc tên (như run_impacted)
+STEM_EXT = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")   # import theo tên module (không đuôi): `from lib.gone import x`
 SOURCE_EXT = CODE_EXT + (".cjs", ".ts", ".tsx", ".jsx", ".zsh", ".jq")
 PY_SCAN_EXT = (".py", ".sh", ".bash")                       # import Python, kể cả heredoc `python3 - <<'PY'`
 SKIP_DIRS = ("vendor", "node_modules", "build")
@@ -117,16 +121,19 @@ def _sections(text):
 
 
 def load_core(project):
-    """{"core": [glob], "smoke": [path]} từ .agents/gate-core.txt ([core] ∪ [core:auto], [smoke]); thiếu file → DEFAULT_CORE."""
+    """{"core": [glob], "smoke": [path], "core_smoke": [path]} từ .agents/gate-core.txt ([core] ∪ [core:auto], [smoke], [core-smoke]);
+    thiếu file → DEFAULT_CORE."""
     try:
         with open(os.path.join(project, CORE_FILE), encoding="utf-8") as f:
             sec = _sections(f.read())
     except OSError:
-        return {"core": list(DEFAULT_CORE), "smoke": []}
+        return {"core": list(DEFAULT_CORE), "smoke": [], "core_smoke": []}
+    except ValueError:                                      # không giải mã được (UnicodeDecodeError): lõi mặc định, không làm gate sập
+        return {"core": list(DEFAULT_CORE), "smoke": [], "core_smoke": []}
     core = sec.get("core", []) + [g for g in sec.get("core:auto", []) if g not in sec.get("core", [])]
     if CORE_FILE not in core:
         core.append(CORE_FILE)                              # sửa chính danh sách lõi luôn là lõi
-    return {"core": core, "smoke": list(sec.get("smoke", []))}
+    return {"core": core, "smoke": list(sec.get("smoke", [])), "core_smoke": list(sec.get("core-smoke", []))}
 
 
 # --- quét file -------------------------------------------------------------------------------------------------------------
@@ -444,6 +451,50 @@ def test_map(project, graph=None, barrier=None):
 
 # --- diff + quyết định -----------------------------------------------------------------------------------------------------
 
+def pin_to_head(project, base, changed, from_tree=False):
+    """#770: (changed đã ghim theo HEAD, các path đã bỏ). Path ghim HEAD (tree_fp.HEAD_PINNED, kể cả con của nó: .claude/settings.json mà
+    `agent-kit init` sửa cục bộ) được nhìn như tree_fp #691 nhìn nó — bản của HEAD. Path ghim chỉ bẩn ở cây làm việc / chưa track mà không
+    commit nào đổi nó ⇒ bỏ khỏi changed: vân tay và biên nhận lấy bản của HEAD, test nhắc tên nó không kiểm thay đổi nào của commit.
+    - from_tree (changed do changed_files tự tính theo merge-base): "đã commit" = merge-base(base, HEAD)..HEAD (commit mới của base sau điểm rẽ
+      không phải đổi của nhánh, #300) và HỢP path ghim đổi đã commit vào changed, kể cả khi cây làm việc bị ghi đè về bản mb (git diff <mb> --
+      không thấy nó);
+    - changed của caller (post-fix-gate): "đã commit" thêm base..HEAD (`--diff A..B` đưa base = A; nhánh A sửa settings.json sau mb vẫn là đổi)
+      và CHỈ bỏ, không thêm gì ngoài tập caller đã chọn (caller đã lọc, vd. is_devkit_artifact).
+    Không có base, không nạp được tree_fp, HEAD giữ path ghim không phải blob/symlink (tree_fp cũng từ chối) hay git lỗi ⇒ trả nguyên changed
+    (fail closed: thừa test, không thiếu).
+    ponytail: `--diff A..B` với B khác HEAD (đứng ở nhánh khác B, không caller tự động nào dùng) không thấy commit của B; gate vẫn chạy test trên
+    cây làm việc và biên nhận khoá theo vân tay của cây đó, nên không có biên nhận nào bảo lãnh cho B. Nâng khi có caller dùng dải như vậy."""
+    if not base:
+        return changed, []
+    try:
+        bindir = os.path.dirname(os.path.abspath(__file__))
+        if bindir not in sys.path:
+            sys.path.insert(0, bindir)
+        import tree_fp  # noqa: PLC0415 - module cạnh trong bin/: một nguồn danh sách path ghim với vân tay (INSTINCT-015)
+    except ImportError:
+        return changed, []
+    pins = list(tree_fp.HEAD_PINNED)
+    mb = _git(project, "merge-base", base, "HEAD", check=False)
+    mb_sha = mb.stdout.decode().strip()
+    if mb.returncode != 0 or not mb_sha:
+        return changed, []
+    q = ["--literal-pathspecs"]
+    ls = _git(project, *q, "ls-tree", "HEAD", "--", *pins, check=False)
+    if ls.returncode != 0 or any(not r.startswith(("100644 blob ", "100755 blob ", "120000 blob "))
+                                 for r in ls.stdout.decode("utf-8", "surrogateescape").splitlines()):
+        return changed, []
+    runs = [_git(project, *q, "diff", "--name-only", "-z", "--no-renames", "--relative", a, "HEAD", "--", *pins, check=False)
+            for a in ((mb_sha,) if from_tree else dict.fromkeys((mb_sha, base)))]
+    runs += [_git(project, *q, "diff", "--name-only", "-z", "--no-renames", "--relative", "HEAD", "--", *pins, check=False),
+             _git(project, *q, "ls-files", "-z", "-o", "--exclude-standard", "--", *pins, check=False)]
+    if any(r.returncode != 0 for r in runs):
+        return changed, []
+    committed = {f for r in runs[:-2] for f in _z(r.stdout)}
+    dirty = set(_z(runs[-2].stdout)) | set(_z(runs[-1].stdout))
+    drop = [f for f in changed if tree_fp.head_pinned(f) and f in dirty and f not in committed]
+    return sorted((set(changed) - set(drop)) | (committed if from_tree else set())), drop
+
+
 def changed_files(project, base):
     """`git diff --name-only $(git merge-base base HEAD)` (gồm cây làm việc, đổi tên = xoá + thêm) ∪ file mới chưa ignore."""
     mb = _git(project, "merge-base", base, "HEAD").stdout.decode().strip()
@@ -483,7 +534,8 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
     project = os.path.abspath(project)
     nnt = needs_no_test or default_needs_no_test
     res = {"mode": "full", "reasons": [], "core_hits": [], "changed": [], "docs": [], "tests": [], "smoke": [],
-           "unmapped": [], "expanded": [], "matrix_covered": [], "deleted": [], "elapsed_s": 0.0}
+           "unmapped": [], "expanded": [], "matrix_covered": [], "deleted": [], "no_own_test": [], "graph_error": None, "elapsed_s": 0.0,
+           "head_pinned": []}
     core = load_core(project)
     res["smoke"] = [p for p in core["smoke"] if os.path.isfile(os.path.join(project, p))]
 
@@ -491,17 +543,20 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
         res["elapsed_s"] = round(time.monotonic() - t0, 3)
         return res
 
+    from_tree = changed is None   # #770: changed tự tính theo merge-base, không phải tập caller đã chọn
     try:
         if changed is None:
             if not base:
                 raise RuntimeError("thiếu base")
             changed = changed_files(project, base)
         changed = sorted({c.replace("\\", "/") for c in changed if c})
+        changed, res["head_pinned"] = pin_to_head(project, base, changed, from_tree)   # #770: path ghim nhìn theo HEAD như tree_fp
         res["changed"] = changed
         code, reads = {}, {}
         graph = build_graph(project, _code=code, _reads=reads)
     except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as e:
         res["reasons"].append("base/đồ thị lỗi ⇒ full: %s" % e)
+        res["graph_error"] = (str(e) or repr(e))[:300]
         return done()
     rules = _load_matrix(project) if matrix_rules is None else matrix_rules
     fi = fan_in(graph)
@@ -540,11 +595,44 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
         if nnt(f) or state:
             res["docs"].append(f)
         elif mine or hit:                                   # lõi đã là full: không kể thêm là unmapped
+            if not mine:
+                res["no_own_test"].append(f)                # lõi không test nào chạm: no_full bù bằng [core-smoke]
             continue
         elif _matrix_covers(f, rules):
             res["matrix_covered"].append(f)
         else:
             res["unmapped"].append(f)
+    # #741: đồ thị dựng từ cây hiện tại không còn nút của file code bị xoá — test có token (TOKEN, như build_graph) bằng basename của nó,
+    # hay mảnh `.` của token bằng stem (STEM_EXT: `from lib.gone import x`), hay dòng impact_map.txt khớp nó là test của nó; không test nào
+    # ⇒ no_own_test (no_full thêm [core-smoke]). Mỗi test đọc + tách token một lần, tra dict: O(token), không O(file xoá × byte test).
+    gone = [f for f in res["deleted"] if not nnt(f)]
+    named_gone = set()
+    if gone:
+        names = {}
+        for f in gone:
+            b = os.path.basename(f)
+            names.setdefault(b, set()).add(f)
+            if b.endswith(STEM_EXT):
+                names.setdefault(os.path.splitext(b)[0], set()).add(f)
+        for t in sorted(x for x in graph if is_test(x)):
+            try:
+                with open(os.path.join(project, t), encoding="utf-8", errors="replace") as fh:
+                    toks = set(TOKEN.findall(fh.read()))
+            except OSError:
+                continue
+            hit = set()
+            for tok in toks:
+                for piece in {tok} | set(tok.split(".")):
+                    hit |= names.get(piece, set())
+            if hit:
+                tests.add(t)
+                named_gone |= hit
+        files = list(graph)
+        for t, f in _impact_map_edges(project, files + gone, set(files)):
+            if f in gone:
+                tests.add(t)
+                named_gone.add(f)
+    res["no_own_test"] += [f for f in gone if f not in named_gone]
     if res["core_hits"]:
         res["reasons"].insert(0, "khớp lõi ⇒ full: %s" % ", ".join(res["core_hits"][:10]))
     if res["unmapped"]:
@@ -553,6 +641,31 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
     res["expanded"] = sorted(expanded)
     res["mode"] = "full" if res["reasons"] else "scoped"
     return done()
+
+
+def add_core_smoke(res, project):
+    """Thêm [core-smoke] (file còn trên đĩa) vào res["smoke"] và res["core_smoke"]; một lần."""
+    core = load_core(project)
+    have = [p for p in core["smoke"] + core["core_smoke"] if os.path.isfile(os.path.join(project, p))]
+    res["core_smoke"] = [p for p in core["core_smoke"] if p in have]
+    res["smoke"] = list(dict.fromkeys(list(res.get("smoke") or []) + have))
+    return res
+
+
+def no_full(res, project):
+    """#741: quyết định của decide() → phạm vi chạy ở PR / merge gate, mode luôn "scoped". Giữ test chạm tới diff (test-reach, test-read-by
+    của cả file lõi) + [smoke]; file không có test riêng (no_own_test), unmapped hay đồ thị lỗi ⇒ thêm [core-smoke]. Lý do leo full cũ vào
+    would_full, file lõi vào core_touched (verdict ghi "core-touched" để review 2/2 soi kỹ); reasons rỗng. ponytail: test chỉ chạm file
+    lõi qua một file lõi khác (_reach dừng ở barrier) không được chọn — gate-full đêm phủ; nâng cấp khi đêm bisect ra commit lõi xanh ở PR."""
+    out = dict(res)
+    out["would_full"] = list(res.get("reasons") or [])
+    out["core_touched"] = list(res.get("core_hits") or [])
+    out["core_smoke"] = []
+    if res.get("no_own_test") or res.get("unmapped") or res.get("graph_error"):
+        add_core_smoke(out, project)
+    out["reasons"] = []
+    out["mode"] = "scoped"
+    return out
 
 
 # --- gen: map + [core:auto] ------------------------------------------------------------------------------------------------

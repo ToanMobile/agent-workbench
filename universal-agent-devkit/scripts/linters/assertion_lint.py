@@ -8,8 +8,11 @@ full parser: a test whose assert sits in a nested lambda still counts.
 
 from __future__ import annotations
 
+import functools
+import io
 import re
 import sys
+import tokenize
 from pathlib import Path
 
 _MARKER = re.compile(
@@ -35,6 +38,8 @@ _ASSERT = re.compile(
     r"|\bcheck(?:NotNull)?\s*\("
     r"|\bpytest\.raises\b"
     r"|\bself\.assert\w+\s*\("
+    # mock của Python như verify của Mockito: m.assert_called_once_with(…), assert_awaited…, assert_has_calls, assert_not_called
+    r"|\.assert_(?:(?:called|awaited)(?:_once)?(?:_with)?|any_call|any_await|has_calls|has_awaits|not_called|not_awaited)\s*\("
     r"|\bassert\s+(?!True\b|False\b)"
     # Kotlin's assert(cond) (Gradle runs tests with -ea) and JUnit/kotlin.test fail(…)
     r"|\bassert\s*\(|\bfail\s*\("
@@ -82,9 +87,86 @@ def _body(text: str, start: int, limit: int | None = None) -> str:
     return text[brace:end]
 
 
+# f-string (3.12+) / t-string (3.14+): phần chữ là token *_MIDDLE, code trong {…} là token thường (không che)
+_STR_MID = {getattr(tokenize, n) for n in ("FSTRING_MIDDLE", "TSTRING_MIDDLE") if hasattr(tokenize, n)}
+_QUOTE = re.compile(r"[A-Za-z]*('''|\"\"\"|'|\")")
+
+
+@functools.lru_cache(maxsize=1)
+def _python_scan(text: str) -> "tuple | None":
+    """(rows, masked) của một file Python. rows: {số dòng (đếm từ 1, như tokenize): độ sâu khối} của các dòng mở một dòng
+    lệnh logic — dòng trong chuỗi nhiều dòng (OfficeReader#242: script fake adb ở cột 0), trong ngoặc (`) -> None:` của chữ
+    ký nhiều dòng) và dòng comment không mở lệnh nào. Độ sâu đếm INDENT/DEDENT của tokenize: lề do Python tính (tab, "\f",
+    "\" nối dòng), không dựng lại bằng tay. masked: text cùng độ dài, giữ "\n", dấu nháy và `#`; thành dấu cách: comment, ruột chuỗi
+    nhiều dòng (f-string: phần chữ); thành "_": phần khớp _ASSERT trong chuỗi một dòng. Thân test giờ kéo qua dòng cột 0
+    nên chữ `fail() {`, `# assert x` nằm sau đó không được thành assertion (bản cũ cắt thân nên không thấy) — không che
+    là nới linter.
+    Không tokenize được (không phải Python, cú pháp dở) ⇒ None: giữ quy tắc lề cũ."""
+    if re.search("\r(?!\n)", text):
+        return None     # "\r" đơn (gate --staged đọc blob): tokenize gom dòng khác splitlines của quy tắc cũ ⇒ quy tắc cũ
+    rows, fresh, depth, cuts = {}, True, 0, []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.INDENT:
+                depth += 1
+            elif tok.type == tokenize.DEDENT:
+                depth -= 1
+            if tok.type == tokenize.NEWLINE:
+                fresh = True
+            elif fresh and tok.type not in (tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT):
+                rows[tok.start[0]] = depth
+                fresh = False
+            if tok.type == tokenize.COMMENT:
+                cuts.append((tok.start, tok.end, True))
+            elif tok.type in _STR_MID:
+                cuts.append((tok.start, tok.end, False))
+            elif tok.type == tokenize.STRING:
+                q = _QUOTE.match(tok.string)
+                if q:
+                    cuts.append(((tok.start[0], tok.start[1] + q.end()), (tok.end[0], tok.end[1] - len(q.group(1))), False))
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    starts = [0] + [m.end() for m in re.finditer("\n", text)]
+    pieces, prev = [], 0
+    for (r0, c0), (r1, c1), whole in sorted(cuts, key=lambda c: c[0]):
+        a, b = starts[r0 - 1] + c0, starts[r1 - 1] + c1
+        if a < prev or a >= b:
+            continue                                            # ruột rỗng; token không chồng nhau, chặn phòng xa để giữ độ dài
+        seg = text[a:b]
+        if whole:
+            # giữ `#`: che hết thì \s* của _ASSERT nối `fail  # c` với `(1)` ở dòng sau thành `fail(`
+            seg = seg[:1] + re.sub(r"[^\n]", " ", seg[1:])
+        elif r1 > r0:
+            seg = re.sub(r"[^\n]", " ", seg)
+        else:
+            # chỉ che phần khớp: che cả chuỗi thì assertEqual("a", "b") thành hai literal giống nhau (_VACUOUS);
+            # che bằng "_" vì dấu cách tạo khớp mới: "assert.assert_called()" thành `assert ` + cách
+            seg = _ASSERT.sub(lambda m: "_" * len(m.group()), seg)
+        pieces += [text[prev:a], seg]
+        prev = b
+    return rows, "".join(pieces) + text[prev:]
+
+
 def _python_body(text: str, start: int) -> str:
     line_start = text.rfind("\n", 0, start) + 1
     indent = len(text[line_start:start]) - len(text[line_start:start].lstrip(" "))
+    row = text.count("\n", 0, start) + 1
+    scan = _python_scan(text)
+    if scan and row in scan[0] and start < len(text):
+        # `def` là lệnh thật (không nằm trong chuỗi fixture): thân hết ở lệnh kế tiếp có độ sâu khối ≤ độ sâu của dòng `def`
+        # (regex khớp từ đầu dòng nên lề tính ở trên luôn 0 ⇒ method kéo tới cột 0, nuốt assert của test sau, #737),
+        # và đọc trên bản đã che comment/chuỗi. Chỉ tách ở "\n" như tokenize: splitlines còn tách ở \f, U+2028…
+        stmts, masked = scan
+        lines = io.StringIO(masked[start:]).readlines()
+        out, depth = [lines[0]], stmts[row]
+        row += lines[0].count("\n")
+        for line in lines[1:]:
+            if row in stmts and stmts[row] <= depth:
+                break
+            out.append(line)
+            row += line.count("\n")
+        return "".join(out)
+    # quy tắc lề cũ y nguyên: file chỉ xuống dòng bằng "\r" (tokenize từ chối) vẫn phải tách được dòng
     lines = text[start:].splitlines(keepends=True)
     out = [lines[0]] if lines else []
     for line in lines[1:]:

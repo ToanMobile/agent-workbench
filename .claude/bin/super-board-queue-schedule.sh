@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # super-board-queue-schedule.sh — lịch rút hàng đợi merge cho backend workflow (Q-schedule, #453): một launchd agent mỗi repo (macOS)
-# chạy `super-board-merge-queue.sh --config <cfg> --if-due` mỗi 60 s, độc lập với mọi runner. Backend claude-p đã có runner gọi nó mỗi
-# tick nên không cần lịch; workflow không có tiến trình sống giữa các wave, nên PR đã vào hàng (nhãn merge-queue) cần lịch này để được gom.
-# Bộ gom tự thoát 0 khi chưa tới hạn / tắt / khoá bận (flock), nên chạy chồng với runner hay lượt trước là an toàn.
+# chạy `super-board-merge-queue.sh --config <cfg>` mỗi 60 s, độc lập với mọi runner. Backend claude-p đã có runner gọi nó mỗi
+# tick nên không cần lịch; workflow không có tiến trình sống giữa các wave, nên PR đã vào hàng (nhãn merge-queue) cần lịch này để được merge.
+# Bộ gom tự thoát 0 khi hàng rỗng / tắt / khoá bận (flock), nên chạy chồng với runner hay lượt trước là an toàn.
 #
 # Usage: super-board-queue-schedule.sh <install|ensure|uninstall|status> <config-slug>
 #   ensure     install khi chưa có hoặc plist đã đổi (super-board-wave-plan.sh gọi mỗi wave; yên lặng nếu không có gì đổi)
 # Env: SB_LAUNCH_AGENTS_DIR (thư mục plist, cho test), SB_QUEUE_SCHEDULE_AUTOINSTALL=0 (ensure không làm gì).
 # Exit: 0 xong · 1 cài launchd lỗi · 64 sai cách gọi.
-# ponytail: chỉ macOS (launchd); máy khác ensure in một dòng rồi thoát 0 và hàng chỉ được rút khi ai đó chạy --if-due. Nâng lên khi có
+# ponytail: chỉ macOS (launchd); máy khác ensure in một dòng rồi thoát 0 và hàng chỉ được rút khi ai đó chạy super-board-merge-queue.sh. Nâng lên khi có
 #   host Linux chạy board: systemd timer / cron cùng ProgramArguments.
 set -euo pipefail
 
@@ -40,7 +40,6 @@ plist_text() {
     <string>$(xml "$SCRIPT_DIR/super-board-merge-queue.sh")</string>
     <string>--config</string>
     <string>$(xml "$CONFIG")</string>
-    <string>--if-due</string>
   </array>
   <key>WorkingDirectory</key><string>$(xml "$ROOT")</string>
   <key>StartInterval</key><integer>$INTERVAL</integer>
@@ -95,7 +94,7 @@ install_agent() {   # $1 = quiet: không làm gì khi đúng bản này đã n�
     if [ "$i" -ge 3 ]; then echo "launchctl bootstrap gui/$uid $PLIST failed 3 times: merge-queue schedule NOT loaded" >&2; return 1; fi
     sleep 1
   done
-  echo "installed $LABEL: merge-queue --if-due every ${INTERVAL}s ($PLIST)"
+  echo "installed $LABEL: merge-queue every ${INTERVAL}s ($PLIST)"
 }
 
 case "$CMD" in

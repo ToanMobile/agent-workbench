@@ -215,7 +215,9 @@ Repeat until a done condition or halt gate fires:
    `## Blocked by` line to be fixed, and return every stranded Building card to
    `Ready` (below). Swept, resumed, approval-refresh and stranded cards are NOT in this pass's
    `cards`; they join the next wave. `waiting` lists Ready cards labelled `needs-you` / `human-gated`
-   (#95): only a person can move them, so they are never in `cards`; leave them, name them in the
+   (#95): only a person (or the owner's standing decision) can move them, so they are never in `cards`. Before leaving them, apply
+   run.md → "Owner's standing decision" to them and to the 🙋/❓ cards in Blocked: a decided card moves column
+   and joins the next wave. Leave the rest, name them in the
    summary, and they return once a person removes the label. It also lists Ready cards labelled
    `waiting-on:#N` (#601): they wait on another card, need nobody, and return once the sweep drops
    the label. It also lists, with a `why`, the cards
@@ -254,7 +256,7 @@ Repeat until a done condition or halt gate fires:
    after a wave that hit the hourly limit. If `cards` is empty and
    Building/QA/Review counts are 0 → done. Cards the planner lists in `waiting`
    (a person, or a real device) are not counted in those columns. If empty but
-   cards sit in Blocked or `waiting` only → report and stop. This is unfinished work, not a completed-run calibration trigger.
+   cards sit in Blocked or `waiting` only (after the standing decision above) → report and stop. This is unfinished work, not a completed-run calibration trigger.
 3. **Claim** — for each card, `gh issue edit <n> --add-assignee <bot_identity>`,
    then VERIFY: re-read assignees (`gh issue view <n> --json assignees`) and
    proceed only if the list is exactly `[<bot_identity>]`. Adding an assignee
@@ -273,7 +275,7 @@ Repeat until a done condition or halt gate fires:
    `tier` is the run's model ladder: `'low'` when the user invoked
    `super-board run --low` (haiku/sonnet/opus by card complexity), `'high'`
    for `run --high` (opus for every card), omitted/`'medium'`
-   otherwise (sonnet/opus/session — the default). A `model_tier` key in the
+   otherwise (sonnet/opus/opus — the default). A `model_tier` key in the
    config sets the default; an explicit flag wins over config.
 5. **Reconcile** (when the run completes) — read the returned `cards`
    summary. If `halted: true`, any card is `halted`, or the GitHub helper's `--check`

@@ -55,7 +55,11 @@ for i in 1 2 3 4 5 6; do
   g -C "$T/seed" merge -q --no-ff -m "Merge branch 'f$i'" "f$i"
 done
 g -C "$T/seed" push -q origin main
-BAD_MERGE="$(git -C "$T/seed" log --first-parent --merges --format='%H %s' | awk '/f4/ {print $1}')"
+# #713: tìm theo TIÊU ĐỀ. awk '/f4/' trên "%H %s" khớp cả sha của merge khác (~14 % mỗi sha có "f4") ⇒ BAD_MERGE nhiều dòng, b2 vẫn xanh
+# (grep nhiều mẫu) còn b5 so 12 ký tự đầu của sha sai ⇒ đỏ '1 FAIL' (log đủ: merge gate #728 31/10 11:01)
+# #732: --basic-regexp ghim kiểu mẫu: máy có grep.patternType=fixed trong ~/.gitconfig thì mẫu neo ^…$ thành chuỗi cố định, BAD_MERGE rỗng
+BAD_MERGE="$(git -C "$T/seed" log --first-parent --merges --format=%H --basic-regexp --grep="^Merge branch 'f4'\$")"
+chk "setup. BAD_MERGE là đúng một sha (merge f4)" '[ "$(printf "%s\n" "$BAD_MERGE" | grep -cE "^[0-9a-f]{40}$")" = 1 ] && [ "$(printf "%s\n" "$BAD_MERGE" | wc -l | tr -d " ")" = 1 ]' "BAD_MERGE=$BAD_MERGE"
 g clone -q "$T/origin.git" "$T/repo"
 COMMON="$(cd "$T/repo" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
 
@@ -66,6 +70,7 @@ cat >"$T/fakegate.sh" <<'SH'
 echo "$(pwd -P)" >>"$FAKE_CALLS"
 case "${FAKE_MODE:-}" in
   timeout) echo '{"verdict": "UNTESTED", "exit_code": 2, "busy": false, "regression_tests": [{"id": "REG-SLOW-01", "status": "TIMEOUT", "command": "sleep 5"}]}'; exit 2 ;;
+  kitred) echo '{"verdict": "FAIL", "exit_code": 1, "regression_tests": [{"id": "agent-kit test", "status": "FAIL", "command": "exit 1"}]}'; exit 1 ;;
   slowred) echo '{"verdict": "FAIL", "exit_code": 1, "regression_tests": [{"id": "REG-SLOW-01", "status": "FAIL", "command": "sleep 5"}]}'; exit 1 ;;
 esac
 if sh tests/check.sh; then
@@ -90,6 +95,7 @@ chmod +x "$T/fakegate.sh" "$T/fakecard.sh" "$T/bin/gh"
 export PATH="$T/bin:$PATH" FAKE_CALLS="$T/gate.calls" FAKE_CARD_ARGS="$T/card.args"
 export DEVKIT_GATE_FULL_CMD="sh $T/fakegate.sh" DEVKIT_GATE_FULL_CARD_CMD="sh $T/fakecard.sh"
 export DEVKIT_GATE_FULL_LOG_DIR="$T/logs" DEVKIT_GATE_FULL_POLL_S=1 DEVKIT_CAPACITY_LOAD=0
+export DEVKIT_GATE_FULL_GLOBAL_LOCK="$T/global.lock"   # khoá toàn máy trong thư mục tạm: không chờ / chặn lượt đêm thật
 
 no_scratch() {   # scratch đã gỡ: không thư mục, không mục worktree, không khoá
   ! ls -d "$COMMON"/postfix-gate/gate-full-scratch-* >/dev/null 2>&1 \
@@ -139,6 +145,51 @@ rm -f "$T/card.args"
 rc=$(run_gf --slug fake/repo)
 chk "b8. đã có issue mở cùng tiêu đề: không gọi lệnh tạo thẻ, summary dẫn issue cũ" \
   '[ ! -e "$T/card.args" ] && grep -q "issues/7" "$T/logs/summary-latest.md"' "$(tail -5 "$T/out")"
+
+# b''. #662: thẻ mở tay (tiêu đề KHÔNG theo CARD_PREFIX) có mã suite trong body ⇒ nhận thẻ đó, không mở thẻ P1 trùng
+gh_returns() {   # gh giả trả đúng một thẻ mở: tiêu đề $1, url $2, body $3
+  python3 - "$T/bin/gh" "$T" "$1" "$2" "$3" <<'PY'
+import json, sys
+open(sys.argv[1], "w").write('#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho %s\n'
+                             % (sys.argv[2], "'" + json.dumps([{"title": sys.argv[3], "url": sys.argv[4], "body": sys.argv[5]}]) + "'"))
+PY
+  chmod +x "$T/bin/gh"
+}
+gh_returns "🐛 [fix] gate: thẻ mở tay" "https://github.com/fake/repo/issues/659" "Suite đỏ: REG-FAKE-01 trên main"
+rm -f "$T/card.args" "$T/gh.calls"
+rc=$(run_gf --slug fake/repo)
+chk "b9. thẻ mở tay có mã suite trong body: không gọi lệnh tạo thẻ, summary dẫn thẻ đó" \
+  '[ ! -e "$T/card.args" ] && grep -q "issues/659" "$T/logs/summary-latest.md"' "$(tail -5 "$T/out")"
+chk "b9b. gh issue comment được gọi vào đúng thẻ mở tay" 'grep -q "issue comment https://github.com/fake/repo/issues/659" "$T/gh.calls"'
+gh_returns "🐛 [fix] gate: thẻ mở tay" "https://github.com/fake/repo/issues/659" "Suite đỏ: REG-FAKE-011 và REG-OTHER-01"
+rm -f "$T/card.args"
+rc=$(run_gf --slug fake/repo)
+chk "b10. body chỉ chứa mã suite dài hơn (REG-FAKE-011): không khớp lỏng, vẫn mở thẻ mới" '[ -e "$T/card.args" ]' "$(tail -5 "$T/out")"
+chk "b10b. gh được gọi với --search \"<suite>\" in:title,body và --json title,url,body" \
+  'grep -q "in:title,body" "$T/gh.calls" && grep -q "title,url,body" "$T/gh.calls"'
+# b11. mã suite chỉ ở tiêu đề (body rỗng) ⇒ vẫn nhận thẻ đó
+gh_returns "🐛 [fix] gate: REG-FAKE-01 đỏ trên main" "https://github.com/fake/repo/issues/660" ""
+rm -f "$T/card.args" "$T/gh.calls"
+rc=$(run_gf --slug fake/repo)
+chk "b11. mã suite chỉ ở tiêu đề: nhận thẻ, không mở thẻ mới" \
+  '[ ! -e "$T/card.args" ] && grep -q "issue comment https://github.com/fake/repo/issues/660" "$T/gh.calls"' "$(tail -5 "$T/out")"
+# b12. thẻ mới hơn chỉ nhắc suite trong body, thẻ CARD_PREFIX cũ hơn ở sau (gh trả mới trước) ⇒ ưu tiên thẻ CARD_PREFIX
+python3 - "$T/bin/gh" "$T" <<'PY'
+import json, sys
+items = [{"title": "🐛 [fix] thẻ khác", "url": "https://github.com/fake/repo/issues/700", "body": "nhắc REG-FAKE-01"},
+         {"title": "🐛 [fix] P1 gate-full đêm 2026-01-01: REG-FAKE-01 đỏ", "url": "https://github.com/fake/repo/issues/5", "body": ""}]
+open(sys.argv[1], "w").write('#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho %s\n' % (sys.argv[2], "'" + json.dumps(items) + "'"))
+PY
+chmod +x "$T/bin/gh"
+rm -f "$T/card.args" "$T/gh.calls"
+rc=$(run_gf --slug fake/repo)
+chk "b12. có cả thẻ body-only (mới) và thẻ CARD_PREFIX (cũ): ưu tiên thẻ CARD_PREFIX" \
+  '[ ! -e "$T/card.args" ] && grep -q "issue comment https://github.com/fake/repo/issues/5 " "$T/gh.calls"' "$(cat "$T/gh.calls" 2>/dev/null)"
+# b13. suite đỏ không phải mã REG-/BUG- (agent-kit test): thẻ thường nhắc lệnh trong body KHÔNG được nhận, vẫn mở thẻ P1
+gh_returns "🐛 [fix] việc khác" "https://github.com/fake/repo/issues/473" "Chạy agent-kit test để kiểm"
+rm -f "$T/card.args"
+rc=$(FAKE_MODE=kitred run_gf --slug fake/repo)
+chk "b13. first=agent-kit test: không nhận thẻ thường chỉ nhắc lệnh, vẫn mở thẻ P1" '[ -e "$T/card.args" ]' "$(tail -5 "$T/out")"
 printf '#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho "[]"\n' "$T" >"$T/bin/gh"
 
 # c. khoá ---------------------------------------------------------------------------------------------------------------------
@@ -164,7 +215,9 @@ python3 -c 'import fcntl, os, sys, time
 fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o644); fcntl.flock(fd, fcntl.LOCK_EX); open(sys.argv[2], "w").close(); time.sleep(30)' \
   "$COMMON/postfix-gate/gate-full.lock" "$T/flock.ready" &
 SLEEP_PID=$!
-i=0; while [ ! -e "$T/flock.ready" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+# #713: chờ theo sự kiện (ready, hoặc tiến trình giữ đã chết), không theo trần 5 s: python3 khởi động chậm khi tải cao thì gate_full chạy trước flock
+i=0; while [ ! -e "$T/flock.ready" ] && kill -0 "$SLEEP_PID" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+chk "c5 setup. tiến trình giữ flock đã giữ khoá trước khi chạy gate_full" '[ -e "$T/flock.ready" ]' "chờ ${i} × 0,1 s, tiến trình giữ đã chết"
 : >"$T/gate.calls"
 rc=$(run_gf --ref origin/green)
 chk "c5. khoá rỗng do tiến trình sống giữ (flock): skip, gate không chạy, file khoá còn" \

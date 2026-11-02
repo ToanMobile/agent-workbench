@@ -197,8 +197,12 @@ trap 'dk_keep_failed_logs; rm -rf "$out"; trap - HUP EXIT; kill -HUP $$' HUP
 run_one() { # <test> <out dir>
   local o
   o="$2/$(printf '%s' "$1" | tr '/' '_')"
+  # #473: `· start` before the test runs, `· done` after: the gate names a hung suite's RUNNING tests (started, not done), not the last one
+  # that ended. Same line rules as `· done` below. A reader that is already gone: SIGPIPE here, the test is not started (nobody wants it).
+  printf '· start %s\n' "$1" >&2
   # Stop của Grok export GROK_HOOK_*; detect() coi mọi hook con là Grok và nhả phiên sau 3 lần chặn (exit 0).
-  # Bài thử nào cần Grok thì tự gán các biến đó. Không gỡ DEVKIT_GATE_DONE: gate truyền danh sách suite đã chạy.
+  # Bài thử nào cần Grok thì tự gán các biến đó. #660: DEVKIT_GATE_DONE (đã dùng ở trên để lọc pool này) cũng bị gỡ khỏi bài con: bài chạy
+  # `run_impacted.sh --list` bên trong sẽ bị lọc mất test của chính nó (impeccable/SKILL.md). Bài nào cần danh sách thì tự gán.
   # Slot riêng từng bài: --full của `sh`/`echo` không được chờ 2 slot Gradle/Unity của máy (Stop ngắt ở 600s).
   # Bài nào tự export SB_HEAVY_SLOT_DIR thì dùng dir của nó (test_heavy_slot.sh).
   # 24/10: mỗi bài chạy qua tests/lib/run_bounded.py: cả nhóm tiến trình của bài bị giết khi quá DEVKIT_TEST_TIMEOUT_S (mặc định
@@ -238,7 +242,7 @@ run_one() { # <test> <out dir>
   trap '_dk_clean_tdir; trap - TERM EXIT; kill -TERM $$' TERM
   trap '_dk_clean_tdir; trap - HUP EXIT; kill -HUP $$' HUP
   env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
-       -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC -u _DEVKIT_IN_MKTEMP_SHIM -u DEVKIT_IMPACTED_DIRS \
+       -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC -u _DEVKIT_IN_MKTEMP_SHIM -u DEVKIT_IMPACTED_DIRS -u DEVKIT_GATE_DONE \
        ${_dk_tdir:+TMPDIR="$_dk_tdir" PYTHONPYCACHEPREFIX="$_dk_tdir/pyc" PATH="$2/mkbin:$PATH"} \
        SB_HEAVY_SLOT_DIR="$o.slots" \
        ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
@@ -379,6 +383,13 @@ w=0; while [ -n "$after" ] && [ -n "$alone" ] && [ ! -e "$after" ] && [ "$w" -lt
   sleep 1; w=$((w + 1))
 done
 for t in $alone; do bash -c 'run_one "$1" "$2"' _ "$t" "$out"; done
+# #721: dòng hỏng của test đỏ (✖ ✘ ✗ ❌ FAIL not ok ở đầu dòng) nằm TRƯỚC 20 dòng đuôi in bên dưới. Gate-full 31/10:
+# test_game_blender_default.sh 'failures: 2' nhưng ✖ A33/A23 sớm hơn đuôi nên log không có. Tối đa 40; dòng đã ở trong đuôi không in lại.
+dk_fail_lines() { # <log>
+  LC_ALL=C awk -v cap=40 'NR == FNR { n++; next }
+    FNR <= n - 20 && /^[ \t]*(✖|✘|✗|❌|FAIL|not ok)/ { k++; if (k <= cap) print }
+    END { if (k > cap) printf "… còn %d dòng hỏng nữa\n", k - cap; if (k) print "… (20 dòng cuối)" }' "$1" "$1" </dev/null 2>/dev/null
+}   # </dev/null: awk giả đọc stdin (test_run_impacted_order.sh) không treo khi chạy tay ở terminal (T0183)
 rc=0; n_reuse=0; n_ran=0
 for t in $selected; do
   [ -f "$t" ] || continue
@@ -394,7 +405,7 @@ for t in $selected; do
   if [ "$(cat "$o.rc" 2>/dev/null)" = 0 ]; then
     echo "✔ $t"
   else
-    echo "✖ $t"; tail -n 20 "$o.log" 2>/dev/null | sed 's/^/    /'; rc=1
+    echo "✖ $t"; { dk_fail_lines "$o.log"; tail -n 20 "$o.log" 2>/dev/null; } | sed 's/^/    /'; rc=1
   fi
 done
 # #472 D: hit-rate của sổ per-test (post-fix-gate đọc dòng này ghi vào runs.jsonl); chỉ khi sổ bật

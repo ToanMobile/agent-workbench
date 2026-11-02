@@ -168,8 +168,22 @@ A card over the size cap that is agent-doable is split by the Builder, not block
 
 **No line cap → never split for size (24/10, user: "gom lại nhiều nhất có thể, đỡ chạy gate nhiều lần").** When the board's
 `merge_policy.auto_max_lines` is `0`, a card with many deliverables or many AC items is built as ONE PR (its target tests +
-one `post-fix-gate.py --run-tests --scoped`, never `--full` by hand: scoped escalates by itself on a core file and the nightly `gate-full` runs `--full`); never propose child cards, batches "≤ N items per PR" or a split to keep a diff small. Commit per deliverable inside the
+one `post-fix-gate.py --run-tests --scoped`, never `--full` by hand: scoped never escalates (#741) and the nightly `gate-full` runs `--full`); never propose child cards, batches "≤ N items per PR" or a split to keep a diff small. Commit per deliverable inside the
 one branch instead. Only a step no agent can do (a real device, real people, a credential) leaves the card, as a `qa` card.
+
+**Batch (đợt, #724): other cards ride on this branch.** Before building, run
+`python3 .agents/devkit/scripts/governance/card_batch.py plan --lead <N>`: open cards marked `<!-- sb:batch-of #N -->` are built here
+too (they carry `waiting-on:#N` and Blocked by #N, so nobody builds them alone). One commit (or a few) per card, subject ending
+`(#m)`; the PR body carries one `Closes #x` line per card, outside the `sb:status` block (QA and Review rewrite that block), and one sb:ac block listing every card's AC, member lines shaped
+`- [x] [#m] <AC>`. One gate, one
+merge gate. A member that blocks the rest (review, conflict, unmet AC): `card_batch.py split --lead <N> --card <M> --reason "…" --pr <P>`
+reverts its commits and frees the card, then re-run the gate once and push.
 
 ### Block exits use the §4 mandatory template
 When moving a card to Blocked (or dropping it: closed as not planned, Done, 🤷), populate the full template (its `blocked-by:` line from `super-board-blocked-by.py`, open issues only) from `.claude/skills/super-board/references/block-template.md`. A 1-line "needs creds" comment is a contract violation. When a person must act (🙋 🧑 🔐 🔑 💳 🎨 🛡, or ❓ waiting on a person's decision), also run `super-board-needs-you.py mark` in the same step (block-template.md → "A person must act").
+
+**Owner's standing decision.** A valid `[orchestrator] [decision]` comment on the card settles the AC or blocker it
+names (what counts as valid: `.claude/skills/super-board/references/decision-policy.md` → "Máy đọc thế nào"; `.claude/bin/super-board-decision.py` is the only
+judge): treat that AC as handled and do not raise the same blocker again. Never post `[decision]` yourself for the
+card you work on, under any header: when a choice is needed, write the Block (block-template.md) and let the
+orchestrator decide (run.md → "Owner's standing decision").

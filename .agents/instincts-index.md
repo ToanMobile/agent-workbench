@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (736 dòng, 80.8 KB) · 88 mục
+> **Tệp gốc:** `.agents/instincts.md` (783 dòng, 87.3 KB) · 94 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -19,76 +19,81 @@
 - [INSTINCT-012] Sửa hook DevKit tại chỗ làm hỏng mọi phiên đang chạy — `sed -n '108,116p' .agents/instincts.md`
 - [INSTINCT-013] Nhận cờ CLI bằng regex 'có chữ X trong từ' cho lọt giá trị dính cờ — `sed -n '117,124p' .agents/instincts.md`
 - [INSTINCT-014] Gate nhận lệnh shell chỉ ở đầu đoạn và coi mọi file lạ là code — `sed -n '125,132p' .agents/instincts.md`
-- [INSTINCT-015] Hai chỗ trong DevKit phân loại cùng một thứ khác nhau — `sed -n '133,140p' .agents/instincts.md`
-- [INSTINCT-016] Cài DevKit từ bản stage cũ ghi đè commit của phiên khác — `sed -n '141,148p' .agents/instincts.md`
-- [INSTINCT-017] Khoá cache dựng sai làm dùng nhầm hoặc không bao giờ dùng lại kết quả test — `sed -n '149,156p' .agents/instincts.md`
-- [INSTINCT-018] Kết quả 'không chạy được trên máy này' làm kẹt mốc đã kiểm nên mọi lượt Stop chạy lại cả dải commit — `sed -n '157,164p' .agents/instincts.md`
-- [INSTINCT-019] Đo thời gian hook bằng đồng hồ tường mà không trừ lúc máy ngủ — `sed -n '165,172p' .agents/instincts.md`
-- [INSTINCT-020] Dọn/kiểm kê worktree đọc lỗi git thành 'sạch' và cho file mới lọt allowlist theo tiền tố — `sed -n '173,180p' .agents/instincts.md`
-- [INSTINCT-021] Nguồn tự dò mới giành quyền cấu hình đã khai — `sed -n '181,188p' .agents/instincts.md`
-- [INSTINCT-022] Gắn skill vào intent rộng làm đổi dòng 'Skill phù hợp' và đẩy skill khác khỏi top 5 — `sed -n '189,196p' .agents/instincts.md`
-- [INSTINCT-023] Swift Concurrency / MainActor Isolation & Task Cancellation Leak — `sed -n '197,204p' .agents/instincts.md`
-- [INSTINCT-024] Android StateFlow Lifecycle Collection & Main Thread Blocking trong Jetpack Compose — `sed -n '205,213p' .agents/instincts.md`
-- [INSTINCT-025] Chia nhóm thư mục làm hỏng đường dẫn mà grep chuỗi literal không bắt hết, và hook nuốt lỗi bằng… — `sed -n '214,221p' .agents/instincts.md`
-- [INSTINCT-026] Thêm khối ngữ cảnh luôn bật vào hook prompt: dedupe theo dòng, bẫy UI chen slot, từ khoá UI mơ hồ và… — `sed -n '222,230p' .agents/instincts.md`
-- [INSTINCT-027] Lối tắt của cổng tin trạng thái agent ghi được và tái dùng bộ phân loại của việc khác — `sed -n '231,240p' .agents/instincts.md`
-- [INSTINCT-028] Nới nhánh bỏ qua gate biến lỗ phân loại cũ thành fail-open — `sed -n '241,248p' .agents/instincts.md`
-- [INSTINCT-029] Test bảo vệ không được sandbox RED-proof chọn nên bằng chứng ra VACUOUS giả — `sed -n '249,256p' .agents/instincts.md`
-- [INSTINCT-030] bash 3.2 cắt đối số "$(cmd "{\"a\":…}")" tại dấu nháy thoát — `sed -n '257,264p' .agents/instincts.md`
-- [INSTINCT-031] Hook lexer: shlex hides what follows a hash, and the one-line fix opens a new hole — `sed -n '265,272p' .agents/instincts.md`
-- [INSTINCT-032] Stop hook that accepts a report from any earlier transcript line: the hook's own feedback holds the… — `sed -n '273,280p' .agents/instincts.md`
-- [INSTINCT-033] A gate that skips unfinished turns must remember what it skipped — `sed -n '281,288p' .agents/instincts.md`
-- [INSTINCT-034] A hook that ages a green run by the last source edit must only count edits that belong to the project — `sed -n '289,296p' .agents/instincts.md`
-- [INSTINCT-035] zsh and && chains in install steps — `sed -n '297,304p' .agents/instincts.md`
-- [INSTINCT-036] A new tests/*/test_*.sh needs a line in tests/lib/test_durations.txt, and the gate only shows it when… — `sed -n '305,312p' .agents/instincts.md`
-- [INSTINCT-037] A MUST/CẤM regex lint cannot see obligations phrased without a keyword, so an on-demand split needs a… — `sed -n '313,320p' .agents/instincts.md`
-- [INSTINCT-038] A copy that keeps the source's macOS user flags (uchg) cannot be deleted, and git drops the worktree… — `sed -n '321,328p' .agents/instincts.md`
-- [INSTINCT-039] A gate shortcut that treats 'the folder is gone' as 'done' without proving the work reached trunk — `sed -n '329,336p' .agents/instincts.md`
-- [INSTINCT-040] A FIFO at any agent-writable path a hook or gate opens hangs it, and a Stop hook killed at its timeout… — `sed -n '337,344p' .agents/instincts.md`
-- [INSTINCT-041] A worktree is adopted on proof of death, never on a stale heartbeat — `sed -n '345,352p' .agents/instincts.md`
-- [INSTINCT-042] A helper worktree made with --no-init fails agent-kit health, and the Stop hook gates it at every Stop — `sed -n '353,360p' .agents/instincts.md`
-- [INSTINCT-043] A test that disables the global git config relies on git's auto-detected identity, which needs a… — `sed -n '361,370p' .agents/instincts.md`
-- [INSTINCT-044] bash 3.2 ${var//x/} is quadratic and a PreToolUse guard killed at its timeout gives no verdict: a big… — `sed -n '371,380p' .agents/instincts.md`
-- [INSTINCT-045] A guard that cuts heredoc bodies as data with a scanner that is not the shell hides live commands… — `sed -n '381,390p' .agents/instincts.md`
-- [INSTINCT-046] Công tắc môi trường của runner/worker lọt vào suite test của gate — `sed -n '391,398p' .agents/instincts.md`
-- [INSTINCT-047] Squash merge làm main local lệch origin, và symlink kit chặn gỡ worktree — `sed -n '399,406p' .agents/instincts.md`
-- [INSTINCT-048] Hook Stop của phiên cha tự gộp worktree của agent con đang chạy — `sed -n '407,414p' .agents/instincts.md`
-- [INSTINCT-049] Gỡ một lần git từ chối có thể lộ ra việc ghi đè file bị ignore — `sed -n '415,422p' .agents/instincts.md`
-- [INSTINCT-050] Gate tin lệnh do chính thay đổi thêm vào: lệnh đó chạy trước suite base thì vô hiệu được suite base — `sed -n '423,431p' .agents/instincts.md`
-- [INSTINCT-051] Khoá dùng lại kết quả test băm cả file mà chính suite ghi lại thì không bao giờ khớp giữa hai checkout — `sed -n '432,439p' .agents/instincts.md`
-- [INSTINCT-052] Worktree do công cụ tự tạo thiếu phần cài DevKit bị ignore, và bài thử pass trên đường khác đường chạy… — `sed -n '440,447p' .agents/instincts.md`
-- [INSTINCT-053] Halt vì lỗi đọc tạm thời không ai tự gỡ: máy ngủ dậy làm chết mọi board hàng giờ — `sed -n '448,455p' .agents/instincts.md`
-- [INSTINCT-054] Guard đường dẫn chạy SAU bước phá huỷ, hoặc leo tổ tiên theo chuỗi để lọt '..' — `sed -n '456,464p' .agents/instincts.md`
-- [INSTINCT-055] Chạy gate dưới nohup làm test SIGHUP đỏ giả — `sed -n '465,473p' .agents/instincts.md`
-- [INSTINCT-056] killpg bị macOS từ chối (EPERM) làm gate chết khi suite quá giờ, biên nhận cũ ở lại thành xanh giả — `sed -n '474,482p' .agents/instincts.md`
-- [INSTINCT-057] Test super-board chạy trong worktree dùng heavy_slot của main checkout, không phải bản đang sửa — `sed -n '483,491p' .agents/instincts.md`
-- [INSTINCT-058] Một lần đọc GitHub hỏng tạm thời dưới set -e giết runner, watchdog crash-loop rồi bỏ cuộc — `sed -n '492,497p' .agents/instincts.md`
-- [INSTINCT-059] Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu — `sed -n '498,505p' .agents/instincts.md`
-- [INSTINCT-060] Model 3D cache cũ sau khi dựng lại — `sed -n '506,513p' .agents/instincts.md`
-- [INSTINCT-061] Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source — `sed -n '514,521p' .agents/instincts.md`
-- [INSTINCT-062] Mở file người dùng ghi được bằng open() không kiểm loại file — `sed -n '522,529p' .agents/instincts.md`
-- [INSTINCT-063] KNOWN-RED chỉ nhận FAIL và guard che message commit mở cửa — `sed -n '530,537p' .agents/instincts.md`
-- [INSTINCT-064] Sweep bỏ sót thẻ bị gom/bỏ (NOT_PLANNED) — `sed -n '538,545p' .agents/instincts.md`
-- [INSTINCT-065] Test chạy không hạn giờ để lại tiến trình mồ côi hàng chục giờ — `sed -n '546,553p' .agents/instincts.md`
-- [INSTINCT-066] Gate gộp đổi thứ tự suite làm PASS của suite phụ thuộc diff vào cache trước khi suite khác đỏ — `sed -n '554,562p' .agents/instincts.md`
-- [INSTINCT-067] Tính phần chênh lệch của PR bằng origin/main so với ngọn nhánh cũ sẽ hoàn tác việc mới của phiên khác — `sed -n '563,571p' .agents/instincts.md`
-- [INSTINCT-068] Chuỗi bí mật giả trong test vẫn bị công cụ quét báo vì nó đọc diff chứ không đọc lúc chạy — `sed -n '572,580p' .agents/instincts.md`
-- [INSTINCT-069] Giới hạn thời gian thực trong test bị phình khi run_impacted chạy song song lúc máy tải cao — `sed -n '581,588p' .agents/instincts.md`
-- [INSTINCT-070] Thêm lệnh mới vào commands/ của kit làm agent-kit health FAIL ở mọi repo đã cài — `sed -n '589,596p' .agents/instincts.md`
-- [INSTINCT-072] Tài liệu/báo cáo: không bịa số liệu, tính năng, thư viện — `sed -n '597,606p' .agents/instincts.md`
-- [INSTINCT-073] Root cause trên đúng bản và đúng biến thể người dùng báo — `sed -n '607,616p' .agents/instincts.md`
-- [INSTINCT-074] Nhắc lại cách hiểu khi yêu cầu có gỡ/xoá/public/bổ sung — `sed -n '617,626p' .agents/instincts.md`
-- [INSTINCT-075] Chỉ hỏi khi xoá dữ liệu quan trọng, secrets, billing — `sed -n '627,635p' .agents/instincts.md`
-- [INSTINCT-076] Không hỏi lại điều đã chọn, không làm lại việc đã xong — `sed -n '636,645p' .agents/instincts.md`
-- [INSTINCT-077] Sửa chỉ doc thì không chạy gate full; gom một lần chạy — `sed -n '646,655p' .agents/instincts.md`
-- [INSTINCT-078] Phiên trong worktree riêng không chờ khoá của checkout chính — `sed -n '656,664p' .agents/instincts.md`
-- [INSTINCT-079] Máy quá tải thì tự tạm dừng board, không ngồi chờ — `sed -n '665,674p' .agents/instincts.md`
-- [INSTINCT-080] Tài liệu gửi người: văn tự nhiên, không giọng AI — `sed -n '675,684p' .agents/instincts.md`
-- [INSTINCT-081] Chờ việc nền bằng thông báo, không sleep rồi poll — `sed -n '685,693p' .agents/instincts.md`
-- [INSTINCT-082] Trong worktree cô lập: gọi git trực tiếp, một lệnh một dòng — `sed -n '694,702p' .agents/instincts.md`
-- [INSTINCT-083] macOS: sed BSD và không có timeout — `sed -n '703,712p' .agents/instincts.md`
-- [INSTINCT-071] Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main — `sed -n '713,721p' .agents/instincts.md`
-- [INSTINCT-084] Gộp lane bằng cherry-pick làm kit không gỡ được worktree lane và Stop hook tự gộp main local vào lane — `sed -n '722,731p' .agents/instincts.md`
-- [INSTINCT-085] Lời duyệt AskUserQuestion của gate mất khi file bị sửa rồi hoàn nguyên — `sed -n '732,736p' .agents/instincts.md`
-- [INSTINCT-086] Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình — `sed -n '740,744p' .agents/instincts.md`
+- [INSTINCT-015] Hai chỗ trong DevKit phân loại cùng một thứ khác nhau — `sed -n '133,141p' .agents/instincts.md`
+- [INSTINCT-016] Cài DevKit từ bản stage cũ ghi đè commit của phiên khác — `sed -n '142,149p' .agents/instincts.md`
+- [INSTINCT-017] Khoá cache dựng sai làm dùng nhầm hoặc không bao giờ dùng lại kết quả test — `sed -n '150,157p' .agents/instincts.md`
+- [INSTINCT-018] Kết quả 'không chạy được trên máy này' làm kẹt mốc đã kiểm nên mọi lượt Stop chạy lại cả dải commit — `sed -n '158,165p' .agents/instincts.md`
+- [INSTINCT-019] Đo thời gian hook bằng đồng hồ tường mà không trừ lúc máy ngủ — `sed -n '166,173p' .agents/instincts.md`
+- [INSTINCT-020] Dọn/kiểm kê worktree đọc lỗi git thành 'sạch' và cho file mới lọt allowlist theo tiền tố — `sed -n '174,181p' .agents/instincts.md`
+- [INSTINCT-021] Nguồn tự dò mới giành quyền cấu hình đã khai — `sed -n '182,189p' .agents/instincts.md`
+- [INSTINCT-022] Gắn skill vào intent rộng làm đổi dòng 'Skill phù hợp' và đẩy skill khác khỏi top 5 — `sed -n '190,197p' .agents/instincts.md`
+- [INSTINCT-023] Swift Concurrency / MainActor Isolation & Task Cancellation Leak — `sed -n '198,205p' .agents/instincts.md`
+- [INSTINCT-024] Android StateFlow Lifecycle Collection & Main Thread Blocking trong Jetpack Compose — `sed -n '206,214p' .agents/instincts.md`
+- [INSTINCT-025] Chia nhóm thư mục làm hỏng đường dẫn mà grep chuỗi literal không bắt hết, và hook nuốt lỗi bằng… — `sed -n '215,222p' .agents/instincts.md`
+- [INSTINCT-026] Thêm khối ngữ cảnh luôn bật vào hook prompt: dedupe theo dòng, bẫy UI chen slot, từ khoá UI mơ hồ và… — `sed -n '223,231p' .agents/instincts.md`
+- [INSTINCT-027] Lối tắt của cổng tin trạng thái agent ghi được và tái dùng bộ phân loại của việc khác — `sed -n '232,241p' .agents/instincts.md`
+- [INSTINCT-028] Nới nhánh bỏ qua gate biến lỗ phân loại cũ thành fail-open — `sed -n '242,249p' .agents/instincts.md`
+- [INSTINCT-029] Test bảo vệ không được sandbox RED-proof chọn nên bằng chứng ra VACUOUS giả — `sed -n '250,257p' .agents/instincts.md`
+- [INSTINCT-030] bash 3.2 cắt đối số "$(cmd "{\"a\":…}")" tại dấu nháy thoát — `sed -n '258,265p' .agents/instincts.md`
+- [INSTINCT-031] Hook lexer: shlex hides what follows a hash, and the one-line fix opens a new hole — `sed -n '266,273p' .agents/instincts.md`
+- [INSTINCT-032] Stop hook that accepts a report from any earlier transcript line: the hook's own feedback holds the… — `sed -n '274,281p' .agents/instincts.md`
+- [INSTINCT-033] A gate that skips unfinished turns must remember what it skipped — `sed -n '282,289p' .agents/instincts.md`
+- [INSTINCT-034] A hook that ages a green run by the last source edit must only count edits that belong to the project — `sed -n '290,297p' .agents/instincts.md`
+- [INSTINCT-035] zsh and && chains in install steps — `sed -n '298,305p' .agents/instincts.md`
+- [INSTINCT-036] A new tests/*/test_*.sh needs a line in tests/lib/test_durations.txt, and the gate only shows it when… — `sed -n '306,313p' .agents/instincts.md`
+- [INSTINCT-037] A MUST/CẤM regex lint cannot see obligations phrased without a keyword, so an on-demand split needs a… — `sed -n '314,321p' .agents/instincts.md`
+- [INSTINCT-038] A copy that keeps the source's macOS user flags (uchg) cannot be deleted, and git drops the worktree… — `sed -n '322,329p' .agents/instincts.md`
+- [INSTINCT-039] A gate shortcut that treats 'the folder is gone' as 'done' without proving the work reached trunk — `sed -n '330,337p' .agents/instincts.md`
+- [INSTINCT-040] A FIFO at any agent-writable path a hook or gate opens hangs it, and a Stop hook killed at its timeout… — `sed -n '338,345p' .agents/instincts.md`
+- [INSTINCT-041] A worktree is adopted on proof of death, never on a stale heartbeat — `sed -n '346,353p' .agents/instincts.md`
+- [INSTINCT-042] A helper worktree made with --no-init fails agent-kit health, and the Stop hook gates it at every Stop — `sed -n '354,361p' .agents/instincts.md`
+- [INSTINCT-043] A test that disables the global git config relies on git's auto-detected identity, which needs a… — `sed -n '362,371p' .agents/instincts.md`
+- [INSTINCT-044] bash 3.2 ${var//x/} is quadratic and a PreToolUse guard killed at its timeout gives no verdict: a big… — `sed -n '372,381p' .agents/instincts.md`
+- [INSTINCT-045] A guard that cuts heredoc bodies as data with a scanner that is not the shell hides live commands… — `sed -n '382,391p' .agents/instincts.md`
+- [INSTINCT-046] Công tắc môi trường của runner/worker lọt vào suite test của gate — `sed -n '392,399p' .agents/instincts.md`
+- [INSTINCT-047] Squash merge làm main local lệch origin, và symlink kit chặn gỡ worktree — `sed -n '400,407p' .agents/instincts.md`
+- [INSTINCT-048] Hook Stop của phiên cha tự gộp worktree của agent con đang chạy — `sed -n '408,415p' .agents/instincts.md`
+- [INSTINCT-049] Gỡ một lần git từ chối có thể lộ ra việc ghi đè file bị ignore — `sed -n '416,423p' .agents/instincts.md`
+- [INSTINCT-050] Gate tin lệnh do chính thay đổi thêm vào: lệnh đó chạy trước suite base thì vô hiệu được suite base — `sed -n '424,432p' .agents/instincts.md`
+- [INSTINCT-051] Khoá dùng lại kết quả test băm cả file mà chính suite ghi lại thì không bao giờ khớp giữa hai checkout — `sed -n '433,440p' .agents/instincts.md`
+- [INSTINCT-052] Worktree do công cụ tự tạo thiếu phần cài DevKit bị ignore, và bài thử pass trên đường khác đường chạy… — `sed -n '441,448p' .agents/instincts.md`
+- [INSTINCT-053] Halt vì lỗi đọc tạm thời không ai tự gỡ: máy ngủ dậy làm chết mọi board hàng giờ — `sed -n '449,456p' .agents/instincts.md`
+- [INSTINCT-054] Guard đường dẫn chạy SAU bước phá huỷ, hoặc leo tổ tiên theo chuỗi để lọt '..' — `sed -n '457,465p' .agents/instincts.md`
+- [INSTINCT-055] Chạy gate dưới nohup làm test SIGHUP đỏ giả — `sed -n '466,474p' .agents/instincts.md`
+- [INSTINCT-056] killpg bị macOS từ chối (EPERM) làm gate chết khi suite quá giờ, biên nhận cũ ở lại thành xanh giả — `sed -n '475,483p' .agents/instincts.md`
+- [INSTINCT-057] Test super-board chạy trong worktree dùng heavy_slot của main checkout, không phải bản đang sửa — `sed -n '484,492p' .agents/instincts.md`
+- [INSTINCT-058] Một lần đọc GitHub hỏng tạm thời dưới set -e giết runner, watchdog crash-loop rồi bỏ cuộc — `sed -n '493,498p' .agents/instincts.md`
+- [INSTINCT-059] Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu — `sed -n '499,506p' .agents/instincts.md`
+- [INSTINCT-060] Model 3D cache cũ sau khi dựng lại — `sed -n '507,514p' .agents/instincts.md`
+- [INSTINCT-061] Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source — `sed -n '515,522p' .agents/instincts.md`
+- [INSTINCT-062] Mở file người dùng ghi được bằng open() không kiểm loại file — `sed -n '523,530p' .agents/instincts.md`
+- [INSTINCT-063] KNOWN-RED chỉ nhận FAIL và guard che message commit mở cửa — `sed -n '531,538p' .agents/instincts.md`
+- [INSTINCT-064] Sweep bỏ sót thẻ bị gom/bỏ (NOT_PLANNED) — `sed -n '539,546p' .agents/instincts.md`
+- [INSTINCT-065] Test chạy không hạn giờ để lại tiến trình mồ côi hàng chục giờ — `sed -n '547,554p' .agents/instincts.md`
+- [INSTINCT-066] Gate gộp đổi thứ tự suite làm PASS của suite phụ thuộc diff vào cache trước khi suite khác đỏ — `sed -n '555,563p' .agents/instincts.md`
+- [INSTINCT-067] Tính phần chênh lệch của PR bằng origin/main so với ngọn nhánh cũ sẽ hoàn tác việc mới của phiên khác — `sed -n '564,572p' .agents/instincts.md`
+- [INSTINCT-068] Chuỗi bí mật giả trong test vẫn bị công cụ quét báo vì nó đọc diff chứ không đọc lúc chạy — `sed -n '573,581p' .agents/instincts.md`
+- [INSTINCT-069] Giới hạn thời gian thực trong test bị phình khi run_impacted chạy song song lúc máy tải cao — `sed -n '582,589p' .agents/instincts.md`
+- [INSTINCT-070] Thêm lệnh mới vào commands/ của kit làm agent-kit health FAIL ở mọi repo đã cài — `sed -n '590,597p' .agents/instincts.md`
+- [INSTINCT-072] Tài liệu/báo cáo: không bịa số liệu, tính năng, thư viện — `sed -n '598,607p' .agents/instincts.md`
+- [INSTINCT-073] Root cause trên đúng bản và đúng biến thể người dùng báo — `sed -n '608,617p' .agents/instincts.md`
+- [INSTINCT-074] Nhắc lại cách hiểu khi yêu cầu có gỡ/xoá/public/bổ sung — `sed -n '618,627p' .agents/instincts.md`
+- [INSTINCT-075] Chỉ hỏi khi xoá dữ liệu quan trọng, secrets, billing — `sed -n '628,636p' .agents/instincts.md`
+- [INSTINCT-076] Không hỏi lại điều đã chọn, không làm lại việc đã xong — `sed -n '637,646p' .agents/instincts.md`
+- [INSTINCT-077] Sửa chỉ doc thì không chạy gate full; gom một lần chạy — `sed -n '647,656p' .agents/instincts.md`
+- [INSTINCT-078] Phiên trong worktree riêng không chờ khoá của checkout chính — `sed -n '657,665p' .agents/instincts.md`
+- [INSTINCT-079] Máy quá tải thì tự tạm dừng board, không ngồi chờ — `sed -n '666,675p' .agents/instincts.md`
+- [INSTINCT-080] Tài liệu gửi người: văn tự nhiên, không giọng AI — `sed -n '676,685p' .agents/instincts.md`
+- [INSTINCT-081] Chờ việc nền bằng thông báo, không sleep rồi poll — `sed -n '686,694p' .agents/instincts.md`
+- [INSTINCT-082] Trong worktree cô lập: gọi git trực tiếp, một lệnh một dòng — `sed -n '695,703p' .agents/instincts.md`
+- [INSTINCT-083] macOS: sed BSD và không có timeout — `sed -n '704,713p' .agents/instincts.md`
+- [INSTINCT-071] Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main — `sed -n '714,722p' .agents/instincts.md`
+- [INSTINCT-084] Gộp lane bằng cherry-pick làm kit không gỡ được worktree lane và Stop hook tự gộp main local vào lane — `sed -n '723,732p' .agents/instincts.md`
+- [INSTINCT-085] Lời duyệt AskUserQuestion của gate mất khi file bị sửa rồi hoàn nguyên — `sed -n '733,740p' .agents/instincts.md`
+- [INSTINCT-086] Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình — `sed -n '741,748p' .agents/instincts.md`
+- [INSTINCT-096] agent-office: thanh nút dưới đáy "cuộn ngang ẩn" giấu mất nút — `sed -n '749,756p' .agents/instincts.md`
+- [INSTINCT-097] agent-office: nút bật một khung mà CSS đang ẩn khung đó thì nút như chết — `sed -n '757,764p' .agents/instincts.md`
+- [INSTINCT-098] agent-office: vòng render 3D phải hạ nhịp khi cảnh đứng yên, tài nguyên GPU dùng chung — `sed -n '765,770p' .agents/instincts.md`
+- [INSTINCT-099] gate-full: nhiều repo cùng chạy --full một lúc làm máy quá tải, mỗi repo chỉ có khoá riêng — `sed -n '771,778p' .agents/instincts.md`
+- [INSTINCT-100] Biên nhận cây của train và cây của merge gate gộp theo hai chiều ngược nhau; tiến trình nền của job… — `sed -n '779,783p' .agents/instincts.md`
 

@@ -1,9 +1,13 @@
-# .agents/gate-core.txt — lõi của gate scoped (#644): diff chạm một file khớp ở đây ⇒ gate leo --full (universal-agent-devkit/bin/scoped_gate.py).
+# .agents/gate-core.txt — lõi của gate scoped (#644): diff chạm một file khớp ở đây là "core-touched" (universal-agent-devkit/bin/scoped_gate.py).
+# #741 (anh Đạt 31/10): gate PR / merge gate KHÔNG leo --full nữa — file lõi chạy test chạm tới nó; file không test riêng, unmapped, code bị
+# xoá hay đồ thị lỗi thêm [core-smoke]; cả bộ suite chỉ chạy ở gate-full đêm 00:00.
 # Glob fnmatch tương đối gốc repo, `*` khớp cả `/`; phần sau ` # ` là lý do. Mục:
 #   [core]       người viết, sửa tay được;
 #   [core:auto]  `python3 universal-agent-devkit/bin/scoped_gate.py gen --write-core` viết lại (fan-in ≥ 5 không tính test + file hay làm
 #                vỡ test chỗ khác); đừng sửa tay, lần gen sau ghi đè;
 #   [smoke]      test luôn chạy ở lượt scoped (đo 29/10, chạy riêng từng cái ở tải ~70–90: 15 + 6 + 4 + 5 ≈ 30 s).
+#   [core-smoke] test thêm vào lượt scoped khi có file không test riêng (lõi không test chạm, unmapped, code bị xoá) hay đồ thị lỗi; trần
+#                tổng ≤ 120 s theo tests/lib/test_durations.txt (tests/gates/test_scoped_gate_nofull.sh kiểm).
 # Không lõi: tài liệu, .agents/instincts.md, code + test riêng của một module (đồ thị chọn test của nó).
 
 [core]
@@ -174,3 +178,12 @@ universal-agent-devkit/tests/verification/test_repo_consistency.sh
 universal-agent-devkit/tests/gates/test_gate_reasons.sh
 universal-agent-devkit/tests/gates/test_gate_since_new_test.sh
 universal-agent-devkit/tests/gates/test_scoped_gate.sh
+
+[core-smoke]
+universal-agent-devkit/tests/gates/test_push_gate.sh             # cửa push đọc biên nhận
+universal-agent-devkit/tests/gates/test_scoped_receipt_doors.sh  # biên nhận scoped qua merge / push / XONG
+universal-agent-devkit/tests/gates/test_gate_scoped_routing.sh   # đường chạy test của lượt --scoped
+universal-agent-devkit/tests/gates/test_proof_gate.sh            # Stop hook XONG
+universal-agent-devkit/tests/context_memory/test_session_lock.sh # khoá checkout / trunk mode
+universal-agent-devkit/hooks/tests/test_git_guard_bypass.sh      # git guard
+universal-agent-devkit/tests/gates/test_capacity.sh              # sức chứa máy của gate

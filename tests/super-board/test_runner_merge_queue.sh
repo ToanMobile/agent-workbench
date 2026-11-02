@@ -7,7 +7,7 @@
 #  - merge_queue_due: tham số gọi bộ gom, exit 3/5, 79/9, công tắc tắt và thiếu script đều được khẳng định ở ca 7 bên dưới.
 #  - SB_MERGE_QUEUE=0 giữ nguyên đường cũ (merge-only / train), kể cả khi config bật.
 #  - Vòng sửa 1 (R3): queue chỉ bật khi worker_backend của config là "claude-p" (backend khác luôn tắt, kể cả SB_MERGE_QUEUE=1);
-#    RUNAWAY chỉ miễn khi PR cũ nhất trong merge-queue.labeled chờ chưa quá 3 × merge_queue.max_wait_min; thẻ Review đã duyệt đúng head
+#    RUNAWAY chỉ miễn khi PR cũ nhất trong merge-queue.labeled chờ chưa quá 3 giờ (hằng cố định, không còn đọc config); thẻ Review đã duyệt đúng head
 #    mà mất nhãn merge-queue thì runner gắn lại nhãn, không phóng reviewer; mọi worker runner phóng có SB_BOARD_WORKER=1.
 # Chạy offline qua lane_dispatch_tick thật: gh/claude là stub, đọc GitHub qua SB_GITHUB_READ giả. Tương thích bash 3.2.
 set -u
@@ -194,18 +194,18 @@ grep -q "^move PVTI_7 Blocked" "$TMP/writes" && ok "  … an unqueued Review car
 reset; export SB_MERGE_QUEUE=1; items Review Done Done; REVIEW=1
 printf '[%s]' "$(pr 70 7 "$H1" "$MQ" false)" > "$TMP/prs.json"; approve 70 OWNER "$H1"; tick
 NO_PROGRESS_CYCLES=2; NO_PROGRESS_CYCLE_COUNT=0; PREV_DONE_SIG="8,9"; LANDED_COUNT=0; RUNAWAY_PAUSE_UNTIL=0
-# Vòng sửa 1 (R3): miễn chỉ khi PR cũ nhất trong <git-common-dir>/super-board/merge-queue.labeled chờ ≤ 3 × max_wait_min (mặc định 60).
+# Vòng sửa 1 (R3): miễn chỉ khi PR cũ nhất trong <git-common-dir>/super-board/merge-queue.labeled chờ ≤ 3 giờ (hằng cố định).
 LBL="$TMP/repo/.git/super-board/merge-queue.labeled"; mkdir -p "$(dirname "$LBL")"; NOW=$(date +%s)
 printf '71 %s %s\n70 %s %s\n' "$H2" "$((NOW - 30))" "$H1" "$((NOW - 60))" > "$LBL"
 rc=0; for i in 1 2 3 4; do record_cycle_progress "8,9" || rc=1; done
 [ "$rc" = 0 ] && [ "$NO_PROGRESS_CYCLE_COUNT" = 0 ] && ok "queued cards waiting for the batch (oldest 1 min): 4 ticks without Done do not trip RUNAWAY" || fail "RUNAWAY counted queued wait: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT"
 printf '71 %s %s\n70 %s %s\n' "$H2" "$((NOW - 30))" "$H1" "$((NOW - 3 * 3600 - 60))" > "$LBL"
 NO_PROGRESS_CYCLE_COUNT=0; rc=0; for i in 1 2; do record_cycle_progress "8,9" || rc=1; done
-[ "$rc" = 1 ] && ok "  … oldest queued PR waited > 3 × max_wait_min (default 60): RUNAWAY counts again and trips" || fail "RUNAWAY exempt forever for a stuck queue: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT"
+[ "$rc" = 1 ] && ok "  … oldest queued PR waited > 3 h: RUNAWAY counts again and trips" || fail "RUNAWAY exempt forever for a stuck queue: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT"
 echo "{$CP,\"merge_queue\":{\"enabled\":true,\"max_wait_min\":1}}" > "$CONFIG_PATH"
 printf '70 %s %s\n' "$H1" "$((NOW - 200))" > "$LBL"
 NO_PROGRESS_CYCLE_COUNT=0; rc=0; for i in 1 2; do record_cycle_progress "8,9" || rc=1; done
-[ "$rc" = 1 ] && ok "  … max_wait_min is read from the config (1 min: a 200 s wait is over 3 min, trips)" || fail "max_wait_min not read: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT"
+[ "$rc" = 0 ] && [ "$NO_PROGRESS_CYCLE_COUNT" = 0 ] && ok "  … a leftover max_wait_min in the config is ignored (a 200 s wait stays exempt)" || fail "max_wait_min still read: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT"
 echo "{$CP}" > "$CONFIG_PATH"; rm -f "$LBL"
 NO_PROGRESS_CYCLE_COUNT=0; rc=0; for i in 1 2; do record_cycle_progress "8,9" || rc=1; done
 [ "$rc" = 1 ] && ok "  … no merge-queue.labeled (queue never ran): no exemption, RUNAWAY trips" || fail "missing labeled file exempts forever: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT"
@@ -217,7 +217,7 @@ NO_PROGRESS_CYCLE_COUNT=0; rc=0; for i in 1 2; do record_cycle_progress "8,9" ||
 # ── 7. merge_queue_due: tham số gọi bộ gom, exit 3/5 (runner chạy tiếp), 79/9 (halt), công tắc tắt, thiếu script
 reset; export SB_MERGE_QUEUE=1
 ( mq_cycle ); r=$?
-{ [ "$r" = 0 ] && grep -qxF -- "--config $CONFIG_PATH --if-due" "$TMP/mq-calls"; } && ok "queue on: merge_queue_due runs super-board-merge-queue.sh --config <cfg> --if-due" || fail "merge-queue not called right: rc=$r calls=$(cat "$TMP/mq-calls" 2>/dev/null)"
+{ [ "$r" = 0 ] && grep -qxF -- "--config $CONFIG_PATH" "$TMP/mq-calls"; } && ok "queue on: merge_queue_due runs super-board-merge-queue.sh --config <cfg> (no --if-due)" || fail "merge-queue not called right: rc=$r calls=$(cat "$TMP/mq-calls" 2>/dev/null)"
 export MQ_RC=3; ( mq_cycle ); r=$?
 [ "$r" = 0 ] && grep -q 'merge-queue' "$TMP/log" && ok "  … its exit 3 is logged and the runner keeps going" || fail "merge-queue exit 3 ended the runner: rc=$r"
 export MQ_RC=79; ( mq_cycle ); r=$?

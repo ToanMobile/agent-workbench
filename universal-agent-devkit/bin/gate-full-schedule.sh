@@ -118,8 +118,7 @@ data = {
     "StandardOutPath": os.path.join(log_dir, "launchd.out.log"),
     "StandardErrorPath": os.path.join(log_dir, "launchd.err.log"),
     "RunAtLoad": False,
-    "ProcessType": "Background",
-}
+}   # nice -n 10 ở ProgramArguments là chỗ DUY NHẤT đặt mức nice; không ProcessType=Background (#696: launchd hạ tiếp CPU/IO của job)
 tmp = plist + ".tmp"
 with open(tmp, "wb") as f:
     plistlib.dump(data, f)

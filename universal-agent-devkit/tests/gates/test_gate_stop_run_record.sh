@@ -141,7 +141,8 @@ two
 run_gate; delta                       # records both
 echo "// edit" >> "$R/app/src/main/kotlin/pkg/Lonely.kt"
 run_gate FAIL1=1; delta; d="$D"; rc="$RC"
-[ "$rc" = 1 ] && [ "$d" = "1:1" ] && ok "A7a: a FAIL on new content: exit 1, both suites ran (runs $d)" || bad "A7a: exit $rc runs $d (want 1, 1:1)"
+# #647 (fail-fast): REG-1 FAILs, so REG-2 is not started (UNTESTED): runs 1:0, not 1:1.
+[ "$rc" = 1 ] && [ "$d" = "1:0" ] && ok "A7a: a FAIL on new content: exit 1, REG-1 ran and REG-2 was stopped by fail-fast (runs $d)" || bad "A7a: exit $rc runs $d (want 1, 1:0)"
 [ ! -e "$GD/budget_pass.json" ] && ok "A7b: a run with a FAILED suite leaves no record" || bad "A7b: a record exists after a FAIL"
 run_gate; delta; d="$D"
 [ "$d" = "1:1" ] && ok "A7c: the next run on that content re-uses nothing (runs $d)" || bad "A7c: runs $d (want 1:1)"
@@ -507,9 +508,10 @@ else bad "B6: rc=$rc runs=$d real gate runs $before -> $(real_runs) (want a new 
 # the controls: the gate cache off brings back the old behaviour of both
 age_reminder 400
 hookstop s-a "$TMP/sA.jsonl" FAIL1=1 DEVKIT_GATE_CACHE=0; delta; d="$D"
-if [ "$d" = "1:1" ] && cat "$TMP/out" "$TMP/err" | grep -q "FAIL"; then
-  ok "B5 control: DEVKIT_GATE_CACHE=0: the suites start (runs $d) and the failure is reported"
-else bad "B5 control: runs=$d out='$(head -c 200 "$TMP/out")' err='$(head -c 200 "$TMP/err")' (want 1:1 and a FAIL line)"; fi
+# #647 (fail-fast): REG-1 fails, so REG-2 is not started (UNTESTED): runs 1:0, not 1:1. The control still shows the cache-off run starts REG-1 and reports the FAIL.
+if [ "$d" = "1:0" ] && cat "$TMP/out" "$TMP/err" | grep -q "FAIL"; then
+  ok "B5 control: DEVKIT_GATE_CACHE=0: REG-1 starts (runs $d, REG-2 stopped by fail-fast #647) and the failure is reported"
+else bad "B5 control: runs=$d out='$(head -c 200 "$TMP/out")' err='$(head -c 200 "$TMP/err")' (want 1:0 and a FAIL line)"; fi
 hookstop s-a "$TMP/sA.jsonl" REGRESSION_GATE_TOUCHED_RECHECK_S=0 DEVKIT_GATE_CACHE=0; delta; d="$D"
 [ "$d" = "1:1" ] && ok "B6 control: RECHECK_S=0 with the gate cache off starts the suites again (runs $d)" || bad "B6 control: runs=$d (want 1:1)"
 echo "// one more byte" >> "$H/app/src/main/kotlin/pkg/Lonely.kt"

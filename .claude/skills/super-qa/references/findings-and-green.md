@@ -117,8 +117,8 @@ If any of those fire → cell is `[b]` → bug filed.
 
 **DevKit repo** (it has `.agents/devkit/bin/post-fix-gate.py`): a QA pass also needs, on the branch
 head QA tested after `git merge --no-edit origin/<base>`, the target tests green and
-`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief` (scoped, not `--full`: it escalates by itself
-on a core file; the merge point runs `--scoped` on the merged tree, the nightly `gate-full` runs `--full`) at exit 0, which
+`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief` (scoped, not `--full`: it never escalates
+(#741), a core file runs the tests that reach it; the merge point runs `--scoped` on the merged tree, the nightly `gate-full` runs `--full`) at exit 0, which
 writes the scoped receipt (and the task receipt); and, when app/UI source changed on a
 profile with a screen, a fresh `python3 .agents/devkit/bin/proof-capture.py` PNG. This holds when `/super-qa`
 runs on its own, outside the board's worker preamble. Paste the gate's last line, the head SHA and the PNG into

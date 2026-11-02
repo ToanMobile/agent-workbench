@@ -103,6 +103,9 @@ function findAnyUuid(obj, depth = 0) {
 // ---- duong agy (model cu the) ---------------------------------------------------------------------------------------------
 const AGY_INIT_WAIT_MS = 60000;
 const AGY_RUNS_KEEP_MS = 7 * 24 * 3600 * 1000;
+/** The luot trong env cua agy (= ten file chay agy-runs/<the>.jsonl, muc so dang ky giu o `out`): moi lenh cua agent mang theo no. */
+const RUN_ENV = 'ANTIGRAVITY_PM_RUN';
+const runOf = (out) => (typeof out === 'string' && out ? path.basename(out, '.jsonl') : null);   // muc sua tay sai kieu: khong co the
 
 /** Binary agy. ANTIGRAVITY_PM_AGY dat thi CHI dung no (khong roi sang cho khac): biet chinh xac dang goi binary nao. */
 export function agyPath() {
@@ -257,7 +260,7 @@ const selfTag = () => { SELF_TAG = SELF_TAG || procTag(process.pid); return SELF
 // May ban (load1 > 100, #657) lam ps tra loi > 1,5 s: timeout cu coi cham la loi. Chinh duoc qua env, KEP o PS_TIMEOUT_MAX_MS: ngan sach ps duoi khoa
 // (<= 4 lan) x tran phai < LOCK_STALE_MS (4 x 7 s = 28 s < 40 s); muon tran cao hon thi nang LOCK_STALE_MS trong code (PM khac xet khoa cu bang hang so cua no, khong bang env cua chu khoa).
 const PS_TIMEOUT_MAX_MS = 7000;
-export const psTimeoutMs = () => { const n = Number(process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS); return Number.isFinite(n) && n > 0 ? Math.min(n, PS_TIMEOUT_MAX_MS) : 5000; };
+export const psTimeoutMs = () => { const n = Math.trunc(Number(process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS)); return Number.isFinite(n) && n > 0 ? Math.min(n, PS_TIMEOUT_MAX_MS) : 5000; };
 
 function procTag(pid) {
   if (!pid) return null;
@@ -349,6 +352,15 @@ function assertProjectDir(cwd) {
   if (!fs.existsSync(cwd)) throw new AgentApiError(`thu muc project ${cwd} khong con ton tai (da doi ten hoac xoa?): agy khong chay duoc o do`);
 }
 
+// #734: bien messaging cua phien Claude dang chay PM (MCP stdio thua env cua phien) khong duoc xuong agy va moi lenh cua agent
+// (--dangerously-skip-permissions). Danh sach TUONG MINH, khong loc theo mau: bo nham bien agy can thi luot agy hong.
+const CLAUDE_SESSION_ENV = ['CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_CODE_MESSAGING_SOCKET'];
+function agyEnv(outFile) {
+  const env = { ...process.env, [RUN_ENV]: runOf(outFile) };
+  for (const k of CLAUDE_SESSION_ENV) delete env[k];
+  return env;
+}
+
 /**
  * Chay `agy ...` tach nhom, cho den khi no in su kien `init` (co conversation_id + cwd that) roi de no chay tiep den het luot.
  * stdout+stderr vao 1 file 0600 trong agy-runs/ (dong khong phai JSON bi bo qua khi doc). Cho init ma server bi tat (SIGTERM) thi don luon nhom con.
@@ -364,13 +376,14 @@ function agyStart(args, cwd, onSpawn) {
   const fd = fs.openSync(outFile, 'a', 0o600);
   let child;
   try {
-    child = spawn(agy, args, { cwd, detached: true, stdio: ['ignore', fd, fd] });
+    // the luot: agy chuyen env cua no cho moi lenh cua agent => lenh sot lai sau luot nhan ra duoc (reapTurnLeftovers)
+    child = spawn(agy, args, { cwd, detached: true, stdio: ['ignore', fd, fd], env: agyEnv(outFile) });
   } finally {
     fs.closeSync(fd);
   }
   trackChild(child.pid);
   if (onSpawn && child.pid) {
-    try { onSpawn(child); } catch (e) {
+    try { onSpawn(child, outFile); } catch (e) {
       killGroup(child.pid);   // loi = nhom da het
       untrackChild(child.pid);
       throw e;
@@ -494,6 +507,123 @@ function reapOrphanAgy() {
   } catch (err) { logStderr(`don agy mo coi: khong don duoc (${err.message})`); }
 }
 
+// Daemon / app dung chung ma lenh cua agent (hay MCP cua agy) hay khoi dong: build, thiet bi, IDE (`antigravity .`, Unity), daemon
+// codebase-memory cua phien khac co the dang dung no => giu, du mang the luot da xong. Neo theo ten file thuc thi (argv[0]) hoac dau hieu
+// daemon trong argv, khong theo chuoi bat ky. App GUI = file chinh `*.app/Contents/MacOS/<ten>`, TRU Python: python3 cua Homebrew /
+// python.org chay duoi ten `.../Python.app/Contents/MacOS/Python` (dung hinh tien trinh `while True` 30/10). java cua daemon: argv[0] khong dau cach,
+// hoac nam duoi `<thu muc>.app/Contents/` (JBR cua `Android Studio.app`: ten bundle co dau cach, #734). Dau cach chi duoc o doan ten bundle
+// (khong vuot `/`) nen tham so co `/` dung truoc khong bi khop; hai nhom lap co tran ({0,32}, {0,16}) de quet argv dai (agent dat, chay dong bo
+// tren event loop cua PM) khong backtrack bac hai (review r19: 960 KB `a.app/Contents/` lap lai 132 s => ~1 ms).
+const SHARED_BIN_RE = /^(emulator|qemu-system-[\w-]+|netsimd|crashpad_handler|watchman)$/;
+const SHARED_ARGV_RE = /^(?:\S*|\/(?:[^\/ ]+\/){0,32}[^\/]+\.app\/Contents\/(?:[^\s\/]+\/){0,16})\bjava\s.*\b(GradleDaemon|KotlinCompileDaemon)\b|^(\S*\/)?adb\s.*\bfork-server\b|\s--cbm-daemon-internal\b|^.*?\.app\/Contents\/MacOS\/(?!Python)/;
+export const sharedDaemon = (argv) => SHARED_BIN_RE.test(path.basename(argv.split(/\s/)[0])) || SHARED_ARGV_RE.test(argv);
+const LSTART_RE = '(\\w{3} \\w{3} [ \\d]\\d \\d\\d:\\d\\d:\\d\\d \\d{4})';
+const REAP_MAX = 20;
+const psEnv = () => ({ ...process.env, LC_ALL: 'C', TZ: 'UTC' });   // lstart cung khuon voi procTag
+
+// #768: `-E` (in env sau argv) la co cua ps BSD/macOS; tren CI ubuntu `/bin/ps -axwwE ...` that bai (31/10) nen moi lan don bi bo qua.
+// procps (Linux) in env sau argv bang co BSD `e`.
+const PS_ENV_ARGS = process.platform === 'linux' ? ['axwwe'] : ['-axwwE'];
+
+/**
+ * Ung vien (PPID 1) mang the luot: mot lan ps. Cot command cua `ps -E` noi argv + env bang dau cach, khong phan biet duoc: o day chi loc
+ * tho; reapTurnLeftovers cat argv (procNow) roi moi xet bien o PHAN ENV.
+ */
+function orphanAgentProcs() {
+  const text = execFileSync(process.env.ANTIGRAVITY_PM_PS || '/bin/ps', [...PS_ENV_ARGS, '-o', 'pid=,ppid=,lstart=,command='],
+    { encoding: 'utf8', timeout: psTimeoutMs(), maxBuffer: 64 * 1024 * 1024, env: psEnv() });
+  const re = new RegExp(`^\\s*(\\d+)\\s+1\\s+${LSTART_RE}\\s+(.*)$`);
+  const procs = [];
+  for (const line of text.split('\n')) {
+    const m = re.exec(line);
+    if (!m || Number(m[1]) === process.pid || !/(?:^|\s)ANTIGRAVITY_AGENT=1(?=\s|$)/.test(m[3])) continue;
+    const run = new RegExp(`(?:^|\\s)${RUN_ENV}=([\\w.-]+)(?=\\s|$)`).exec(m[3])?.[1];
+    if (run) procs.push({ pid: Number(m[1]), tag: m[2], run, full: m[3] });
+  }
+  return procs;
+}
+
+/** Env luc exec (phan sau argv) co CA HAI bien: lenh cua agent (agy dat ANTIGRAVITY_AGENT=1) thuoc dung luot `run`. */
+const agentEnvOf = (env, run) => { const w = env.split(/\s+/); return w.includes('ANTIGRAVITY_AGENT=1') && w.includes(`${RUN_ENV}=${run}`); };
+
+/** lstart + argv cua mot pid (ps khong co -E: chi argv, env cua agent co the chua token); null = da thoat / doc loi => giu tien trinh. */
+function procNow(pid) {
+  try {
+    const out = execFileSync(process.env.ANTIGRAVITY_PM_PS || '/bin/ps', ['-ww', '-o', 'lstart=,command=', '-p', String(pid)],
+      { encoding: 'utf8', timeout: psTimeoutMs(), env: psEnv() });
+    const m = new RegExp(`^${LSTART_RE}\\s+(.*)$`).exec(out.trim());
+    return m ? { tag: m[1], cmd: m[2] } : null;
+  } catch (e) {
+    // pid vua thoat: ps exit 1, khong in gi (nhu procTag); loi khac (timeout, khong co ps) ghi ra roi giu tien trinh
+    if (!(e.status === 1 && !String(e.stdout || '').trim())) logStderr(`don lenh sot lai: giu pid ${pid} (ps: ${e.message.split('\n')[0]})`);
+    return null;
+  }
+}
+
+/** Luot cua muc so dang ky da xong VA do PM nay (hoac PM da chet) mo. Khong biet (ps loi, thieu chu) => false: giu. */
+function turnDoneAndOurs(id, e) {
+  try {
+    if (entryBusy(e)) return false;   // agy cua luot con song / PM dang giu cho
+    if (!e.ownerPid || !e.ownerTag) return false;
+    if (e.ownerPid === process.pid && e.ownerTag === selfTag()) return true;
+    return !sameProcess(e.ownerPid, e.ownerTag);   // PM khac con song: no tu don lenh cua luot no mo
+  } catch (err) { logStderr(`don lenh sot lai: giu luot ${id} (${err.message.split('\n')[0]})`); return false; }
+}
+
+/**
+ * Dung lenh cua agent con song sau khi luot agy cua no da xong (#697: `while True` mo coi dot 1 loi 18 phut). Chi dung DUNG pid: env luc exec
+ * (phan sau argv) co ANTIGRAVITY_AGENT=1 + the luot cua mot muc so dang ky (turnDoneAndOurs), PPID 1, lstart chua doi ngay truoc khi giet,
+ * khong phai daemon dung chung. Moi loi chi ghi stderr (luot dang mo van tiep tuc). Tra ve [{ pid, conversationId, cmd }] da dung; cmd chi la
+ * ten file thuc thi (argv day du co the chua token: `curl -H 'Authorization: ...'`).
+ */
+// ponytail: muc cua luot truoc bi luot moi ghi de (luot do do PM khac con song mo) / bi don khoi so (>500) / muc cho bi go (agy chet truoc
+// init, reapOrphanAgy) thi the cua no mat => lenh sot lai cua luot do khong bi dung; con cua lenh mo coi (PPID khac 1) bi dung o lan don sau;
+// toi da REAP_MAX lan hoi ps tung pid mot lan don. Nang cap khi thay xay ra.
+export function reapTurnLeftovers() {
+  const turns = new Map();   // the luot -> [id muc, muc]
+  let procs;
+  try {
+    for (const [id, e] of Object.entries(readAgyRegistry())) { const run = runOf(e?.out); if (run) turns.set(run, [id, e]); }
+    if (!turns.size) return [];   // so chua co luot nao mang the: khong ton lan ps (task IDE, lan mo agy dau tien)
+    procs = orphanAgentProcs();
+  } catch (e) { logStderr(`don lenh sot lai: bo qua (${e.message.split('\n')[0]})`); return []; }
+  const verdict = new Map();   // the luot -> id hoi thoai neu duoc don, null neu giu
+  const done = [];
+  let asked = 0;   // ps tung pid: chan tren ca khi pid bi giu (daemon dung chung song mai, moi pm_status hoi lai)
+  for (const p of procs) {
+    if (asked >= REAP_MAX) break;
+    if (!verdict.has(p.run)) {
+      const hit = turns.get(p.run);
+      verdict.set(p.run, hit && turnDoneAndOurs(...hit) ? hit[0] : null);
+    }
+    const conversationId = verdict.get(p.run);
+    if (!conversationId) continue;
+    asked += 1;
+    const now = procNow(p.pid);
+    if (!now || now.tag !== p.tag) continue;   // da thoat / pid bi dung lai
+    // bien phai nam o phan ENV: argv co the trich nguyen chuoi do (prompt cua agy, log) ma env khong co
+    if (!p.full.startsWith(now.cmd) || !agentEnvOf(p.full.slice(now.cmd.length), p.run) || sharedDaemon(now.cmd)) continue;
+    const cmd = path.basename(now.cmd.split(/\s/)[0]);
+    try { process.kill(p.pid, 'SIGKILL'); } catch (e) {
+      if (e.code !== 'ESRCH') logStderr(`don lenh sot lai: khong dung duoc pid ${p.pid} (${e.message})`);
+      continue;
+    }
+    logStderr(`don lenh sot lai sau luot agy da xong (hoi thoai ${conversationId}): da dung pid ${p.pid}: ${cmd}`);
+    done.push({ pid: p.pid, conversationId, cmd });
+  }
+  return done;
+}
+
+/**
+ * Don dinh ky trong server: agent ghi plan-review.json / result.json TRUOC khi agy thoat, PM doc xong roi di lam viec khac (30/10: gate-full
+ * 18 phut, tien trinh mo coi chay suot) thi lan don tiep theo van den sau toi da everyMs. Timer unref (server thoat binh thuong). Tra ve timer.
+ */
+export function startLeftoverReaper(everyMs = 60000) {
+  const timer = setInterval(() => reapTurnLeftovers(), everyMs);
+  timer.unref();
+  return timer;
+}
+
 /**
  * Go cac muc cho CUA CHINH PM nay khoi so dang ky (duoi khoa; chu = pid + dau van tay, selfTag da nho nen khong them ps). Khoa `pending-<pid>` chi noi len
  * pid agy: pid dung lai thi muc duoi khoa do co the la cua PM song khac (PM do chet truoc init se de lai agy khong ai theo doi). Chi ghi lai khi co muc bi go.
@@ -522,9 +652,10 @@ async function agyNewConversation({ prompt, model, cwd }) {
   const root = fs.realpathSync(cwd);
   readAgyRegistry();   // hong thi nem loi NGAY, truoc khi sinh agent: sau khi spawn khong con cach nao theo doi no
   // ponytail: agy mo coi chi bi dung khi co lan mo hoi thoai agy ke tiep (cua PM nao cung duoc; PM chi gui tin thi khong don); nang cap: don them luc
-  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa): thuong khoang chuc ms, xau nhat 5 s
-  // (timeout cua procTag) + 3 s (cho khoa); PM chet trong do thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
+  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa): thuong khoang chuc ms, xau nhat 7 s
+  // (tran timeout cua procTag, mac dinh 5 s) + 3 s (cho khoa); PM chet trong do thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
   reapOrphanAgy();
+  reapTurnLeftovers();
   // ps cua chinh PM tinh MOT lan, TRUOC spawn: hong (nem) hoac khong in gi (null: entryBusy / reaper khong nhan ra chu) thi tu choi, chua co agy nao chay
   let ownerTag;
   try { ownerTag = selfTag(); } catch (e) { throw new AgentApiError(`chua sinh agy nao: ${e.message}`); }
@@ -532,8 +663,8 @@ async function agyNewConversation({ prompt, model, cwd }) {
   let pending = null;
   let r;
   try {
-    r = await agyStart(agyArgs(model, ['--print', String(prompt)], agyMaySkipPermissions(root)), root, (child) => {
-      saveAgyEntry(pendingKey(child.pid), { pending: true, model, cwd: root, pid: child.pid, pidTag: procTag(child.pid), ownerPid: process.pid, ownerTag, at: nowIso() });
+    r = await agyStart(agyArgs(model, ['--print', String(prompt)], agyMaySkipPermissions(root)), root, (child, out) => {
+      saveAgyEntry(pendingKey(child.pid), { pending: true, model, cwd: root, pid: child.pid, pidTag: procTag(child.pid), ownerPid: process.pid, ownerTag, out, at: nowIso() });
       pending = pendingKey(child.pid);
     });
   } catch (e) {
@@ -544,7 +675,7 @@ async function agyNewConversation({ prompt, model, cwd }) {
     withRegistryLock(() => {
       const reg = readAgyRegistry();
       delete reg[pending];
-      putAgyEntry(reg, r.conversationId, { model, cwd: root, workspace: r.workspace, pid: r.pid, pidTag: r.pidTag, starting: false, out: r.out, at: nowIso() });
+      putAgyEntry(reg, r.conversationId, { model, cwd: root, workspace: r.workspace, pid: r.pid, pidTag: r.pidTag, ownerPid: process.pid, ownerTag, starting: false, out: r.out, at: nowIso() });
     });
   } catch (e) {
     const err = stopUntracked(r, e);
@@ -580,19 +711,25 @@ function reserveTurn(conversationId) {
 
 async function agySendMessage(conversationId, content) {
   requireAgy();
+  reapTurnLeftovers();   // TRUOC reserveTurn: muc cua luot truoc (the + agy da thoat) con trong so, chua bi luot moi ghi de
   const entry = reserveTurn(conversationId);
   let r = null;
   try {
     const skip = agyMaySkipPermissions(entry.cwd);
     // Khong co --model thi agy resume bang model mac dinh, khong phai model cua hoi thoai (do 14/10/2026): luon truyen model da luu.
+    // the luot (out) + chu luot ghi CUNG lan voi pid agy: reapTurnLeftovers khong bao gio ghep the luot cu voi agy cua luot moi
     r = await agyStart(agyArgs(entry.model, ['--conversation', conversationId, '--print', String(content)], skip), entry.cwd,
-      (child) => saveAgyEntry(conversationId, { pid: child.pid, pidTag: procTag(child.pid), starting: true, reservation: false, reservedAt: nowIso() }));
+      (child, out) => saveAgyEntry(conversationId, {
+        pid: child.pid, pidTag: procTag(child.pid), out, ownerPid: process.pid, ownerTag: selfTag(), starting: true, reservation: false, reservedAt: nowIso(),
+      }));
     saveAgyEntry(conversationId, { pid: r.pid, pidTag: r.pidTag, starting: false, reservation: false, out: r.out, lastSentAt: nowIso(), workspace: r.workspace || entry.workspace });
     return { ok: true, raw: `agy pid ${r.pid}`, parsed: { pid: r.pid, pidTag: r.pidTag, out: r.out } };
   } catch (e) {
     const failure = r ? stopUntracked(r, e) : e;
     try {
-      saveAgyEntry(conversationId, { pid: entry.pid || null, pidTag: entry.pidTag || null, starting: false, reservation: false });   // nha cho: luot khong mo duoc
+      saveAgyEntry(conversationId, {   // nha cho: luot khong mo duoc; the luot + chu tro lai cua luot truoc (cung cap voi pid cu)
+        pid: entry.pid || null, pidTag: entry.pidTag || null, out: entry.out ?? null, ownerPid: entry.ownerPid ?? null, ownerTag: entry.ownerTag ?? null, starting: false, reservation: false,
+      });
     } catch (e2) {
       logStderr(`khong nha duoc cho giu cua hoi thoai agy ${conversationId}: ${e2.message}`);   // khong che loi goc
     }

@@ -512,9 +512,9 @@ def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = ""
 def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: bool = False) -> bool:
     """True when this test existed at `since`, a LOCAL-ONLY commit of `since..HEAD` (one not
     reachable from `upstream`; no upstream → every range commit) touches it, and its change to
-    the working tree is not append-only — counted from the latest range commit touching it whose
-    message holds a `Test-approved-by:` line (that commit's content was audited), else from
-    `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate.
+    the working tree is not append-only — counted from the latest range commit (any path, an empty
+    one included) whose message holds a `Test-approved-by:` line that push_gate accepts and whose
+    auditedHead is at or after `since` (that tree was audited), else from `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate.
     runner: a suite runner script (A2), judged by test_change_is_append_only(runner=True)."""
     root = str(get_repo_root())
     if object_info(since, repo_path) is None:
@@ -524,16 +524,22 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
                            capture_output=True, text=True)
     if local.returncode == 0 and not local.stdout.strip():
         return False                                  # only upstream commits touch it
+    # Không pathspec (#630): luồng audit #605 kết thúc bằng một commit RỖNG mang trailer, `-- <path>` không bao giờ liệt kê nó
+    # (_trailer_cross_review cũng quét cả range). Đổi lại phải kiểm auditedHead sau `since` như _trailer_cross_review.
     res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
-                          "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD",
-                          "--", repo_path], capture_output=True, text=True)
+                          "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD"],
+                         capture_output=True, text=True)
     if res.returncode != 0:
         return True                                   # cannot read the range: fail closed
     # The line counts only as push_gate counts it (2026-10-09): a real trailer whose task has antigravity-pm's audit pass
     # record; a line the agent writes itself is no audit (tests/gates/test_gate_since_test_edit.sh).
     base = since
     for sha in res.stdout.split():                    # newest first
-        if _push_gate().approved(root, f"{sha}^!")[0]:
+        ok, note = _push_gate().approved(root, f"{sha}^!")
+        m = re.search(r"antigravity\s+(\S+)", note or "") if ok else None
+        head = _push_gate().audited_head(root, m.group(1)) if m else None
+        # auditedHead trước `since` (task cũ, commit rỗng ở nhánh phụ gộp vào range) kéo base lùi về cây yếu cũ: không duyệt.
+        if head and _push_gate().head_after(root, since, head):
             base = sha
             PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
             break
@@ -711,6 +717,17 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
         return {}
 
 
+def _main_checkout_root(root) -> Path:
+    """The main checkout of the repository `root` belongs to (the parent of its `.git` common dir); `root` itself when it is
+    the main checkout or git cannot say. #628 AC2."""
+    try:
+        common = subprocess.run(["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return Path(root)
+    return Path(os.path.realpath(str(Path(common).parent))) if common and Path(common).name == ".git" else Path(root)
+
+
 def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> tuple:
     """(still_blocking, approved): an edited existing test approved by the user's answer or by a CROSS-REVIEW (#605).
     Cross-review: .claude/audit-gate/approved_tests.json = {"approvals": [{path, sha256, reviewer, author, task_id, reason}]},
@@ -752,7 +769,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
         try:
             with open(appr_file, encoding="utf-8") as afh:
                 saved = json.load(afh)
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, RecursionError) as e:   # RecursionError: JSON lồng quá sâu, không phải ValueError
             # fail-closed: file duyệt không đọc được thì không duyệt gì, và nói rõ cho agent
             saved = None
             APPROVAL_REJECTS.extend((f, _cur_sha(f), f"approved_tests.json không đọc được ({type(e).__name__})") for f in mtimes)
@@ -879,14 +896,17 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     # ponytail: duyệt được nhớ theo (đường dẫn, nội dung) trong phạm vi transcript còn quét được, không gắn với blob HEAD gốc; gắn base blob nếu việc yếu hoá lại test sau khi revert thành vấn đề
     hash_file = root / ".claude" / "audit-gate" / "approved_hashes.json"
     saved_hashes = {}
-    if hash_file.is_file():
-        try:
-            with open(hash_file, "r", encoding="utf-8") as hf:
-                saved_hashes = json.load(hf)
-                if not isinstance(saved_hashes, dict):
-                    saved_hashes = {}
-        except Exception:
-            saved_hashes = {}
+    # #628 AC2: .claude/audit-gate/ is git-ignored, so a fresh linked worktree starts without the hashes of the answer the user
+    # gave in the main checkout. The hash binds the answer to the file's content (sha256), never to mtime: read the main checkout's too.
+    for hf_path in (hash_file, _main_checkout_root(root) / ".claude" / "audit-gate" / "approved_hashes.json"):
+        if hf_path.is_file():
+            try:
+                with open(hf_path, "r", encoding="utf-8") as hf:
+                    loaded = json.load(hf)
+                if isinstance(loaded, dict):
+                    saved_hashes = {**loaded, **saved_hashes}
+            except Exception:
+                pass
 
     new_hashes = saved_hashes.copy()
     
@@ -1499,6 +1519,112 @@ def sibling_receipts(project_dir):
     return [p for _, p in sorted(found, reverse=True)[:SIBLING_RECEIPTS_MAX]]
 
 
+def scoped_store_receipt(project_dir, fp):
+    """Đường dẫn `<common>/postfix-gate/scoped_receipts/<fp>.json` khi mục store scoped của đúng cây `fp` là file thường (#785), None nếu không."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - module cùng thư mục bin/
+        tdir = tree_fp.tree_receipt_dir(project_dir)
+    except (ImportError, OSError, subprocess.SubprocessError):
+        return None
+    if not tdir or not re.fullmatch(r"[0-9a-f]{24}", fp or ""):
+        return None
+    p = os.path.join(os.path.dirname(tdir), tree_fp.SCOPED_STORE_DIR, fp + ".json")
+    try:
+        return p if stat.S_ISREG(os.lstat(p).st_mode) else None   # chỉ file thường (INSTINCT-040)
+    except OSError:
+        return None
+
+
+def _scoped_reuse_max_s():
+    """#803: hạn tuổi (giây) của PASS mượn từ biên nhận scoped: DEVKIT_GATE_CACHE_MAX_S (mặc định 6 h); rác, nan, inf hay ≤ 0 ⇒ None (không mượn)."""
+    try:
+        v = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
+    except ValueError:
+        return None
+    return v if math.isfinite(v) and v > 0 else None
+
+
+def cached_scoped_pass(project_dir, matrix_arg, fp, scoped_decision, path=None, why_out=None):
+    """#785: đọc và xác thực biên nhận scoped từ store chung (`<common>/postfix-gate/scoped_receipts/<fp>.json`).
+    Chỉ trả dict biên nhận khi khớp toàn bộ: scope=='scoped', exit==0, không carried_from, còn trong hạn DEVKIT_GATE_CACHE_MAX_S theo tested_at,
+    cùng result_format + gate_sha + matrix_sha, cùng dấu vân tay cây fp, không có --full đỏ trên cây, cùng local_sha, và tập test quyết định
+    hiện tại nằm trọn trong tập mà biên nhận đã kiểm."""
+    def _reject(msg):
+        if isinstance(why_out, list):
+            why_out.append(msg)
+        return None
+    if not isinstance(scoped_decision, dict):
+        return _reject("not_found")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - module cùng thư mục bin/
+        fp = fp or tree_fp.tree_fingerprint(project_dir)
+        path = path or scoped_store_receipt(project_dir, fp)
+        if not path or not stat.S_ISREG(os.lstat(path).st_mode):
+            return _reject("not_found")
+        r = _load_state_json(path)
+        max_s = _scoped_reuse_max_s()
+    except (ImportError, OSError, ValueError, TypeError, OverflowError, RecursionError):
+        return _reject("not_found")
+    if not isinstance(r, dict) or not isinstance(r.get("tests"), list) or not r["tests"]:
+        return _reject("malformed")
+    if r.get("scope") != "scoped":
+        return _reject("malformed")
+    if r.get("exit") != 0 or isinstance(r.get("exit"), bool) or r.get("carried_from") or not isinstance(r.get("project"), str):
+        return _reject("exit_or_carried")
+    def _time_ok(v):
+        return not isinstance(v, bool) and isinstance(v, (int, float)) and -1e15 < v < 1e15
+    tested, now = r.get("tested_at"), time.time()
+    if max_s is None or not _time_ok(tested) or tested > now + 60 or now - tested > max_s:
+        return _reject("ttl")
+    if any(not isinstance(x, dict) or not (x.get("ran_at") is None or _time_ok(x.get("ran_at"))) for x in r["tests"]):
+        return _reject("malformed")
+    def _str_or_none(v):
+        return v is None or isinstance(v, str)
+    if any(not isinstance(x.get("id"), str) or not all(_str_or_none(x.get(k)) for k in ("status", "log", "duration", "full_command")) for x in r["tests"]):
+        return _reject("malformed")
+    if not all(isinstance(r.get(k, []), list) and all(isinstance(x, str) for x in r.get(k, []))
+               for k in ("scoped_tests", "smoke", "core_smoke", "not_run")):
+        return _reject("malformed")
+    if r.get("untested") is not None and not (isinstance(r["untested"], list) and all(isinstance(u, str) for u in r["untested"])):
+        return _reject("malformed")
+    r_base, cur_base = r.get("base") or "", scoped_decision.get("base_sha") or ""
+    if not (re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", r_base) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", cur_base)):
+        return _reject("malformed")
+    if r.get("result_format") != RESULT_FORMAT:
+        return _reject("result_format")
+    if r.get("gate_sha") != _sha_file(__file__):
+        return _reject("gate_sha")
+    if r.get("matrix_sha") != _sha_file(find_matrix_path(matrix_arg)):
+        return _reject("matrix_sha")
+    if not fp or r.get("fingerprint") != fp:
+        return _reject("fp")
+    if _full_red_on_tree(project_dir, fp):
+        return _reject("full_red")
+    want_ts = set(scoped_decision.get("tests") or []) | set(scoped_decision.get("smoke") or [])
+    have_ts = set(r.get("scoped_tests") or []) | set(r.get("smoke") or [])
+    want_cs = set(scoped_decision.get("core_smoke") or [])
+    have_cs = set(r.get("core_smoke") or [])
+    have_nr = set(r.get("not_run") or [])
+    want_nr = set(scoped_decision.get("not_run") or [])
+    if not (want_ts <= have_ts and want_cs <= have_cs and have_nr <= want_nr):
+        return _reject("superset")
+    if r.get("local_sha") in (None, "?"):
+        return _reject("local_sha")
+    regen = r.get("local_regen") or []
+    if not (isinstance(regen, list) and all(isinstance(p, str) for p in regen)):
+        return _reject("local_sha")
+    try:
+        regen = regen_allowed(regen)
+    except Exception:
+        return _reject("local_sha")
+    want_local = local_state_sha(project_dir, regen) if regen else local_state_sha(project_dir)
+    if r.get("local_sha") != want_local:
+        return _reject("local_sha")
+    return r
+
+
 # Modes that ran a subset of a suite's command, or nothing: never a full PASS — no PASS row in
 # the checklist, no full-pass receipt (audit 2026-09-28: a RESOURCE run that ran nothing and a
 # PACKAGE subset were both stamped as a full PASS, and a later --full reused them).
@@ -1607,13 +1733,18 @@ def head_and_dirty(project_dir):
     # Paths decoded with surrogateescape, as everywhere else: a non-UTF-8 name crashed text=True here, AFTER the gate
     # printed PASS (A8, 2026-10-09). Such a key reaches the receipt as a \udcXX escape (json's ensure_ascii).
     run = lambda *a: subprocess.run(["git", "-C", str(project_dir), *a], capture_output=True)
-    top, head = run("rev-parse", "--show-toplevel"), run("rev-parse", "HEAD")
-    if top.returncode or head.returncode:
+    top, head, pre = run("rev-parse", "--show-toplevel"), run("rev-parse", "HEAD"), run("rev-parse", "--show-prefix")
+    if top.returncode or head.returncode or pre.returncode:   # #691: không biết tiền tố project thì không đoán path ghim nằm đâu
         return None, {}
     top = os.fsdecode(top.stdout.strip())
+    prefix = os.fsdecode(pre.stdout.rstrip(b"\r\n"))   # không .strip(): tên thư mục con có thể bắt đầu bằng khoảng trắng
     names = sorted({p for args in (("diff", "--name-only", "-z", "HEAD"), ("ls-files", "-o", "--exclude-standard", "-z"))
                     for p in subprocess.run(["git", "-C", top, *args], capture_output=True).stdout
                     .decode("utf-8", errors="surrogateescape").split("\0") if p})
+    # #691: path ghim (tree_fp.HEAD_PINNED, kể cả con của nó) không vào `dirty`: tree_fingerprint() đã lấy bản của HEAD, push_gate dựng lại
+    # cây từ head+dirty nên để lại nó là fp dựng lại lệch fp đã ghi và biên nhận hợp lệ bị bác
+    import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    names = [p for p in names if not tree_fp.head_pinned(p, prefix)]
     present = [p for p in names if os.path.isfile(os.path.join(top, p))]
     shas = subprocess.run(["git", "-C", top, "hash-object", "--stdin-paths"], capture_output=True,
                           input="\n".join(present).encode("utf-8", "surrogateescape")).stdout.decode().split() if present else []
@@ -1716,7 +1847,8 @@ def _tree_store(tree_fp, project_dir, fp, data=None, create=True, kind=TREE_STOR
 
 
 def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None,
-                            untested=None, partial=False, locked=True, keep_same=False, refresh_only=False, scoped=None):
+                            untested=None, partial=False, locked=True, keep_same=False, refresh_only=False, scoped=None,
+                            write_store=True):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
     tree). hooks/proof_gate.sh accepts an XONG only with a receipt from this turn whose
@@ -1736,7 +1868,9 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     content as it is (what the session owes is its own gate's business); a receipt of other content is still dropped.
     refresh_only (#247): the run re-used a PASS — its tree store entry is refreshed when there, never created (see _tree_store).
     scoped (#644): a --scoped run — the same record, in scoped_pass.json + <common>/postfix-gate/scoped_receipts/ instead, with "scope": "scoped"
-    and these extra fields (the tests it ran, why); full_pass.json is left alone."""
+    and these extra fields (the tests it ran, why); full_pass.json is left alone.
+    write_store False (#785, V4-4): lượt exit 0 đã MƯỢN mục store chỉ ghi biên nhận của chính nó, không ghi mục store
+    (refresh_only vẫn ghi đè mục đang có: quyết định hẹp hơn, tested_at khác)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -1838,7 +1972,9 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
                 "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
                            "duration": t.get("duration"), "ran_at": SUITE_RAN_AT.get(t.get("id")),
                            # #645: biên nhận scoped ghi rõ suite dùng lại PASS (mode "cached", label khoá nội dung) hay chạy thật
-                           **({"mode": t.get("mode"), "label": t.get("label")} if scoped is not None else {})}
+                           # #785 (V4-1): và lệnh ma trận suite đã PASS — SCOPED-EXTRA cùng id nhưng lệnh đổi theo quyết định
+                           **({"mode": t.get("mode"), "label": t.get("label"), "full_command": t.get("full_command") or t.get("command")}
+                              if scoped is not None else {})}
                           for t in (tests or []) if t.get("command")]}
         if scoped is not None:
             data.update(scoped, scope="scoped")
@@ -1852,7 +1988,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
         os.replace(tmp, path)
-        if exit_code == 0:
+        if exit_code == 0 and write_store:
             _tree_store(tree_fp, project_dir, fingerprint, data, create=not refresh_only, kind=store_kind)
     except OSError as e:
         log_err(f"full-pass receipt not written: {e}")
@@ -3657,11 +3793,15 @@ def _int_env(name, default):
 
 
 def force_full_reason(args):
-    """Why this run must use the full commands, or None (selection allowed)."""
+    """Why this run must use the full commands, or None (selection allowed). #741: lượt --scoped (PR, merge gate, train, integrate) chỉ full
+    khi gọi tường minh — --full / --force-full (--tree HEAD của gate-full đêm đặt cả hai); POSTFIX_GATE_FULL, POSTFIX_GATE_FORCE_FULL, CI,
+    --record-lesson và quyết định scoped không bao giờ đẩy nó lên full."""
     if getattr(args, "full", False):
         return "--full"
     if getattr(args, "force_full", False):
         return "--force-full"
+    if getattr(args, "scoped", False):
+        return None
     if os.environ.get("POSTFIX_GATE_FORCE_FULL") == "1":
         return "POSTFIX_GATE_FORCE_FULL=1"
     if os.environ.get("POSTFIX_GATE_FULL") == "1":
@@ -3670,8 +3810,6 @@ def force_full_reason(args):
         return "CI"
     if getattr(args, "record_lesson", None):
         return tr("--record-lesson (nghiệm thu)", "--record-lesson (acceptance)")
-    if getattr(args, "scoped_full", None):   # #644: --scoped mà bin/scoped_gate.py quyết full (lõi, không suy ra test, đồ thị lỗi)
-        return args.scoped_full
     return None
 
 
@@ -3693,12 +3831,13 @@ def _scoped_test_cmd(path):
     return None
 
 
-def scoped_suites(decision, rules, selected, covers=None):
+def scoped_suites(decision, rules, selected, covers=None, skip=None):
     """(suite thêm vào, danh sách test của kit tương đối kit, lý do leo full hoặc None) cho một quyết định scoped.
     Chỉ tests/<thư mục>/test_*.sh và hooks/tests/*.sh của kit (dưới thư mục của runner run_impacted.sh trong ma trận) đi qua runner đó — nó
     chạy từng cái bằng bash; thêm suite runner nếu luật của nó chưa được chọn. Test khác mà không lệnh suite đã chọn nào nhắc tới: luật ma trận
     có watch_files CỤ THỂ khớp (không bắt-tất-cả, lệnh không phải runner kit) ⇒ suite của luật đó (đúng môi trường của package); không luật
-    nào ⇒ .sh thành suite SCOPED-EXTRA (một vòng bash, đỏ khi một test đỏ), py/js ⇒ lý do leo full (fail closed)."""
+    nào ⇒ .sh thành suite SCOPED-EXTRA (một vòng bash, đỏ khi một test đỏ), py/js ⇒ lý do leo full (fail closed). #741: `skip` là list thì
+    py/js đó vào `skip` (không chạy ở PR, gate-full đêm chạy) và đi tiếp, không trả lý do."""
     from scoped_gate import _catch_all  # noqa: PLC0415 - main đã nạp bin/ vào sys.path trước khi gọi decide
     covers = covers or {}
     found = []
@@ -3734,6 +3873,9 @@ def scoped_suites(decision, rules, selected, covers=None):
                     have_ids.add(test.get("id"))
             continue
         c = _scoped_test_cmd(t)
+        if c is None and skip is not None:
+            skip.append(t)
+            continue
         if c is None:
             return [], [], tr(f"không luật ma trận cụ thể nào chạy được test {t} đúng môi trường",
                               f"no specific matrix rule runs test {t} in its environment")
@@ -4362,6 +4504,11 @@ HANG_TEST_LINE = re.compile(r"(?i)test|✔|✖|▶|^ok\b|^not ok\b")
 # #427 / hang giả 27/10: dòng cuối của ảnh ps — tuổi (giây) của tiến trình CÓ CON trẻ nhất trong cả cây suite (mọi tiến trình, không chỉ
 # 12 dòng in ra). hang_report đọc dòng này: một cây con mới (một test mới) vừa bắt đầu thì suite vẫn đang tiến triển, chưa phải treo. Lá
 # không tính: vòng poll của một suite kẹt (`sleep 5` của unity-batch.sh, `grep` chờ marker) sinh lá mới liên tục mà không tiến triển.
+# #473: run_impacted.sh prints `· start <test>` when a test begins and `· done rc=N Ns <test>` when it ends: the tests of a hung suite that are
+# started and not done are the ones that hang (the last line naming a test is often a FINISHED one: the pool runs them in parallel).
+HANG_START_RE = re.compile(r"^· start (\S+)$")
+HANG_DONE_RE = re.compile(r"^· done rc=\S+ \d+s (\S+)$")
+HANG_TAIL_LINES = 3   # lines of the suite's own output kept on a TIMEOUT that is not a HANG
 HANG_YOUNGEST_LINE = "# youngest process: {} s"
 HANG_YOUNGEST_RE = re.compile(r"^# youngest process: (\d+) s$", re.M)
 PS_ETIME_RE = re.compile(r"^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$")   # cột etime của ps: [[dd-]hh:]mm:ss
@@ -6072,7 +6219,7 @@ def default_gate_slots() -> int:
 
 def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
                   cache, run_tests, force_reason, no_test_only, project_dir, git_dir, read_only=False, log_fp="", exit_reason="",
-                  slot_waits=None):
+                  slot_waits=None, reused_scoped="", reuse_miss_reason=""):
     """Append the run log line (see above). Takes only values the gate already has and reads nothing; `no_test_only` is main()'s own
     `docs_only` (every changed file passes needs_no_test()), while the logged `docs_only` is stricter: every changed file, rename source
     included, is documentation by DOC_EXT / DOC_NAMES. `log_fp` and `exit_reason` are values main() already holds: this function does not
@@ -6095,7 +6242,7 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             verdict = "FAIL"
         elif deferred_by and exit_code in (0, 5):
             verdict = "DEFERRED"
-        elif exit_code == 0 and cache and not any(s[2] is not None for s in suites):
+        elif exit_code == 0 and (cache or reused_scoped) and not any(s[2] is not None for s in suites):
             verdict = "REUSED"
             reason = "reused"   # nhánh này quyết trong logger: lý do main đưa vào không còn mô tả đúng lượt
         elif exit_code == 0:
@@ -6142,6 +6289,12 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
         }
         if _SHADOW is not None:   # #476: chỉ dữ liệu so sánh; cách chọn suite không đổi
             rec["shadow_skip"], rec["shadow_miss"] = _SHADOW
+        if getattr(args, "core_touched", None):   # #741: lượt --scoped chạm lõi (không leo full); chỉ ghi khi có, như ptc
+            rec["core_touched"] = [f[:200] for f in args.core_touched[:RUN_LOG_CHANGED_MAX]]
+        if reused_scoped:   # #785: lượt dùng lại biên nhận scoped ghi dấu vân tay cây đã mượn
+            rec["reused_scoped"] = reused_scoped
+        elif reuse_miss_reason and re.fullmatch(r"[a-z0-9_]{1,40}", str(reuse_miss_reason)):
+            rec["reuse_miss_reason"] = str(reuse_miss_reason)
         ptc = [t["ptc"] for t in regression_tests if t.get("ptc")]
         if ptc:   # #472 D: hit-rate của per_test_cache (chỉ lượt có suite run_impacted.sh chạy với sổ per-test bật)
             rec["ptc_reuse"], rec["ptc_ran"] = sum(p[0] for p in ptc), sum(p[1] for p in ptc)
@@ -6219,8 +6372,9 @@ def main():
     parser.add_argument("--force-full", action="store_true",
                         help="Force the full test commands (like --full; kept for callers that pass it: --full is no longer deferred for sibling sessions)")
     parser.add_argument("--scoped", action="store_true",
-                        help="#644: run exactly the tests bin/scoped_gate.py derives from the diff (import graph) plus the smoke group; a change "
-                             "to a core file (.agents/gate-core.txt), a file no test reaches, or a graph error escalates to the full run. "
+                        help="#644: run exactly the tests bin/scoped_gate.py derives from the diff (import graph) plus the smoke group. #741: it "
+                             "never escalates to the full run — a core file (.agents/gate-core.txt) runs the tests that reach it, a file no test "
+                             "reaches or a graph error adds the [core-smoke] group; only --full / --force-full asked for explicitly run in full. "
                              "A PASS writes scoped_pass.json, which merge, push and XONG accept for that tree. Build/QA/merge/push use it; "
                              "--full belongs to the gate-full skill (by hand or the 00:00 launchd job)")
     parser.add_argument("--dry-run", action="store_true", help="Only list impacted tests, do not run them (default without --run-tests; never PASS)")
@@ -6630,7 +6784,11 @@ def main():
         comp_name = rule.get("component", "UnknownComponent")
         watch_files = rule_watch(rule, covers)
         rule_files = [f for f in modified_files if any(match_pattern(f, pat) for pat in watch_files)]
-        if not rule_files and args.tree is None:   # --tree: every rule's suites run, whatever the files
+        # #741: lượt --scoped không còn leo full khi đổi tên file code — nguồn git mv (đã rời chỗ cũ) cũng chọn luật; "files" chỉ giữ đường
+        # dẫn còn trên đĩa (narrow / impacted không nhận đường dẫn đã mất). Lượt khác giữ hành vi cũ.
+        moved_from = (any(match_pattern(s, pat) for s in RENAME_SOURCES.values() for pat in watch_files)
+                      if getattr(args, "scoped", False) else False)
+        if not rule_files and not moved_from and args.tree is None:   # --tree: every rule's suites run, whatever the files
             continue
         impacted_components.append(comp_name)
         for test in rule.get("mandatory_regression_tests", []):
@@ -6649,41 +6807,51 @@ def main():
             })
         for guard in rule.get("immutable_guards", []):
             immutable_guards_protected.append((comp_name, guard))
-    # #644 --scoped: một bộ quyết định (bin/scoped_gate.py) cho task / QA / merge / push (INSTINCT-015). Lõi, test không suy ra được, đồ thị lỗi
-    # ⇒ full y như --force-full; còn lại chạy đúng test của diff + smoke. Lượt đã cưỡng bức, --since (Stop hook) giữ hành vi cũ.
+    # #644 --scoped: một bộ quyết định (bin/scoped_gate.py) cho task / QA / merge / push (INSTINCT-015): chạy đúng test của diff + smoke.
+    # #741 (anh Đạt 31/10): KHÔNG BAO GIỜ leo full — lõi chạy test chạm tới nó, file không test riêng / đồ thị lỗi thêm [core-smoke]
+    # (scoped_gate.no_full); cả bộ suite chỉ ở gate-full đêm 00:00. Lượt --full / --force-full tường minh, --since (Stop hook) giữ hành vi cũ.
     scoped = None
     os.environ.pop(SCOPED_TESTS_ENV, None)
     if getattr(args, "scoped", False) and run_tests and not force_full_reason(args) and not args.since:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import scoped_gate  # noqa: PLC0415 - sibling module in bin/ (thiếu thì gate hỏng to, không âm thầm leo full)
+        project = str(get_project_dir())
         try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            import scoped_gate  # noqa: PLC0415 - sibling module in bin/
-            scoped = scoped_gate.decide(str(get_project_dir()), base_ref, needs_no_test=needs_no_test, matrix_rules=rules,
-                                        # nguồn rename là file bị xoá với decide (code bị xoá ⇒ full), như _log_gate_run
+            scoped = scoped_gate.decide(project, base_ref, needs_no_test=needs_no_test, matrix_rules=rules,
+                                        # nguồn rename là file bị xoá với decide (code bị xoá ⇒ [core-smoke]), như _log_gate_run
                                         changed=sorted(set(modified_files) | set(RENAME_SOURCES.values())))
-        except Exception as e:   # noqa: BLE001 - không quyết được thì fail closed: full
-            scoped = {"mode": "full", "reasons": [f"scoped_gate: {e!r}"[:200]]}
-        why = None
-        if scoped.get("mode") == "scoped":
-            added, kit_tests, why = scoped_suites(scoped, rules, regression_tests, covers)
-        if scoped.get("mode") != "scoped" or why:
-            args.scoped_full = "--scoped → full: " + "; ".join(([why] if why else []) + list(scoped.get("reasons") or [])[:3])
-            print(f"  • {YELLOW}{args.scoped_full}{RESET}")
-            scoped = None
-        else:
-            for comp, test in added:
-                regression_tests.append({
-                    "component": comp, "id": test.get("id"), "name": test.get("name"), "command": test.get("command"),
-                    "impacted_command": test.get("impacted_command"), "files": [], "untested_exit": test.get("untested_exit"),
-                    "parallel_safe": test.get("parallel_safe") is True, "status": "NOT_RUN", "duration": "-",
-                    "covered_by": test.get("covered_by") if isinstance(test.get("covered_by"), str) else None})
-            os.environ[SCOPED_TESTS_ENV] = "\n".join(kit_tests)
-            args.scoped_run = True   # dòng runs.jsonl ghi mode "scoped" (push_gate đối chiếu biên nhận scoped với nó)
-            scoped["kit_tests"] = kit_tests
-            # base của biên nhận là sha commit (push_gate đòi sha hex): "HEAD" / tên nhánh phân giải NGAY lúc quyết định (HEAD có thể đi trong lượt)
-            scoped["base_sha"] = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", base_ref + "^{commit}"],
-                                                capture_output=True, text=True).stdout.strip()
-            print(f"  • {CYAN}--scoped: {len(scoped.get('tests') or [])} test của diff + {len(scoped.get('smoke') or [])} smoke"
-                  f" ({len(scoped.get('docs') or [])} file tài liệu, {scoped.get('elapsed_s', '?')} s){RESET}")
+        except Exception as e:   # noqa: BLE001 - không quyết được: smoke + [core-smoke], lý do giữ ở would_full
+            scoped = {"mode": "full", "reasons": [f"scoped_gate: {e!r}"[:200]], "graph_error": f"{e!r}"[:200], "tests": [], "smoke": []}
+        scoped = scoped_gate.no_full(scoped, project)
+        skipped = []
+        added, kit_tests, _ = scoped_suites(scoped, rules, regression_tests, covers, skip=skipped)
+        if skipped:   # test py/js không luật ma trận nào chạy đúng môi trường: không chạy ở PR, bù bằng [core-smoke]
+            scoped["not_run"] = args.scoped_not_run = skipped
+            scoped["would_full"].append("không luật ma trận cụ thể nào chạy được: " + ", ".join(skipped[:5]))
+            if not scoped["core_smoke"]:
+                scoped_gate.add_core_smoke(scoped, project)
+                added, kit_tests, _ = scoped_suites(scoped, rules, regression_tests, covers, skip=[])
+        if scoped["would_full"]:
+            print(f"  • {YELLOW}{tr('--scoped (#741: không leo full; trước đây: ', '--scoped (#741: no escalation to full; it used to: ')}"
+                  f"{'; '.join(scoped['would_full'][:3])})" + (f" + [core-smoke] {len(scoped['core_smoke'])} test" if scoped["core_smoke"] else "")
+                  + f"{RESET}")
+        args.core_touched = list(scoped.get("core_touched") or [])
+        for comp, test in added:
+            regression_tests.append({
+                "component": comp, "id": test.get("id"), "name": test.get("name"), "command": test.get("command"),
+                "impacted_command": test.get("impacted_command"), "files": [], "untested_exit": test.get("untested_exit"),
+                "parallel_safe": test.get("parallel_safe") is True, "status": "NOT_RUN", "duration": "-",
+                "covered_by": test.get("covered_by") if isinstance(test.get("covered_by"), str) else None})
+        os.environ[SCOPED_TESTS_ENV] = "\n".join(kit_tests)
+        args.scoped_run = True   # dòng runs.jsonl ghi mode "scoped" (push_gate đối chiếu biên nhận scoped với nó)
+        scoped["kit_tests"] = kit_tests
+        # base của biên nhận là sha commit (push_gate đòi sha hex): "HEAD" / tên nhánh phân giải NGAY lúc quyết định (HEAD có thể đi trong lượt)
+        scoped["base_sha"] = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", base_ref + "^{commit}"],
+                                            capture_output=True, text=True).stdout.strip()
+        print(f"  • {CYAN}--scoped: {len(scoped.get('tests') or [])} test của diff + {len(scoped.get('smoke') or [])} smoke"
+              f" ({len(scoped.get('docs') or [])} file tài liệu, {scoped.get('elapsed_s', '?')} s){RESET}")
+        if args.core_touched:
+            print(f"  • {YELLOW}core-touched ({len(args.core_touched)} file lõi; review 2/2 soi kỹ): {', '.join(args.core_touched[:10])}{RESET}")
     impacted_tests = list(regression_tests)   # what the change itself needs (coverage verdicts)
     project_dir = get_project_dir()
     run_start_tree = head_tree(project_dir)   # the tree this run tests; mark_merge_gate_receipt keys the receipt to THIS tree, not to whatever HEAD is after the run
@@ -6848,7 +7016,8 @@ def main():
     # polls every 0.5 s and, if it won the lock before the full-pass receipt below was written
     # (the static audits and the receipt's own fingerprint sit in between: 0.1-20 s), found no
     # receipt to re-use and ran every suite again. Closed right after the receipt block below.
-    cache = None
+    cache = scoped_cache = None
+    scoped_miss = [""]
     tested_fp = tree_fp_of(project_dir) if run_tests and (force_reason or scoped) else None   # #644: biên nhận scoped cũng gắn cây đã kiểm
     # T0061: cây mà một lượt task kiểm, lấy TRƯỚC khi suite chạy (biên nhận task chỉ ghi khi cây vẫn là nó; một FAIL bỏ biên nhận của cây đó)
     task_fp = tree_fp_of(project_dir) if (run_tests and not force_reason and not deferred_by and not args.since and task_off_trunk
@@ -6914,7 +7083,7 @@ def main():
     budget_fp = tested_fp or (tree_fp_of(project_dir) if budget_s > 0 and use_cache else None)
     budget_head = _head_sha(project_dir) if budget_fp and not force_reason else None   # the HEAD of the same moment: a Stop record names both
 
-    def reuse_from(found, budget_run=False, partial=False):
+    def reuse_from(found, budget_run=False, partial=False, scoped_src=False):
         """Mark every reusable suite PASS from `found`, the receipt (or the budget record) of this exact content; it, or None.
         partial (biên nhận của worktree anh em): suite mà biên nhận KHÔNG có thì chạy thật, không huỷ cả lần dùng lại — merge gate #56
         (17/10): scratch không có overlay checklist của worktree nên chạy thêm một suite STALE nhẹ, và vì biên nhận thiếu đúng suite đó
@@ -6928,13 +7097,39 @@ def main():
             unity_max_s = float(os.environ.get("DEVKIT_UNITY_REUSE_MAX_S", "3600"))
         except ValueError:
             unity_max_s = 3600.0
+        scoped_max_s = _scoped_reuse_max_s() if scoped_src else None
 
         def ran_at(t):   # when this suite really ran: its own stamp, else the receipt's (a receipt without ran_at)
             return float((prev.get(t.get("id")) or {}).get("ran_at") or (found or {}).get("tested_at") or 0)
 
         def reusable_suite(t):
             cmd = t["command"]
-            if sc is not None and any(sc.blocked(k, t.get("id")) for k in (KEYS.get(id(t)) or (None,))):
+            if scoped_src:   # #785: suite khai "cache": false hoặc khớp DEVICE_SUITE vẫn chạy thật mỗi lượt kể cả khi mượn biên nhận scoped
+                src_m = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == cmd), t)
+                if src_m.get("cache") is False or DEVICE_SUITE.search(cmd):
+                    return False
+                # V4-1: chỉ mượn PASS của đúng lệnh ma trận đó (SCOPED-EXTRA giữ id cố định nhưng lệnh đổi theo quyết định); lệch ⇒ chạy thật
+                if (prev.get(t.get("id")) or {}).get("full_command") != cmd:
+                    return False
+                # #803: PASS mượn phải còn hạn theo ran_at của CHÍNH suite (tested_at của biên nhận có thể mới hơn) và chưa bị SuiteCache
+                # void sau lần chạy đó (TIMEOUT / FAIL chập chờn ở nơi khác), như SuiteCache.hit
+                at = ran_at(t)
+                if scoped_max_s is None or not (-60 < time.time() - at <= scoped_max_s):
+                    return False
+                if sc is not None and sc.voided(t.get("id"), at):
+                    return False
+            keys = KEYS.get(id(t))
+            if scoped_src and not keys and sc is not None and suite_keyable(src_m):
+                # #785 (AG5-P1b): lượt task / --scoped không dựng KEYS cho run_impacted.sh / Gradle, nhưng FAIL của chúng vẫn vào sổ khoá (F1):
+                # tính khoá tại chỗ (không ghi KEYS, lookup_key giữ None) để PASS mượn từ store không vượt một FAIL đã ghi trên khoá đó
+                try:
+                    keys = sc.keys(t)
+                except Exception as e:   # noqa: BLE001 - khoá không tính được: không mượn, suite này chạy thật
+                    log_warn(f"suite_cache key {t.get('id')}: {e!r}")
+                    return False
+                if not any(keys or ()):   # #803: (None, None) — sổ khoá hỏng, --list lỗi / quá giờ: như nhánh ngoại lệ, không mượn
+                    return False
+            if sc is not None and any(sc.blocked(k, t.get("id")) for k in (keys or (None,))):
                 return False   # P2: khoá hiện tại từng FAIL hoặc suite bị cách ly (flaky): không có PASS nào được dùng lại cho nó
             if not DEVICE_SUITE.search(cmd):
                 return True
@@ -7007,6 +7202,69 @@ def main():
                 return found
         return None
 
+    def _scoped_entry_block():
+        """#785 (AG2-P1, OCR2-H2): chụp cổng vào MỘT lần trước acquire_test_run_lock (dòng dưới tạo
+        .claude/audit-gate/test_run.lock làm _ever_gated trả True từ đó trở đi), để các lần kiểm lại
+        sau chờ khoá/slot không bị chính khoá của lượt này chặn."""
+        if not scoped or force_reason or getattr(args, "force", False):
+            return "disabled"
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        try:
+            import tree_fp as _tfp  # noqa: PLC0415 - module cùng thư mục bin/
+            own = _result_file(project_dir, None)
+            own_sp = _tfp.scoped_receipt_path(project_dir)
+        except (ImportError, OSError):
+            return "disabled"
+        if not own or not own_sp:
+            return "disabled"
+        if _file_stamp(own) is not None or _file_stamp(own_sp) is not None:
+            return "own_receipt"
+        if _ever_gated(project_dir):
+            return "ever_gated"
+        return ""
+
+    scoped_entry_block = _scoped_entry_block() if (use_cache and scoped is not None) else "disabled"
+
+    def reuse_scoped_pass(fp=None, quiet=False):
+        """#785: dùng lại biên nhận scoped từ store chung (`<common>/postfix-gate/scoped_receipts/<fp>.json`)
+        cho lượt `--scoped` trong một git dir CHƯA từng chạy gate (scratch của merge gate, integrate, worktree QA/review mới).
+        Worktree đã có biên nhận hoặc đã từng chạy gate (`_ever_gated`) giữ nguyên hành vi cũ (chạy lại suite không khoá như run_impacted.sh)."""
+        if scoped_entry_block:
+            if not quiet and scoped_entry_block in ("own_receipt", "ever_gated"):
+                scoped_miss[0] = scoped_entry_block
+            return None
+        fp = (fp or tree_fp_of(project_dir)) or None
+        if tested_fp and fp != tested_fp:
+            if not quiet:
+                scoped_miss[0] = "fp"
+            return None
+        path = scoped_store_receipt(project_dir, fp)
+        if not path:
+            if not quiet:
+                scoped_miss[0] = "not_found"
+            return None
+        stamp = _file_stamp(path)   # lấy TRƯỚC khi đọc để stale_reused phát hiện mọi thay đổi/xoá lúc chờ khoá
+        why = []
+        cand = cached_scoped_pass(project_dir, args.matrix, fp, scoped, path, why)
+        if cand is None:
+            reason_code = why[0] if why else "malformed"
+            if not quiet:
+                scoped_miss[0] = reason_code
+                print(f"    {DIM}({tr('không dùng lại biên nhận scoped', 'scoped receipt not reused')}: {os.path.basename(path)}: {','.join(why) or 'malformed'}){RESET}")
+            return None
+        found = reuse_from(cand, partial=True, scoped_src=True)
+        if found:
+            scoped_miss[0] = ""
+            print(f"    {DIM}({tr('biên nhận scoped theo cây', 'scoped tree receipt')}: {path}){RESET}")
+            regen = regen_allowed(found.get("local_regen") or [])
+            if regen:
+                print(f"    {DIM}{tr('không so (suite tự ghi lại)', 'not compared (rewritten by its suites)')}: {len(regen)}: {', '.join(regen[:3])}{RESET}")
+            reuse_src[0] = (path, stamp, "__scoped__", True)
+            return found
+        if not quiet:
+            scoped_miss[0] = "no_reusable_suite"
+        return None
+
     def recheck_keyed():
         """PASS dùng lại theo khoá phải còn đứng vững (sổ khoá có flock riêng; một FAIL vừa ghi ở lượt/worktree khác lật nó thành UNTESTED).
         Gọi sau các suite và một lần nữa ngay trước kết luận, có hay không có khoá dự án (review 20/10, P1-5)."""
@@ -7023,7 +7281,12 @@ def main():
                         f"{len(gone_keyed)} content-key PASS no longer stand — UNTESTED"))
 
     def reused_tested_at():
-        """Lúc chạy cũ nhất của các suite PASS dùng lại (biên nhận cả cây hoặc khoá); None khi lượt này không dùng lại gì."""
+        """Lúc chạy cũ nhất của các suite PASS dùng lại; ở lượt --scoped chỉ tính suite mượn từ biên nhận (không gộp KEYED_IDS lưu UNTESTED/KEYED)."""
+        if scoped and not force_reason:
+            ts = [float(t.get("tested_at") or 0) for t in reused_pass()]
+            if scoped_cache:
+                ts.append(float(scoped_cache.get("tested_at") or 0))
+            return min(ts) if ts else None
         ts = [float(t.get("tested_at") or 0) for t in regression_tests if t.get("mode") == "cached" and t.get("status") == "PASS"]
         if cache:
             ts.append(float(cache.get("tested_at") or 0))
@@ -7054,14 +7317,36 @@ def main():
         now = _file_stamp(src)   # before the read, as at the first one
         if now == stamp:
             return []
-        # biên nhận của worktree anh em: đọc lại đúng file đó với luật của anh em; biên nhận của mình: như cũ (path None)
-        found = cached_full_pass(project_dir, args.matrix, budget_fp, name, src if sibling else None) if now else None
+        # biên nhận scoped (#785) hoặc biên nhận của worktree anh em: đọc lại đúng file đó với luật tương ứng; biên nhận của mình: như cũ (path None)
+        if name == "__scoped__":
+            found = cached_scoped_pass(project_dir, args.matrix, None, scoped, src) if (now and (not budget_fp or tree_fp_of(project_dir) == budget_fp)) else None
+        else:
+            found = cached_full_pass(project_dir, args.matrix, budget_fp, name, src if sibling else None) if now else None
         if found:
             reuse_src[0] = (src, now, name, sibling)
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
-        untested = set((found or {}).get("untested") or [])
-        return [t for t in reused_pass() if not (found and t["id"] not in untested and prev.get(t["id"], {}).get("status") == "PASS"
+        untested = set((found or {}).get("untested") or []) | (
+            {i for i, x in prev.items() if x.get("status") == "UNTESTED"} if name == "__scoped__" else set())
+        gone = [t for t in reused_pass() if not (found and t["id"] not in untested and prev.get(t["id"], {}).get("status") == "PASS"
                                                  and (name is None or prev[t["id"]].get("full_command") == t["command"]))]
+        if found and name == "__scoped__" and sc is not None and keyed_ok:
+            # V4-3: mục store bị một lượt PASS khác ghi lại có thể giữ suite này dạng UNTESTED/KEYED (lượt kia trúng SuiteCache):
+            # tra khoá nội dung của chính suite; trúng ⇒ giữ như PASS theo khoá, trượt hoặc lỗi ⇒ vẫn là gone (STALE, an toàn)
+            def _relabel(t):
+                x = prev.get(t["id"]) or {}
+                if x.get("status") != "UNTESTED" or x.get("label") != "KEYED" or x.get("full_command") != t["command"]:
+                    return False
+                try:
+                    k = lookup_key(t)
+                    rec = sc.hit(k, t) if k else None
+                except Exception as e:   # noqa: BLE001 - sổ khoá không đọc được: suite này không đứng vững
+                    log_warn(f"suite_cache relabel {t.get('id')}: {e!r}")
+                    return False
+                if rec:
+                    mark_keyed(t, rec)
+                return bool(rec)
+            gone = [t for t in gone if not _relabel(t)]
+        return gone
 
     def stale_to_untested(label, gone):
         """A re-used PASS that cannot be stood on (its file moved and no longer vouches for it, or there is no lock to check it under) is UNTESTED,
@@ -7082,11 +7367,21 @@ def main():
         except (ImportError, OSError, TypeError):
             return None
 
+    def scoped_receipt_stamp(fp=None):
+        """#785 (P1-AG1c): dấu stamp của mục store scoped_receipts/<fp>.json để nhận biết lượt khác vừa ghi biên nhận lúc ta chờ khoá/slot."""
+        if not scoped:
+            return None
+        p = scoped_store_receipt(project_dir, (fp or tree_fp_of(project_dir)) or None)
+        return _file_stamp(p) if p else None
+
     stamp_before = receipt_stamp() if use_cache else None
+    scoped_stamp_before = scoped_receipt_stamp(budget_fp) if (use_cache and scoped is not None) else None
     if use_cache:
         # budget_fp (= tested_fp for a forced run) was taken just above and nothing has run since: the same tree (A13). The
         # re-check after the lock wait below takes a fresh one: the tree may have changed while this run waited.
         cache = reuse_full_pass(budget_fp)
+        if cache is None and scoped is not None:
+            scoped_cache = reuse_scoped_pass(budget_fp)
     if sc is not None and keyed_ok:
         for t in regression_tests:
             k = lookup_key(t)
@@ -7114,11 +7409,16 @@ def main():
     rerun_local_sha = local_state_sha(project_dir) if run_tests and rerun_path and rerun_fp else ""
     device_selected = any(HARD_DEVICE_SUITE.search(t.get("command") or "")
                           for t in regression_tests if t.get("command"))
+    # #678: suite không có khoá (cache:false, run_impacted.sh, thiết bị…) chạy mỗi lượt; bản ghi skip không được bỏ qua chúng.
+    unkeyed_selected = any(
+        not suite_cacheable(next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t))[0]
+        for t in regression_tests if t.get("command"))
     if (run_tests and rerun_path and rerun_fp and not getattr(args, "force", False)
             and not getattr(args, "force_full", False)
             and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0"
             and hygiene_ok and anti_laziness_ok and deps_ok and settings_ok
-            and not edited_early and not tests_touched and not device_selected
+            and rerun_mode != "full"   # #678: --full dùng lại qua cached_full_pass (biên nhận đủ suite + mode "cached"), không qua bản ghi skip
+            and not edited_early and not tests_touched and not device_selected and not unkeyed_selected
             and not _rerun_skip_expired(rerun_path)
             and rerun_skip_match(_read_rerun_skip(rerun_path), rerun_fp, rerun_mode, selected_ids, rerun_local_sha)
             and not _rerun_cache_blocks(sc, regression_tests, lookup_key, rerun_path)
@@ -7155,6 +7455,21 @@ def main():
         cache = reuse_full_pass()
         to_run = [t for t in regression_tests if t.get("mode") not in ("cached", "edited")]
         nothing_to_run = not any(t.get("command") for t in to_run)
+    if use_cache and cache is None and scoped_cache is None and scoped is not None and lock_held:
+        cur_scoped_stamp = scoped_receipt_stamp(tested_fp)
+        if cur_scoped_stamp not in (None, scoped_stamp_before):
+            scoped_cache = reuse_scoped_pass(quiet=True)
+            if scoped_cache is not None:
+                if sc is not None and keyed_ok:
+                    for t in regression_tests:
+                        k = lookup_key(t)
+                        if k and t.get("mode") != "cached":
+                            rec = sc.hit(k, t)
+                            if rec:
+                                mark_keyed(t, rec)
+                to_run = [t for t in regression_tests if t.get("mode") not in ("cached", "edited")]
+                nothing_to_run = not any(t.get("command") for t in to_run)
+        scoped_stamp_before = cur_scoped_stamp
     # T0056: hàng đợi gate toàn máy (pool 'gate', tối đa N lượt chạy suite cùng lúc). Chỉ xin slot khi đã giữ khoá dự án,
     # thực sự còn suite cần chạy và tiến trình cha chưa giữ slot (DEVKIT_GATE_SLOT_HELD != "1").
     if run_tests and lock_held and not nothing_to_run and prev_gate_slot_held != "1":
@@ -7190,6 +7505,8 @@ def main():
                     # kiểm tra lại ngay, nếu không còn suite nào cần chạy thì trả slot liền cho hàng đợi.
                     if use_cache and cache is None:
                         cache = reuse_full_pass()
+                        if cache is None and scoped_cache is None and scoped is not None and scoped_receipt_stamp(tested_fp) not in (None, scoped_stamp_before):
+                            scoped_cache = reuse_scoped_pass(quiet=True)
                     if use_cache and sc is not None and not keyed_ok and not sc.sentinel_due():
                         sentinel_run = False
                         keyed_ok = True
@@ -7478,6 +7795,14 @@ def main():
         last test line it printed plus the `ps` snapshot of its process group in output_tail; under load it stays a plain TIMEOUT, and so does
         a suite still making progress (#427: its youngest process that has a child is younger than min(timeout/2, 120) s)."""
         body, _, snap = (out or "").partition(HANG_SNAPSHOT_MARK)
+        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+        # Ảnh của chính lượt này luôn nằm cuối out (rpartition: output của gate lồng không lẫn vào).
+        youngest = HANG_YOUNGEST_RE.search((out or "").rpartition(HANG_SNAPSHOT_MARK)[2])
+        # #473: a TIMEOUT that is not a HANG still says where it stopped: the last lines it printed and the age of its youngest parent process.
+        # a heading line first (the Stop hook shows line 0 as the reason); each line cut, as the HANG line is
+        t["output_tail"] = "\n".join([tr("quá giờ — dòng cuối suite in ra:", "timed out — last lines the suite printed:")]
+                                     + [ln[:300] for ln in (lines[-HANG_TAIL_LINES:] or ["(no output)"])]
+                                     + ([HANG_YOUNGEST_LINE.format(youngest.group(1))] if youngest else []))
         try:
             import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
             load, busy = _capacity.load(), _capacity.busy_load()
@@ -7488,20 +7813,23 @@ def main():
             return
         # #427 / hang giả 27/10: tải thấp chưa đủ. REG-DK-ALL-01 hết 900 s ở đuôi tuần tự (tải ~15 < 36) khi test đang chạy mới 6 s và
         # tiến trình lá mới sinh — vẫn bị gọi HANG. Chỉ gọi HANG khi tiến trình CÓ CON trẻ nhất của cây đã sống ≥ min(timeout/2, 120) s
-        # (không cây con nào mới bắt đầu ngần ấy lâu; lá của vòng poll không tính, xem HANG_YOUNGEST_LINE). Ảnh của chính lượt này luôn nằm cuối out (rpartition: output của gate lồng không lẫn vào).
+        # (không cây con nào mới bắt đầu ngần ấy lâu; lá của vòng poll không tính, xem HANG_YOUNGEST_LINE).
         # Không đọc được tuổi (ps hỏng, không dòng nào, thiếu dòng youngest): giữ cách cũ, chỉ xét tải.
-        youngest = HANG_YOUNGEST_RE.search((out or "").rpartition(HANG_SNAPSHOT_MARK)[2])
         if youngest and int(youngest.group(1)) < min(args.timeout / 2, 120):
             return
-        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
-        last = next((ln for ln in reversed(lines) if HANG_TEST_LINE.search(ln)), lines[-1] if lines else "(no output)")
+        done = {m.group(1) for m in (HANG_DONE_RE.match(ln) for ln in lines) if m}
+        running = list(dict.fromkeys(m.group(1) for m in (HANG_START_RE.match(ln) for ln in lines) if m and m.group(1) not in done))
         t["hang"] = True
         shown = [ln for ln in snap.strip().splitlines() if not HANG_YOUNGEST_RE.match(ln)]   # dòng tuổi chỉ để quyết định, không chiếm chỗ
-        t["output_tail"] = "\n".join(shown[:7] + [
-            tr(f"HANG (tải {load:.1f} < {busy}): test cuối suite in ra: {last[:200]}",
-               f"HANG (load {load:.1f} < {busy}): last test line the suite printed: {last[:200]}")])
-        log_warn(tr(f"{t.get('id')}: quá giờ lúc máy rảnh (tải {load:.1f}) — TREO, không phải chậm; test cuối: {last[:120]}",
-                    f"{t.get('id')}: timed out on an idle machine (load {load:.1f}) — a HANG, not slow; last test: {last[:120]}"))
+        if running:   # #473: named by start/done markers: the test(s) still running, not the one that ended last
+            what = ", ".join(running[:3]) + (f" (+{len(running) - 3})" if len(running) > 3 else "")
+            vi, en = f"test đang chạy: {what[:200]}", f"running test(s): {what[:200]}"
+        else:
+            last = next((ln for ln in reversed(lines) if HANG_TEST_LINE.search(ln)), lines[-1] if lines else "(no output)")
+            vi, en = f"test cuối suite in ra: {last[:200]}", f"last test line the suite printed: {last[:200]}"
+        t["output_tail"] = "\n".join(shown[:7] + [tr(f"HANG (tải {load:.1f} < {busy}): {vi}", f"HANG (load {load:.1f} < {busy}): {en}")])
+        log_warn(tr(f"{t.get('id')}: quá giờ lúc máy rảnh (tải {load:.1f}) — TREO, không phải chậm; {vi[:130]}",
+                    f"{t.get('id')}: timed out on an idle machine (load {load:.1f}) — a HANG, not slow; {en[:130]}"))
 
     def _run_suite(t, cmd, mode, env):
         started = time.perf_counter()
@@ -7563,7 +7891,12 @@ def main():
                 t["ptc"] = (int(m.group(1)), int(m.group(2)))
             # Which sub-test failed, from the WHOLE output: run_impacted's "✖ tests/x.sh" sits
             # mid-output, outside the last lines shown (2026-09-28, --brief showed five ✔).
-            t["fail_lines"] = [l.rstrip()[:300] for l in (out or "").splitlines() if FAIL_LINE.search(l)][:8]
+            # #721: run_impacted.sh in dòng hỏng của test đỏ dưới tên nó; "✖ tests/x.sh" (cột 0) của test đỏ SAU không bị đẩy khỏi 8 dòng
+            # đầu — merge-train single_red_test (#578) đếm test đỏ từ đây, gate_full.collect_red tìm đường dẫn từ đây. dict.fromkeys:
+            # flaky_retry nối out = first + retry ở trên, mỗi dòng có hai lần.
+            fl = [l.rstrip()[:300] for l in (out or "").splitlines() if FAIL_LINE.search(l)]
+            head = fl[:8]
+            t["fail_lines"] = head + list(dict.fromkeys(l for l in fl if RED_TEST_LINE.match(l) and l not in head))[:40]
         else:
             t["status"] = "TIMEOUT"
             hang_report(t, out)
@@ -7671,7 +8004,9 @@ def main():
         # Suite NOT_RUN phía sau thành UNTESTED — covered_by và skip-compile không kịp biến chúng thành PASS.
         # Ngoại lệ: cover FAIL trên lượt không --full (ca 2), và run_impacted.sh sau STALE / cached-full đỏ.
         if (run_tests and not getattr(args, "no_fail_fast", False)
-                and any(x.get("status") in ("FAIL", "TIMEOUT") for x in regression_tests)
+                # #678: suite FAIL vì bị kill từ ngoài / thiếu môi trường (env_blocked) không có kết luận test, nên không dừng cả lượt:
+                # nếu dừng, suite lỗi thật đứng sau thành UNTESTED và regression_gate.sh cho Stop qua như lỗi môi trường (che lỗi thật).
+                and any(x.get("status") in ("FAIL", "TIMEOUT") and not x.get("env_blocked") for x in regression_tests)
                 and not _keep_after_red(t)):
             if group:
                 drain()
@@ -8069,10 +8404,12 @@ def main():
     # dùng hàm đó để bỏ qua gate, mà chính gate mới là nơi quét secret cho sổ này.
     # Config board super-board (.claude/super-board/configs/*.json, 18/10): chỉ script super-board đọc, như .claude/settings.json; đổi luật
     # gộp ở đó không có test hồi quy nào của dự án bắt được. Rule nào theo dõi nó vẫn chạy test.
-    docs_only = bool(modified_files) and all(
-        needs_no_test(f) or f.replace("\\", "/") in GATE_STATE_FILES
-        or re.fullmatch(r"\.claude/super-board/configs/[^/]+\.json", f.replace("\\", "/")) is not None
-        for f in modified_files)
+    def _doc_like(f):
+        return (needs_no_test(f) or f.replace("\\", "/") in GATE_STATE_FILES
+                or re.fullmatch(r"\.claude/super-board/configs/[^/]+\.json", f.replace("\\", "/")) is not None)
+    # #741: lượt --scoped — git mv code → tài liệu không phải "chỉ tài liệu" (nguồn rename xét cùng luật với đích)
+    docs_only = bool(modified_files) and all(_doc_like(f) for f in modified_files) and (
+        not getattr(args, "scoped", False) or all(_doc_like(s) for s in RENAME_SOURCES.values()))
     no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.
@@ -8208,6 +8545,11 @@ def main():
     print(f"  • {tr('Test hồi quy đạt', 'Regression tests passed')}: {tests_passed}/{len(regression_tests)}" + (tr(" (chưa chạy)", " (not run)") if unverified else "")
           + (tr(f" — {len(impacted_run)} lệnh chỉ chạy test bị ảnh hưởng ({impacted_n} test), lệnh đầy đủ CHƯA chạy",
                 f" — {len(impacted_run)} commands ran impacted tests only ({impacted_n} tests), the full commands were NOT run") if impacted_run else ""))
+    if getattr(args, "core_touched", None):   # #741: lượt --scoped chạm lõi không leo full — dòng này nằm trong --brief cho review 2/2
+        print(f"  • {YELLOW}core-touched{RESET}: {', '.join(args.core_touched[:10])}" + (" …" if len(args.core_touched) > 10 else ""))
+    if getattr(args, "scoped_not_run", None):   # #741: test chạm diff mà không suite nào của ma trận chạy đúng môi trường
+        print(f"  • {YELLOW}{tr('Test chạm diff không chạy ở PR (không luật ma trận cụ thể nào chạy nó; đã thêm [core-smoke])', 'Tests reaching the diff not run at PR (no specific matrix rule runs them; [core-smoke] added)')}{RESET}: "
+              f"{', '.join(args.scoped_not_run[:10])}")
     print(f"  • {tr('Lớp tĩnh (bí mật, lười biếng, dependency, hiệu năng, nuốt lỗi, log)', 'Static checks (secrets, laziness, dependencies, performance, swallowed errors, logging)')}: "
           f"{tr('đạt', 'passed') if static_ok else tr('CÓ PHÁT HIỆN', 'FINDINGS')}")
     for f in unreadable[:5]:
@@ -8247,6 +8589,8 @@ def main():
     if pm_relax:
         print(f"  • {YELLOW}{tr('Lời duyệt test dựa vào biên bản antigravity-pm ở ANTIGRAVITY_PM_STATE_HOME lạ (không phải ~/.antigravity-pm): kết luận giữ nguyên nhưng KHÔNG ghi biên nhận task / merge gate, full_pass.json không là exit 0', 'Test approval rests on an antigravity-pm record under a foreign ANTIGRAVITY_PM_STATE_HOME (not ~/.antigravity-pm): verdict kept, but NO task / merge-gate receipt, full_pass.json is not exit 0')}{RESET}")
     try:
+        # #785 (OCR4-1, P1-AG1a): tính reuse_at MỘT lần trước cả hai khối full_pass và scoped_pass (--scoped luôn có partial=True nên không đi vào khối full_pass).
+        reuse_at = reused_tested_at()
         if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy and not edited_early and (not partial or (exit_code != 0 and not receipt_untested)) \
                 and (lock_held or partial or exit_code != 0):
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
@@ -8265,7 +8609,6 @@ def main():
             # ponytail: a --full that re-used some suites of its own exit-2 receipt (the Stop hook dropped the tree entry) and ran the rest leaves no
             # tree entry for a removed worktree: safe, only slower; upgrade when a PASS carries its lineage (real-run time) so a copy of a real
             # run can be told from a copy of a copy.
-            reuse_at = reused_tested_at()
             # pm home lạ (pm_relaxed): exit 0 vào biên nhận như exit 2 — suite vẫn dùng lại được, proof/push gate không nhận
             write_full_pass_receipt(project_dir, 2 if exit_code == 0 and pm_relax else exit_code, args.matrix, receipt_tests,
                                     tested_at=reuse_at, refresh_only=reuse_src[0] is not None,
@@ -8284,7 +8627,10 @@ def main():
         # read-only, không suite UNTESTED / BUSY / BUDGET / SLOT, không pm home lạ); một FAIL bỏ biên nhận scoped của cây đó. Không đụng full_pass.json.
         if scoped and run_tests and not project_gone:
             meta = {"scoped_tests": list(scoped.get("tests") or []), "smoke": list(scoped.get("smoke") or []),
-                    "reasons": list(scoped.get("reasons") or []), "base": scoped.get("base_sha") or "", "tree": run_start_tree}
+                    "reasons": list(scoped.get("reasons") or []), "base": scoped.get("base_sha") or "", "tree": run_start_tree,
+                    # #741: lượt không leo full — file lõi đã chạm, lý do leo full cũ, [core-smoke] đã chạy (review 2/2 đọc)
+                    "core_touched": list(scoped.get("core_touched") or []), "would_full": list(scoped.get("would_full") or []),
+                    "core_smoke": list(scoped.get("core_smoke") or []), "not_run": list(scoped.get("not_run") or [])}
             if exit_code == 0 and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", meta["base"]):
                 print(f"  • {YELLOW}{tr(f'Không ghi biên nhận scoped: không phân giải được base {base_ref} thành sha commit', f'Scoped receipt not written: base {base_ref} does not resolve to a commit sha')}{RESET}")
             elif exit_code == 0 and (impacted_run or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)):
@@ -8292,12 +8638,18 @@ def main():
                 print(f"  • {YELLOW}{tr('Không ghi biên nhận scoped: có suite chạy hẹp (impacted/resource/package/module)', 'Scoped receipt not written: a suite ran narrowed (impacted/resource/package/module)')}{RESET}")
             elif exit_code == 0 and _full_red_on_tree(project_dir, tested_fp):
                 # full đỏ trên cây này đã bỏ cả hai biên nhận; scoped không chọn suite đỏ thì PASS — không để nó mở lại merge / push
-                print(f"  • {YELLOW}{tr('Không ghi biên nhận scoped: cây này có lượt --full đỏ — chạy --full', 'Scoped receipt not written: this tree has a red --full run — run --full')}{RESET}")
+                print(f"  • {YELLOW}{tr('Không ghi biên nhận scoped: cây này có lượt --full đỏ — sửa suite đỏ (cây mới); --full chỉ chạy ở gate-full đêm', 'Scoped receipt not written: this tree has a red --full run — fix the red suite (a new tree); --full runs only in the nightly gate-full')}{RESET}")
             elif (exit_code == 0 and lock_held and not read_only and not pm_relax and not lock_busy and not budget_cut and not slot_busy
                     and not any(t.get("status") == "UNTESTED" for t in regression_tests)):
-                # PASS theo khoá CHÍNH XÁC vào biên nhận như UNTESTED / KEYED, như receipt_tests của biên nhận full
+                # PASS theo khoá CHÍNH XÁC vào biên nhận như UNTESTED / KEYED, như receipt_tests của biên nhận full.
+                # #785 (V4-4): lượt MƯỢN mục store (scoped_cache, chỉ reuse_scoped_pass đặt) giữ tested_at của mục đã mượn (không gia hạn TTL)
+                # và không ghi mục store (không hồi sinh mục đã bị FAIL xoá, không thu hẹp nó); lượt không mượn ghi như trước.
+                # AG5-P1a: lượt chép PASS từ biên nhận riêng (reuse_full_pass: full_pass.json / bản ghi budget, reuse_src) cũng là lượt mượn.
+                borrowed = scoped_cache is not None or reuse_src[0] is not None
                 write_full_pass_receipt(project_dir, 0, args.matrix,
                                         [dict(t, status="UNTESTED", label="KEYED") if precise_hit(t) else t for t in regression_tests],
+                                        tested_at=reuse_at if borrowed else None,
+                                        write_store=not borrowed,
                                         tested_fp=tested_fp, locked=True, scoped=meta)
                 mark_merge_gate_receipt(project_dir, diff_ref, run_start_tree, scoped=True, relaxing=[
                     flag for flag, on in (("--allow-no-tests", args.allow_no_tests), ("--allow-orphan-tests", args.allow_orphan_tests),
@@ -8334,7 +8686,9 @@ def main():
             try:
                 write_rerun_skip(rerun_path, rerun_fp, rerun_mode, ran_ids, rerun_local_sha)
             except OSError as e:
-                log_warn(f"rerun_skip: {e}")
+                # #678: không in str(e): mkstemp ghi tên file tạm ngẫu nhiên vào thông báo, hai lượt cùng đầu vào ra hai chuỗi byte khác nhau
+                # (test_gate_run_log: thư mục postfix-gate chỉ đọc phải cho cùng stdout như khi tắt log).
+                log_warn(f"rerun_skip: {e.strerror or type(e).__name__}")
         elif rerun_path and exit_code != 0 and any(id(t) in really_ran for t in regression_tests):
             with contextlib.suppress(OSError):
                 os.remove(rerun_path)
@@ -8473,6 +8827,7 @@ def main():
                             if (run_tests and not lock_held and not read_only) else None),
             "budget_exhausted": any(t.get("label") == "BUDGET" for t in regression_tests),   # GATE_TOTAL_BUDGET_S spent
             "test_mode": test_mode, "full_run_required": bool(impacted_run),
+            "core_touched": list(getattr(args, "core_touched", None) or []),   # #741: lượt --scoped chạm lõi (review 2/2 soi kỹ)
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
             "static": {"secrets": len(secrets), "lazy": len(lazy_findings), "dependencies": len(dep_findings),
                        "perf": len(perf_findings),
@@ -8505,12 +8860,15 @@ def main():
         _SHADOW = _shadow_compare(project_dir, rules, find_matrix_path(args.matrix), covers, regression_tests,
                                   [str(f) for f in modified_files])
     _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
-                  cache or (keyed_hits or None), run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only,
-                  log_fp=log_fp, exit_reason=exit_reason, slot_waits=slot_waits)
+                  cache or scoped_cache or (keyed_hits or None), run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only,
+                  log_fp=log_fp, exit_reason=exit_reason, slot_waits=slot_waits,
+                  reused_scoped=_run_log_fp(scoped_cache.get("fingerprint")) if (scoped_cache and exit_code == 0) else "",
+                  reuse_miss_reason=scoped_miss[0] if (scoped is not None and not scoped_cache) else "")
     return exit_code
 
 
-FAIL_LINE = re.compile(r"✖|✗|❌|\bFAILED\b|\bFAIL\b|\bERROR\b|Traceback|AssertionError|\bException\b")
+FAIL_LINE = re.compile(r"✖|✘|✗|❌|\bFAILED\b|\bFAIL\b|^[ \t]*not ok\b|\bERROR\b|Traceback|AssertionError|\bException\b")
+RED_TEST_LINE = re.compile(r"^✖ (?:hooks/)?tests/\S+\.(?:sh|py|mjs)\s*$")   # #721: dòng test đỏ của tests/run_impacted.sh (cột 0)
 
 
 def run_brief():
@@ -8544,7 +8902,10 @@ def run_brief():
         plain = re.sub(r"\x1b\[[0-9;]*m", "", line)
         if "KẾT LUẬN" in plain or "VERDICT" in plain:
             summary = True
-        if summary or (tail and plain.strip().startswith(("|", "Lệnh chạy", "Command"))):
+        # #721: "Log:" (#647, giữa dòng lệnh và khối '|') từng đặt tail = 0: suite không có dòng ✖ mất cả khối '|' ở --brief.
+        # ponytail: dòng ✖ chỉ đặt lại cửa sổ khi tail == 0, nên ≥ 7 test đỏ trong một shard có thể rơi dòng đuôi không-✖ khỏi
+        # --brief (toàn văn ở last_output.log); nâng khi có log thật thiếu dòng đuôi
+        if summary or (tail and plain.strip().startswith(("|", "Lệnh chạy", "Command", "Log:"))):
             keep.append(line)
             tail = max(tail - 1, 0)
             continue

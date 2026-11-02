@@ -176,6 +176,7 @@ const lanePrompt = (lane, card) => [
   `move the project card yourself, clean up the worktree on exit. Config: ${input.configPath}.`,
   WORKTREE_STEP(lane, card.number),
   BOARD_IO(),
+  `Owner's standing decision (#516): a valid \`[orchestrator] [decision]\` comment on the card (valid per .claude/skills/super-board/references/decision-policy.md, judged only by .claude/bin/super-board-decision.py) settles the AC or blocker it names: treat that AC as handled and do not raise the same blocker again. Never post \`[decision]\` yourself for this card, under any header: when a choice is needed, write the Block (block-template.md) and let the orchestrator decide.`,
   `Commits, PR title, PR body blocks, comments: .claude/skills/super-board/references/writing-standard.md. Rewrite only your own PR body blocks, with .claude/bin/super-board-pr-body.sh.`,
   ...(lane === 'review' ? REVIEW_MEMORY : []),
   ...(lane === 'qa' && card.status === 'Ready'
@@ -191,16 +192,17 @@ const lanePrompt = (lane, card) => [
   `column = the column the card is in when you exit. detail = one line. Include prUrl/branch when they exist.`,
 ].join('\n')
 
-// Run-tier model ladders. Card complexity indexes into the active ladder;
-// undefined = inherit the session model (the strongest available — e.g.
-// Fable/Opus). Cards entering past Ready (cls null, never classified)
-// always inherit the session model.
+// Run-tier model ladders. Card complexity indexes into the active ladder.
+// Every cell names a model: an undefined cell would inherit the session
+// model, which ~/.claude/settings.json may set to sonnet, so a high card
+// could run weaker than a medium one (#553). Cards entering past Ready
+// (cls null, never classified) still inherit the session model.
 //   low    (run --low):  haiku / sonnet / opus
-//   medium (default):    sonnet / opus / session
+//   medium (default):    sonnet / opus / opus
 //   high   (run --high): opus for every card
 const LADDERS = {
   low: { low: 'haiku', medium: 'sonnet', high: 'opus' },
-  medium: { low: 'sonnet', medium: 'opus', high: undefined },
+  medium: { low: 'sonnet', medium: 'opus', high: 'opus' },
   high: { low: 'opus', medium: 'opus', high: 'opus' },
 }
 const ladder = LADDERS[input.tier || 'medium']

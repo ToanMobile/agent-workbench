@@ -48,7 +48,7 @@
   // Default model ladder for lane workers, indexed by card complexity from
   // the classify router. Overridden per run by `super-board run --low|--high`.
   //   "low"    — haiku (low) / sonnet (medium) / opus (high)
-  //   "medium" — (default) sonnet / opus / session model
+  //   "medium" — (default) sonnet / opus / opus
   //   "high"   — opus for every card
   "model_tier": "medium",
 
@@ -174,8 +174,9 @@
                   "keywords": ["drop table", "drop column", "truncate table", "rename column", "drop schema"] }
     },
     // #605: a PR that DELETES (or renames away) a file matching one of these
-    // globs → human, category "delete-protected": only a human "done" approves it;
-    // the reviewer's cross-review-approved marker does not.
+    // globs → human. Matrix, memory and project-rules deletes (T0209) → "delete-reviewable",
+    // approved by the cross-review marker; any other match (.env, keystore, jks,
+    // google-services, custom globs) → "delete-protected": only a human "done" approves it.
     // Setting this replaces the defaults below; [] turns it off.
     "protected_paths": ["**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json",
                         ".agents/regression_matrix.active.json",
@@ -332,23 +333,23 @@
 
   // Optional. Merge queue (Pha 2, 26/10): reviewers label an approved PR
   // `merge-queue` (plus an `approved-head:<sha40>` comment) instead of calling
-  // the merge gate; `.claude/bin/super-board-merge-queue.sh --config <cfg>
-  // --if-due` batches them into ONE super-board-merge-train.sh run (one verify
-  // for the batch) and routes every `train-result:` line. Off by default.
-  // On only for worker_backend "claude-p" (its runner calls --if-due every tick)
+  // the merge gate; `.claude/bin/super-board-merge-queue.sh --config <cfg>`
+  // starts one background super-board-merge-train.sh per valid queued PR
+  // (#676: scoped verify of main+PR, several at once through the slot pool;
+  // only `gh pr merge` is serialised by the merge gate's lock), exits at once,
+  // and routes every finished train's `train-result:` lines on its next run.
+  // No batching: no wait for more PRs, no age limit, no wait for an idle
+  // machine; `--full` runs once a night (gate-full).
+  // Off by default.
+  // On only for worker_backend "claude-p" (its runner calls it every tick)
   // or "workflow" (the launchd schedule super-board-queue-schedule.sh does, which
   // super-board-wave-plan.sh ensures); "codex" never uses the queue.
   // `SB_MERGE_QUEUE=1` / `0` overrides `enabled` for one process.
   //   enabled_at:   ISO time it was switched on (the batch canary only reads
   //                 runs after it); null while off.
-  //   batch_max:    most PRs per batch, oldest labelled first. `--if-due` runs
-  //                 once this many wait. After a batch with a red PR the next
-  //                 one takes at most max(1, batch_max/2).
-  //   max_wait_min: `--if-due` also runs once the oldest PR waited this long
-  //                 (its `labeled` timeline event), or when the machine is
-  //                 idle (no live board worker, merge gate lock or
-  //                 post-fix-gate test_run.lock).
-  "merge_queue": { "enabled": false, "enabled_at": null, "batch_max": 6, "max_wait_min": 60 },
+  //   max_trains:   trains running at once (#676); default 3. A PR over the
+  //                 cap waits for the next run; no attempt is counted.
+  "merge_queue": { "enabled": false, "enabled_at": null, "max_trains": 3 },
 
   // When the count of Blocked cards exceeds this percent of the initial Ready
   // count, post a mid-run breakdown in the run report. Default `30`. Set to `0`

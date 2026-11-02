@@ -8,7 +8,7 @@ import {
   discardProofs, anhTrung, hashFile, ackWarning, locCanhBaoDaXem, ghiMocGiao, chupThemCam } from './tasks.js';
 import {
   newConversation, sendMessage, getConversationMetadata, conversationProgress, transcriptErrors, MODELS, isAgyModel, agyPath, agyTurnStatus, agyTurnStatusSafe, agyRegistryProblem, agyPermissionPolicy,
-  sameProcess,
+  sameProcess, reapTurnLeftovers,
 } from './agentapi.js';
 import { discover, agentapiPath } from './discover.js';
 import { requireProjectId, resolveProject } from './projects.js';
@@ -490,6 +490,8 @@ export const TOOLS = [
       L.push(`${task.id} — ${task.title}`);
       L.push(`Giai doan: ${task.phase} · trang thai: ${task.state} · vong: ${task.round}`);
       L.push(`Hoi thoai: ${task.conversationId || '(chua giao)'}${task.auditConversationId ? ` · audit: ${task.auditConversationId}` : ''}`);
+      // PM thay luot agy xong qua pm_status: lenh cua agent con song sau luot (mo coi, dot CPU #697) bi dung o day
+      for (const k of reapTurnLeftovers()) L.push(`Da dung lenh mo coi cua agent sau luot agy da xong: pid ${k.pid} (hoi thoai ${k.conversationId}) — ${k.cmd}`);
       if (task.conversationId) {
         const prog = conversationProgress(task.conversationId);
         const regProblem = agyRegistryProblem();

@@ -52,10 +52,49 @@ gh_write_once() {
       [ "${args[i]}" = --body ] && { args[i+1]="${args[i+1]}"$'\n'"<!-- ${token} -->"; break; }
     done
   fi
-  gh "${args[@]}" || {
+  # #520: lỗi thoáng qua (5xx, timeout, rate limit/abuse, mạng, TLS, DNS) được thử lại tối đa 2 lần, chờ SB_WRITE_RETRY_DELAYS giây
+  # (mặc định "5 30"; test đặt "0 0"), trước khi đi đường hỏng bên dưới (#517). stderr của gh vào file tạm để phân loại, rồi chép lại ra
+  # stderr như cũ. 401/404/422, Bad credentials, "Could not resolve to a …" (không tìm thấy) và stderr rỗng: không thử lại. Comment:
+  # trước mỗi lần thử lại đọc lại marker token trên issue — có rồi thì coi như đã ghi; đọc lỗi thì không đăng mù (đi đường hỏng).
+  # Hàm này được test trích riêng bằng sed (test_gh_write_once_marker.sh): không `}` ở cột 0 bên trong, biến ngoài đều ${X:-}.
+  local errf="" rc=0 tries=0 d seen api_repo="{owner}/{repo}" delays=()
+  read -r -a delays <<< "${SB_WRITE_RETRY_DELAYS-5 30}"   # tách theo khoảng trắng, không glob
+  errf=$(mktemp "${TMPDIR:-/tmp}/sb-gh-write.XXXXXX" 2>/dev/null) || errf=""
+  if [ -n "$token" ]; then   # repo của comment: --repo/-R của lệnh nếu có, không thì repo của cwd như chính gh
+    for ((i = 0; i < ${#args[@]} - 1; i++)); do
+      case "${args[i]}" in --repo|-R) api_repo="${args[i+1]}"; break ;; esac
+    done
+  fi
+  while :; do
+    rc=0
+    if [ -n "$errf" ]; then
+      gh "${args[@]}" 2>"$errf" || rc=$?
+      cat "$errf" >&2 2>/dev/null || true
+    else
+      gh "${args[@]}" || rc=$?
+    fi
+    [ "$rc" -ne 0 ] || break
+    [ -n "$errf" ] && [ "$tries" -lt 2 ] && [ "$tries" -lt "${#delays[@]}" ] || break
+    grep -qiE 'HTTP 5[0-9][0-9]|Bad Gateway|Service Unavailable|Gateway Time|Internal Server Error|time(d)? ?out|deadline exceeded|HTTP 429|rate limit|abuse|connection (reset|refused)|broken pipe|(^|[^A-Za-z])EOF([^A-Za-z]|$)|TLS handshake|could not resolve host|no such host|temporary failure in name resolution|network is unreachable|Something went wrong while executing your query' "$errf" 2>/dev/null || break
+    ! grep -qiE 'HTTP (401|404|422)|Bad credentials|Could not resolve to (a|an) ' "$errf" 2>/dev/null || break
+    d="${delays[$tries]:-5}"
+    case "$d" in *[!0-9]*|????*) d=5 ;; esac   # giá trị lạ: 5 s, không để lỗi số học giết runner
+    tries=$((tries + 1))
+    if declare -F log >/dev/null; then log "⚠ GitHub $1 $2 failed with a transient error — retry ${tries}/2 in ${d}s"; fi
+    if declare -F tick_sleep >/dev/null; then tick_sleep "$((10#$d))"; else sleep "$((10#$d))" || true; fi
+    gh_checkpoint   # board bị halt trong lúc ngủ (stop, watchdog, lần đọc hỏng) → không ghi nữa, như ở đầu hàm
+    if [ -n "$token" ]; then
+      seen=$(gh api "repos/${api_repo}/issues/${3}/comments" --paginate --jq ".[] | select(.body | contains(\"${token}\")) | .id" 2>/dev/null) || break
+      if [ -n "$seen" ]; then rc=0; break; fi
+    fi
+  done
+  [ -z "$errf" ] || rm -f "$errf"
+  [ "$rc" -eq 0 ] || {
     # 28/10: lệnh ghi về MỘT thẻ hỏng thì thẻ đó vào Blocked, board chạy tiếp (block_card_after_failed_write). Lệnh ghi của chính
     # bước chặn thẻ hỏng (SB_CARD_BLOCKING) chỉ trả 1: lệnh ghi gốc halt bên dưới với bản ghi verify của nó.
     [ -z "${SB_CARD_BLOCKING:-}" ] || return 1
+    # #520: argv đúng như đã gửi (comment kèm marker token) cho state ghi lại của block_card_after_failed_write.
+    SB_WRITE_ARGS_JSON=$(printf '%s\0' "${args[@]}" | jq -Rsc 'split("\u0000")[:-1]' 2>/dev/null) || SB_WRITE_ARGS_JSON=""
     if declare -F block_card_after_failed_write >/dev/null && block_card_after_failed_write "$@"; then return 1; fi
     local verify=() spec=""
     [ -z "$token" ] || spec=$(jq -nc --argjson n "$3" --arg m "$token" '{kind:"comment",issue:$n,marker:$m}' 2>/dev/null) || spec=""
@@ -263,9 +302,11 @@ column_count() {
 FOR_A_PERSON_JQ='def for_a_person: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
   | ((index("needs-you") or index("human-gated")) and (map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not));'
 # #601: thẻ Ready chỉ chờ thẻ khác mang nhãn `waiting-on:#N` (mọi hoa/thường, ở item hay content, chuỗi hay {name}); không giao
-# tới khi sweep_waiting_on gỡ nhãn vì #N đã CLOSED/MERGED.
+# tới khi sweep_waiting_on gỡ nhãn vì #N đã CLOSED/MERGED. #619: N phải là số — cùng một regex với `waiting_on` của
+# super-board-wave-plan.sh và LABEL_RE của super-board-waiting-on.py (sweep chỉ gỡ nhãn dạng số, nên nhãn sai dạng như
+# `waiting-on:#x` từng giữ thẻ Ready mãi). test_waiting_on_skip_next.sh mục A kiểm ba nơi cho cùng một tập.
 WAITING_ON_JQ='def waiting_on: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
-  | any(startswith("waiting-on:#"));
+  | any(test("^waiting-on:#[0-9]+$"));
 def file_wait: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("⏳ chờ thẻ khác") != null;'
 # #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
 waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
@@ -359,7 +400,15 @@ set_card_status() {
   project_id=$(project_node_id) || return $?
   gh_checkpoint
   gh_write_once project item-edit --id "$item_id" --project-id "$project_id" \
-    --field-id "$STATUS_FIELD_ID" --single-select-option-id "$opt_id" >/dev/null 2>&1
+    --field-id "$STATUS_FIELD_ID" --single-select-option-id "$opt_id" >/dev/null 2>&1 || return $?
+  # #520: cache của tick theo đúng cột vừa ghi. Không thì một lệnh ghi hỏng ngay sau một lần chuyển cột thành công (vd comment chặn
+  # sau khi đã vào Blocked) bị block_card_after_failed_write ghi nhầm "cột cũ" là cột trước lần chuyển, và lần ghi lại kéo thẻ về đó.
+  local cache
+  if cache=$(printf '%s' "${PROJECT_ITEMS_JSON:-}" | jq -c --arg id "$item_id" --arg s "$name" \
+       '.items |= map(if .id == $id then .status = $s else . end)' 2>/dev/null) && [ -n "$cache" ]; then
+    PROJECT_ITEMS_JSON="$cache"
+  fi
+  return 0
 }
 
 # 28/10 (04:33 gỡ assignee #446 hỏng một lần, board đứng tới 07:05): gh_write_once gọi hàm này khi một lệnh ghi hỏng. Lệnh của MỘT thẻ
@@ -389,18 +438,67 @@ block_card_after_failed_write() {
     [ "$prev" = --body ] && a="${a%%$'\n'*}…"
     what="${what:+$what }$a"; prev="$a"
   done
+  local sdir="${INFLIGHT_DIR:-}/card-write-failed" sf="" save=0 cycles=0 retry_line=""
+  [ -z "${INFLIGHT_DIR:-}" ] || sf="$sdir/${issue}.json"
+  # #520: thẻ này đã bị chặn vì một lệnh ghi hỏng (trong tick này, hoặc từ trước: còn state và thẻ vẫn Blocked): nối lệnh mới vào state
+  # (thứ tự phát lại giữ nguyên), giữ cột cũ của lần đầu, không chuyển cột / comment lần nữa. Không thì lần hỏng sau đọc cột Blocked và
+  # ghi đè làm mất lệnh đầu.
+  local again=" ${CARD_WRITE_BLOCKED:-} "
+  if [ -n "$sf" ] && [ -f "$sf" ] && [ "$col" = Blocked ]; then again=" ${issue} "; fi
+  case "$again" in *" ${issue} "*)
+    # state đã gave_up (đã gọi người, hoặc state hỏng): sweep không còn phát lại nó → không nối vào, nói rõ lệnh này không được thử lại
+    if [ -n "$sf" ] && [ -f "$sf" ] && [ "$(jq -r '.gave_up // false' "$sf" 2>/dev/null)" = true ]; then
+      log "⚠ GitHub write for #${issue} failed again (gh ${what}) — the card already waits for a person; this write is not retried"
+    elif [ -n "$sf" ] && [ -f "$sf" ] && [ -n "${SB_WRITE_ARGS_JSON:-}" ] \
+       && jq -c --argjson a "$SB_WRITE_ARGS_JSON" '.argvs = ((.argvs // []) + [$a])' "$sf" > "$sf.tmp" 2>/dev/null && mv -f "$sf.tmp" "$sf"; then
+      log "⚠ GitHub write for #${issue} failed again (gh ${what}) — added to its retry state, card already Blocked"
+    else
+      rm -f "$sf.tmp" 2>/dev/null || true
+      log "⚠ GitHub write for #${issue} failed again (gh ${what}) — card already Blocked, this write is not retried automatically"
+    fi
+    SB_WRITE_ARGS_JSON=""
+    return 0 ;;
+  esac
+  # #520 (review P1-1): thẻ ĐANG ở Blocked có lý do chặn riêng (dòng `blocked-by:` cuối của nó: một thẻ khác, hoặc người). Chuyển cột và
+  # đăng comment chặn mới (`blocked-by:  -`) sẽ đè lý do đó: thẻ lẽ ra tự nhả khi thẻ kia đóng thành chờ người mãi. Giữ nguyên thẻ, không
+  # comment; lưu state để sweep ghi lại nhãn / comment (lệnh nhả thẻ không phát lại: blocked sweep tự quyết lại mỗi tick).
+  if [ "$col" = Blocked ]; then
+    if [ -n "$sf" ] && [ -n "${SB_WRITE_ARGS_JSON:-}" ] && mkdir -p "$sdir" 2>/dev/null \
+       && jq -nc --arg item "$item" --argjson argv "$SB_WRITE_ARGS_JSON" \
+            '{from: "Blocked", item: $item, argvs: [$argv], fails: 0, cycles: 0, gave_up: false}' > "$sf.tmp" 2>/dev/null \
+       && mv -f "$sf.tmp" "$sf"; then
+      log "⚠ GitHub write for #${issue} failed (gh ${what}) — card already Blocked, left as it is; the write is retried each tick"
+    else
+      rm -f "$sf.tmp" 2>/dev/null || true
+      log "⚠ GitHub write for #${issue} failed (gh ${what}) — card already Blocked, left as it is; the runner decides this step again next tick"
+    fi
+    SB_WRITE_ARGS_JSON=""
+    CARD_WRITE_BLOCKED="${CARD_WRITE_BLOCKED:-} ${issue}"
+    return 0
+  fi
   log "⚠ GitHub write for #${issue} failed (gh ${what}) — #${issue} ${col:-?} → Blocked, the board keeps running"
+  # #520: chỉ hứa tự ghi lại khi lưu được state (argv đúng như đã gửi, biết cột cũ). Thẻ vừa được ghi lại xong mà bị chặn lại trong 6 giờ
+  # mang số vòng (`cycles`) từ sổ <N>.done sang: sweep thôi trả thẻ về sau 2 vòng (chặn ↔ trả về lặp mãi với lệnh không phát lại).
+  if [ -n "$sf" ] && [ -n "${SB_WRITE_ARGS_JSON:-}" ] && [ -n "$col" ]; then
+    save=1
+    cycles=$(jq -r --argjson now "$(date +%s)" 'if ($now - (.at // 0)) < 21600 then (.cycles // 0) else 0 end | floor' "$sdir/${issue}.done" 2>/dev/null) || cycles=0
+    case "$cycles" in ''|*[!0-9]*) cycles=0 ;; esac
+    retry_line="
+Retry:       the runner writes it again each tick and moves the card back to ${col} when it lands; after ${CWF_MAX_TICKS:-3} failed ticks it labels needs-you"
+  fi
   local SB_CARD_BLOCKING=1   # gh_write_once lồng bên dưới thấy biến này: hỏng thì trả 1, không chặn thẻ lần nữa
   if ! set_card_status "$item" "Blocked"; then
     log "✖ could not move #${issue} to Blocked after its failed GitHub write — halting as before"
     return 1
   fi
-  if ! gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ❓ GitHub write failed · needs you
+  # #520: dòng `Retry:` (khi lưu được state) + marker máy đọc được `sb-card-write-failed {"issue":N,"from":"<cột>"}` (cột cũ). Lệnh để ghi
+  # lại KHÔNG đọc từ comment này (dữ liệu trên GitHub người khác sửa được) mà từ state cục bộ ghi ngay sau đây.
+  if ! gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ❓ GitHub write failed$([ "$save" -eq 0 ] || printf ' · retrying')
 Card:        #${issue}${title:+ ${title}}
 Reason tag:  ❓
 Why blocked: the runner's GitHub write about this card failed and may or may not have been applied: \`gh ${what}\`
 Evidence:    run log ${RUN_MANIFEST:-?} (⚠ GitHub write for #${issue} failed)
-Checked:     the card was moved to Blocked so the board keeps running; no worker is dispatched for it
+Checked:     the card was moved to Blocked so the board keeps running; no worker is dispatched for it${retry_line}
 What blocks: an uncertain GitHub write the bot cannot verify on its own
 Why I (bot) cannot decide:
              writing it again blind could post twice or undo a person's change
@@ -408,10 +506,24 @@ To unblock:  [ ] Check on GitHub whether the write above took effect (assignee, 
              [ ] Drag #${issue} back to ${col:-the column it came from}
 Owner:       Eric
 Move back:   drag this card to ${col:-its previous column} after the check above
+<!-- sb-card-write-failed $(jq -nc --argjson n "$issue" --arg c "${col:-}" '{issue:$n,from:$c}' 2>/dev/null) -->
 blocked-by:  -" >/dev/null 2>&1; then
     log "✖ #${issue} is in Blocked but its blocker comment failed too — halting as before"
     return 1
   fi
+  # #520: state ghi lại (sweep_card_write_failed) — chỉ khi có argv đúng như đã gửi và biết cột cũ; thiếu thì thẻ chờ người như #517.
+  if [ "$save" -eq 1 ]; then
+    if ! { mkdir -p "$sdir" 2>/dev/null \
+         && jq -nc --arg from "$col" --arg item "$item" --argjson argv "$SB_WRITE_ARGS_JSON" --argjson c "$cycles" \
+              '{from: $from, item: $item, argvs: [$argv], fails: 0, cycles: $c, gave_up: false}' > "$sf.tmp" 2>/dev/null \
+         && mv -f "$sf.tmp" "$sf"; }; then
+      rm -f "$sf.tmp" 2>/dev/null || true
+      log "⚠ #${issue}: retry state not saved — the card waits in Blocked for a person (#517)"
+    fi
+  else
+    log "⚠ #${issue}: no retry state (unknown column or command) — the card waits in Blocked for a person (#517)"
+  fi
+  SB_WRITE_ARGS_JSON=""
   # Tới lần đọc board kế tiếp: dispatch_lane không phóng worker cho thẻ này, cache của tick này thấy nó ở Blocked.
   CARD_WRITE_BLOCKED="${CARD_WRITE_BLOCKED:-} ${issue}"
   local cache
@@ -422,6 +534,133 @@ blocked-by:  -" >/dev/null 2>&1; then
     log "⚠ #${issue}: board cache not updated; the next tick reads Blocked from GitHub"
   fi
   return 0
+}
+
+# #520: thẻ vào Blocked vì một lệnh ghi GitHub của nó hỏng (block_card_after_failed_write) được ghi lại MỖI tick, không chờ người.
+# Lệnh lấy từ state cục bộ $INFLIGHT_DIR/card-write-failed/<N>.json do chính runner ghi lúc chặn thẻ — không bao giờ từ comment GitHub —
+# và chỉ nhận đúng dạng runner tự ghi (review P2-1: cả cờ, không --repo / --body-file / --title…): `issue edit <N> --add-assignee|
+# --remove-assignee|--add-label|--remove-label <v>`, `issue comment <N> --body <v>`, `issue reopen <N>`, `project item-edit …`. Nhiều lệnh
+# (argvs) phát lại theo thứ tự.
+#   không phát lại (net của "ghi lại rồi về cột cũ" là về cột cũ, bước của runner tự quyết lại): `project item-edit` (chuyển cột),
+#   `issue reopen` (issue_is_open xét lại nhãn ac-open / NOT_PLANNED), `issue edit … --add-assignee` khi thẻ không còn lock (lượt nhận
+#   thẻ đã huỷ)
+#   `issue comment`: marker token sb-write đã có trên issue → coi như đã ghi; đọc lại được và chưa có → đăng lại đúng argv (cùng token);
+#   đọc lại hỏng → tick hỏng, không bao giờ đăng mù
+#   `issue edit|close` khác: idempotent → gh lại đúng argv
+# Được → thẻ về cột cũ (cột cũ là Blocked: chỉ phát lại, không đổi cột; Building mà không còn lock: về Ready), comment
+# [orchestrator] [report], state đổi thành sổ <N>.done {cycles, at}. Hỏng (kể cả bước về cột cũ) → bộ đếm +1 (ghi nguyên tử, sống qua
+# restart); đủ CWF_MAX_TICKS tick liên tiếp, hoặc thẻ đã được trả về CWF_MAX_CYCLES lần trong 6 giờ mà lại bị chặn (vòng chặn ↔ trả về)
+# → super-board-needs-you.py mark (nhãn + MỘT comment của chính nó), gave_up chỉ khi mark exit 0. Mọi lệnh ở đây là gh trực tiếp hoặc
+# chạy với SB_CARD_BLOCKING=1: hỏng chỉ trả 1, không chặn thẻ lần nữa, KHÔNG BAO GIỜ halt board. Người đã kéo thẻ khỏi Blocked → xoá
+# state. Trả 0 khi có thẻ đổi cột hoặc nhãn (vòng lặp đọc lại board), 1 khi không.
+CWF_MAX_TICKS=3
+CWF_MAX_CYCLES=2
+sweep_card_write_failed() {
+  local sdir="${INFLIGHT_DIR:-}/card-write-failed" f issue col from to item fails cycles tok seen moved=1 a repo rc what verb n i why
+  [ -n "${INFLIGHT_DIR:-}" ] && [ -d "$sdir" ] || return 1
+  for f in "$sdir"/*.done; do   # sổ vòng cũ hơn 6 giờ: hết tác dụng
+    [ -f "$f" ] || continue
+    [ "$(jq -r --argjson now "$(date +%s)" '($now - (.at // 0)) >= 21600' "$f" 2>/dev/null)" != true ] || rm -f "$f"
+  done
+  for f in "$sdir"/*.json; do
+    [ -f "$f" ] || continue
+    issue=$(basename "$f" .json)
+    case "$issue" in ''|*[!0-9]*) continue ;; esac
+    col=$(printf '%s' "${PROJECT_ITEMS_JSON:-}" | jq -r --argjson n "$issue" '[.items[]? | select(.content.number == $n) | .status][0] // empty' 2>/dev/null) || col=""
+    if [ "$col" != Blocked ]; then   # người (hoặc bước khác) đã đưa thẻ ra khỏi Blocked: không còn việc của runner
+      rm -f "$f"; log "card-write-failed #${issue}: no longer Blocked (${col:-not on the board}) — retry state dropped"; continue
+    fi
+    [ "$(jq -r '.gave_up // false' "$f" 2>/dev/null)" != true ] || continue
+    from=$(jq -r '.from // empty' "$f" 2>/dev/null) || from=""
+    item=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[]? | select(.content.number == $n) | .id][0] // empty' 2>/dev/null) || item=""
+    fails=$(jq -r '(.fails // 0) | if type == "number" then floor else 0 end' "$f" 2>/dev/null) || fails=0
+    cycles=$(jq -r '(.cycles // 0) | if type == "number" then floor else 0 end' "$f" 2>/dev/null) || cycles=0
+    case "$fails" in ''|*[!0-9]*) fails=0 ;; esac
+    case "$cycles" in ''|*[!0-9]*) cycles=0 ;; esac
+    n=$(jq -r '(.argvs // []) | length' "$f" 2>/dev/null) || n=0
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    what=$(jq -r '[(.argvs // [])[] | .[:3] | map(tostring) | join(" ")] | join("; ")' "$f" 2>/dev/null) || what=""
+    # mọi lệnh phải đúng dạng runner tự ghi, cho đúng thẻ này; một lệnh lạ là cả state không dùng được
+    verb=ok
+    [ "$n" -gt 0 ] || verb=""
+    for ((i = 0; i < n; i++)); do   # đúng số đối số và đúng cờ của từng dạng; lỗi jq (argv không phải mảng chuỗi) = lạ
+      [ "$(jq -r --argjson i "$i" --arg n "$issue" '.argvs[$i] as $a
+        | ($a | type) == "array" and all($a[]; type == "string" and (contains("\u0000") | not))
+          and (if $a[0:2] == ["issue", "edit"] then ($a | length) == 5 and $a[2] == $n
+                 and any(["--add-assignee", "--remove-assignee", "--add-label", "--remove-label"][]; . == $a[3])
+               elif $a[0:2] == ["issue", "comment"] then ($a | length) == 5 and $a[2] == $n and $a[3] == "--body"
+               elif $a[0:2] == ["issue", "reopen"] then ($a | length) == 3 and $a[2] == $n
+               else $a[0:2] == ["project", "item-edit"] end)' "$f" 2>/dev/null)" = true ] || verb=""
+    done
+    if [ -z "$verb" ] || [ -z "$from" ] || [ -z "$item" ]; then
+      log "⚠ card-write-failed #${issue}: retry state not usable (gh ${what:-?}, from '${from}') — left in Blocked for a person"
+      jq -c '.gave_up = true' "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" || rm -f "$f.tmp"
+      continue
+    fi
+    to="$from"
+    if [ "$to" = Building ] && ! issue_locked "$issue"; then to=Ready; fi   # không còn worker: Building trống sẽ kẹt, về Ready
+    rc=0; why=""
+    if [ "$cycles" -ge "$CWF_MAX_CYCLES" ]; then
+      rc=66; why="blocked again after ${cycles} write-again rounds in 6 h"   # vòng chặn ↔ trả về: không trả thẻ về nữa, gọi người
+    else
+      gh_checkpoint
+      for ((i = 0; i < n && rc == 0; i++)); do
+        local argv=()
+        while IFS= read -r -d '' a; do argv+=("$a"); done < <(jq -j --argjson i "$i" '.argvs[$i][] | tostring | . + "\u0000"' "$f" 2>/dev/null)
+        case "${argv[0]:-} ${argv[1]:-}" in
+          "project item-edit"|"issue reopen") continue ;;
+          "issue edit")
+            case " ${argv[*]} " in *" --add-assignee "*) issue_locked "$issue" || continue ;; esac
+            gh "${argv[@]}" >/dev/null 2>&1 || rc=$? ;;
+          "issue comment")
+            tok=$(printf '%s' "${argv[*]}" | grep -oE 'sb-write:[0-9]+-[0-9]+-[0-9]+' | head -1) || tok=""
+            if [ -z "$tok" ]; then
+              rc=65   # comment không mang marker: không kiểm được đã đăng hay chưa → không đăng mù
+            else
+              seen=$(gh api "repos/{owner}/{repo}/issues/${issue}/comments" --paginate --jq ".[] | select(.body | contains(\"${tok}\")) | .id" 2>/dev/null) || rc=$?
+              if [ "$rc" -eq 0 ] && [ -z "$seen" ]; then gh "${argv[@]}" >/dev/null 2>&1 || rc=$?; fi
+            fi ;;
+          *) gh "${argv[@]}" >/dev/null 2>&1 || rc=$? ;;
+        esac
+      done
+    fi
+    if [ "$rc" -eq 0 ] && { [ "$to" = Blocked ] || SB_CARD_BLOCKING=1 set_card_status "$item" "$to"; }; then
+      rm -f "$f"
+      if [ "$to" = Blocked ]; then   # thẻ vốn đã được chặn có chủ đích: chỉ cần lệnh ghi còn thiếu, giữ nguyên cột
+        log "card-write-failed #${issue}: retry state done (gh ${what}; label / comment writes re-applied, column moves left to the runner's own steps) — card stays Blocked"
+        continue
+      fi
+      jq -nc --argjson c "$((cycles + 1))" --argjson at "$(date +%s)" '{cycles: $c, at: $at}' > "$sdir/${issue}.done.tmp" 2>/dev/null \
+        && mv -f "$sdir/${issue}.done.tmp" "$sdir/${issue}.done" || rm -f "$sdir/${issue}.done.tmp"
+      moved=0
+      log "card-write-failed #${issue}: GitHub write re-applied (gh ${what}) — card back to ${to}"
+      SB_CARD_BLOCKING=1 gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to ${to} · GitHub write re-applied
+Did: the GitHub write that failed earlier (\`gh ${what}\`) is on GitHub now; #${issue} moved back to ${to}
+Next: the card continues from ${to}; nothing to do" >/dev/null 2>&1 || log "⚠ card-write-failed #${issue}: back in ${to}, report comment failed"
+      continue
+    fi
+    [ "$rc" -eq 66 ] || fails=$((fails + 1))
+    if [ "$rc" -eq 66 ] || [ "$fails" -ge "$CWF_MAX_TICKS" ]; then
+      [ -n "$why" ] || why="still failing after ${fails} ticks"
+      repo=$(jq -r '.repo.remote // empty' "${CONFIG_PATH:-/dev/null}" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##') || repo=""
+      # --action/--next ngắn, không dòng máy (Reason tag:, blocked-by:, <!--) — super-board-needs-you.py one_line từ chối các dòng đó.
+      if [ -n "$repo" ] && python3 "$(dirname "$SB_GITHUB_READ")/super-board-needs-you.py" mark --repo "$repo" --issue "$issue" \
+           --action "kiểm trên GitHub lệnh ghi runner không ghi lại được (gh ${what}) và làm tay nếu chưa có hiệu lực" \
+           --next "$([ "$to" = Blocked ] && echo "để #${issue} ở Blocked tới khi lý do chặn của nó hết" || echo "kéo #${issue} về ${to}")" \
+           >/dev/null 2>>"${RUN_MANIFEST:-/dev/null}"; then
+        jq -c --argjson n "$fails" '.fails = $n | .gave_up = true' "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" || rm -f "$f.tmp"
+        moved=0
+        log "✖ card-write-failed #${issue}: ${why} — labelled needs-you, no more retries"
+        continue
+      fi
+      log "⚠ card-write-failed #${issue}: ${why} and needs-you could not be marked — retrying next tick"
+    else
+      log "⚠ card-write-failed #${issue}: writing it again failed (tick ${fails}/${CWF_MAX_TICKS}) — card stays Blocked"
+    fi
+    jq -c --argjson n "$fails" '.fails = $n' "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" || {
+      rm -f "$f.tmp"; log "⚠ card-write-failed #${issue}: retry counter not saved (${f}) — the ${CWF_MAX_TICKS}-tick cap cannot advance"; }
+  done
+  return "$moved"
 }
 
 PROJECT_NODE_ID=""
@@ -576,6 +815,15 @@ Next: Eric — merge this card into ${dup}, or cut the overlap from its Fix" >/d
   return 0
 }
 
+review_wait_cooldown() {
+  # $1 = issue. 0 = lượt review gần nhất của thẻ kết thúc sạch khi đang chờ một điều kiện (#671) chưa quá SB_REVIEW_WAIT_S (900) giây: chưa cho reviewer mới.
+  # Sổ review-wait/<issue> mỗi lượt chờ một dòng (epoch); mốc nghỉ là dòng cuối.
+  local f="$INFLIGHT_DIR/review-wait/$1" t
+  [ -f "$f" ] || return 1
+  t=$(tail -n 1 "$f" 2>/dev/null | tr -dc '0-9')
+  [ -n "$t" ] && [ $(( $(date +%s) - t )) -lt "${SB_REVIEW_WAIT_S:-900}" ]
+}
+
 top_card_in_column() {
   # Sets TOP_ISSUE / TOP_ITEM_ID to the FIRST dispatchable card in column $1:
   # no assignee, no local in-flight lock, and the underlying issue still OPEN.
@@ -589,6 +837,8 @@ top_card_in_column() {
   TOP_ISSUE=""; TOP_ITEM_ID=""
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
+    # #619: thẻ dispatch_ready_tick đã thử trong tick này (preflight không giao, đã reconcile, đang giữ): không chọn lại, không ghi lại.
+    case " ${PREFLIGHT_SKIP:-} " in *" ${issue} "*) continue ;; esac
     issue_locked "$issue" && continue
     if early_backoff "$issue" "$col"; then   # #94: its worker died at once twice in the window — no claim/release loop
       local key
@@ -600,6 +850,7 @@ top_card_in_column() {
       esac
       continue
     fi
+    if [ "$col" = "Review" ] && review_wait_cooldown "$issue"; then continue; fi   # #671: waiting review turn, rest before the next one
     local issue_rc=0
     issue_is_open "$issue" || issue_rc=$?
     [ "$issue_rc" -le 1 ] || exit "$issue_rc"
@@ -609,9 +860,13 @@ top_card_in_column() {
       gh_checkpoint
       [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
       rm -f "$INFLIGHT_DIR/$issue"
+      [ "${SB_READY_TICK:-0}" != 1 ] || PREFLIGHT_SKIP="${PREFLIGHT_SKIP:-} ${issue}"
       continue
     fi
-    if [ "$col" = "Ready" ] && ready_card_held "$issue" "$item_id"; then continue; fi   # #202
+    if [ "$col" = "Ready" ] && ready_card_held "$issue" "$item_id"; then   # #202
+      [ "${SB_READY_TICK:-0}" != 1 ] || PREFLIGHT_SKIP="${PREFLIGHT_SKIP:-} ${issue}"
+      continue
+    fi
     # Pha 2: thẻ Review đã vào hàng (PR không draft, nhãn merge-queue, approved-head khớp head) chờ super-board-merge-queue.sh gom;
     # phóng reviewer cho nó chỉ lặp lại review (B1). Đọc GitHub hỏng → coi như chưa vào hàng (review như cũ, không bỏ qua vì lỗi đọc).
     if [ "$col" = "Review" ] && merge_queue_on && queued=$(review_approved_head "$issue" merge-queue </dev/null); then
@@ -985,6 +1240,29 @@ lane_dispatch_tick() {
   ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
 }
 
+# Ready của một tick: nhãn của thẻ đầu chọn lane — `qa` sang Tester (bỏ Building), còn lại build. #619: preflight không giao thẻ đầu
+# (mark waiting-on hỏng kéo dài, fold hỏng, đang chờ…) thì thử thẻ Ready kế trong CÙNG tick, tối đa 3 thẻ — trước đây lane build đứng ở
+# đúng một thẻ mỗi tick. PREFLIGHT_SKIP / SB_READY_TICK là local: chỉ sống trong lượt này (dispatch_lane, top_card_in_column đọc chúng).
+# Giao thật đo bằng DISPATCH_COUNT (tăng đúng lúc phóng worker): ACTIVE_WORKERS chỉ cộng khi có worker mới.
+# Đọc QA_FREE, BUILD_FREE, ACTIVE_WORKERS của vòng lặp chính.
+dispatch_ready_tick() {
+  local SB_READY_TICK=1 PREFLIGHT_SKIP="" tries=0 before
+  while top_card_in_column "Ready"; do
+    if [ "$(card_lane "$TOP_ISSUE")" = "qa" ]; then
+      [ "$QA_FREE" -eq 1 ] && { dispatch_lane qa "$TOP_ISSUE"; ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1)); }
+      return 0
+    fi
+    [ "$BUILD_FREE" -eq 1 ] || return 0
+    before=${DISPATCH_COUNT:-0}
+    dispatch_lane build "$TOP_ISSUE"
+    if [ "${DISPATCH_COUNT:-0}" -gt "$before" ]; then ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1)); return 0; fi
+    case " ${PREFLIGHT_SKIP} " in *" ${TOP_ISSUE} "*) ;; *) return 0 ;; esac   # không giao vì lý do khác (claim, account, đĩa)
+    tries=$((tries + 1))
+    [ "$tries" -lt 3 ] || { log "Ready: ${tries} cards skipped by preflight this tick — the next tick tries the top cards again"; return 0; }
+  done
+  return 0
+}
+
 tick_is_cheap() {
   # #288: 0 khi slot đã đầy. #530: load1 vượt ngưỡng cũng là tick rẻ, nhưng chỉ sau lần đọc board đầu
   # và khi tick này không vừa thu worker (worker vừa chết còn phải đối chiếu trên board mới).
@@ -1130,18 +1408,15 @@ merge_queue_on() {
 
 merge_queue_wait_ok() {
   # Vòng sửa 1 (R3): 0 khi PR cũ nhất đang chờ trong <git-common-dir>/super-board/merge-queue.labeled (dòng `<PR> <head> <epoch>`,
-  # super-board-merge-queue.sh ghi mỗi lượt có PR trong hàng) chờ chưa quá 3 × merge_queue.max_wait_min (mặc định 60, như bộ gom).
+  # super-board-merge-queue.sh ghi mỗi lượt có PR trong hàng) chờ chưa quá 3 giờ (hằng cố định; queue không còn config chờ).
   # Thiếu file / không có mốc hợp lệ = 1: bộ gom chạy trước record_cycle_progress trong cùng tick và luôn ghi file khi có PR, nên
   # không có file nghĩa là hàng không được rút; khi đó không miễn RUNAWAY. Thư mục chung tính như bộ gom (repo.path → git-common-dir).
-  local rp common max oldest
+  local rp common oldest
   rp=$(jq -r '.repo.path // "."' "$CONFIG_PATH" 2>/dev/null) || rp=.
   common=$(cd "${rp:-.}" 2>/dev/null && g=$(git rev-parse --git-common-dir 2>/dev/null) && [ -n "$g" ] && cd "$g" && pwd -P) || return 1
-  max=$(jq -r '.merge_queue.max_wait_min // empty' "$CONFIG_PATH" 2>/dev/null || true)
-  case "$max" in ''|*[!0-9]*|0) max=60 ;; esac
-  [ "${#max}" -le 6 ] || max=60
   oldest=$(awk '$3 ~ /^[0-9]+$/ { if (m == "" || $3 + 0 < m + 0) m = $3 } END { print m }' "$common/super-board/merge-queue.labeled" 2>/dev/null)
   [ -n "$oldest" ] || return 1
-  [ $(( $(date +%s) - oldest )) -le $(( 3 * 10#$max * 60 )) ]
+  [ $(( $(date +%s) - oldest )) -le $(( 3 * 60 * 60 )) ]
 }
 
 mq_collect_rc() {
@@ -1151,15 +1426,15 @@ mq_collect_rc() {
   case "$rc" in
     0) ;;
     79|9) log "🛑 halt — super-board-merge-queue.sh exited ${rc}"; exit "$rc" ;;
-    *) log "⚠ super-board-merge-queue.sh --if-due exited ${rc:-?} — runner keeps going, the queue is retried next tick" ;;
+    *) log "⚠ super-board-merge-queue.sh exited ${rc:-?} — runner keeps going, the queue is retried next tick" ;;
   esac
 }
 
 merge_queue_due() {
-  # Pha 2: khi queue bật, mỗi tick chạy `super-board-merge-queue.sh --config <cfg> --if-due` (bộ gom tự thoát 0 khi chưa tới hạn hoặc
-  # khoá bận). Exit 79/9 của nó là halt như gh_checkpoint; mọi lỗi khác chỉ ghi log, không được kết thúc runner (set -euo pipefail).
+  # Pha 2: khi queue bật, mỗi tick chạy `super-board-merge-queue.sh --config <cfg>` (không gom đợt: mọi PR đã duyệt vào train ngay; bộ gom thoát 0 khi hàng
+  # rỗng hoặc khoá bận). Exit 79/9 của nó là halt như gh_checkpoint; mọi lỗi khác chỉ ghi log, không được kết thúc runner (set -euo pipefail).
   # #537: bộ gom chạy NỀN (gate --full có thể kéo dài hàng chục phút). Tick chỉ đợi tối đa SB_MQ_TICK_WAIT giây (mặc định 60; bộ gom
-  # thường thoát ngay vì chưa tới hạn, nên kết quả vẫn thấy trong cùng tick); quá hạn thì bỏ lại chạy nền và tick sau đọc mã thoát,
+  # thường thoát ngay khi hàng rỗng, nên kết quả vẫn thấy trong cùng tick); quá hạn thì bỏ lại chạy nền và tick sau đọc mã thoát,
   # nên halt 79/9 có thể đến chậm. Trạng thái nằm trong <RUNNER_DIR>/<slug>.mq.pid (PID) và .mq.rc (mã thoát, ghi nguyên tử khi xong);
   # runner chết giữa chừng thì runner sau vẫn đọc được .mq.rc; chỉ một bộ gom chạy một lúc (còn khoá riêng của nó).
   merge_queue_on || return 0
@@ -1183,7 +1458,7 @@ merge_queue_due() {
     log "⚠ super-board-merge-queue.sh background run (pid ${pid:-?}) ended without an exit code — restarting it"
     rm -f "$pidf"
   fi
-  ( "$mq" --config "$CONFIG_PATH" --if-due >> "${RUN_MANIFEST:-/dev/null}" 2>&1 </dev/null; echo "$?" > "$rcf.tmp" && mv "$rcf.tmp" "$rcf" ) &
+  ( "$mq" --config "$CONFIG_PATH" >> "${RUN_MANIFEST:-/dev/null}" 2>&1 </dev/null; echo "$?" > "$rcf.tmp" && mv "$rcf.tmp" "$rcf" ) &
   echo "$!" > "$pidf"
   wait_s="${SB_MQ_TICK_WAIT:-60}"
   case "$wait_s" in ''|*[!0-9]*) wait_s=60 ;; esac
@@ -1539,7 +1814,11 @@ dispatch_lane() {
     return 0
   fi
   # Sau các kiểm tra đĩa/account (không tốn một lượt preflight mỗi tick khi chưa giao được), trước khi nhận thẻ.
-  if [ "$lane" = "build" ]; then preflight_gate "$issue" || return 0; fi
+  # #619: preflight không giao (mark/fold hỏng, đang chờ, đã sang Blocked…) → trong dispatch_ready_tick, thẻ bị bỏ qua tới hết tick
+  # để lane build thử thẻ Ready kế; gọi lẻ (ngoài dispatch_ready_tick) giữ hành vi cũ.
+  if [ "$lane" = "build" ]; then
+    preflight_gate "$issue" || { [ "${SB_READY_TICK:-0}" != 1 ] || PREFLIGHT_SKIP="${PREFLIGHT_SKIP:-} ${issue}"; return 0; }
+  fi
   if ! try_claim_assignee "$issue"; then
     return 0
   fi
@@ -1582,7 +1861,7 @@ EOF
       if [ -n "$train_rows" ]; then
         noop_judge=0
         log "review lane: merge-train for #${train_issues// /, #} (PRs ${train_prs}) — one worker, one verify, no fresh review"
-        prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done (not when the gate printed ac-open: #N — that card stays open, the gate moved it to Ready); red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
+        prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done (not when the gate printed ac-open: #N — that card stays open, the gate moved it to Ready); red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred, timeout or base-moved → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
       elif ! merge_queue_on && merge_only=$(review_approved_head "$issue"); then   # Pha 2: queue bật thì không có worker merge-only
         noop_judge=0
         read -r mo_pr mo_head <<EOF
@@ -1592,7 +1871,7 @@ EOF
         prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
       elif merge_queue_on; then
       # Pha 2 (Q1): reviewer vào hàng thay cho gọi merge gate; super-board-merge-queue.sh gom và merge cả đợt, rồi chuyển thẻ Done.
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; the cross-review is Antigravity's. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: run an Antigravity audit of the PR head through the antigravity-pm MCP (pm_task_create with project = the config repo.path, pm_dispatch kind=audit on that task, read its audit-agent.json, and only when Antigravity's verdict is pass record pm_verdict kind=audit verdict=pass auditedHead=<the 40-char head sha>), then post a PR comment whose first line is exactly approved-head:<the 40-char head sha you reviewed> and whose second line is approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"<the builder lane id>\",\"task_id\":\"<that T… task id>\",\"gate_receipt\":\"<impacted task receipt id>\"}. Antigravity unavailable (MCP tools absent, pm_dispatch errors, verdict not pass): post no approval, leave the card in Review with a [reviewer] comment whose last line is blocked-by: - (never a bare approved-head line: the git guard blocks it). After the approval, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; the cross-review is Antigravity's. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: run an Antigravity audit of the PR head through the antigravity-pm MCP (pm_task_create with project = the config repo.path, pm_dispatch kind=audit on that task, read its audit-agent.json, and only when Antigravity's verdict is pass record pm_verdict kind=audit verdict=pass auditedHead=<the 40-char head sha>), then post a PR comment whose first line is exactly approved-head:<the 40-char head sha you reviewed> and whose second line is approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"<the builder lane id>\",\"task_id\":\"<that T… task id>\",\"gate_receipt\":\"<impacted task receipt id: output of .claude/bin/super-board-gate-receipt.sh <the 40-char head sha>>\"}. Antigravity unavailable (MCP tools absent, pm_dispatch errors, verdict not pass): post no approval, leave the card in Review with a [reviewer] comment whose last line is blocked-by: - (never a bare approved-head line: the git guard blocks it). After the approval, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
       else
       prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; a cross-review-approved marker (gate exit 7/8) is posted only after an Antigravity audit pass of the head (run.md → Reviewer lifecycle). When ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
       fi ;;
@@ -1845,11 +2124,11 @@ record_cycle_progress() {
     return 0
   fi
   # Pha 2 (M4): the last Review scan found cards queued for super-board-merge-queue.sh (MQ_WAITING, set by top_card_in_column and kept
-  # while the review lane is busy). Done moves only when their batch lands (up to merge_queue.max_wait_min), so the wait is no runaway.
-  # Vòng sửa 1 (R3): miễn có hạn — chỉ khi PR cũ nhất trong hàng chờ chưa quá 3 × max_wait_min; quá hạn (hàng kẹt) thì đếm như thường.
+  # while the review lane is busy). Done moves only when their train lands, so the wait is no runaway.
+  # Vòng sửa 1 (R3): miễn có hạn — chỉ khi PR cũ nhất trong hàng chờ chưa quá 3 giờ; quá hạn (hàng kẹt) thì đếm như thường.
   if [ "${MQ_WAITING:-0}" = 1 ] && [ "${REVIEW:-0}" -gt 0 ]; then
     merge_queue_wait_ok && return 0
-    log "⚠ cards wait in the merge queue but its oldest PR is past 3 × merge_queue.max_wait_min (or merge-queue.labeled is missing) — counted as a no-progress cycle"
+    log "⚠ cards wait in the merge queue but its oldest PR is past 3 hours (or merge-queue.labeled is missing) — counted as a no-progress cycle"
   fi
   # #530: máy quá tải và chưa có worker thì im lặng không phải runaway.
   if [ "${ACTIVE_WORKERS:-0}" -eq 0 ] && [ "${LOAD_HELD_TICK:-0}" = 1 ]; then
@@ -1928,6 +2207,28 @@ worker_exit_line() {
   awk '/^=== dispatch /{l=""} /^worker_exit: /{l=$0} END{print l}' "$1" 2>/dev/null || true
 }
 
+# #434: exit=0 AND a successful result record as the last result in the log = the worker finished its turn on its own, no crash.
+# Exit 0 alone proves nothing: a session limit also exits 0 (19/10, #94) but prints text or `is_error: true`, so those still fail here.
+worker_ended_clean() {
+  case "$(worker_exit_line "$1")" in
+    *"exit=0 "*) python3 -c 'import json, sys
+rs = None
+with open(sys.argv[1], errors="replace") as fh:
+    for l in fh:
+        if l.startswith("=== dispatch "):
+            rs = None
+        elif l.startswith("{"):
+            try:
+                r = json.loads(l)
+            except ValueError:
+                continue
+            if r.get("type") == "result":
+                rs = r
+sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") else 1)' "$1" 2>/dev/null; return $? ;;
+  esac
+  return 1
+}
+
 note_worker_exit() {
   # $1 = issue; the lock just read (LANE) is the worker that died. Logs its exit record and, unless it exited 0, comments on the card.
   # No record = the wrapper itself was killed (SIGKILL, host asleep) or the worker predates the wrapper.
@@ -1965,21 +2266,7 @@ note_early_death() {
   # #434: a worker that ended with exit=0 AND a successful result record as its last log line finished its turn on its own (a quick
   # rebuild pass: 51 s and 80 s on #428), no crash. Its "did nothing" case is the no-op ledger's. Exit 0 alone proves nothing: a
   # session limit also exits 0 (19/10, #94) but prints text or `is_error: true`, so those, and non-zero or missing records, still count.
-  case "$(worker_exit_line "$wlog")" in
-    *"exit=0 "*) python3 -c 'import json, sys
-rs = None
-for l in open(sys.argv[1], errors="replace"):
-    if l.startswith("=== dispatch "):
-        rs = None
-    elif l.startswith("{"):
-        try:
-            r = json.loads(l)
-        except ValueError:
-            continue
-        if r.get("type") == "result":
-            rs = r
-sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") else 1)' "$wlog" 2>/dev/null && return 0 ;;
-  esac
+  worker_ended_clean "$wlog" && return 0
   # How long the worker lived: up to its log's last write. Reap runs once per tick (tick_seconds, 120 by default), so "now" can be a
   # whole tick after the death (review 19/10: measured at reap time, no worker ever counted). No log: now, with one tick of slack.
   # The log's mtime counts only when later than STARTED: `claude -p` (text mode) writes nothing until it ends, so a long silent
@@ -2048,6 +2335,12 @@ issue_comment_count() {
   python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1" --jq .comments 2>/dev/null | tr -dc '0-9' || true
 }
 
+issue_last_comment() {
+  # $1 = issue, $2 = số comment của nó. In nội dung comment mới nhất; không in gì khi GitHub không trả lời hoặc số comment là 0.
+  [ "${2:-0}" -gt 0 ] || return 0
+  python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1/comments?per_page=1&page=$2" --jq '.[0].body' 2>/dev/null || true
+}
+
 dispatch_baseline() {
   # $1 = issue, $2 = lane, $3 = 1 when the dispatch is judged. Called BEFORE the worker starts (a worker that comments at once would
   # inflate COMMENTS0, #316 R8); prints the FROM_COL/COMMENTS0 lines for dispatch_lane to write into the lock in the same write as PID=.
@@ -2073,27 +2366,32 @@ note_worker_end() {
   # $1 = issue; the lock just read (LANE, FROM_COL, COMMENTS0) is the worker that ended. Queued for block_noop_workers.
   case "${LANE:-}" in qa|review) ;; *) return 0 ;; esac
   [ -n "${FROM_COL:-}" ] && [ -n "${COMMENTS0:-}" ] || return 0
-  NOOP_CHECK="${NOOP_CHECK:-} ${1}:${LANE}:${FROM_COL}:${COMMENTS0}"
+  # Trường thứ 5 là đường log của chính worker này (từ lock; lock là file shell nên đường dẫn không có dấu cách).
+  NOOP_CHECK="${NOOP_CHECK:-} ${1}:${LANE}:${FROM_COL}:${COMMENTS0}:${WORKER_LOG:-${WORKER_LOG_DIR:-docs/super-board}/worker-${LANE}-${1}.log}"
 }
 
 block_noop_workers() {
   # Expensive tick, after fetch_project_items: judge the workers queued by note_worker_end. Sets NOOP_MOVED=1 when a card was moved.
   local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
   local entry issue lane from c0 col count f now n item_id title wlog last tag human_line
+  local wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait
   NOOP_CHECK=""
   for entry in $pending; do
-    IFS=: read -r issue lane from c0 <<EOF
+    wlog=""
+    IFS=: read -r issue lane from c0 wlog <<EOF
 $entry
 EOF
     [ -n "$issue" ] && [ -n "$c0" ] || continue
     issue_locked "$issue" && continue
     f="$INFLIGHT_DIR/noops/$issue"
+    [ -n "$wlog" ] || wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
+    eff_max="$max"; over_wait=""; human_wait=""
     col=$(issue_status "$issue")
     [ -n "$col" ] || continue
     count=$(issue_comment_count "$issue")
     [ -n "$count" ] || continue   # GitHub cannot say: conclude nothing
     if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
-      rm -f "$f" 2>/dev/null || true   # it moved the card or wrote something: progress
+      rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # it moved the card or wrote something: progress
       continue
     fi
     # Pha 2 (M4): a reviewer that queued the PR (merge-queue label + approved-head at the head) rightly leaves the card in Review:
@@ -2102,14 +2400,42 @@ EOF
       rm -f "$f" 2>/dev/null || true
       continue
     fi
+    # #671 (#659): review worker kết thúc lượt sạch (exit 0, result success) khi đang chờ một điều kiện, comment mới nhất của chính reviewer
+    # kết thúc bằng dòng `blocked-by: <X>`, thì không chết và không phải no-op: lượt sau đúng ra không đăng gì lần nữa. Kill và lỗi vẫn đếm.
+    # Chỉ comment của [reviewer] mới tính (dòng đầu sau marker `<!-- -->` là `[reviewer]`, dòng cuối là `blocked-by:`).
+    # Miễn có trần: thẻ nghỉ SB_REVIEW_WAIT_S (900) giữa hai lượt (review_wait_cooldown) và chỉ được miễn SB_REVIEW_WAIT_MAX (8) lượt trong
+    # SB_NOOP_WINDOW_S (24 giờ), quá thì Blocked "chờ <X> quá lâu". `blocked-by: -` là chờ người: không miễn, Blocked ngay.
+    if [ "$lane" = review ] && worker_ended_clean "$wlog"; then
+      wait_val=$(issue_last_comment "$issue" "$count" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
+      wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+      if [ -n "$wait_val" ] && [ "$wait_what" = "-" ]; then
+        eff_max=1; human_wait=1   # chờ người, không có gì để dispatch lại
+      elif [ -n "$wait_what" ]; then   # `blocked-by:` rỗng không nêu điều kiện chờ: đếm no-op như thường
+        now=$(date +%s)
+        wfile="$INFLIGHT_DIR/review-wait/$issue"
+        wlimit="${SB_REVIEW_WAIT_MAX:-8}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=8 ;; esac
+        [ "${#wlimit}" -le 2 ] && [ "$wlimit" -le 19 ] || wlimit=19   # sổ chỉ giữ 20 dòng (tail 19 + dòng mới): trần cao hơn sẽ không bao giờ chạm
+        mkdir -p "$INFLIGHT_DIR/review-wait" 2>/dev/null || true
+        # Kết quả lấy từ chính lệnh ghi + mv (trong `if`, nên set -e không giết runner): ghi lỗi thì lượt này KHÔNG có bản ghi (wn=0, không miễn,
+        # fail-closed) và không suy từ việc đọc lại sổ, vì sổ cũ có thể đã có dòng cùng giây. wc chạy sau mv thành công nên sổ luôn tồn tại.
+        wn=0
+        if { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } 2>/dev/null > "$wfile.tmp" \
+          && mv "$wfile.tmp" "$wfile" 2>/dev/null; then
+          wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ' || true)
+        fi
+        if [ "${wn:-0}" -ge 1 ] && [ "$wn" -le "$wlimit" ]; then
+          continue   # miễn: sổ no-op giữ nguyên, nên kill xen kẽ lượt chờ vẫn đếm dồn tới SB_NOOP_MAX
+        fi
+        if [ "${wn:-0}" -ge 1 ]; then over_wait="${wait_what:-?}"; eff_max=1; fi
+      fi
+    fi
     now=$(date +%s)
     mkdir -p "$INFLIGHT_DIR/noops" 2>/dev/null || true
     { { tail -n 19 "$f" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now $lane $col $count"; } > "$f.tmp" 2>/dev/null \
       && mv "$f.tmp" "$f" 2>/dev/null || true
     n=$( { wc -l < "$f"; } 2>/dev/null | tr -d ' ')
-    wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
     last=$( { grep -Ev '^[[:space:]]*$|^worker_exit: ' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
-    if [ "${n:-0}" -lt "$max" ]; then
+    if [ "${n:-0}" -lt "$eff_max" ]; then
       log "⚠ #${issue} (lane ${lane}): worker ended with the card still in ${col} and no new comment — no-op ${n} of ${max}; last log line: ${last:-<no worker log at ${wlog}>}"
       continue
     fi
@@ -2119,15 +2445,18 @@ EOF
     printf '%s' "$last" | grep -qiE 'máy thật|thiết bị|real device|device|adb' && tag="📱"
     # #529: `blocked-by:  -` hands the card to a person; only a missing device is theirs. Other no-ops are agent work (no machine line).
     human_line="blocked-by:  agent"; [ "$tag" = "📱" ] && human_line="blocked-by:  -"
+    why_line="the ${lane} worker for #${issue} exited ${n} times in a row with the card still in ${col} and no new comment"
+    [ -z "$human_wait" ] || { human_line="blocked-by:  -"; why_line="the reviewer for #${issue} ended its turn waiting on a person (blocked-by: -); dispatching another review turn cannot change that"; }
+    [ -z "$over_wait" ] || why_line="the ${lane} worker for #${issue} has waited on ${over_wait} for more than ${wlimit} review turns in the last $((window / 3600)) hours with no new comment (chờ ${over_wait} quá lâu)"
     if [ -n "$item_id" ] && set_card_status "$item_id" "Blocked"; then
       NOOP_MOVED=1
-      rm -f "$f" 2>/dev/null || true
+      rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # thẻ sang Blocked: cả hai sổ bắt đầu lại khi người kéo về
       [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
       gh_checkpoint
       gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tag} ${lane} worker exited ${n} times without moving the card or commenting
 Card:        #${issue}${title:+ ${title}}
 Reason tag:  ${tag}
-Why blocked: the ${lane} worker for #${issue} exited ${n} times in a row with the card still in ${col} and no new comment
+Why blocked: ${why_line}
 Evidence:    ${wlog}; last log line: ${last:-<empty>}
 Checked:     inflight lock reaped; card still in ${col}; issue comment count unchanged since dispatch (${c0})
 What blocks: the worker cannot finish this card${last:+ — its last log line is quoted above}
@@ -2564,7 +2893,7 @@ sweep_blocked_cards() {
     log "⚠ blocked sweep skipped: wave planner exit ${rc}; retrying in ${SWEEP_RETRY_SECONDS}s"
     return 2
   fi
-  local next key
+  local next key retry=0
   sync_waiting_labels "$plan"
   log_unreadable_blocked_by "$plan"
   while IFS=$'\t' read -r issue cleared; do
@@ -2574,6 +2903,15 @@ sweep_blocked_cards() {
     # vòng lặp; bị chặn bởi blocker KHÁC (daemon chạy nhiều ngày) thì vẫn được sweep khi blocker mới đóng.
     key="${issue}:$(printf '%s' "$cleared" | tr -d ' #')"
     if swept_seen "$key"; then log "blocked sweep: #${issue} already swept for ${cleared} — left Blocked"; continue; fi
+    # #520 (review vòng 3): thẻ còn lệnh ghi đang chờ ghi lại (card-write-failed/<N>.json chưa gave_up), vd comment chặn
+    # `blocked-by:  agent` của reclaim / noop vừa hỏng: dòng blocked-by cũ hoặc mục Blocked by trong body chưa phải lý do chặn thật
+    # → không nhả lúc này; thử lại sau SWEEP_RETRY_SECONDS (state được xoá thì sig của maybe_sweep_blocked không đổi).
+    if [ -n "${INFLIGHT_DIR:-}" ] && [ -f "$INFLIGHT_DIR/card-write-failed/${issue}.json" ] \
+       && [ "$(jq -r '.gave_up // false' "$INFLIGHT_DIR/card-write-failed/${issue}.json" 2>/dev/null)" != true ]; then
+      log "blocked sweep: #${issue} has a GitHub write waiting to be re-applied — not released yet"
+      retry=1
+      continue
+    fi
     # `needs-you` là quyết định của người, kể cả khi planner thả thẻ (planner chỉ đọc 8 comment cuối).
     if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" '[.items[] | select(.content.number == $n)
          | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
@@ -2584,7 +2922,10 @@ sweep_blocked_cards() {
     [ -n "$item_id" ] || continue
     if ! set_card_status "$item_id" "Ready"; then
       gh_checkpoint
-      log "⚠ blocked sweep: could not move #${issue} to Ready"
+      # #520: lệnh nhả hỏng giữ thẻ ở Blocked (block_card_after_failed_write không đổi cột thẻ vốn Blocked); sig của maybe_sweep_blocked
+      # không đổi nên phải hẹn thử lại, không thì thẻ chờ tới lần có thẻ về Done kế tiếp
+      log "⚠ blocked sweep: could not move #${issue} to Ready — retrying in ${SWEEP_RETRY_SECONDS}s"
+      retry=1
       continue
     fi
     swept_add "$key"
@@ -2603,7 +2944,7 @@ EOF
   # 24/10 (#321): `resume` = a 🙋 card whose current-head request a trusted human answered `done` (super-board-approval.py,
   # verified by the deps helper). Only the workflow backend read it, so the legacy runner never acted on an approval and
   # #321 sat Blocked ~18 h. Back to Review, where the Reviewer re-checks the approval at the merge gate. Once per card.
-  local akey why resume_repo retry=0
+  local akey why resume_repo
   while IFS=$'\t' read -r issue akey why; do
     [ -n "$issue" ] || continue
     key="${issue}:resume:${akey:-none}"   # one move per approval (head + request id): a later approval moves it again
@@ -3445,6 +3786,8 @@ while true; do
   # ── Expensive-tick path: we have capacity, fetch real state.
   tick_guard || continue
   tick_fetch || continue
+  # #520: thẻ Blocked vì một lệnh ghi GitHub hỏng: ghi lại lệnh đó; đổi cột / gắn needs-you thì đọc lại board cho phần còn lại của tick.
+  if sweep_card_write_failed; then tick_fetch || continue; fi
 
   # Re-sweep zombies against fresh cache; the previous sweep used stale data.
   sweep_lane_zombies
@@ -3513,18 +3856,11 @@ while true; do
   BUILD_FREE=0
   if can_dispatch && [ "$READY" -gt 0 ]; then build_slot_free || true; fi
   if can_dispatch && [ "$READY" -gt 0 ] && { [ "$BUILD_FREE" -eq 1 ] || [ "$QA_FREE" -eq 1 ]; }; then
-    if top_card_in_column "Ready"; then
-      if [ "$(card_lane "$TOP_ISSUE")" = "qa" ]; then
-        [ "$QA_FREE" -eq 1 ] && { dispatch_lane qa "$TOP_ISSUE"; ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1)); }
-      elif [ "$BUILD_FREE" -eq 1 ]; then
-        dispatch_lane build "$TOP_ISSUE"
-        ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
-      fi
-    fi
+    dispatch_ready_tick
   fi
 
   gh_checkpoint
-  merge_queue_due   # Pha 2: gom PR đã vào hàng khi tới hạn (hợp đồng lanes-contract: --if-due exit 0 khi chưa tới hạn; merge_queue_on lọc khi tắt)
+  merge_queue_due   # Pha 2: rút PR đã vào hàng, không gom đợt (hợp đồng lanes-contract: exit 0 khi hàng rỗng; merge_queue_on lọc khi tắt)
 
   # ── Landed-work halt gate (issue #8).
   #    Progress = the Done/Skipped set changed since the last dispatch cycle. Lane
