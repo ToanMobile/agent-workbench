@@ -7,7 +7,7 @@
 <script>
   (function () {
     var saved = null;
-    try { saved = localStorage.getItem('agent-office-theme'); } catch (e) {}
+    try { saved = localStorage.getItem('agent-office-theme'); } catch (e) { console.warn('Không đọc được giao diện đã lưu', e); }
     var dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
     document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
   })();
@@ -552,6 +552,7 @@
   <button type="button" role="menuitem" id="btnDesk" aria-haspopup="true" aria-expanded="false" aria-controls="deskPicker"><span class="mi-ic" aria-hidden="true">▭</span><span class="mi-t">Kiểu bàn</span><span class="mi-k">D</span></button>
   <button type="button" role="menuitemcheckbox" id="btnTheme" aria-checked="false"><span class="mi-ic" aria-hidden="true">☾</span><span class="mi-t">Ca đêm</span><span class="mi-k">T</span></button>
   <button type="button" role="menuitem" id="btnPhone" aria-haspopup="dialog" aria-controls="phoneDlg"><span class="mi-ic" aria-hidden="true">📱</span><span class="mi-t">Điện thoại</span></button>
+  <button type="button" role="menuitem" id="btnCcs" title="Bảng điều khiển 6 tài khoản AI (đã chuyển từ Telegram)"><span class="mi-ic" aria-hidden="true">⇄</span><span class="mi-t">CC Switcher</span></button>
   <button type="button" role="menuitem" id="btnGateFull" aria-controls="drawer" hidden><span class="mi-ic" aria-hidden="true">▶</span><span class="mi-t">Chạy gate full…</span></button>
   <button type="button" role="menuitem" id="btnRefresh"><span class="mi-ic" aria-hidden="true">↻</span><span class="mi-t">Tải lại GitHub</span></button>
 </div>
@@ -2985,11 +2986,13 @@ $('#btnNext').onclick = () => {
   if (!list.length) { select({ type: 'repo', id: STATE.repos[0] && STATE.repos[0].name }); return; }
   nextIdx = (nextIdx + 1) % list.length; select({ type: 'worker', id: list[nextIdx].id });
 };
+// CC Switcher: bảng điều khiển 6 tài khoản AI nằm ở trang riêng /cc-switcher (chỉ mở trên máy Mac)
+$('#btnCcs').addEventListener('click', () => { location.href = '/cc-switcher'; });
 function syncThemeBtn() { $('#btnTheme').setAttribute('aria-checked', String(document.documentElement.dataset.theme === 'dark')); } // nhãn cố định "Ca đêm", bật = tối
 $('#btnTheme').onclick = () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
-  try { localStorage.setItem('agent-office-theme', next); } catch (e) {}
+  try { localStorage.setItem('agent-office-theme', next); } catch (e) { console.warn('Không lưu được giao diện', e); }
   syncThemeBtn(); if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
 };
 $('#btnRefresh').onclick = () => { fetch('api/refresh', { headers: apiHeaders() }).catch(() => {}); const t = $('#btnRefresh .mi-t'); t.textContent = 'Đang tải…'; setTimeout(() => { t.textContent = 'Tải lại GitHub'; }, 2500); toast('Đang đọc lại GitHub Project…'); };
@@ -3058,7 +3061,7 @@ function renderDeskPicker() {
 }
 function setDesk(i) {
   if (i === deskStyle) return;
-  deskStyle = i; try { localStorage.setItem('agent-office-desk', String(i)); } catch (e) {}
+  deskStyle = i; try { localStorage.setItem('agent-office-desk', String(i)); } catch (e) { console.warn('Không lưu được kiểu bàn', e); }
   const had = document.activeElement && document.activeElement.closest('#deskPicker');
   renderDeskPicker(); if (had) $('#deskPicker [aria-pressed="true"]').focus();
   if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
