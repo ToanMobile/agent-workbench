@@ -746,6 +746,14 @@ Mẫu ghi nhận:
 
 ---
 
+### [INSTINCT-087] Bỏ trần đếm cũng bỏ luôn khoá tuần tự hoá
+- **Ngày phát hiện:** 2026-10-29
+- **Hiện tượng lỗi:** Bỏ trần đếm cũng bỏ luôn khoá tuần tự hoá
+- **Nguyên nhân:** khoá add chỉ mở khi có WORKTREE_MAX; bỏ số đếm làm mất luôn khoá, 4 add song song cùng path ra 2 đăng ký
+- **Quy tắc phòng ngừa & Cách fix:** khi xoá một giới hạn, tách và giữ khoá/tuần tự hoá nó từng bao; thêm test race song song cùng tài nguyên
+
+---
+
 ### [INSTINCT-096] agent-office: thanh nút dưới đáy "cuộn ngang ẩn" giấu mất nút
 - **Ngày phát hiện:** 2026-10-31
 - **Hiện tượng lỗi:** 15 nút khi mở "Khác" cần ~1460px; ở 1280 mất Thoại/Tải lại GitHub/Thu gọn, trên điện thoại cả nút "Khác" ra ngoài màn hình (overflow-x: auto + ẩn thanh cuộn)
@@ -781,3 +789,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Biên nhận cây của train và cây của merge gate gộp theo hai chiều ngược nhau; tiến trình nền của job launchd chết theo process group
 - **Nguyên nhân:** train dựng biên nhận base+head (ours=base), gate dựng head+base (ours=head): file merge=union cho thứ tự dòng khác nên cây khác dù base đứng yên ⇒ gate --require-receipt thoát 12 mãi (base-moved lặp vô hạn); queue phóng train nền rồi thoát nhưng launchd (không AbandonProcessGroup) giết cả process group của job ⇒ train chết mỗi phút (#676, 01/11)
 - **Quy tắc phòng ngừa & Cách fix:** so cây giữa hai công cụ thì phải cùng chiều merge, hoặc khi lệch mà base không dời thì rơi về verify đầy đủ thay vì lặp; tiến trình nền phải sống sau khi script thoát thì chạy trong session riêng (python os.setsid, macOS không có setsid) và có test giết process group của job
+
+---
+
+### [INSTINCT-101] Dem dong reflog so voi log -g: dong null-oid bi bo qua
+- **Ngày phát hiện:** 2026-10-28
+- **Hiện tượng lỗi:** Dem dong reflog so voi log -g: dong null-oid bi bo qua
+- **Nguyên nhân:** branch -m ghi dong co oid moi toan so 0 vao logs/HEAD; log -g bo qua dong do nen so dong file lon hon so muc va worktree.py coi reflog khong doc duoc, remove bao UNREACHABLE oan
+- **Quy tắc phòng ngừa & Cách fix:** Chi loai dung dong co oid moi bang null 0x40 hoac 0x64; dong hong hoac cat cut van dem de fail closed; test co ca branch -m va ca dong hong

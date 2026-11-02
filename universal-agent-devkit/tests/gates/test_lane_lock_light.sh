@@ -249,6 +249,22 @@ echo $! > "${TMP}/L11d.pid"
 if started_in L11d 6; then ok "11d. đứng trên nhánh đích, không upstream: base không phải origin/main ⇒ nhẹ, nhận ngay"
 else bad "11d. đứng trên nhánh đích mà vẫn lấy origin/main làm base" "$(tr '\n' ' ' < "${TMP}/L11d.log" | cut -c1-200)"; fi
 release_all
+# 11e. đứng trên main, upstream origin/main chậm 20 file, refs/heads/master trỏ đúng HEAD, cây sạch: gate kiểm @{upstream}..HEAD (task_trunk
+#      chọn origin/main = nhánh đang đứng) ⇒ nặng; bộ thăm dò không được lấy master làm base thay thế (review vòng 3: Claude P2-1, Grok, Antigravity)
+R6="${TMP}/r6"; mkdir -p "${R6}/src"; cp -R "${REPO}/kit" "${R6}/kit"; printf 'kit/\n' > "${R6}/.gitignore"
+G6() { git -C "${R6}" -c user.email=t@t -c user.name=t "$@"; }
+G6 init -q -b main && G6 add .gitignore && G6 commit -q -m init && G6 update-ref refs/remotes/origin/main HEAD \
+  && G6 remote add origin "${TMP}/nowhere6.git" && G6 config branch.main.remote origin && G6 config branch.main.merge refs/heads/main \
+  || bad "11e. dựng fixture main + upstream"
+i=0; while [ "${i}" -lt 20 ]; do echo "${i}" > "${R6}/src/u_${i}.sh"; i=$((i + 1)); done
+G6 add src && G6 commit -q -m twenty && G6 branch master HEAD || bad "11e. commit 20 file / nhánh master"
+load 40
+( cd "${R6}" && JOB_P="${TMP}/H11e" JOB_DUR=0.2 exec python3 "${LL_PY}" H11e -- python3 "${R6}/kit/bin/post-fix-gate.py" --run-tests --scoped ) \
+  > "${TMP}/H11e.log" 2>&1 &
+echo $! > "${TMP}/H11e.pid"
+if started_in H11e 2.5; then bad "11e. đứng trên main: lấy master làm base thay @{upstream} ⇒ 20 file xếp nhẹ" "$(tr '\n' ' ' < "${TMP}/H11e.log" | cut -c1-200)"
+else ok "11e. đứng trên main, upstream chậm 20 file: base @{upstream} như task_trunk ⇒ nặng, chờ"; fi
+release_all
 
 # 12. ma trận: file JSON hỏng ⇒ nặng; luật Gradle khớp file đổi ⇒ nặng (heavy_slot.classify, bản của lane_lock khi kit gate thiếu)
 mkdir -p "${REPO}/.agents"; echo '{"rules": [' > "${REPO}/.agents/regression_matrix.active.json"
@@ -278,13 +294,14 @@ no = [["python3", g, "--scoped"], ["python3", g, "--run-tests", "--scoped", "--f
       ["python3", g, "--run-tests", "--scoped", "--timeout"], ["python3", g, "--run-tests=1", "--scoped"], ["python3", "-u", g, "--run-tests", "--scoped"],
       ["env", "GIT_DIR=/y", "python3", g, "--run-tests", "--scoped"], ["bash", "-c", "python3 %s --run-tests --scoped" % g],
       ["python3", "/x/post-fix-gate.sh", "--run-tests", "--scoped"], ["python3", g, "--run-tests", "--scoped", "extra"],
-      ["python3", g, "--run-tests", "--scoped", "--diff", "-x"], ["python3", g, "--run-tests", "--scoped", "--diff=--full"]]
+      ["python3", g, "--run-tests", "--scoped", "--diff", "-x"], ["python3", g, "--run-tests", "--scoped", "--diff=--full"],
+      ["python3", g, "--run-tests", "--scoped", "--session", "s1"], ["env", "DEVKIT_GATE_MERGE_CHECK=1", "python3", g, "--run-tests", "--scoped"]]
 bad = [a for a in yes if m.gate_call(a) is None] + [a for a in no if m.gate_call(a) is not None]
 base = m.gate_call(yes[2])[1] if m.gate_call(yes[2]) else None
 if bad or base != "origin/main":
     print("sai:", bad, "base:", base); sys.exit(1)
 PY
-then ok "13. nhận dạng gate: 4 dạng nhận, 16 dạng từ chối (--full, viết tắt, --tree=, A..B, --diff -x, --matrix, GIT_DIR=, bash -c…)"
+then ok "13. nhận dạng gate: 4 dạng nhận, 18 dạng từ chối (--full, viết tắt, --tree=, A..B, --diff -x, --session, MERGE_CHECK, --matrix, GIT_DIR=, bash -c…)"
 else bad "13. nhận dạng gate sai"; fi
 
 # 14. bộ thăm dò với post-fix-gate.py + scoped_gate.py THẬT của kit này (OCR 02/11): phân loại bằng hàm của gate, không chép lại
