@@ -2917,6 +2917,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-guard-nested-c-quotes",
+      "watch_files": [
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/tests/gates/test_guard_nested_c_quotes.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-NESTED-C-QUOTES-01",
+          "name": "#844: $\"…\" (locale) và \\$ trước nháy trong nháy kép của script bash -c / sh -c / eval được đọc thêm đã giải mã (không bao giờ thành '…'); corpus tìm kiếm rg/grep -E/git grep/sed vẫn qua",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_nested_c_quotes.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
