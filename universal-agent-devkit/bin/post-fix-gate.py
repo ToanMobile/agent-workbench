@@ -8438,10 +8438,17 @@ def main():
     _added_ids = set(matrix_added or ())
     _added_pats = [p for r in rules if isinstance(r, dict)
                    and any(isinstance(t, dict) and t.get("id") in _added_ids for t in r.get("mandatory_regression_tests") or [])
-                   for p in r.get("watch_files") or [] if isinstance(p, str)]
+                   for p in rule_watch(r, covers) if isinstance(p, str)]
+    try:   # đúng ma trận đang chạy (audit: không khớp đuôi tên của file khác)
+        _mx = find_matrix_path(args.matrix)
+        _mx_rel = os.path.relpath(str(_mx), str(project_dir)).replace("\\", "/") if _mx else None
+    except (OSError, ValueError):
+        _mx_rel = None
+    # #741: lượt --scoped xét cả nguồn của file đổi tên như docs_only (audit: git mv deploy.yml docs/ không lọt)
+    _check = list(modified_files) + (list(RENAME_SOURCES.values()) if getattr(args, "scoped", False) else [])
     added_covers_diff = bool(run_tests and matrix_added) and all(
-        _doc_like(f) or is_test_path(f) or f.replace("\\", "/").endswith(".agents/regression_matrix.active.json")
-        or any(match_pattern(f, p) for p in _added_pats) for f in modified_files)
+        _doc_like(f) or is_test_path(f) or f.replace("\\", "/") == _mx_rel
+        or any(match_pattern(f, p) for p in _added_pats) for f in _check)
     no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only and not added_covers_diff
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.

@@ -7,7 +7,8 @@
 #   b. đối chứng: test của rule mới ĐỎ ⇒ REJECT (1);
 #   c. đối chứng: đổi file code không rule nào theo dõi, ma trận không đổi ⇒ vẫn exit 2;
 #   d. nối rule kèm một file không phải code (deploy.yml) không rule nào theo dõi ⇒ vẫn exit 2 (review vòng 1: miễn trừ chỉ khi mọi file
-#      đổi là ma trận, test, tài liệu hay nằm trong watch_files của rule mới).
+#      đổi là ma trận, test, tài liệu hay nằm trong watch_files của rule mới);
+#   e. --scoped, nối rule kèm git mv deploy.yml docs/deploy.md ⇒ vẫn exit 2 (audit Antigravity: nguồn đổi tên #741 cũng phải được phủ).
 # Python stdlib, tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -30,9 +31,11 @@ mk() {
     printf '#!/bin/sh\nexit %s\n' "$2" > tests/test_b.sh
     printf '{"project": "t", "rules": [{"component": "A", "watch_files": ["src/*"], "mandatory_regression_tests": [{"id": "REG-A", "command": "sh tests/test_a.sh"}]}]}\n' \
       > .agents/regression_matrix.active.json
+    [ "$3" = append-mv ] && echo "on: push" > deploy.yml
     git add . && git commit -qm base
     [ "$3" = append-yml ] && echo "on: push" > deploy.yml   # file không phải code, không rule nào theo dõi (review: không được lọt exit 2)
-    if [ "$3" = append ] || [ "$3" = append-yml ]; then
+    [ "$3" = append-mv ] && mkdir -p docs && git mv deploy.yml docs/deploy.md   # #741: nguồn đổi tên cũng phải được phủ (audit)
+    if [ "$3" = append ] || [ "$3" = append-yml ] || [ "$3" = append-mv ]; then
       git add . && python3 -c '
 import json; p = ".agents/regression_matrix.active.json"; m = json.load(open(p))
 m["rules"].append({"component": "B", "watch_files": ["hooks/*"], "mandatory_regression_tests": [{"id": "REG-B", "command": "sh tests/test_b.sh"}]})
@@ -57,6 +60,8 @@ mk "$TMP/c" 0 code; gate "$TMP/c"
 [ "$RC" = 2 ] && ok "c. đổi code không rule nào theo dõi, ma trận không đổi ⇒ vẫn exit 2" || fail "c. đổi code không test ⇒ exit $RC (cần 2): $(tail_out)"
 mk "$TMP/d" 0 append-yml; gate "$TMP/d"
 [ "$RC" = 2 ] && ok "d. nối rule + deploy.yml không ai theo dõi ⇒ vẫn exit 2" || fail "d. nối rule kèm .yml không test ⇒ exit $RC (cần 2): $(tail_out)"
+mk "$TMP/e" 0 append-mv; gate "$TMP/e"
+[ "$RC" = 2 ] && ok "e. --scoped: nối rule + git mv deploy.yml docs/deploy.md ⇒ vẫn exit 2" || fail "e. nối rule kèm đổi tên .yml ⇒ exit $RC (cần 2): $(tail_out)"
 
 [ "$FAILS" = 0 ] && echo "PASS test_gate_matrix_append_only_coverage" && exit 0
 echo "FAIL test_gate_matrix_append_only_coverage: $FAILS"; exit 1
