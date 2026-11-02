@@ -8867,7 +8867,22 @@ def main():
     return exit_code
 
 
-FAIL_LINE = re.compile(r"✖|✘|✗|❌|\bFAILED\b|\bFAIL\b|^[ \t]*not ok\b|\bERROR\b|Traceback|AssertionError|\bException\b")
+# 02/11: cả dòng hỏng của runner ở 5 repo app — Kotlin `e:`, Gradle, Unity/C# `error CS…`, javac/clang/swiftc `file:N: error`,
+# pytest `E   …`, jest `●`, npm, Android `FATAL EXCEPTION`, `…Error:`, tín hiệu chết tiến trình. Trước đó khối '| …' của suite Gradle
+# đỏ chỉ có đuôi "Run with --stacktrace…", dòng `e:` thật nằm giữa log (tests/gates/test_fail_line_ecosystems.sh).
+# `…Error:` không khớp khi đứng ngay sau một từ thường + dấu cách (`retry after SocketTimeoutError:`, `✔ … with TypeError:`): dòng
+# INFO/✔ đó chiếm 8 dòng đầu của fail_lines. Mọi tiền tố khác vẫn khớp: đầu dòng, `.`/`$` của tên gói/lớp lồng, Gradle `   > `,
+# logcat `tag: `, `stack=`, `| `, `[x] ` (#901 neo đầu dòng làm mất chúng: tests/gates/test_fail_line_prefixed.sh). Lookbehind độ
+# dài cố định: tuyến tính. Đổi lại `Uncaught TypeError:` của trình duyệt không khớp;
+# `Killed: N` không neo: bash in `x.sh: line N: PID Killed: 9 cmd` (tests/gates/test_fail_line_precision.sh).
+# ponytail: `^E {2,}` lấy cả diff assertion nhiều dòng của pytest, test đỏ đầu có thể chiếm hết 8 dòng đầu; bỏ nhánh này khi log thật
+# của app mất tên test đỏ sau (dòng `file:N: AssertionError` vẫn khớp nhánh AssertionError).
+FAIL_LINE = re.compile(r"✖|✘|✗|❌|\bFAILED\b|\bFAIL\b|^[ \t]*not ok\b|\bERROR\b|Traceback|AssertionError|\bException\b"
+                       r"|^[ \t]*e: \S|What went wrong:|Execution failed for task|\berror (?:CS|MSB)\d{4}\b"
+                       r"|:\d+(?::\d+)?: (?:fatal )?error\b|^E {2,}\S|^[ \t]*● |^npm (?:ERR!|error) |FATAL EXCEPTION"
+                       r"|(?<![a-z] )\b[A-Z]\w*Error:"
+                       r"|\b(?:Segmentation fault|Bus error|Abort trap)\b"
+                       r"|\bKilled: \d")
 RED_TEST_LINE = re.compile(r"^✖ (?:hooks/)?tests/\S+\.(?:sh|py|mjs)\s*$")   # #721: dòng test đỏ của tests/run_impacted.sh (cột 0)
 
 

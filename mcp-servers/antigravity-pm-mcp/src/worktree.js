@@ -143,6 +143,17 @@ export async function dongBangCay(cfg) {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* da don */ }
     return { error: (add.stderr || add.stdout).trim().slice(0, 400) };
   }
+  // sau `git worktree add` moi loi nem ra (ghi file, chep file, file bi xoa giua chung) truoc day khong go gi: worktree va
+  // dang ky cua no bi ro (quet critical 31/10) — go no roi nem lai loi
+  try {
+    return await dongBangCayVao(cfg, dir);
+  } catch (err) {
+    await goWorktree(cfg, dir);
+    throw err;
+  }
+}
+
+async function dongBangCayVao(cfg, dir) {
   const snap = await gitSnapshot(cfg);
   let applied = 0;
   const d = await run('git', ['--no-pager', 'diff', 'HEAD', '--binary'], { cwd: cfg.projectRoot, timeoutMs: 120000, maxBytes: 50_000_000 });
@@ -164,7 +175,12 @@ export async function dongBangCay(cfg) {
     if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue;
     const to = path.resolve(dir, f);
     fs.mkdirSync(path.dirname(to), { recursive: true });
-    fs.copyFileSync(src, to);
+    try {
+      fs.copyFileSync(src, to);
+    } catch (e) {
+      if (e.code === 'ENOENT') continue;   // bi xoa giua luc liet ke va luc chep: khong con thuoc cay nua
+      throw e;
+    }
     untracked += 1;
   }
   for (const f of cfg.oracle?.copyToWorktree || []) chepVaoWorktree(cfg.projectRoot, dir, f);
