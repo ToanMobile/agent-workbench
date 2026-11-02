@@ -200,12 +200,26 @@ export function resolveProfile(target) {
 function syncToCcSwitchApp(stateDir, profile) {
   const dir = resolveStateDir(stateDir);
   const settingsFile = ccSwitchSettingsPath(dir);
-  const currentSettings = readJsonSafe(settingsFile, {});
-  currentSettings.currentProviderClaude = profile.id;
-  if (profile.settingsKey) {
-    currentSettings[profile.settingsKey] = profile.settingsValue;
+  // Missing file: {}. A file that does not parse (or is not a JSON object) is LEFT ALONE: readJsonSafe returned {} for it too,
+  // and writing that back wiped the CC Switch app's whole configuration (critical scan 31/10).
+  let currentSettings = {};
+  let settingsOk = true;
+  if (fs.existsSync(settingsFile)) {
+    try {
+      currentSettings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      if (!currentSettings || typeof currentSettings !== 'object' || Array.isArray(currentSettings)) throw new Error('not a JSON object');
+    } catch (err) {
+      settingsOk = false;
+      logStructured('warn', 'cc_switch_settings_unreadable_sync_skipped', { settingsFile, error: err?.message });
+    }
   }
-  writeJsonAtomic(settingsFile, currentSettings, 0o600);
+  if (settingsOk) {
+    currentSettings.currentProviderClaude = profile.id;
+    if (profile.settingsKey) {
+      currentSettings[profile.settingsKey] = profile.settingsValue;
+    }
+    writeJsonAtomic(settingsFile, currentSettings, 0o600);
+  }
 
   const dbFile = ccSwitchDbPath(dir);
   if (fs.existsSync(dbFile) && /^[a-z0-9_]+$/i.test(profile.id)) {
@@ -605,37 +619,43 @@ export async function syncLiveQuotas(opts = {}) {
     return state.quotaCache;
   }
 
-  let updated = false;
+  const fetched = [];
   for (const p of DEFAULT_PROFILES) {
     try {
-      const q = await quotaFetcher(p, nowMs);
-      if (q && typeof q.remainingPct === 'number') {
-        state.quotaCache[p.id] = {
-          ...q,
-          updatedAtMs: nowMs,
-        };
-        if (q.remainingPct <= 0 && q.resetAtMs > nowMs) {
-          state.frozenUntil[p.id] = q.resetAtMs;
-        } else if (q.remainingPct > 0 && state.frozenUntil[p.id]) {
-          delete state.frozenUntil[p.id];
-        }
-        updated = true;
-      } else if (state.quotaCache?.[p.id]?.source === 'anthropic_429_header') {
-        // Tu dong xoa cache 0% gia do loi quy chup HTTP 429 cua endpoint /api/oauth/usage truoc day
-        delete state.quotaCache[p.id];
-        delete state.frozenUntil[p.id];
-        updated = true;
-      }
+      fetched.push([p, await quotaFetcher(p, nowMs)]);
     } catch (err) {
       logStructured('warn', 'sync_profile_quota_error', { profileId: p.id, error: err?.message });
     }
   }
 
-  if (updated) {
-    state.quotaFetchedAtMs = nowMs;
-    saveSwitcherState(stateDir, state);
+  // Doc lai state sau khi cho mang: thao tac chay xen (POST action, daemon xoay do 429) khong bi ghi de bang ban cu.
+  const fresh = loadSwitcherState(stateDir);
+  let updated = false;
+  for (const [p, q] of fetched) {
+    if (q && typeof q.remainingPct === 'number') {
+      fresh.quotaCache[p.id] = {
+        ...q,
+        updatedAtMs: nowMs,
+      };
+      if (q.remainingPct <= 0 && q.resetAtMs > nowMs) {
+        fresh.frozenUntil[p.id] = q.resetAtMs;
+      } else if (q.remainingPct > 0 && fresh.frozenUntil[p.id]) {
+        delete fresh.frozenUntil[p.id];
+      }
+      updated = true;
+    } else if (fresh.quotaCache?.[p.id]?.source === 'anthropic_429_header') {
+      // Tu dong xoa cache 0% gia do loi quy chup HTTP 429 cua endpoint /api/oauth/usage truoc day
+      delete fresh.quotaCache[p.id];
+      delete fresh.frozenUntil[p.id];
+      updated = true;
+    }
   }
-  return state.quotaCache;
+
+  if (updated) {
+    fresh.quotaFetchedAtMs = nowMs;
+    saveSwitcherState(stateDir, fresh);
+  }
+  return fresh.quotaCache;
 }
 
 /**
