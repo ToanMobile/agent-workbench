@@ -1,11 +1,15 @@
 ---
 name: codebase-memory
-description: Use the codebase knowledge graph for structural code queries, AST navigation, and blast radius analysis. Dùng khi khám phá code, tìm symbol, đọc implementation, trace call/data flow, ai gọi hàm này (inbound caller), hàm này gọi gì (outbound), phân tích blast radius, dead code, refactor candidates, Cypher query, hoặc xem kiến trúc dự án. Tự động fallback về Read/Grep khi thiếu node hoặc index stale.
+description: Dùng khi khám phá code, tìm symbol, đọc implementation, trace call/data flow, ai gọi hàm này (inbound caller), hàm này gọi gì (outbound), phân tích blast radius, dead code, refactor candidates, Cypher query, hoặc xem kiến trúc dự án qua codebase knowledge graph.
 ---
 
 # Codebase Memory & Graph Navigation (SSOT)
 
 Kết hợp công cụ Đồ thị Tri thức AST (`codebase-memory-mcp`) và Quy trình Điều hướng Tinh gọn, trả về kết quả cấu trúc chính xác chỉ tiêu tốn ~500 tokens (so với ~80K tokens của brute-force grep).
+
+## Phạm vi
+
+Use the codebase knowledge graph for structural code queries, AST navigation, and blast radius analysis. Tự động fallback về Read/Grep khi thiếu node hoặc index stale.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: impeccable
-description: "Dùng khi thiết kế mới, làm lại (redesign), định hình UX (shape), phê bình (critique), kiểm toán kỹ thuật (audit), tinh chỉnh hoàn thiện (polish, distill, bolder, quieter, harden, onboard, clarify, adapt, optimize) hoặc nâng tầm thẩm mỹ (typeset, colorize, layout, animate, delight, overdrive, live) cho giao diện Web (React, Next.js, Vue, Svelte, HTML/CSS), dashboard, landing page và màn hình native iOS/Android, hoặc trích xuất hệ thống thiết kế (DESIGN.md, PRODUCT.md). Bỏ qua khi làm backend thuần không có UI, CLI/script nội bộ, hoặc game Unity 3D (dùng ui-ux-pro-max)."
+description: "Dùng khi thiết kế mới, redesign, shape, critique, audit, polish giao diện Web, dashboard, landing page, màn hình native iOS/Android, hoặc trích xuất DESIGN.md/PRODUCT.md. Bỏ qua khi backend thuần không có UI, CLI/script nội bộ, hoặc game Unity 3D (dùng ui-ux-pro-max)."
 license: Apache-2.0
 metadata:
   version: 4.7.1
@@ -12,6 +12,15 @@ Core principles:
 - Finish the job. No hedging, no shortcuts: the deliverable is complete, except assets the user must provide.
 - Scale ambition to the surface's mode (see Modes). Persuade and Experience get full commitment: bold, distinct work with a point of view. On Operate and Read, ambition shows as precision and restraint, and patterns the visitor already knows earn their place.
 - Verify by looking at the rendered result at the sizes it ships at, and batch the checks: fix what one look shows before looking again, rather than screenshotting after every tweak.
+
+## Phạm vi
+
+Dùng khi thiết kế mới, làm lại (redesign), định hình UX (shape), phê bình (critique), kiểm toán kỹ thuật (audit),
+tinh chỉnh hoàn thiện (polish, distill, bolder, quieter, harden, onboard, clarify, adapt, optimize) hoặc nâng tầm
+thẩm mỹ (typeset, colorize, layout, animate, delight, overdrive, live) cho giao diện Web (React, Next.js, Vue,
+Svelte, HTML/CSS), dashboard, landing page và màn hình native iOS/Android, hoặc trích xuất hệ thống thiết kế
+(DESIGN.md, PRODUCT.md). Bỏ qua khi làm backend thuần không có UI, CLI/script nội bộ, hoặc game Unity 3D
+(dùng ui-ux-pro-max).
 
 ## Setup
 
