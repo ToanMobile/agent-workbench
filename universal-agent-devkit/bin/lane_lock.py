@@ -36,8 +36,10 @@ phần còn lại nằm trong pool (đã chứng minh cho merge gate: P5 dưới
 
 P5 (02/11) — merge gate: lệnh con là super-board-merge-gate.sh (argv[0], hoặc `[env K=V…] bash <…/super-board-merge-gate.sh>`) thì mỗi
 LANE_LOCK_POOL_POLL_S đọc cây tiến trình MỘT lần (`ps -A -o pid=,ppid=`) và nhả như trên khi một HẬU DUỆ của con có vé chờ pool gate đúng
-luật #849, hoặc đang giữ slot pool gate (<slot_dir>/gate-<k>.lock.held ghi PID hậu duệ đó, mtime ≥ lúc tạo con): phần merge gate chạy
-ngoài pool chỉ là git/gh. Vé queue/heavy không bao giờ tính. ps lỗi ⇒ giữ slot (fail closed), log một lần, thăm lại vòng sau.
+luật #849, hoặc đang giữ slot pool gate (<slot_dir>/gate-<k>.lock.held ghi PID hậu duệ đó, mtime ≥ lúc tạo con). Vé queue/heavy không
+bao giờ tính. ps lỗi ⇒ giữ slot (fail closed), log một lần, thăm lại vòng sau. ponytail: ngoài pool merge gate còn git/gh và, khi gate
+REJECT, kiểm "đỏ sẵn trên base" (run_suite_on_base, ≤ 900 s mỗi suite đỏ, không slot): khi đó có thể chạy dư MỘT việc nặng so với
+LANE_LOCK_SLOTS (khoá merge xếp merge gate nối tiếp nên không quá 1); cho run_suite_on_base vào pool gate khi đo thấy dư tải đó.
 
 P7 (02/11) — chống dồn: load1 là trung bình trượt 1 phút, trễ 30–60 s; tải vừa tụt dưới ngưỡng thì cả loạt lane chờ vào cùng một vòng
 (9 → 88 → 10). Lượt KHÔNG nhẹ chưa lấy khi có ≥ 1 slot lane KHÁC đang bị giữ thật (flock bận) mà lane-<j>.owner của nó mới

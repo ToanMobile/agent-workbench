@@ -4583,10 +4583,12 @@ def _extend_min_s() -> float:
         return EXTEND_MIN_TIMEOUT_S
 
 
-def suite_timeout(t: dict, timeout):
-    """--timeout of one suite: times SUITE_TIMEOUT_FACTOR of its id; a test's own short budget (below _extend_min_s()) is kept."""
+def suite_timeout(t: dict, timeout, stop_like: bool = False):
+    """--timeout of one suite: times SUITE_TIMEOUT_FACTOR of its id; a test's own short budget (below _extend_min_s()) is kept, and so is
+    a Stop-like run (--session / GATE_TOTAL_BUDGET_S): the budget only stops NEW suites, so a doubled suite would outlive the hook's hard
+    timeout (1800 s, 2026-10-02) and leave no record."""
     factor = SUITE_TIMEOUT_FACTOR.get(str(t.get("id") or ""))
-    return timeout * factor if factor and timeout >= _extend_min_s() else timeout
+    return timeout * factor if factor and not stop_like and timeout >= _extend_min_s() else timeout
 
 
 def _machine_busy() -> bool:
@@ -7856,7 +7858,7 @@ def main():
         # (gradle daemons, test workers), not just the shell. Commands come from the matrix at the base
         # ref (load_active_matrix), so the audited change cannot rewrite them.
         ext = {}
-        code, out, timed_out = run_in_group(cmd, str(project_dir), env, suite_timeout(t, args.timeout), extend=ext)
+        code, out, timed_out = run_in_group(cmd, str(project_dir), env, suite_timeout(t, args.timeout, _stop_like), extend=ext)
         if ext.get("s"):
             t["extended_s"] = ext["s"]   # #616 A: seconds past --timeout the suite was left running because the machine was busy
         full_cmd = t.get("full_command") or ""
@@ -7870,7 +7872,7 @@ def main():
             cmd, mode = full_cmd, "full"
             t.update({"command": cmd, "mode": mode, "mode_reason": reason})
             narrow_out = out or ""
-            code, out, timed_out = run_in_group(cmd, str(project_dir), env, suite_timeout(t, args.timeout))
+            code, out, timed_out = run_in_group(cmd, str(project_dir), env, suite_timeout(t, args.timeout, _stop_like))
             out = narrow_out + f"\n# --- narrow không khớp test nào, chạy lại lệnh đầy đủ — exit {code} ---\n" + (out or "")
         if not timed_out:
             t["status"] = "PASS" if code == 0 else "FAIL"
@@ -7885,7 +7887,8 @@ def main():
             if t["status"] == "FAIL":
                 first = out or ""
                 infra = infra_failure(first)
-                retry = flaky_retry(cmd, project_dir, args.timeout, time.perf_counter() - started, infra=infra, env=env)
+                retry = flaky_retry(cmd, project_dir, suite_timeout(t, args.timeout, _stop_like), time.perf_counter() - started,
+                                    infra=infra, env=env)
                 if retry:
                     last_code = retry[0]
                     # a compile error followed by a re-run that is killed is still a code problem: the first run must be
@@ -7929,7 +7932,7 @@ def main():
         else:
             t["label"] = "HANG" if t.get("hang") else t["status"]
         _v0 = time.monotonic()
-        proved = vacuity_revert(project_dir, t, args.timeout, env=env)
+        proved = vacuity_revert(project_dir, t, suite_timeout(t, args.timeout, _stop_like), env=env)
         if proved != "skip":
             _add_step("vacuity", time.monotonic() - _v0)   # a re-run that happened: its seconds are outside the suite's duration
         if proved == "vacuous":
@@ -8429,8 +8432,17 @@ def main():
     # #741: lượt --scoped — git mv code → tài liệu không phải "chỉ tài liệu" (nguồn rename xét cùng luật với đích)
     docs_only = bool(modified_files) and all(_doc_like(f) for f in modified_files) and (
         not getattr(args, "scoped", False) or all(_doc_like(s) for s in RENAME_SOURCES.values()))
-    # P6: impacted_tests chụp trước khi nối test của rule mới (matrix_added) — ma trận chỉ-nối có test mới vừa chạy thì không phải "không test"
-    no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only and not (run_tests and matrix_added)
+    # P6: impacted_tests chụp trước khi nối test của rule mới (matrix_added) — ma trận chỉ-nối có test mới vừa chạy thì không phải "không test",
+    # nhưng CHỈ khi mọi file đổi là ma trận, test, tài liệu hay nằm trong watch_files của rule mới (review: một .yml/Makefile không ai theo
+    # dõi đi kèm một rule nối thêm không được lọt exit 2)
+    _added_ids = set(matrix_added or ())
+    _added_pats = [p for r in rules if isinstance(r, dict)
+                   and any(isinstance(t, dict) and t.get("id") in _added_ids for t in r.get("mandatory_regression_tests") or [])
+                   for p in r.get("watch_files") or [] if isinstance(p, str)]
+    added_covers_diff = bool(run_tests and matrix_added) and all(
+        _doc_like(f) or is_test_path(f) or f.replace("\\", "/").endswith(".agents/regression_matrix.active.json")
+        or any(match_pattern(f, p) for p in _added_pats) for f in modified_files)
+    no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only and not added_covers_diff
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.
     uncovered = [] if args.allow_no_tests else uncovered_code_files(modified_files, rules)

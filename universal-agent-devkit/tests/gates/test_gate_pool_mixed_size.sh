@@ -84,12 +84,13 @@ def free(name):
     return fh is not None
 
 t0 = time.monotonic()
-h = hs.acquire_pool("gate", hs.pool_paths("gate", 4, lock_dir=lock_dir), wait_s=3.0, prio="interactive", label=f"ca {case}")
+# wait 10 s, đòi lấy trong < 5 s (review: máy tải 20–80, ngưỡng 1 s dễ flaky; vẫn tách bạch với ca hết giờ)
+h = hs.acquire_pool("gate", hs.pool_paths("gate", 4, lock_dir=lock_dir), wait_s=10.0, prio="interactive", label=f"ca {case}")
 waited = time.monotonic() - t0
 got = os.path.basename(h.path) if h.path else ""
 held = sorted(n for n in os.listdir(lock_dir) if n.endswith(".held"))
 ahead_left = sorted(n for n in os.listdir(qdir) if n.endswith("-ahead.json"))
-check(f"{case}.1 vé 4 path lấy gate-3 trong ≤ 1 s", not h.timed_out and got == "gate-3.lock" and waited < 1.0,
+check(f"{case}.1 vé 4 path lấy gate-3 trong < 5 s", not h.timed_out and got == "gate-3.lock" and waited < 5.0,
       f"timed_out={h.timed_out} lấy={got or '-'} chờ={waited:.2f}s")
 check(f"{case}.2 chỉ slot đang giữ có marker .held", held == (["gate-3.lock.held"] if got == "gate-3.lock" else []), f"held={held}")
 spare = "gate-4.lock" if case == "a" else "gate-2.lock"

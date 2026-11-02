@@ -5,7 +5,9 @@
 # như vậy đều rơi vào ca này.
 #   a. chỉ nối rule B, test của B XANH ⇒ exit 0, REG-B PASS;
 #   b. đối chứng: test của rule mới ĐỎ ⇒ REJECT (1);
-#   c. đối chứng: đổi file code không rule nào theo dõi, ma trận không đổi ⇒ vẫn exit 2.
+#   c. đối chứng: đổi file code không rule nào theo dõi, ma trận không đổi ⇒ vẫn exit 2;
+#   d. nối rule kèm một file không phải code (deploy.yml) không rule nào theo dõi ⇒ vẫn exit 2 (review vòng 1: miễn trừ chỉ khi mọi file
+#      đổi là ma trận, test, tài liệu hay nằm trong watch_files của rule mới).
 # Python stdlib, tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -29,8 +31,9 @@ mk() {
     printf '{"project": "t", "rules": [{"component": "A", "watch_files": ["src/*"], "mandatory_regression_tests": [{"id": "REG-A", "command": "sh tests/test_a.sh"}]}]}\n' \
       > .agents/regression_matrix.active.json
     git add . && git commit -qm base
-    if [ "$3" = append ]; then
-      python3 -c '
+    [ "$3" = append-yml ] && echo "on: push" > deploy.yml   # file không phải code, không rule nào theo dõi (review: không được lọt exit 2)
+    if [ "$3" = append ] || [ "$3" = append-yml ]; then
+      git add . && python3 -c '
 import json; p = ".agents/regression_matrix.active.json"; m = json.load(open(p))
 m["rules"].append({"component": "B", "watch_files": ["hooks/*"], "mandatory_regression_tests": [{"id": "REG-B", "command": "sh tests/test_b.sh"}]})
 json.dump(m, open(p, "w"), indent=2)'
@@ -52,6 +55,8 @@ mk "$TMP/b" 1 append; gate "$TMP/b"
 [ "$RC" = 1 ] && ok "b. test của rule mới ĐỎ ⇒ REJECT (1)" || fail "b. test mới ĐỎ ⇒ exit $RC (cần 1): $(tail_out)"
 mk "$TMP/c" 0 code; gate "$TMP/c"
 [ "$RC" = 2 ] && ok "c. đổi code không rule nào theo dõi, ma trận không đổi ⇒ vẫn exit 2" || fail "c. đổi code không test ⇒ exit $RC (cần 2): $(tail_out)"
+mk "$TMP/d" 0 append-yml; gate "$TMP/d"
+[ "$RC" = 2 ] && ok "d. nối rule + deploy.yml không ai theo dõi ⇒ vẫn exit 2" || fail "d. nối rule kèm .yml không test ⇒ exit $RC (cần 2): $(tail_out)"
 
 [ "$FAILS" = 0 ] && echo "PASS test_gate_matrix_append_only_coverage" && exit 0
 echo "FAIL test_gate_matrix_append_only_coverage: $FAILS"; exit 1
