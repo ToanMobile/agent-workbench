@@ -2934,6 +2934,24 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-shell-writes-dollar-quotes",
+      "watch_files": [
+        "universal-agent-devkit/hooks/shell_writes.py",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/hooks/worktree_guard.sh",
+        "universal-agent-devkit/bin/session_lock.py",
+        "universal-agent-devkit/tests/gates/test_shell_writes_dollar_quotes.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SHELL-WRITES-DQ-01",
+          "name": "T4 #844: đích ghi dạng $'…' / $\"…\" (đích, động từ, bash -c, cd, heredoc cho shell) được shell_writes đọc thêm đã giải mã - worktree_guard, session_lock (anh em bị giữ, bash_collides, trunk_write) chặn; đích của cách đọc cũ còn nguyên; lệnh tìm kiếm rg/grep -E/git grep/sed vẫn qua",
+          "command": "bash universal-agent-devkit/tests/gates/test_shell_writes_dollar_quotes.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

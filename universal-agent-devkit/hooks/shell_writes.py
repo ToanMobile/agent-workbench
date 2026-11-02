@@ -8,6 +8,7 @@ file writes into the held checkout). Standard library only.
 import os
 import re
 import shlex
+import sys
 
 # `<<WORD` (not the here-string `<<<`), WORD up to a metacharacter with `-` in it (OCR 26/10 r3: `<<END-X` read as END) - as bin/session_lock.py
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([^\s;&|<>()'\"`\\]+)\1")
@@ -357,7 +358,25 @@ def targets(cmd, here, depth=0, run_bodies=False):
     the line of `env -S '…'` / `--split-string` is split into words in place (_env_split).
     A body run_bodies cannot tokenise comes back as ("unparsed", "", directory).
     Thư mục theo cd chữ (cd / pushd; cd có $VAR / backtick / NUL: "cdvar", thư mục giữ); #427 vòng 3: `)` đưa nó về như trước `(` (khi
-    _scoped), `popd` về thư mục pushd tương ứng đã rời (ngăn rỗng / không theo được: giữ)."""
+    _scoped), `popd` về thư mục pushd tương ứng đã rời (ngăn rỗng / không theo được: giữ).
+    T4 (#844): dòng có $'…' / $"…" được đọc THÊM một lần đã giải mã (_targets decode=True: comment bỏ bằng shell_norm.drop_comments, rồi
+    ansi_c_to_single và locale_to_double như hai guard lệnh) và đích của cách đọc đó nối sau đích của cách đọc cũ - shlex đọc $'<M>/a' là
+    `$<M>/a`, caller bỏ qua đích có `$`. Cách đọc cũ đứng trước và giữ nguyên (None vẫn là None): không đích nào của main mất đi, thứ tự cũ
+    giữ nguyên (cdvar của _family_write_held). Cách đọc thêm lỗi (không tách được, module không nạp được): chỉ cách đọc cũ."""
+    got = _targets(cmd, here, depth, run_bodies, False)
+    if got is None or ("$\x27" not in cmd and "$\x22" not in cmd):
+        return got
+    try:
+        more = _targets(cmd, here, depth, run_bodies, True)
+    except Exception as e:  # noqa: BLE001 - lỗi của cách đọc thêm không được làm mất cách đọc cũ (worktree_guard: hook văng = cho qua)
+        sys.stderr.write(f"shell_writes: bỏ cách đọc giải mã $'…' / $\"…\": {e!r}\n")
+        return got
+    seen = set(got)
+    return got + [t for t in more or () if t not in seen]
+
+
+def _targets(cmd, here, depth, run_bodies, decode):
+    """Một cách đọc của targets(): decode=True đọc dòng đã giải mã $'…' / $"…" (shell_norm), False là cách đọc cũ."""
     out, bodies, pos, ends = [], [], 0, {}
     while True:                               # heredoc bodies are data, not commands
         m = HEREDOC.search(cmd, pos)
@@ -375,7 +394,11 @@ def targets(cmd, here, depth=0, run_bodies=False):
         e = cmd.find("\n", s)
         pos = len(cmd) if e < 0 else e
     try:
-        text = _drop_fd_numbers(strip_comments("".join(out)))
+        if decode:   # thứ tự của hai guard lệnh: bỏ comment (biết $'…') rồi giải mã; T3 (#883): locale_to_double sau ansi_c_to_single
+            import shell_norm   # noqa: PLC0415 - chỉ dòng có $'…' / $"…" trả giá nạp; cùng thư mục hooks/ trên sys.path của caller
+            text = _drop_fd_numbers(shell_norm.locale_to_double(shell_norm.ansi_c_to_single(shell_norm.drop_comments("".join(out)))))
+        else:
+            text = _drop_fd_numbers(strip_comments("".join(out)))
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|<>()\n")
         lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
         toks = list(lex)
