@@ -75,7 +75,8 @@ run_case() {
   echo b > "$R/b"; git -C "$R" add b; git -C "$R" commit -qm main-moves; git -C "$R" push -q origin main
   python3 -c 'import json,sys; print(json.dumps({"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"verify_commands":[sys.argv[1]]}))' \
     "echo ran > $D/verify-ran" > "$D/cfg.json"
-  ( cd "$WT" && bash "$GATE" --config "$D/cfg.json" --pr 61 --expect-head "$X" ) >"$D/gate.log" 2>&1; RC=$?
+  ( cd "$WT" && bash "$GATE" --config "$D/cfg.json" --pr 61 --expect-head "$X" ${GATE_EXTRA:-} ) >"$D/gate.log" 2>&1; RC=$?
+  ORIGIN_HEAD=$(git -C "$O" rev-parse issue-61-x)
   READS=0; [ ! -f "$D/mergeable-calls" ] || READS=$(wc -l < "$D/mergeable-calls" | tr -d ' ')
   DIR="$D"
 }
@@ -90,6 +91,9 @@ grep -q "git merge --no-edit origin/main" "$DIR/gate.log" && grep -q -- "--expec
   || fail "CONFLICTING: message lacks the fix: $(grep 'merge-gate' "$DIR/gate.log" | tail -3)"
 [ ! -e "$DIR/repo/.claude/worktrees/review-x/.claude/super-board/inflight/merge.lock" ] && ok "CONFLICTING: merge lock released" \
   || fail "CONFLICTING: merge lock left behind"
+[ "$ORIGIN_HEAD" = "$X" ] && ok "CONFLICTING: PR branch on origin unchanged (#570)" || fail "CONFLICTING: PR branch moved ${X:0:8} -> ${ORIGIN_HEAD:0:8}"
+ls -d "$DIR"/repo/.claude/worktrees/.merge-scratch-* >/dev/null 2>&1 && fail "CONFLICTING: scratch dir left behind: $(ls -d "$DIR"/repo/.claude/worktrees/.merge-scratch-*)" \
+  || ok "CONFLICTING: no .merge-scratch-* left behind"
 
 # 2) MERGEABLE: như cũ
 run_case mergeable MERGEABLE
@@ -110,9 +114,17 @@ run_case unknown_then_conflicting UNKNOWN CONFLICTING
 
 # 5) UNKNOWN mãi: đọc lại có giới hạn rồi đi tiếp như cũ (GitHub tự từ chối nếu thật sự xung đột)
 run_case unknown_forever UNKNOWN
-[ "$RC" -eq 0 ] && [ -e "$DIR/verify-ran" ] && [ "$READS" -ge 2 ] && [ "$READS" -le 10 ] \
+[ "$RC" -eq 0 ] && [ -e "$DIR/verify-ran" ] && [ "$READS" -eq 4 ] \
   && ok "UNKNOWN forever: bounded re-reads ($READS), then verify + merge as before" \
   || fail "UNKNOWN forever: gate exit $RC, reads $READS"
+
+# 5b) --preflight (train gọi cho từng PR trước verify_set của đợt): CONFLICTING ⇒ 14, không in "preflight: ok"; MERGEABLE ⇒ ok
+GATE_EXTRA=--preflight run_case preflight_conflicting CONFLICTING
+[ "$RC" -eq 14 ] && ! grep -q '^preflight: ok' "$DIR/gate.log" && [ ! -e "$DIR/verify-ran" ] \
+  && ok "--preflight CONFLICTING: exit 14 before the train builds a tree" || fail "--preflight CONFLICTING: gate exit $RC: $(tail -3 "$DIR/gate.log")"
+GATE_EXTRA=--preflight run_case preflight_mergeable MERGEABLE
+[ "$RC" -eq 0 ] && grep -q '^preflight: ok' "$DIR/gate.log" && ok "--preflight MERGEABLE: preflight: ok" \
+  || fail "--preflight MERGEABLE: gate exit $RC: $(tail -3 "$DIR/gate.log")"
 
 # 6) Đọc mergeable lỗi (mạng, gh cũ): không thêm lối hỏng mới, đi tiếp như cũ
 mkdir -p "$TMP/read_error"; : > "$TMP/read_error/mergeable-fail"

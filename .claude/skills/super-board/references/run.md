@@ -582,6 +582,8 @@ at once, default 3; the queue lock is never held while a verify waits for a slot
           → Blocked with the §4 template; this one really is a human's
      4 → another card holds the merge lock, or the merge call failed while GitHub still shows the PR open at the verified head → leave the card in Review, next wave retries
      5 → the base does not merge in cleanly → **rebase pass** (see below)
+    14 → GitHub reports the PR CONFLICTING with the base (a merge driver that exists only
+          locally made the scratch merge clean); nothing verified → **rebase pass**
      6 → the PR head is not the commit you reviewed (a push after review, or during
           verify). Your evidence is void: leave the card in Review with a `[reviewer]`
           comment naming both shas; the next wave reviews the new head
@@ -605,7 +607,7 @@ at once, default 3; the queue lock is never held while a verify waits for a slot
           verifies their permission and the head before resuming Review. For exits
           7 and 8, copy the gate's `approval-request:` line into the canonical issue
           block; link it from the PR without duplicating the request.
-   → do NOT leave a card in Review on exit 2, 3, 5, 7, 8 or 11. A card left in Review is
+   → do NOT leave a card in Review on exit 2, 3, 5, 7, 8, 11 or 14. A card left in Review is
      re-picked next tick and re-reviewed forever, which is the re-dispatch waste
      tracked in issue #10. Exits 4 and 6 are the exceptions: 4 simply queued, and
      6 needs a fresh review of a commit nobody has reviewed yet.
@@ -777,7 +779,7 @@ were waiting on that one and parked behind it. The resolution, when a human fina
 "keep both sides" in twelve of the thirteen hunks and one block of setup code moved into a
 function. Three cards lost a wave to a mechanical edit.
 
-**The rule.** On merge-gate exit 2 or 5 (never 11 — that branch is not behind the base, so a
+**The rule.** On merge-gate exit 2, 5 or 14 (never 11 — that branch is not behind the base, so a
 rebase is a wasted pass; it is an ordinary `loop:rebuild-N` bounce, see Merge protocol step 5):
 
 ```
