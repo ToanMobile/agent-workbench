@@ -22,7 +22,8 @@ area) · traps `.agents/instincts.md`.
 1. The user's instruction in this task.
 2. Project rules in `.agents/local/rules/` marked immutable (bất biến, MUST, cấm): they win over
    a generic DevKit rule; say which project rule you followed.
-3. These essentials and the master rules. 4. Existing code patterns and tests.
+3. These essentials, then the master rules; where they differ (e.g. master §5.1 user gates),
+   these essentials win. 4. Existing code patterns and tests.
 
 ## Before the first edit (pre-code gate)
 Fill all five or collect evidence first: (1) target + authority (verified error, necessity, user
@@ -65,13 +66,13 @@ calibration, the paired oracle and the gate (core-rules §4).
 - **Git — commit and push yourself** (a project or user rule that forbids it wins: stop and wait
   for the order). A finished task
   is committed and pushed without asking, only your own paths (`git commit -m … -- <paths>`, never
-  `git add -A`/`commit -a`). Before a push: `git fetch`, `git pull --ff-only` (or `--no-rebase
-  --no-edit` when both moved; check the exit code; a conflict → skill conflict, ask only for a
-  business decision), re-run the step 3 gate after any pull or merge, then `git push origin <branch>`,
+  `git add -A`/`commit -a`). Before a push: `git fetch`, then as its own command `git pull --ff-only` (or
+  `--no-rebase --no-edit` when both moved; check its exit code; a conflict → skill conflict, ask only for a
+  business decision), re-run the step 3 gate after any pull, merge or conflict fix, then `git push origin <branch>`,
   never `<sha>:<branch>`. Every commit and push needs the latest gate on that content at exit 0, or
   exit 2 whose only reason is an edited test an Antigravity audit passed; a trunk-push repo moves
   main only through `agent-kit integrate`. Never commit secrets (`.env`, keystores,
-  `local.properties`, `google-services.json`, tokens); mask them in proof.
+  `local.properties`, `google-services.json`, tokens); mask them in proof. Details: core-rules §19.
 - **One developer, one branch**: work on the current branch; no new branch, worktree or remote
   branch unless the user asks (then prefix the git command with `DEVKIT_ALLOW_BRANCH=1`), except the
   pre-authorized worktree below. The git guard blocks the rest.
@@ -81,7 +82,7 @@ calibration, the paired oracle and the gate (core-rules §4).
   `agent-kit worktree add ../<repo>-<task>`, gate and commit there, then `agent-kit worktree finish <path>`
   (main still held → finish once the holder idles). A task that session dispatched to you (`/giao`)
   is done in its checkout. Exit 5 = trunk mode (default): main is merge-only, every session works
-  in its own worktree (Claude Code: EnterWorktree) and only `agent-kit worktree finish` moves main.
+  in its own worktree (Claude Code: EnterWorktree; others: `agent-kit worktree add`) and only `agent-kit worktree finish` moves main.
 - **Done means verified**: step 3 at exit 0 on the current code and, when step 4 applies, this
   turn's proof PNG before XONG; Stop hooks enforce it where they exist, but no hook takes the screenshot.
 
@@ -115,22 +116,22 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
    DONE / NOT DONE / AWAITING APPROVAL). Line 2: what the user gets. Line 3: gate exit code, then
    image path and serial, or "ảnh: không cần — <reason>"; then the next step. Stay short.
    Every handover (an XONG, or any turn that runs `git push`) carries the acceptance report
-   (core-rules §1.3), 1–2 lines each: 1. Đã fix gì (lỗi, nguyên nhân gốc, RED→GREEN) · 2. Chặn bug
+   (core-rules §2.3), 1–2 lines each: 1. Đã fix gì (lỗi, nguyên nhân gốc, RED→GREEN) · 2. Chặn bug
    cũ (test hồi quy / immutable_guards chạy lại PASS) · 3. Nguy cơ bug mới (caller, module liên đới
    đã rà) · 4. An toàn mã nguồn (secret, placeholder, OCR); kèm điểm chất lượng Agent trên thang 100
    (ngưỡng ≥ 95/100, core-rules §18). `proof_gate.sh` refuses the reply without all four.
    A Markdown or LICENSE-type-only change needs no regression test: the gate passes it.
 
-## Engineering musts (details: `.agents/devkit/rules/core-rules.md` §6, §8–14)
+## Engineering musts (details: `.agents/devkit/rules/core-rules.md` §6, §8–12, §14)
 - No O(N²) where a map/set does, no allocations in hot loops, no I/O/network/DB/heavy parsing on
-  the main/UI thread; every stream, cursor, connection, listener, timer and scope released with
-  its lifecycle; no static UI/Context refs.
-- No empty `catch`/`except: pass`; no raw `console.log`/`println`/`printStackTrace` in production;
+  the main/UI thread; streams/cursors/connections closed (`use`/try-with-resources/`finally`);
+  listeners, observers, timers and scopes released with their lifecycle; no static UI/Context refs.
+- No empty `catch`/`except: pass` (log with context or rethrow); no raw `console.log`/`println`/`printStackTrace` in production;
   structured logs with PII masked. Network: connect ≤10 s, read ≤15 s, retry only idempotent calls
   with backoff + jitter, idempotency key on payment/order writes. Every schema change ships a
   migration and its test; never a destructive drop in LIVE.
 - UI: `DESIGN.md` tokens, touch targets ≥48 dp (≥44 px web), immediate feedback, expensive actions
-  debounced ≥1000 ms. UI files (core-rules §19) follow Zero-Slop: no card in card or panel in panel, no icon tile above
+  disabled on the first tap and debounced ≥1000 ms. UI files (core-rules §19) follow Zero-Slop: no card in card or panel in panel, no icon tile above
   a heading, no bare grey/`#808080`, no purple-blue gradient (tint neutrals 3–5 %),
   spacing 4–8 / 12–16 / 24–32 (never 16 everywhere); game:
   9-slice bevel, pressed scale 0.95 with a 2–4 px sink, never `LiberationSans SDF`.
@@ -138,16 +139,19 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 ## Working style
 - Pick skills from context yourself; never ask the user to type a slash command.
 - Act, don't offer: a defect an audit or review finds here is fixed in the same turn (oracle, gate,
-  proof) unless the fix needs the ask list; never end a turn with a menu of prescribed steps: do them.
+  proof) unless the fix needs the ask list; never end a turn with a menu of prescribed steps (tests,
+  gate, fresh-context review, proof capture): do them.
 - Never hand the work to the user (2026-10-09: "tự xử lý luôn đi, tôi không đọc đâu"): no `!`
   command, no "run this", no checklist. The agent runs the gate of every repo the change reaches,
-  the reviews and their fixes, the kit install and host re-sync, commit and push. Only the "ask
+  the fresh-context review and its fixes, the Antigravity audit when required, the kit install and host re-sync, commit and push. Only the "ask
   the user" list below, a login only the user can type and a switch the kit reserves go to the user.
 - **Auto 100%** (chủ repo 2026-11-02: "tự auto toàn bộ ko cần người phải duyệt hay comment hay cho
-  quyền"; quyền công cụ: câu cuối): không bước nào chờ người duyệt, comment, review hay merge; cần
+  quyền"; quyền công cụ: câu cuối): không bước nào chờ người duyệt, comment, review hay merge, trừ
+  danh sách hỏi bên dưới và cổng human-gate của merge_policy super-board (mục Super Board); cần
   người duyệt thứ hai thì đó là agent khác (Antigravity audit, review lane). Agent TỰ AUTO DUYỆT
   thay đổi code khi test PASS, không hỏi "Duyệt / không duyệt". Commit, push fast-forward kể cả
-  `main`, mở và merge PR thường, sửa test, sửa code: tự làm. Hỏi người dùng CHỈ KHI: force-push
+  `main`, mở và merge PR thường, sửa code, sửa test: tự làm (test cũ bị sửa vẫn cần agent khác
+  duyệt, mục dưới; luật dự án/người dùng cấm commit/push thì mục Git thắng). Hỏi người dùng CHỈ KHI: force-push
   hoặc viết lại lịch sử đã chia sẻ; xoá file/dữ liệu cực kỳ quan trọng không khôi phục được từ
   origin (dữ liệu người dùng thật, migration phá dữ liệu LIVE, nhánh/tag còn commit chưa có trên
   remote); phát hành store / deploy production; đổi hoặc in secret đang dùng; billing/thanh toán;
