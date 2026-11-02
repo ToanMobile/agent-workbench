@@ -1,9 +1,13 @@
 ---
 name: super-board
-description: GitHub-Project-driven autonomous pipeline. Five verbs — onboard, lint, status, run, stop — that take a Project board from empty to drained across Build → QA → Review → Done lanes (labels qa · bug · feature route each card), with graceful shutdown / resume. Use when the user says "super-board", "/super-board", "drain my GitHub project", "set up the autonomous loop", "kick off the headless build/QA pipeline", or "stop super-board".
+description: GitHub-Project-driven autonomous pipeline (onboard, lint, status, run, stop). Use when the user says "super-board", "/super-board", "drain my GitHub project", "set up the autonomous loop", "kick off the headless build/QA pipeline", or "stop super-board".
 ---
 
 # super-board — autonomous GitHub Project pipeline
+
+Five verbs — onboard, lint, status, run, stop — take a Project board from empty to drained across
+Build → QA → Review → Done lanes (labels qa · bug · feature route each card), with graceful
+shutdown / resume.
 
 ## Five verbs
 

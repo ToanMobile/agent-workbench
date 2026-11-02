@@ -2902,6 +2902,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-skill-description-budget",
+      "watch_files": [
+        ".claude/skills/*/SKILL.md",
+        "universal-agent-devkit/tests/verification/test_skill_description_budget.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SKILL-DESC-BUDGET-01",
+          "name": "T0211: mọi description skill/command được liệt kê (kit skills, commands, .claude/skills) ≤ 300 byte UTF-8, không rỗng",
+          "command": "bash universal-agent-devkit/tests/verification/test_skill_description_budget.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

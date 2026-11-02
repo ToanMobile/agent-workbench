@@ -1,12 +1,22 @@
 ---
 name: generate2dsprite
-description: Make game-ready 2D characters, creatures, props, icons and FX as master stills, sprite sheets or animation clips. Plan size, motion and finish; generate the art (image generation is the default, through generate2dmedia route_media.py - the API when a key is configured, else the local Codex or Grok CLI); approve one master still per character; then key, slice, register, scale, palette, QA and export frames for a game engine (Aseprite JSON, Godot SpriteFrames or Sprite3D). HD finish by default, pixel finish on request. Character animation is one image-to-video clip per action from the master (video2dsprite); sheets are for FX, icons and props. Use for sprites, masters, sheets, frame-by-frame animation and packaging frames from any source. Not for maps, tiles or backgrounds (generate2dmap), video clips (video2dsprite), code-drawn art (codeart2d, only on request) or calling an image or video API by itself (generate2dmedia).
+description: Use for game-ready 2D characters, creatures, props, icons and FX - masters, sheets, frame-by-frame animation, packaging frames from any source. Not for maps, tiles or backgrounds (generate2dmap), video clips (video2dsprite), code-drawn art (codeart2d) or a bare media API call (generate2dmedia).
 ---
 
 # Generate 2D Sprite
 
 Make the smallest asset bundle the game needs, at its real display size, camera and style.
 Game logic (collision, damage, timing) stays independent of the art.
+
+## Scope
+
+Makes game-ready 2D characters, creatures, props, icons and FX as master stills, sprite sheets or animation
+clips. Plan size, motion and finish; generate the art (image generation is the default, through generate2dmedia
+`route_media.py` - the API when a key is configured, else the local Codex or Grok CLI); approve one master still
+per character; then key, slice, register, scale, palette, QA and export frames for a game engine (Aseprite JSON,
+Godot SpriteFrames or Sprite3D). HD finish by default, pixel finish on request. Character animation is one
+image-to-video clip per action from the master (video2dsprite); sheets are for FX, icons and props. Code-drawn
+art (codeart2d) only on request; calling an image or video API by itself belongs to generate2dmedia.
 
 ## Use when
 

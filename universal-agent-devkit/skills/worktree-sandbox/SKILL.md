@@ -1,11 +1,15 @@
 ---
 name: worktree-sandbox
-description: "Quản lý môi trường thử nghiệm song song (Parallel Worktree Sandboxes) trên macOS APFS: nhân bản CoW siêu tốc (<100ms, 0-byte đĩa), nạp .worktreeinclude, cách ly dependencies, so sánh diff trọng tài và tự động dọn dẹp sạch sẽ (auto-clear) ngay khi merge vào main để chống rác Git. Kích hoạt khi cần chạy A/B testing giữa các agent, thử nghiệm nhiều giải pháp song song, hoặc gõ /sandbox."
+description: "Kích hoạt khi cần chạy A/B testing giữa các agent, thử nghiệm nhiều giải pháp song song trong Parallel Worktree Sandboxes (macOS APFS), hoặc gõ /sandbox."
 ---
 
 # Parallel APFS Worktree Sandbox
 
 Kỹ năng điều phối môi trường phân nhánh song song cho nhiều AI Agent hoặc thử nghiệm nhiều giải pháp cạnh tranh mà không gây bẩn working directory chính và **tự động xóa sổ sạch sẽ sau khi merge**.
+
+## Phạm vi
+
+Quản lý môi trường thử nghiệm song song (Parallel Worktree Sandboxes) trên macOS APFS: nhân bản CoW siêu tốc (<100ms, 0-byte đĩa), nạp .worktreeinclude, cách ly dependencies, so sánh diff trọng tài và tự động dọn dẹp sạch sẽ (auto-clear) ngay khi merge vào main để chống rác Git.
 
 ## 🚀 Cách Kích Hoạt
 

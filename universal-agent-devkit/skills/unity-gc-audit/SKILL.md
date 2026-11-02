@@ -1,11 +1,15 @@
 ---
 name: unity-gc-audit
-description: Kiểm toán và triệt tiêu cấp phát bộ nhớ rác (Garbage Collection - GC Allocation) trong Unity 6, hướng tới Zero-GC per frame trong Update loop. Tự động kích hoạt khi chỉnh sửa C# scripts, game loop, physics update, LINQ trong game, hoặc khi phát hiện game bị khựng (GC Spike Freeze / Hitching).
+description: Tự động kích hoạt khi chỉnh sửa C# scripts Unity, game loop, physics update, LINQ trong game, hoặc khi phát hiện game bị khựng (GC Spike Freeze / Hitching, GC Allocation).
 ---
 
 # Unity C# Zero-GC Allocation & Memory Leak Audit
 
 Kỹ năng chuyên sâu kiểm toán mã nguồn C# trong Unity 6, triệt tiêu triệt để các hành vi cấp phát bộ nhớ rác (GC Alloc) trong vòng lặp từng khung hình, loại bỏ hiện tượng khựng game do Garbage Collector dọn dẹp bộ nhớ (GC Spikes).
+
+## Phạm vi
+
+Kiểm toán và triệt tiêu cấp phát bộ nhớ rác (Garbage Collection - GC Allocation) trong Unity 6, hướng tới Zero-GC per frame trong Update loop.
 
 ## Nguyên Tắc Vàng Zero-GC
 1. **Vòng lặp từng khung hình là vùng cấm cấp phát (Frame Loops are Zero-Alloc Zones):** Các hàm `Update()`, `LateUpdate()`, `FixedUpdate()`, coroutines chạy liên tục và callbacks render không được phép sinh ra dù chỉ 1 byte GC Allocation.

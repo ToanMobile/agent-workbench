@@ -1,11 +1,15 @@
 ---
 name: gate-full
-description: "Chạy post-fix-gate --full THẬT SỰ trên origin/main (hoặc ref chỉ định) trong scratch tách rời, đọc tóm tắt lượt đêm, cài/gỡ/xem lịch 00:00. Dùng khi cần kiểm cả bộ suite trên main (merge/push giờ chỉ chạy gate scoped), khi hỏi 'đêm qua main xanh không', 'chạy full', 'gate-full', khi thẻ P1 'gate-full đêm' xuất hiện, hoặc khi cài lịch đêm. Bỏ qua khi chỉ cần biên nhận task (`post-fix-gate.py --run-tests --brief`)."
+description: "Dùng khi cần kiểm cả bộ suite trên main, khi hỏi 'đêm qua main xanh không', 'chạy full', 'gate-full', khi thẻ P1 'gate-full đêm' xuất hiện, hoặc khi cài lịch đêm. Bỏ qua khi chỉ cần biên nhận task (`post-fix-gate.py --run-tests --brief`)."
 ---
 
 # gate-full — lượt --full trên main (#644)
 
 Gate mặc định là **scoped**: task, merge và push không còn chạy `--full`. Lượt full chạy ở đây — tay, hoặc 00:00 mỗi đêm (giờ máy, Asia/Ho_Chi_Minh).
+
+## Phạm vi
+
+Chạy post-fix-gate --full THẬT SỰ trên origin/main (hoặc ref chỉ định) trong scratch tách rời, đọc tóm tắt lượt đêm, cài/gỡ/xem lịch 00:00. Merge/push giờ chỉ chạy gate scoped, nên cả bộ suite trên main chỉ được kiểm ở đây.
 
 ## Chạy tay
 

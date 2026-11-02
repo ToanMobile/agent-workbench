@@ -1,6 +1,6 @@
 ---
 name: gen-prompt
-description: Tự động chuyển đổi ý tưởng hoặc yêu cầu ngắn thành Prompt kỹ thuật chuẩn XML của Anthropic (<role>, <system_context>, <task>, <mandatory_oracle>, <injected_constraints>, <historical_traps>, <instructions>) để copy sử dụng ngay cho Claude, ChatGPT, Grok hoặc đồng nghiệp.
+description: Dùng khi cần chuyển ý tưởng hoặc yêu cầu ngắn thành Prompt kỹ thuật chuẩn XML của Anthropic để copy sử dụng ngay cho Claude, ChatGPT, Grok hoặc đồng nghiệp.
 ---
 
 # Generate Anthropic Standard Prompt (`/gen-prompt`)
@@ -13,6 +13,10 @@ Lệnh này nhận vào câu yêu cầu ngắn gọn của người dùng và xu
 - **`<injected_constraints>`**: Tự nạp các yêu cầu phi chức năng (Debounce $\ge 1000\text{ms}$, Touch target $\ge 48\text{dp}$, Non-blocking main thread, Zero placeholders, Mask PII).
 - **`<historical_traps>`**: Nạp chính xác mã bẫy lỗi lịch sử (`instincts`) kèm câu lệnh `sed` để trích xuất.
 - **`<instructions>`**: Hướng dẫn tư duy từng bước qua `<thinking>` và giữ nguyên lý Zero Blast Radius.
+
+## Phạm vi
+
+Tự động chuyển đổi ý tưởng hoặc yêu cầu ngắn thành Prompt kỹ thuật chuẩn XML của Anthropic (<role>, <system_context>, <task>, <mandatory_oracle>, <injected_constraints>, <historical_traps>, <instructions>) để copy sử dụng ngay cho Claude, ChatGPT, Grok hoặc đồng nghiệp.
 
 ---
 
