@@ -2822,6 +2822,48 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-guard-merge-queue-label-536",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        ".claude/bin/super-board-queue-label.sh",
+        "universal-agent-devkit/tests/gates/test_guard_merge_queue_label.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-MQ-LABEL-01",
+          "name": "#536: git guard hỏi .claude/bin/super-board-queue-label.sh --check trước khi cho gắn nhãn merge-queue (gh pr/issue edit --add-label, gh api …/issues/N/labels, interpreter gọi gh); helper từ chối / treo → chặn trong thời hạn, không gợi ý prefix !; gh pr create|new --label merge-queue và mutation graphql gắn nhãn theo id → chặn; nhãn khác / gỡ nhãn / GET / DELETE → qua, không gọi helper; helper của project phiên (checkout chính khi là worktree), không theo cd; project chưa có helper → luật không chạy",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_merge_queue_label.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-queue-label-536",
+      "watch_files": [
+        ".claude/bin/super-board-queue-label.sh",
+        ".claude/bin/super-board-approved-head.jq",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_queue_label.sh",
+        "tests/super-board/test_merge_queue_reject_card_note.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-QUEUE-LABEL-01",
+          "name": "#536: super-board-queue-label.sh gắn nhãn merge-queue chỉ khi approved-head hợp lệ (luật chung super-board-approved-head.jq + audit-check) khớp head hiện tại; thiếu / head cũ / không phải OWNER-MEMBER-COLLABORATOR / audit không khớp → exit 3 kèm lý do và bước đúng; đọc/ghi GitHub hỏng → 69; --check không ghi",
+          "command": "bash tests/super-board/test_queue_label.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MQ-REJECT-NOTE-01",
+          "name": "#536: hàng đợi merge loại PR vì approved-head thiếu / lệch head thì comment thêm lên thẻ PR đóng (nhánh issue-<K>- hoặc closingIssuesReferences, chỉ khi thẻ trên board, đọc hỏng không để lại file halt); --dry-run không ghi",
+          "command": "bash tests/super-board/test_merge_queue_reject_card_note.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
