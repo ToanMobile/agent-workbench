@@ -178,6 +178,7 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_ci_checks.sh"; sb_ci_checks_fixture "$TMP/bin"
 COUNT_FILE="$TMP/timeout_runs"
 SCRATCH_PWD_FILE="$TMP/scratch_pwd"
 rm -f "$COUNT_FILE" "$SCRATCH_PWD_FILE"

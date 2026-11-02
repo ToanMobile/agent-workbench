@@ -3032,6 +3032,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-gate-ci-742-split-a4",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_ci_checks.sh",
+        "tests/super-board/lib/fake_ci_checks.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-742-A4-MERGE-GATE-CI-01",
+          "name": "#742 tách A4 (F5): merge gate đọc gh pr checks sau verify, trước migration và merge: check đỏ hay bucket lạ/rỗng → exit 11, không merge, migration không chạy, tên check trên stdout và stderr; không đọc được → exit 4; no checks reported → merge như cũ; pending rồi pass → merge, pending quá SB_MERGE_AUTO_WAIT_S → exit 4; --dry-run đọc CI một lần không ngủ; head đổi lúc chờ hay lúc check đỏ → exit 6 không in ci-check; mỗi ca có đối chứng",
+          "command": "bash tests/super-board/test_merge_gate_ci_checks.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

@@ -110,6 +110,7 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_ci_checks.sh"; sb_ci_checks_fixture "$TMP/bin"
 # Train chạy từ bản bin liên kết để thay gate bằng shim: shim tự trả lời --preflight, mọi lời gọi khác exec gate thật.
 mkdir -p "$TMP/sbbin"
 for f in "$ROOT"/.claude/bin/*; do ln -s "$f" "$TMP/sbbin/$(basename "$f")"; done

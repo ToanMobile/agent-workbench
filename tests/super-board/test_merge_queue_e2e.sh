@@ -231,6 +231,7 @@ esac
 hold
 SH
 chmod +x "$TMP/path/gh" "$TMP/path/claude"
+. "$ROOT/tests/super-board/lib/fake_ci_checks.sh"; sb_ci_checks_fixture "$TMP/path"
 # post-fix-gate giả: ghi thư mục chạy (scratch của train hay của gate) + đối số, xanh.
 mkdir -p "$TMP/pfg"
 printf 'import os, sys\nopen(os.environ["FAKE"] + "/pfg.log", "a").write(os.getcwd() + " " + " ".join(sys.argv[1:]) + "\\n")\n' > "$TMP/pfg/post-fix-gate.py"

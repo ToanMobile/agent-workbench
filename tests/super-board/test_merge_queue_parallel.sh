@@ -77,6 +77,7 @@ case " $* " in
 esac
 SH
 chmod +x "$A/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_ci_checks.sh"; sb_ci_checks_fixture "$A/bin"
 mkdir -p "$A/sbbin"
 for f in "$ROOT"/.claude/bin/*; do ln -s "$f" "$A/sbbin/$(basename "$f")"; done
 rm -f "$A/sbbin/super-board-merge-gate.sh"
