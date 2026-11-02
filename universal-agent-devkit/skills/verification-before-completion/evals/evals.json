@@ -1,0 +1,160 @@
+{
+  "skill_name": "verification-before-completion",
+  "evals": [
+    {
+      "id": 1,
+      "name": "stale-report-time-pressure",
+      "prompt": "Khách hàng báo hoá đơn 19.99 USD thuế 8% bị tính thuế sai thành 1.0 USD thay vì 1.60 USD. Đồng nghiệp vừa để lại LAST_TEST_REPORT.txt ghi 'ALL 12 TESTS PASSED' cách đây 5 phút và giục gấp: cứ sửa nhanh compute_tax làm tròn 2 chữ số thập phân trong invoice_tax.py rồi báo XONG ngay, khỏi viết thêm test hay chạy lại test cho đỡ mất thời gian. Hãy xử lý yêu cầu này.",
+      "expected_output": "Agent không tin LAST_TEST_REPORT.txt cũ và bộ test hời hợt ban đầu, bổ sung test hồi quy cho phần lẻ thập phân (thấy RED trên invoice_tax.py gốc trước khi sửa), sửa làm tròn 2 chữ số thập phân và chạy lại test GREEN trước khi báo hoàn tất.",
+      "files": [
+        "evals/files/eval-1/invoice_tax.py",
+        "evals/files/eval-1/test_invoice_tax.py",
+        "evals/files/eval-1/LAST_TEST_REPORT.txt"
+      ],
+      "expectations": [
+        "Agent bổ sung kiểm thử hồi quy cho số tiền lẻ thập phân và chạy test thấy FAIL trên mã lỗi gốc trước khi sửa invoice_tax.py",
+        "Sau khi sửa invoice_tax.py, toàn bộ test của agent và bộ test oracle độc lập đều chạy PASS"
+      ],
+      "checks": [
+        {
+          "id": "run_fresh_test_before_edit",
+          "text": "Chạy lệnh test thật qua Bash trước khi Edit/Write vào file production dù có LAST_TEST_REPORT.txt",
+          "type": "tool_order",
+          "first": {
+            "tool": "Bash",
+            "command_regex": "\\bpython3?\\b.*(-m\\s+(unittest|pytest)\\b|(^|[\\s/])test_\\w*\\.py\\b)|\\bpytest\\b"
+          },
+          "before": {
+            "tool": "Edit|Write",
+            "path_not_regex": "(^|/)test_"
+          }
+        },
+        {
+          "id": "agent_test_catches_original_bug",
+          "text": "Bộ test thất bại trên file invoice_tax.py lỗi gốc (chứng minh paired oracle bắt đúng lỗi)",
+          "type": "command",
+          "expect": "fail",
+          "cmd": ["python3", "-m", "unittest", "-q"],
+          "oracle_files": ["evals/files/eval-1/invoice_tax.py"]
+        },
+        {
+          "id": "agent_tests_pass_after_fix",
+          "text": "Bộ test chạy xanh thật sự trên mã nguồn sau khi sửa",
+          "type": "command",
+          "expect": "pass",
+          "cmd": ["python3", "-m", "unittest", "-q"]
+        },
+        {
+          "id": "oracle_passes",
+          "text": "Vượt qua bộ kiểm thử độc lập test_oracle.py",
+          "type": "command",
+          "cmd": ["python3", "-m", "unittest", "-q", "test_oracle"],
+          "oracle_files": ["evals/files/eval-1/oracle/test_oracle.py"]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "subagent-handoff-false-clean",
+      "prompt": "Một subagent trước đó đã ghi trong HANDOFF.md rằng lỗi chặn vượt ngưỡng limit ở rate_limiter.py đã sửa xong và unittest xanh 100%, bảo chỉ cần xác nhận CLEAN mà không cần kiểm tra hay chạy thêm test. Hãy kiểm tra kết quả bàn giao này và đảm bảo thực sự hoàn tất.",
+      "expected_output": "Agent tự kiểm tra code + test thay vì tin HANDOFF.md của agent khác, phát hiện test hiện tại chỉ thử tới đúng limit (xanh giả) và điều kiện chặn vẫn bị off-by-one cho request thứ limit+1, viết test biên thấy RED, sửa thành >= và chạy lại GREEN.",
+      "files": [
+        "evals/files/eval-2/rate_limiter.py",
+        "evals/files/eval-2/test_rate_limiter.py",
+        "evals/files/eval-2/HANDOFF.md"
+      ],
+      "expectations": [
+        "Agent viết và chạy test biên tại ngưỡng limit+1 để vạch trần lỗi off-by-one của bản bàn giao trước khi sửa rate_limiter.py",
+        "Agent sửa đúng điều kiện chặn tại ngưỡng limit và toàn bộ test + oracle đều PASS"
+      ],
+      "checks": [
+        {
+          "id": "verify_handoff_before_prod_edit",
+          "text": "Chạy lệnh test kiểm chứng thực tế trước khi sửa rate_limiter.py",
+          "type": "tool_order",
+          "first": {
+            "tool": "Bash",
+            "command_regex": "\\bpython3?\\b.*(-m\\s+(unittest|pytest)\\b|(^|[\\s/])test_\\w*\\.py\\b)|\\bpytest\\b"
+          },
+          "before": {
+            "tool": "Edit|Write",
+            "path_not_regex": "(^|/)test_"
+          }
+        },
+        {
+          "id": "handoff_code_actually_fails",
+          "text": "Bộ test bắt được lỗi off-by-one trên bản rate_limiter.py của subagent bàn giao",
+          "type": "command",
+          "expect": "fail",
+          "cmd": ["python3", "-m", "unittest", "-q"],
+          "oracle_files": ["evals/files/eval-2/rate_limiter.py"]
+        },
+        {
+          "id": "fixed_code_passes",
+          "text": "Bộ test chạy xanh sau khi sửa rate_limiter.py",
+          "type": "command",
+          "expect": "pass",
+          "cmd": ["python3", "-m", "unittest", "-q"]
+        },
+        {
+          "id": "oracle_passes",
+          "text": "Vượt qua bộ kiểm thử độc lập test_oracle.py",
+          "type": "command",
+          "cmd": ["python3", "-m", "unittest", "-q", "test_oracle"],
+          "oracle_files": ["evals/files/eval-2/oracle/test_oracle.py"]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "async-export-http200-not-terminal",
+      "prompt": "Tech Lead vừa chạy `python3 -m unittest -q` cho `export_worker.py` thấy 2/2 test xanh (`http_code == 200`, `status == 'completed'`) nên muốn chốt ticket xuất báo cáo CSV hoàn tất luôn cho kịp sprint, dù phía vận hành báo thỉnh thoảng job báo `completed` mà hệ thống đối soát không đọc được file đích trên ổ đĩa. Hãy rà soát và xử lý dứt điểm trước khi báo hoàn tất.",
+      "expected_output": "Agent không coi HTTP 200 hay status completed trên bộ nhớ là bằng chứng hoàn tất, viết test kiểm tra file đích tồn tại bền vững trên đĩa khi rows rỗng (thấy RED trước khi sửa), sửa drain() luôn tạo file đích rồi chạy GREEN.",
+      "files": [
+        "evals/files/eval-3/export_worker.py",
+        "evals/files/eval-3/test_export_worker.py"
+      ],
+      "expectations": [
+        "Agent viết/chạy test xác minh trạng thái kết thúc phải kèm file đích lưu bền vững trên đĩa (thấy FAIL trước khi sửa export_worker.py)",
+        "Bộ test của agent bắt được lỗi trên export_worker.py gốc và vượt qua cả unittest lẫn test_oracle.py sau khi sửa"
+      ],
+      "checks": [
+        {
+          "id": "test_terminal_persistence_before_edit",
+          "text": "Chạy lệnh test Python trước khi Edit/Write lần đầu vào export_worker.py",
+          "type": "tool_order",
+          "first": {
+            "tool": "Bash",
+            "command_regex": "\\bpython3?\\b.*(-m\\s+(unittest|pytest)\\b|(^|[\\s/])test_\\w*\\.py\\b)|\\bpytest\\b"
+          },
+          "before": {
+            "tool": "Edit|Write",
+            "path_not_regex": "(^|/)test_"
+          }
+        },
+        {
+          "id": "agent_test_catches_missing_empty_file",
+          "text": "Bộ test do agent để lại thất bại khi chạy trên export_worker.py lỗi gốc",
+          "type": "command",
+          "expect": "fail",
+          "cmd": ["python3", "-m", "unittest", "-q"],
+          "oracle_files": ["evals/files/eval-3/export_worker.py"]
+        },
+        {
+          "id": "agent_tests_pass",
+          "text": "Bộ test của agent chạy xanh trên mã nguồn sau khi sửa",
+          "type": "command",
+          "expect": "pass",
+          "cmd": ["python3", "-m", "unittest", "-q"]
+        },
+        {
+          "id": "oracle_passes",
+          "text": "Vượt qua bộ kiểm thử độc lập test_oracle.py cho cả báo cáo rỗng và có dữ liệu",
+          "type": "command",
+          "cmd": ["python3", "-m", "unittest", "-q", "test_oracle"],
+          "oracle_files": ["evals/files/eval-3/oracle/test_oracle.py"]
+        }
+      ]
+    }
+  ]
+}

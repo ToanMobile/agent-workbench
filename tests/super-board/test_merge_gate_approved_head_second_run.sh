@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# #262 (R1/R2): duyệt của người gắn với head X; gate tự đẩy merge commit Y rồi thoát (verify đỏ). Lượt gate thứ hai thấy head=Y, không đẩy
-# nữa: nó vẫn phải truyền --approved-head X cho approval. Biên nhận do gate ghi theo Y; xoá dòng ghi/đọc nó thì lượt hai đòi duyệt lại (exit 7).
+# #262 (R1/R2), giữ tương thích sau #570: gate không còn tự đẩy merge commit lên nhánh PR, nhưng PR đã bị gate bản cũ đẩy (head Y, biên nhận
+# Y -> X trong <git common dir>/super-board/approved-merge-heads) vẫn phải nhận duyệt của X: gate truyền --approved-head X cho approval.
+# Xoá dòng đọc biên nhận thì lượt đó đòi duyệt lại (exit 7).
 # Approval giả: duyệt khi head == X hoặc --approved-head == X. Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -44,8 +45,13 @@ git -C "$R" push -q origin issue-61-x
 X=$(git -C "$R" rev-parse issue-61-x); echo "$X" > "$TMP/x.head"; echo "$X" > "$TMP/pr61.head"
 git -C "$R" diff "$X~1" "$X" > "$TMP/pr61.diff"
 printf '{"files":[{"path":"f61"}],"labels":[],"body":"","additions":1,"deletions":0,"changedFiles":1}' > "$TMP/pr61.meta"
-# main đi tiếp sau khi PR mở: nhánh PR chậm hơn base, gate tự đẩy merge commit Y.
+# main đi tiếp sau khi PR mở; gate bản cũ đã đẩy merge commit Y lên nhánh PR và ghi biên nhận Y -> X (dựng lại đúng trạng thái đó).
 echo b > "$R/b"; git -C "$R" add b; git -C "$R" commit -qm main-moves; git -C "$R" push -q origin main
+git -C "$WT" merge -q --no-edit origin/main
+git -C "$WT" push -q origin issue-61-x
+Y=$(git -C "$WT" rev-parse HEAD)
+mkdir -p "$R/.git/super-board/approved-merge-heads"; echo "$X" > "$R/.git/super-board/approved-merge-heads/$Y"
+git -C "$R" diff "$Y~1" "$Y" > "$TMP/pr61.diff"
 
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'SH'
@@ -70,11 +76,7 @@ PY
 python3 -c 'import json,sys; print(json.dumps({"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"project":{"owner":"o","number":1},"merge_policy":{"default":"human"},"verify_commands":[sys.argv[1]]}))' "python3 $TMP/g/post-fix-gate.py" > "$TMP/cfg.json"
 gate() { ( cd "$WT" && bash "$GATE" --config "$TMP/cfg.json" --pr 61 --expect-head "$(cat "$TMP/pr61.head")" ) >"$TMP/gate.log" 2>&1; GATE_RC=$?; }
 
-echo 1 > "$TMP/verify-rc"; gate
-Y=$(git -C "$R" rev-parse origin/issue-61-x)
-[ "$Y" != "$X" ] && [ "$GATE_RC" -eq 11 ] && ok "run 1: approved head X, gate pushed merge commit Y, verify red (exit 11)" \
-  || fail "run 1 (rc=$GATE_RC Y=$Y X=$X, want 11 and Y!=X): $(tail -4 "$TMP/gate.log")"
-
+[ "$Y" != "$X" ] || fail "fixture: Y must differ from X"
 echo "$Y" > "$TMP/pr61.head"; echo 0 > "$TMP/verify-rc"; gate
 [ "$GATE_RC" -eq 0 ] && grep -q -- "--approved-head $X" "$TMP/approval-calls" \
   && ok "run 2 on head Y: approval still covers Y through the recorded X, no new 'done' needed" \

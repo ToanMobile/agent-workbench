@@ -12,6 +12,7 @@
 # phải để đầu dò trống; đối chứng --full --diff origin/main phải ghi vào nó.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
+export SB_MARK_VERIFIED_TREE=1   # #575: cờ đặt cho MỌI lượt gate của file này; ca 7 chỉ khác nhau ở --full nên rào `not impacted_run` vẫn bị canh
 unset WORKTREE_TRUNK_MODE DEVKIT_SESSION_ID CLAUDE_SESSION_ID CLAUDE_CODE_SESSION_ID DEVKIT_GATE_MERGE_CHECK
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

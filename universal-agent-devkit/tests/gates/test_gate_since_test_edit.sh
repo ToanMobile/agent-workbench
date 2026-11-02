@@ -46,11 +46,20 @@ expect "append-only change committed in the range is not flagged" no 0 "$base"
 # 2026-10-09: the trailer counts only with antigravity-pm's audit pass record for that task of this repository (kept outside
 # the repo, as bin/push_gate.py checks it); a line the agent writes itself is not an audit.
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
-pm_pass() { # <task-id>: an audit pass recorded for the repo in $PWD
+export DEVKIT_PM_HOME_TEST=1   # #605: test-only switch, a fixture pm home under the temp dir counts for push_gate.approved
+pm_pass() { # <task-id> [auditedHead, default HEAD]: an audit pass recorded for the repo in $PWD
+  # Audit T0066 (#605): the PM verdict names the audited head (`auditedHead: <sha>` in notes); a trailer counts only on that tree.
   mkdir -p "$TMP/pm/projects/$(basename "$PWD")/tasks/$1"
-  printf '{"id":"%s","project":"%s","verdicts":{"audit":{"verdict":"pass","round":1}}}\n' "$1" "$PWD" \
-    > "$TMP/pm/projects/$(basename "$PWD")/tasks/$1/task.json"
+  printf '{"id":"%s","project":"%s","verdicts":{"audit":{"verdict":"pass","round":1,"notes":"auditedHead: %s"}}}\n' "$1" "$PWD" \
+    "${2:-$(git rev-parse HEAD)}" > "$TMP/pm/projects/$(basename "$PWD")/tasks/$1/task.json"
 }
+
+# Audit T0066 (#605): an old task's audit pass (auditedHead = the base) reused in the trailer of a NEW weakening is no audit
+mk replayed_trailer; base="$(git rev-parse HEAD)"
+pm_pass T0002-old "$base"
+printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
+git commit -qam "weaken test + fix" -m "Test-approved-by: antigravity T0002-old"
+expect "a trailer reusing an old task whose auditedHead tree differs is still flagged" yes 2 "$base"
 
 mk self_approved; base="$(git rev-parse HEAD)"
 printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
@@ -62,6 +71,39 @@ printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.k
 git commit -qam "weaken test + fix" -m "Test-approved-by: antigravity T0001-audit"
 pm_pass T0001-audit
 expect "weakened test in a Test-approved-by commit is not flagged" no 0 "$base"
+
+# #630: the trailer sits on an EMPTY commit after the audited tree (the #605 flow): no `-- <path>` pathspec may hide it
+mk empty_trailer; base="$(git rev-parse HEAD)"
+printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
+git commit -qam "weaken test + fix"
+pm_pass T0630-empty
+git commit -q --allow-empty -m "audit" -m "Test-approved-by: antigravity T0630-empty"
+# the cross-review path can rescue the exit code, so judge since_test_weakened itself: it must not call the audited test weakened
+sw="$(CLAUDE_PROJECT_DIR="$PWD" python3 -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("pfg", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print(m.since_test_weakened(sys.argv[2], "tests/test_old.sh"))' "$GATE" "$base" 2>&1 | tail -1)"
+if [ "$sw" = False ]; then echo "✔ since_test_weakened sees the trailer on an empty commit"
+else echo "✖ since_test_weakened ignored the trailer on an empty commit: $sw"; FAILS=$((FAILS + 1)); fi
+
+# #630 (review): a trailer commit whose task audited a tree BEFORE `since` (side branch, `merge -s ours` into the range) pulls
+# `base` back to that old tree: the audit says nothing about the newer test, so the weakening is still flagged
+mk side_branch_old_audit
+printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; git commit -qam "older, weak test"; c0="$(git rev-parse HEAD)"
+printf '#!/bin/sh\n[ 1 = 1 ]\ntrue\n' > tests/test_old.sh; git commit -qam "newer test with an assertion"; base="$(git rev-parse HEAD)"
+git checkout -q -b side "$c0"
+pm_pass T0630-side "$c0"
+git commit -q --allow-empty -m "old audit" -m "Test-approved-by: antigravity T0630-side"
+git checkout -q -
+printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
+git commit -qam "weaken test + fix"
+git merge -q -s ours --no-edit side
+sw="$(CLAUDE_PROJECT_DIR="$PWD" python3 -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("pfg", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print(m.since_test_weakened(sys.argv[2], "tests/test_old.sh"))' "$GATE" "$base" 2>&1 | tail -1)"
+if [ "$sw" = True ]; then echo "✔ a trailer whose auditedHead precedes --since does not approve the range"
+else echo "✖ side-branch trailer on a tree older than --since approved the weakening: $sw"; FAILS=$((FAILS + 1)); fi
 
 mk approved_then_weakened; base="$(git rev-parse HEAD)"
 printf '#!/bin/sh\ntrue\n' > tests/test_old.sh

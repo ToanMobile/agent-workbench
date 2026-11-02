@@ -48,7 +48,7 @@
   // Default model ladder for lane workers, indexed by card complexity from
   // the classify router. Overridden per run by `super-board run --low|--high`.
   //   "low"    — haiku (low) / sonnet (medium) / opus (high)
-  //   "medium" — (default) sonnet / opus / session model
+  //   "medium" — (default) sonnet / opus / opus
   //   "high"   — opus for every card
   "model_tier": "medium",
 
@@ -116,6 +116,15 @@
   // and nothing lands. See references/run-workflow.md → "Mid-run permission prompts".
   "human_approves_merge": false,
 
+  // Ủy quyền thường trực của chủ (#516, references/decision-policy.md): comment `[orchestrator] [decision]` hợp lệ
+  // (marker orchestrator, hoặc comment tay của chủ không marker) coi blocker 🙋/❓ là đã xử lý: deps.sh, needs-you.py mark và
+  // qa-report.py (merge gate) không dựng lại blocker. DANH SÁCH DỪNG vẫn gắn needs-you. Vắng khối = bật.
+  "decision_policy": {
+    "enabled": true,                                   // false: bộ đọc tắt, mọi comment [decision] bị bỏ qua
+    "owner": "ToanMobile",                             // login của chủ (ngoài authorAssociation OWNER)
+    "marker": "<!-- sb-decision:orchestrator -->"      // marker riêng của lane orchestrator
+  },
+
   // Who merges what (v2.6.0). Evaluated by super-board-merge-gate.sh (via
   // super-board-merge-policy.py) on every merge; `human_approves_merge: true`
   // still overrides it and makes the Reviewer stop before the gate.
@@ -126,13 +135,13 @@
     // A human can merge it or approve the pinned request for the next wave.
     // Onboard recommends "human" when base_branch is production-detected.
     "default": "auto",
-    // Small PRs by design. A PR with more changed lines (additions +
-    // deletions) than this waits for a human: Blocked 🙋 "big PR — please
-    // review". Default 400; 0 = no size cap. Files matching size_exclude and
-    // migration files (migrations.globs) do not count; migration lines are
-    // reported separately. Builders keep PRs under this cap and lint flags
-    // tickets likely to exceed it (references/lint.md → "Too big").
-    "auto_max_lines": 400,
+    // Opt-in size gate. A positive number: a PR with more changed lines
+    // (additions + deletions) than this waits for a human: Blocked 🙋
+    // "big PR — please review". Default 0 = no size cap (unset is the same).
+    // Files matching size_exclude and migration files (migrations.globs) do
+    // not count; migration lines are reported separately. Lint does not split
+    // a ticket so the diff stays under a line count (references/lint.md).
+    "auto_max_lines": 0,
     // Globs left out of the size count. Setting this replaces the defaults
     // below; [] counts every file.
     "size_exclude": [
@@ -164,6 +173,14 @@
                   "paths": [],
                   "keywords": ["drop table", "drop column", "truncate table", "rename column", "drop schema"] }
     },
+    // #605: a PR that DELETES (or renames away) a file matching one of these
+    // globs → human. Matrix, memory and project-rules deletes (T0209) → "delete-reviewable",
+    // approved by the cross-review marker; any other match (.env, keystore, jks,
+    // google-services, custom globs) → "delete-protected": only a human "done" approves it.
+    // Setting this replaces the defaults below; [] turns it off.
+    "protected_paths": ["**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json",
+                        ".agents/regression_matrix.active.json",
+                        ".agents/local/memory/**", ".agents/local/rules/**"],
     // true only when the user explicitly chose auto-merge onto a
     // production-detected base in onboard. run.md's production-merge guard
     // refuses to start otherwise.
@@ -304,6 +321,11 @@
   // hit their own preflight and park.
   "max_workers": 0,
 
+  // Optional emergency brake (#530). Hold every lane's spawn while load1 is above
+  // this integer. Absent: busy_load from capacity.py (3 × cores). DEVKIT_SPAWN_LOAD
+  // overrides this for one process. Below the threshold, only max_workers applies.
+  "spawn_load_max": 36,
+
   // Max consecutive failures in the same lane on the same root-cause hash
   // before the card auto-moves to Blocked. Default `2`. Root-cause hash
   // defined in §7 Halt gates.
@@ -311,20 +333,23 @@
 
   // Optional. Merge queue (Pha 2, 26/10): reviewers label an approved PR
   // `merge-queue` (plus an `approved-head:<sha40>` comment) instead of calling
-  // the merge gate; `.claude/bin/super-board-merge-queue.sh --config <cfg>
-  // --if-due` batches them into ONE super-board-merge-train.sh run (one verify
-  // for the batch) and routes every `train-result:` line. Off by default.
+  // the merge gate; `.claude/bin/super-board-merge-queue.sh --config <cfg>`
+  // starts one background super-board-merge-train.sh per valid queued PR
+  // (#676: scoped verify of main+PR, several at once through the slot pool;
+  // only `gh pr merge` is serialised by the merge gate's lock), exits at once,
+  // and routes every finished train's `train-result:` lines on its next run.
+  // No batching: no wait for more PRs, no age limit, no wait for an idle
+  // machine; `--full` runs once a night (gate-full).
+  // Off by default.
+  // On only for worker_backend "claude-p" (its runner calls it every tick)
+  // or "workflow" (the launchd schedule super-board-queue-schedule.sh does, which
+  // super-board-wave-plan.sh ensures); "codex" never uses the queue.
   // `SB_MERGE_QUEUE=1` / `0` overrides `enabled` for one process.
   //   enabled_at:   ISO time it was switched on (the batch canary only reads
   //                 runs after it); null while off.
-  //   batch_max:    most PRs per batch, oldest labelled first. `--if-due` runs
-  //                 once this many wait. After a batch with a red PR the next
-  //                 one takes at most max(1, batch_max/2).
-  //   max_wait_min: `--if-due` also runs once the oldest PR waited this long
-  //                 (its `labeled` timeline event), or when the machine is
-  //                 idle (no live board worker, merge gate lock or
-  //                 post-fix-gate test_run.lock).
-  "merge_queue": { "enabled": false, "enabled_at": null, "batch_max": 6, "max_wait_min": 60 },
+  //   max_trains:   trains running at once (#676); default 3. A PR over the
+  //                 cap waits for the next run; no attempt is counted.
+  "merge_queue": { "enabled": false, "enabled_at": null, "max_trains": 3 },
 
   // When the count of Blocked cards exceeds this percent of the initial Ready
   // count, post a mid-run breakdown in the run report. Default `30`. Set to `0`

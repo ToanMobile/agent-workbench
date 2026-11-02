@@ -713,3 +713,21 @@ fi
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   list_old_backups "$TARGET_DIR"
 fi
+
+# 8. Parity (#773): bỏ cờ cấm khỏi verify_commands của config super-board (--full / --force-full / --auto-approve-tests, #741/#764),
+#    rồi in mọi chỗ repo còn lệch kit (symlink hỏng, hook kit chưa đăng ký, bản sao super-board cũ…). Chỉ báo: exit của install không đổi.
+#    --fix chỉ ở main checkout (hay thư mục không git): worktree.py add, lane và scratch của merge gate cũng chạy install.sh, sửa config đã
+#    track ở đó thì mỗi worktree mới bẩn ngay và gate scoped đếm config là thay đổi của thẻ (cùng phép thử như setup_claude.sh 8b).
+if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && [ -f "$DEVKIT_ROOT/bin/parity_check.py" ]; then
+  _par_fix="--fix"
+  _par_gd="$(git -C "$TARGET_DIR" rev-parse --absolute-git-dir 2>/dev/null)" || true
+  _par_cd="$(git -C "$TARGET_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || true
+  [ "$_par_gd" = "$_par_cd" ] || _par_fix=""
+  _par_out="$(python3 "$DEVKIT_ROOT/bin/parity_check.py" "$TARGET_DIR" $_par_fix 2>&1)" || true
+  printf '%s\n' "$_par_out" | grep '^fixed: ' || true
+  printf '%s\n' "$_par_out" | grep -v '^fixed: \|^parity: ' | head -10 || true
+  printf '%s\n' "$_par_out" | grep '^parity: ' || true
+  if printf '%s\n' "$_par_out" | grep -q '^parity: .* deviation'; then
+    echo "  - $(L "Danh sách đủ" "Full list"): agent-kit parity $TARGET_DIR"
+  fi
+fi

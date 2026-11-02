@@ -111,6 +111,16 @@ fi
 command -v python3 >/dev/null 2>&1 || exit 0
 git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
+# #528: worker của board không chấm main. Worktree liên kết vẫn chạy. Probe vẫn in trạng thái.
+if [ "${SB_BOARD_WORKER:-}" = "1" ] && [ "${PROBE}" != "1" ] && python3 -I -c 'import os,sys
+_d = os.path.dirname(os.path.realpath(sys.argv[1]))
+if os.path.isabs(_d): sys.path.append(_d)
+import session_worktree as s
+raise SystemExit(0 if s.worker_skip_main(sys.argv[2]) else 1)' "$0" "${REPO_ROOT}"; then
+  echo "$(date +%Y-%m-%dT%H:%M:%S) SB_BOARD_WORKER skip main" >> "${LOG}"
+  exit 0
+fi
+
 # Locate the DevKit: this script's real path (symlink install), else `postfix-gate` on PATH.
 SELF="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
 GATE="$(dirname "$(dirname "${SELF}")")/bin/post-fix-gate.py"
@@ -1018,9 +1028,9 @@ for f in summary.get("findings", [])[:10]:
     # static findings (secrets, placeholders, dependencies …) with the exact place to fix
     lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))
 for f in touched[:10]:
-    lines.append("  - TEST ĐÃ CÓ BỊ SỬA/XOÁ: %s — đối chiếu diff (`git diff HEAD -- %s`): agent TỰ auto-duyệt khi thấy tốt hơn và test PASS "
-                 "(một dòng riêng `AUTO-APPROVE: %s` trong câu trả lời, hoặc --auto-approve-tests). KHÔNG hỏi người dùng bằng "
-                 "AskUserQuestion. Không sửa test cũ để lách" % (f, f, f))
+    lines.append("  - TEST ĐÃ CÓ BỊ SỬA/XOÁ: %s — đối chiếu diff (`git diff HEAD -- %s`): cần duyệt chéo bởi agent khác "
+                 "(audit /giao của Antigravity ghi mục duyệt cho %s hoặc trailer `Test-approved-by: antigravity <task-id>`); agent sửa test "
+                 "KHÔNG tự duyệt (--auto-approve-tests / AUTO-APPROVE: bị từ chối), KHÔNG hỏi người dùng. Không sửa test cũ để lách" % (f, f, f))
 for f in uncovered[:10]:
     lines.append("  - UNCOVERED:%s — file code đổi nhưng chưa test hồi quy nào theo dõi" % f)
 lines.append("Checklist: %s · báo cáo: %s" % (summary.get("checklist", ".agents/CHECKLIST.md"), summary.get("report", "-")))

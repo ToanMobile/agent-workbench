@@ -141,6 +141,15 @@ import session_worktree as s; print(s.project(json.loads(sys.stdin.read() or "{}
     echo "⚠ DevKit $(basename "$0"): the session's worktree could not be resolved (hooks/session_worktree.py next to the real hook) - judging ${REPO_ROOT}" >&2
   fi
 fi
+# #528: worker của board không chấm main. Dùng TREE_ROOT (cây đang chấm), trước khi bỏ qua vì không có gradlew.
+if [ "${SB_BOARD_WORKER:-}" = "1" ] && [ "${HAVE_PY}" = "1" ] && python3 -I -c 'import os,sys
+_d = os.path.dirname(os.path.realpath(sys.argv[1]))
+if os.path.isabs(_d): sys.path.append(_d)
+import session_worktree as s
+raise SystemExit(0 if s.worker_skip_main(sys.argv[2]) else 1)' "$0" "${TREE_ROOT}"; then
+  log "SB_BOARD_WORKER skip main"
+  exit 0
+fi
 cd "${TREE_ROOT}" 2>/dev/null || exit 0
 # The Gradle wrapper is ./gradlew, or — in a monorepo whose Android/JVM app sits in
 # a subfolder — a gradlew further down. No wrapper anywhere: nothing to compile.

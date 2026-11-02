@@ -13,6 +13,7 @@ import {
   fetchAnthropicProfileQuotaLive,
   balanceRepoAccounts,
   getRepoAssignments,
+  DEFAULT_REPOS,
 } from '../src/profiles.js';
 import {
   saveTelegramConfig,
@@ -321,7 +322,17 @@ test('Telegram UI 6: balanceRepoAccounts chia deu 3 repo finos va 3 repo finos_t
 test('Telegram UI 7: Bo cuc Mobile UI/UX gon dep, khong lap so [1] 1., nut bam <= 24 ky tu khong bi cat ... tren dien thoai, 6 repo tach dong ro rang', () => {
   const tmp = createTempDir();
   try {
-    const report = getStatusReport({ stateDir: tmp.dir });
+    // #805: 6 repo tam trong tmp.dir (ten cua DEFAULT_REPOS, chia 3 finos / 3 finos_team), khong doc settings.local.json that tren may
+    const repos = DEFAULT_REPOS.map((r) => {
+      const repoPath = path.join(tmp.dir, 'repos', r.name);
+      fs.mkdirSync(path.join(repoPath, '.claude'), { recursive: true });
+      fs.writeFileSync(
+        path.join(repoPath, '.claude', 'settings.local.json'),
+        JSON.stringify({ account: r.defaultAccount }, null, 2),
+      );
+      return { ...r, path: repoPath };
+    });
+    const report = getStatusReport({ stateDir: tmp.dir, repos });
     const dash = buildTelegramDashboard(report);
 
     // 1. Khong lap so thu tu kieu "[1] 1. FinOS" gay roi mat
