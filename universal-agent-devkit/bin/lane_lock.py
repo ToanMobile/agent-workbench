@@ -15,11 +15,27 @@ Biến: LANE_LOCK_DIR (mặc định <git common dir>/lane-lock, chung cho main 
 LANE_LOCK_LOAD_MAX (24), LANE_LOCK_POLL_S (5), LANE_LOCK_LOG_S (60); tải giả cho test: DEVKIT_SLOT_LOAD_FILE (của heavy_slot.load_now).
 ponytail: không có hàng vé/ưu tiên (2–3 người chờ, jitter tránh đồng pha); ≥ 4 lane chờ thường xuyên thì chuyển sang hàng vé của
 heavy_slot.acquire_pool.
+
+#849 — việc NHẸ không chờ ngưỡng tải: lệnh chạy thẳng post-fix-gate.py `--run-tests --scoped` (chỉ cờ trong _LIGHT_FLAGS) mà bộ thăm dò
+(scoped_gate.no_full(decide) của chính kit của gate đó, tiến trình con, tối đa LANE_LOCK_LIGHT_PROBE_S = 20 s) đếm ≤ LANE_LOCK_LIGHT_TESTS
+(15) test + suite ma trận, toàn test bash, suite ngoài runner kit đều `light` theo heavy_slot.classify. Việc nhẹ lấy slot trống bất kỳ
+như lúc tải thấp, không bao giờ quá LANE_LOCK_SLOTS người giữ; hết slot thì chờ slot như cũ. Thăm dò một lần, chỉ khi luật cũ bắt chờ vì
+tải; lỗi, quá giờ, lệnh khác (chuỗi `bash -c`, --full, --since, --tree, cờ lạ) ⇒ việc nặng, luật cũ. Không file khoá hay marker mới.
+ponytail: số test thay cho thời lượng; đo thấy lượt nhẹ > 5 phút thì xét theo thời lượng ghi nhận. Ở tải 12–24 việc nhẹ có thể vượt việc
+nặng (việc nặng cần mọi slot trống); chấp nhận ở 2–3 lane.
+
+#849 (mở rộng 02/11) — lệnh (hay hậu duệ) đang CHỜ pool gate của heavy_slot thì nhả slot lane: mỗi LANE_LOCK_POOL_POLL_S (5 s) đọc CHỈ ĐỌC
+vé <heavy_slot.slot_dir()>/queue/gate/*.json; vé sống (heavy_slot.ticket_alive), wait_s > 0, đã chờ ≥ LANE_LOCK_POOL_WAIT_S (5 s), PID cùng
+nhóm với con hoặc có con trong chuỗi ppid ⇒ xoá .owner rồi nhả flock, KHÔNG lấy lại (wrapper không bao giờ chặn con: không deadlock; pool
+gate giới hạn phần còn lại, hết giờ pool thì gate báo BUSY không chạy suite). ponytail: lệnh ghép `gate; suite nặng` chạy phần sau không slot
+lane; lệnh tự đặt SB_HEAVY_SLOT_DIR khác thì không thấy vé (giữ slot như cũ) — gặp thì lấy lại slot khi hậu duệ không còn vé / marker .held.
 """
 from __future__ import annotations
 
+import json
 import os
 import random
+import re
 import signal
 import subprocess
 import sys
@@ -82,13 +98,222 @@ def _owners(paths: list) -> str:
     return "; ".join(out) or "không ai"
 
 
-def try_take(paths: list, load) -> tuple:
-    """Một lượt xin slot theo tải. Trả (fh, chỉ số slot, cap) khi lấy được, (None, None, cap) khi phải chờ."""
+_GATE = "post-fix-gate.py"
+_PYTHON = re.compile(r"python(?:\d+(?:\.\d+)*)?")
+_ASSIGN = re.compile(r"[A-Za-z_]\w*=")
+# cờ post-fix-gate được phép ở việc nhẹ; cờ khác (--full, --force-full, --since, --tree, --staged, --matrix, viết tắt argparse…) ⇒ nặng
+_LIGHT_FLAGS = {"--run-tests", "--scoped", "--brief", "--json", "--no-cache", "--no-fail-fast", "--no-checklist"}
+_LIGHT_VALUE_FLAGS = {"--diff", "--session", "--transcript", "--task", "--lang", "-l", "--timeout"}
+
+
+def gate_call(argv: list):
+    """(đường dẫn thật của post-fix-gate.py, base hay "", env của gate) khi argv chạy thẳng `[env K=V…] [python…] …/post-fix-gate.py` với
+    --run-tests --scoped và chỉ cờ của _LIGHT_FLAGS / _LIGHT_VALUE_FLAGS; None với mọi lệnh khác (#849)."""
+    env = dict(os.environ)
+    i = 0
+    if argv and os.path.basename(argv[0]) == "env":
+        i = 1
+        while i < len(argv) and _ASSIGN.match(argv[i]):
+            key, _, value = argv[i].partition("=")
+            if key.startswith("GIT_"):   # GIT_DIR / GIT_WORK_TREE… đổi repo gate kiểm: không đoán, coi là nặng
+                return None
+            env[key] = value
+            i += 1
+    if i < len(argv) and _PYTHON.fullmatch(os.path.basename(argv[i])):
+        i += 1
+    if i >= len(argv) or os.path.basename(argv[i]) != _GATE:
+        return None
+    gate, rest, base, seen, k = argv[i], argv[i + 1:], "", set(), 0
+    while k < len(rest):
+        flag, eq, value = rest[k].partition("=")
+        if flag in _LIGHT_VALUE_FLAGS:
+            if not eq:
+                k += 1
+                if k >= len(rest):
+                    return None
+                value = rest[k]
+            if flag == "--diff":
+                if not value or ".." in value:
+                    return None
+                base = value
+        elif flag in _LIGHT_FLAGS and not eq:
+            seen.add(flag)
+        else:
+            return None
+        k += 1
+    if not {"--run-tests", "--scoped"} <= seen:
+        return None
+    return os.path.realpath(os.path.join(os.getcwd(), gate)), base, env
+
+
+# Tiến trình con thăm dò (python -I: không nạp module theo cwd / PYTHONPATH). Base rỗng ⇒ nhánh đích như task_trunk của gate (origin/HEAD →
+# origin/{main,master,trunk} → {main,master,trunk}); merge-base(base, HEAD) + cây làm việc ⊇ diff gate tự chọn. Phân loại bằng HÀM CỦA CHÍNH
+# post-fix-gate.py sẽ chạy (INSTINCT-015, OCR 02/11): needs_no_test, find_matrix_path, load_active_matrix (bản ở merge-base) HỢP bản cây làm
+# việc (JSON hỏng ⇒ nặng), checklist_covers + rule_watch. In một dòng JSON ở cuối stdout.
+_PROBE = r"""
+import importlib.util, json, re, subprocess, sys
+gate_file, project, base, limit, own_bin = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
+def out(light, why):
+    print(json.dumps({"light": light, "why": why}, ensure_ascii=False))
+    sys.exit(0)
+def ok(ref):
+    return subprocess.run(["git", "-C", project, "rev-parse", "--verify", "-q", ref + "^{commit}"], capture_output=True).returncode == 0
+if not base:
+    r = subprocess.run(["git", "-C", project, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"], capture_output=True, text=True)
+    refs = [r.stdout.strip()] if r.returncode == 0 and r.stdout.strip() else []
+    refs += [p + n for p in ("refs/remotes/origin/", "refs/heads/") for n in ("main", "master", "trunk")]
+    base = next((x for x in refs if ok(x)), "HEAD")
+mb = subprocess.run(["git", "-C", project, "merge-base", base, "HEAD"], capture_output=True, text=True).stdout.strip() or base
+sys.path[:0] = [gate_file.rsplit("/", 1)[0], own_bin]   # scoped_gate / heavy_slot của kit gate; heavy_slot thiếu thì của lane_lock
+spec = importlib.util.spec_from_file_location("lane_lock_probe_gate", gate_file)
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+import scoped_gate as sg
+def rules_of(data, where):
+    got = data.get("rules", []) if isinstance(data, dict) else None
+    if not isinstance(got, list):
+        out(False, "ma trận %s: rules không phải danh sách" % where)
+    return got
+matrix, _trust = gate.load_active_matrix(None, mb)
+rules = rules_of(matrix, "ở base")
+path = gate.find_matrix_path(None)
+if path is not None:
+    try:
+        with open(path, encoding="utf-8") as f:
+            rules = rules + rules_of(json.load(f), str(path))
+    except (OSError, ValueError) as e:
+        out(False, "ma trận %s đọc lỗi (%s)" % (path, e))
+res = sg.no_full(sg.decide(project, base, needs_no_test=gate.needs_no_test, matrix_rules=rules), project)
+if res.get("graph_error"):
+    out(False, "đồ thị lỗi")
+tests = list(dict.fromkeys(list(res.get("tests") or []) + list(res.get("smoke") or [])))
+odd = [t for t in tests if not t.endswith((".sh", ".bash"))]
+if odd:
+    out(False, "test không chạy bằng bash: " + odd[0])
+runner = re.compile(r"(?:^|\s)(?:bash\s+)?\S*?tests/run_impacted\.sh(?:\s|$)")   # _KIT_RUNNER của gate: chỉ chạy danh sách scoped
+paths = list(res.get("changed") or []) + tests
+covers = gate.checklist_covers()
+cmds = []
+for rule in rules:
+    if not isinstance(rule, dict):
+        continue
+    watch = [p for p in gate.rule_watch(rule, covers) if isinstance(p, str)]
+    if any(sg.match_pattern(f, p) for f in paths for p in watch):
+        for t in rule.get("mandatory_regression_tests") or []:
+            c = t.get("command") if isinstance(t, dict) else None
+            if isinstance(c, str) and c and not runner.search(c) and c not in cmds:
+                cmds.append(c)
+n = len(tests) + len(cmds)
+if n > limit:
+    out(False, "%d test + suite > %d" % (n, limit))
+if cmds:
+    import heavy_slot as hs
+    for c in cmds:
+        cls = hs.classify(c, project)["cls"]
+        if cls != "light":
+            out(False, "suite %s: %s" % (cls, c[:80]))
+out(True, "%d test + suite" % n)
+"""
+
+
+def light_job(argv: list) -> tuple:
+    """(True, lý do) khi argv là gate scoped NHỎ (#849); (False, lý do) với mọi việc khác và mọi lỗi của bộ thăm dò (fail closed)."""
+    call = gate_call(argv)
+    if call is None:
+        return False, "không phải gate --scoped"
+    gate_file, base, env = call
+    if not (os.path.isfile(gate_file) and os.path.isfile(os.path.join(os.path.dirname(gate_file), "scoped_gate.py"))):
+        return False, "không thấy post-fix-gate.py / scoped_gate.py của gate"
+    target = env.get("CLAUDE_PROJECT_DIR") or env.get("TARGET_DIR")   # như get_project_dir của gate
+    if target and os.path.exists(target):
+        project = os.path.realpath(target)
+    else:
+        try:
+            r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return False, "không đọc được gốc repo"
+        project = os.path.realpath(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else os.path.realpath(os.getcwd())
+    limit = int(_env_num("LANE_LOCK_LIGHT_TESTS", 15))
+    try:
+        r = subprocess.run([sys.executable, "-I", "-c", _PROBE, gate_file, project, base, str(limit),
+                            os.path.dirname(os.path.abspath(__file__))], capture_output=True, text=True,
+                           timeout=_env_num("LANE_LOCK_LIGHT_PROBE_S", 20.0), env=env, cwd=project)
+    except subprocess.TimeoutExpired:
+        return False, "thăm dò quá giờ"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"thăm dò không chạy được ({exc})"
+    try:
+        verdict = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        verdict = None
+    if r.returncode != 0 or not isinstance(verdict, dict) or not isinstance(verdict.get("light"), bool):
+        tail = (r.stderr.strip().splitlines() or [f"rc {r.returncode}"])[-1][:120]
+        return False, f"thăm dò lỗi ({tail})"
+    return verdict["light"], str(verdict.get("why") or "")
+
+
+def _parents() -> dict:
+    """{pid: ppid} của mọi tiến trình (một lần `ps`); {} khi lỗi."""
+    try:
+        r = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    out = {}
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            out[int(parts[0])] = int(parts[1])
+    return out
+
+
+def pool_waiter(root: int):
+    """(pid, nhãn) của một vé đang CHỜ pool gate mà tiến trình là root hay hậu duệ của root (#849); None khi không có.
+    Hàm này chỉ mở vé để đọc (không dùng heavy_slot._read_tickets: thân hàm đó gọi os.remove trên vé chết); lỗi của từng vé ⇒ bỏ vé đó."""
+    qdir = os.path.join(heavy_slot.slot_dir(), "queue", "gate")
+    try:
+        names = [n for n in os.listdir(qdir) if n.endswith(".json")]
+    except OSError:
+        return None
+    now = time.time()
+    min_age = _env_num("LANE_LOCK_POOL_WAIT_S", 5.0)
+    found = []
+    for n in names:
+        try:   # O_NONBLOCK: FIFO đặt ở đây không treo wrapper (INSTINCT-040)
+            fd = os.open(os.path.join(qdir, n), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            with os.fdopen(fd, encoding="utf-8") as f:
+                t = json.loads(f.read(65536))
+            # wait_s 0 = lượt thăm chỗ trống của gate; vé non = gate vừa lấy được slot (vé chỉ sống vài ms)
+            if (isinstance(t, dict) and heavy_slot.ticket_alive(t, now) and float(t.get("wait_s")) > 0
+                    and now - float(t.get("t0")) >= min_age):
+                found.append((int(t.get("pid")), str(t.get("label") or "")[:60]))
+        except (OSError, ValueError, TypeError):
+            continue
+    parents = None
+    for pid, label in found:
+        try:
+            if os.getpgid(pid) == root:   # con chạy start_new_session: cả cây cùng nhóm root
+                return pid, label
+        except OSError:
+            pass
+        if parents is None:
+            parents = _parents()
+        p, seen = pid, set()
+        while p > 1 and p not in seen:   # hậu duệ đã gọi setsid: lần theo ppid
+            if p == root:
+                return pid, label
+            seen.add(p)
+            p = parents.get(p, 0)
+    return None
+
+
+def try_take(paths: list, load, light: bool = False) -> tuple:
+    """Một lượt xin slot theo tải. Trả (fh, chỉ số slot, cap) khi lấy được, (None, None, cap) khi phải chờ.
+    light (#849): bỏ ngưỡng tải, lấy slot trống bất kỳ như lúc tải thấp (không quá len(paths) người giữ)."""
     two = _env_num("LANE_LOCK_LOAD_TWO", 12.0)
     cap_max = _env_num("LANE_LOCK_LOAD_MAX", 24.0)
-    if load is not None and load >= cap_max:
+    if not light and load is not None and load >= cap_max:
         return None, None, 0
-    if load is not None and load < two:
+    if light or (load is not None and load < two):
         for i, path in enumerate(paths):
             fh = heavy_slot._try_lock_path(path)
             if fh is not None:
@@ -126,9 +351,15 @@ def main(argv=None) -> int:
     log_every = _env_num("LANE_LOCK_LOG_S", 60.0)
     t0 = time.monotonic()
     last_log = None
+    light = None   # (bool, lý do) của #849: thăm dò một lần, chỉ khi luật cũ vừa bắt chờ vì tải (tải thấp, hay lấy được ngay: không tốn gì)
     while True:
         load = heavy_slot.load_now()
-        fh, idx, cap = try_take(paths, load)
+        fh, idx, cap = try_take(paths, load, bool(light and light[0]))
+        if fh is None and light is None and (load is None or load >= _env_num("LANE_LOCK_LOAD_TWO", 12.0)):
+            light = light_job(args)
+            _say(f"[lock] {name} " + (f"nhẹ ({light[1]}): bỏ ngưỡng tải, vẫn giữ số slot" if light[0] else f"việc nặng ({light[1]})"))
+            if light[0]:
+                fh, idx, cap = try_take(paths, load, True)
         if fh is not None:
             break
         now = time.monotonic()
@@ -145,6 +376,7 @@ def main(argv=None) -> int:
     rc = 127
     proc = None
     forwarded = {}
+    released = None   # monotonic lúc nhả slot sớm (#849: lệnh chờ pool gate); từ đó slot và .owner có thể là của lane khác
 
     def _signal_group(sig) -> bool:
         """Gửi sig cho cả nhóm của con; False khi nhóm không còn (macOS: nhóm chỉ còn zombie trả PermissionError)."""
@@ -169,7 +401,8 @@ def main(argv=None) -> int:
         except OSError:
             pass
         ltxt = "?" if load is None else f"{load:.1f}"
-        _say(f"[lock] {name} giữ khoá {time.strftime('%T')} (slot {idx + 1}/{len(paths)}, cho phép {cap}, chờ {waited:.0f} s, load {ltxt})")
+        _say(f"[lock] {name} giữ khoá {time.strftime('%T')} (slot {idx + 1}/{len(paths)}, cho phép {cap}, chờ {waited:.0f} s, load {ltxt}"
+             f"{', nhẹ' if light and light[0] else ''})")
         try:
             proc = subprocess.Popen(args, close_fds=True, start_new_session=True)
         except OSError as exc:
@@ -177,12 +410,24 @@ def main(argv=None) -> int:
         else:
             if forwarded:   # tín hiệu tới trước khi con kịp chạy: gửi lại cho nhóm của con
                 _signal_group(forwarded["sig"])
+            pool_poll = max(0.05, _env_num("LANE_LOCK_POOL_POLL_S", 5.0))
             while True:
                 try:
-                    status = proc.wait()
+                    status = proc.wait(timeout=None if released is not None else pool_poll)
                     break
                 except InterruptedError:
                     continue
+                except subprocess.TimeoutExpired:
+                    waiting = pool_waiter(proc.pid)
+                    if waiting is not None:   # .owner xoá TRƯỚC khi nhả: không bao giờ xoá owner của người lấy slot sau
+                        try:
+                            os.remove(owner)
+                        except OSError:
+                            pass
+                        heavy_slot._unlock(fh)
+                        released = time.monotonic()
+                        _say(f"[lock] {name} nhả slot lane sau {released - t1:.0f} s: lệnh đang chờ pool gate (pid {waiting[0]}"
+                             f"{', ' + waiting[1] if waiting[1] else ''}) — không lấy lại")
             rc = status if status >= 0 else 128 - status
             # cháu cùng nhóm còn sống: chờ ân hạn LANE_LOCK_GRACE_S rồi mới nhả slot; nhận tín hiệu thì giết nốt nhóm sau ân hạn
             grace_end = time.monotonic() + _env_num("LANE_LOCK_GRACE_S", 5.0)
@@ -196,12 +441,14 @@ def main(argv=None) -> int:
     finally:
         for s, h in old.items():
             signal.signal(s, h)
-        try:
-            os.remove(owner)
-        except OSError:
-            pass
-        heavy_slot._unlock(fh)
-        _say(f"[lock] {name} nhả khoá rc={rc} {time.strftime('%T')} (giữ {time.monotonic() - t1:.0f} s)")
+        if released is None:
+            try:
+                os.remove(owner)
+            except OSError:
+                pass
+            heavy_slot._unlock(fh)
+        early = "" if released is None else f", đã nhả slot sớm sau {released - t1:.0f} s"
+        _say(f"[lock] {name} nhả khoá rc={rc} {time.strftime('%T')} (giữ {time.monotonic() - t1:.0f} s{early})")
     return rc
 
 
