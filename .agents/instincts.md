@@ -746,6 +746,14 @@ Mẫu ghi nhận:
 
 ---
 
+### [INSTINCT-087] Bỏ trần đếm cũng bỏ luôn khoá tuần tự hoá
+- **Ngày phát hiện:** 2026-10-29
+- **Hiện tượng lỗi:** Bỏ trần đếm cũng bỏ luôn khoá tuần tự hoá
+- **Nguyên nhân:** khoá add chỉ mở khi có WORKTREE_MAX; bỏ số đếm làm mất luôn khoá, 4 add song song cùng path ra 2 đăng ký
+- **Quy tắc phòng ngừa & Cách fix:** khi xoá một giới hạn, tách và giữ khoá/tuần tự hoá nó từng bao; thêm test race song song cùng tài nguyên
+
+---
+
 ### [INSTINCT-096] agent-office: thanh nút dưới đáy "cuộn ngang ẩn" giấu mất nút
 - **Ngày phát hiện:** 2026-10-31
 - **Hiện tượng lỗi:** 15 nút khi mở "Khác" cần ~1460px; ở 1280 mất Thoại/Tải lại GitHub/Thu gọn, trên điện thoại cả nút "Khác" ra ngoài màn hình (overflow-x: auto + ẩn thanh cuộn)

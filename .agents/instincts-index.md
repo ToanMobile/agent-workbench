@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (791 dòng, 87.8 KB) · 95 mục
+> **Tệp gốc:** `.agents/instincts.md` (799 dòng, 88.4 KB) · 96 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -91,10 +91,11 @@
 - [INSTINCT-084] Gộp lane bằng cherry-pick làm kit không gỡ được worktree lane và Stop hook tự gộp main local vào lane — `sed -n '723,732p' .agents/instincts.md`
 - [INSTINCT-085] Lời duyệt AskUserQuestion của gate mất khi file bị sửa rồi hoàn nguyên — `sed -n '733,740p' .agents/instincts.md`
 - [INSTINCT-086] Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình — `sed -n '741,748p' .agents/instincts.md`
-- [INSTINCT-096] agent-office: thanh nút dưới đáy "cuộn ngang ẩn" giấu mất nút — `sed -n '749,756p' .agents/instincts.md`
-- [INSTINCT-097] agent-office: nút bật một khung mà CSS đang ẩn khung đó thì nút như chết — `sed -n '757,764p' .agents/instincts.md`
-- [INSTINCT-098] agent-office: vòng render 3D phải hạ nhịp khi cảnh đứng yên, tài nguyên GPU dùng chung — `sed -n '765,770p' .agents/instincts.md`
-- [INSTINCT-099] gate-full: nhiều repo cùng chạy --full một lúc làm máy quá tải, mỗi repo chỉ có khoá riêng — `sed -n '771,778p' .agents/instincts.md`
-- [INSTINCT-100] Biên nhận cây của train và cây của merge gate gộp theo hai chiều ngược nhau; tiến trình nền của job… — `sed -n '779,786p' .agents/instincts.md`
-- [INSTINCT-101] Dem dong reflog so voi log -g: dong null-oid bi bo qua — `sed -n '787,791p' .agents/instincts.md`
+- [INSTINCT-087] Bỏ trần đếm cũng bỏ luôn khoá tuần tự hoá — `sed -n '749,756p' .agents/instincts.md`
+- [INSTINCT-096] agent-office: thanh nút dưới đáy "cuộn ngang ẩn" giấu mất nút — `sed -n '757,764p' .agents/instincts.md`
+- [INSTINCT-097] agent-office: nút bật một khung mà CSS đang ẩn khung đó thì nút như chết — `sed -n '765,772p' .agents/instincts.md`
+- [INSTINCT-098] agent-office: vòng render 3D phải hạ nhịp khi cảnh đứng yên, tài nguyên GPU dùng chung — `sed -n '773,778p' .agents/instincts.md`
+- [INSTINCT-099] gate-full: nhiều repo cùng chạy --full một lúc làm máy quá tải, mỗi repo chỉ có khoá riêng — `sed -n '779,786p' .agents/instincts.md`
+- [INSTINCT-100] Biên nhận cây của train và cây của merge gate gộp theo hai chiều ngược nhau; tiến trình nền của job… — `sed -n '787,794p' .agents/instincts.md`
+- [INSTINCT-101] Dem dong reflog so voi log -g: dong null-oid bi bo qua — `sed -n '795,799p' .agents/instincts.md`
 
