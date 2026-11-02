@@ -110,13 +110,59 @@ write(K + "bin/other.py", "\n# đổi\n")
 (k5, _), _ = keys(learned=LEARN)
 reset()
 print(("OK " if k4 and k5 != k4 else "BAD ") + f"U14 input học được (bin/other.py) đổi: MISS={k5 != k4}")
+
+def pair(label, setup, change, want_hit, sel=SEL, cmd=shard, sel2=None):
+    """setup() dựng trạng thái A (cùng có ở cả hai lượt), change() đổi một thứ ⇒ so khoá chính xác A / B."""
+    setup()
+    (ka, _), _ = keys(sel, cmd)
+    change()
+    (kb, _), _ = keys(sel2 or sel, cmd)
+    reset()
+    hit = bool(ka) and ka == kb
+    print(("OK " if hit == want_hit else "BAD ") + label + f": HIT={hit} (mong {want_hit})")
+
+OUTK = os.path.join(os.path.dirname(repo), "outside-kit")   # checkout ngoài cây (như .agents/devkit của worktree thật)
+os.makedirs(os.path.join(OUTK, "bin"), exist_ok=True)
+open(os.path.join(OUTK, "bin/x.py"), "w").write("X = 1\n")
+def link_devkit():
+    os.makedirs(os.path.join(repo, ".agents"), exist_ok=True)
+    os.symlink(OUTK, os.path.join(repo, ".agents/devkit"))
+def outside_change():
+    open(os.path.join(OUTK, "bin/x.py"), "a").write("# đổi\n")
+# B1: công cụ / đích ngoài cây của khoá tập chọn chỉ lấy từ file của tập chọn, không từ watch_files `kit/*`
+pair("U15 bin/other.py (ngoài tập chọn) nhắc công cụ cargo", lambda: None, lambda: write(K + "bin/other.py", "\n# cargo build\n"), True)
+pair("U16 đích ngoài cây chỉ bin/other.py nhắc (.agents/devkit/bin/x.py) đổi",
+     lambda: (link_devkit(), write(K + "bin/other.py", "\n# .agents/devkit/bin/x.py\n")), outside_change, True)
+pair("U17 đích ngoài cây lib_a.py (tập chọn) nhắc đổi",
+     lambda: (link_devkit(), write(K + "bin/lib_a.py", "\n# .agents/devkit/bin/x.py\n")), outside_change, False)
+# M1: DEVKIT_SCOPED_TESTS gộp mọi shard — đổi phần của shard khác (tập chọn shard này giữ nguyên) không đổi khoá
+pair("U18 DEVKIT_SCOPED_TESTS thêm test shard khác (tập chọn giữ nguyên)", lambda: None, lambda: None, True,
+     sel2=SEL + "\ntests/verification/test_repo_consistency.sh")
+# B2: test runner khai ở `devkit-selection-tree:` (quét cả kit) trong tập chọn ⇒ shard chỉ khoá cả cây
+REST = "DEVKIT_IMPACTED_DIRS=!gates bash universal-agent-devkit/tests/run_impacted.sh"
+(k6, t6), sel6 = keys(cmd=REST)
+print(("OK " if sel6 and "tests/verification/test_repo_consistency.sh" in sel6 and k6 == t6 else "BAD ")
+      + f"U19 shard có test_repo_consistency.sh: khoá chính xác = khoá cả cây ({k6 == t6}, sel={sel6})")
+# M2: symlink kit (list_files của đồ thị bỏ link) mà file tập chọn nhắc tên, và đích của nó; file dữ liệu code của tập chọn nhắc
+def link_run():
+    os.symlink("bin/other.py", os.path.join(repo, K + "run_x.py"))
+    write(K + "tests/gates/test_a.sh", 'python3 "$DK/run_x.py"\n')
+def retarget():
+    os.remove(os.path.join(repo, K + "run_x.py"))
+    os.symlink("bin/lib_c.py", os.path.join(repo, K + "run_x.py"))
+pair("U20 symlink kit test_a nhắc (run_x.py) đổi đích", link_run, retarget, False)
+pair("U21 đích của symlink kit test_a nhắc (bin/other.py) đổi", link_run, lambda: write(K + "bin/other.py", "\n# đổi\n"), False)
+def data_a():
+    write(K + "bin/lib_a.py", '\nDATA = os.path.join(os.path.dirname(__file__), "../fixtures/data_a.json")\n')
+    write(K + "fixtures/data_a.json", '{"a": 1}\n')
+pair("U22 file dữ liệu chỉ lib_a.py (code tập chọn) nhắc đổi", data_a, lambda: write(K + "fixtures/data_a.json", " "), False)
 PY
 )"
 printf '%s\n' "$OUT_U" | grep -E '^(sel|OK|BAD)' | sed 's/^/    /'
 if ! printf '%s\n' "$OUT_U" | grep -q '^sel tests/gates/test_a.sh tests/gates/test_b.sh$'; then
   fail "U0. tập chọn của fixture không phải {test_a, test_b}"; printf '%s\n' "$OUT_U" | tail -5
 fi
-for c in U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U13 U14; do
+for c in U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U13 U14 U15 U16 U17 U18 U19 U20 U21 U22; do
   line="$(printf '%s\n' "$OUT_U" | grep -E "^(OK|BAD) $c " | head -1)"
   case "$line" in OK*) ok "${line#OK }" ;; BAD*) fail "${line#BAD }" ;; *) fail "$c: không có kết quả"; printf '%s\n' "$OUT_U" | tail -3 ;; esac
 done
