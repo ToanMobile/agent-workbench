@@ -106,9 +106,9 @@ if [ "${1:-}" = "--midlane" ]; then
   # Không bao giờ chặn tool: luôn exit 0, lỗi ghi stderr. sys.path[0] = thư mục enrich_context.py (không phải cwd: file .py
   # của repo không che được stdlib); enrich_context được import nên bytecode của nó vào PYTHONPYCACHEPREFIX ở trên.
   # Test: tests/context_memory/test_context_midlane.sh.
-  printf '%s' "${PAYLOAD}" | CLAUDE_PROJECT_DIR="${REPO_ROOT}" python3 -c '
+  printf '%s' "${PAYLOAD}" | CLAUDE_PROJECT_DIR="${REPO_ROOT}" python3 -I -c '
 import sys
-sys.path[0] = sys.argv[1]   # TRƯỚC mọi import khác: với -c, sys.path[0] là cwd (json.py cài sẵn sẽ chạy, review PR #878)
+sys.path.insert(0, sys.argv[1])   # TRƯỚC mọi import khác: với -c, sys.path[0] là cwd (json.py cài sẵn sẽ chạy, review PR #878)
 import json, os
 try:
     d = json.loads(sys.stdin.read() or "{}")
