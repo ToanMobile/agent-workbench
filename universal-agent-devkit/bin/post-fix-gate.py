@@ -8873,7 +8873,13 @@ def main():
     return exit_code
 
 
-FAIL_LINE = re.compile(r"✖|✘|✗|❌|\bFAILED\b|\bFAIL\b|^[ \t]*not ok\b|\bERROR\b|Traceback|AssertionError|\bException\b")
+# 02/11: cả dòng hỏng của runner ở 5 repo app — Kotlin `e:`, Gradle, Unity/C# `error CS…`, javac/clang/swiftc `file:N: error`,
+# pytest `E   …`, jest `●`, npm, Android `FATAL EXCEPTION`, `…Error:`, tín hiệu chết tiến trình. Trước đó khối '| …' của suite Gradle
+# đỏ chỉ có đuôi "Run with --stacktrace…", dòng `e:` thật nằm giữa log (tests/gates/test_fail_line_ecosystems.sh).
+FAIL_LINE = re.compile(r"✖|✘|✗|❌|\bFAILED\b|\bFAIL\b|^[ \t]*not ok\b|\bERROR\b|Traceback|AssertionError|\bException\b"
+                       r"|^[ \t]*e: \S|What went wrong:|Execution failed for task|\berror (?:CS|MSB)\d{4}\b"
+                       r"|:\d+(?::\d+)?: (?:fatal )?error\b|^E {2,}\S|^[ \t]*● |^npm (?:ERR!|error) |FATAL EXCEPTION"
+                       r"|\b[A-Z]\w*Error:|\b(?:Segmentation fault|Bus error|Abort trap)\b|^[ \t]*Killed: \d")
 RED_TEST_LINE = re.compile(r"^✖ (?:hooks/)?tests/\S+\.(?:sh|py|mjs)\s*$")   # #721: dòng test đỏ của tests/run_impacted.sh (cột 0)
 
 
