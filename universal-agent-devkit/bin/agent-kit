@@ -275,7 +275,9 @@ case "$CMD" in
     ;;
   matrix)
     # matrix [--write] — regression matrix from this project's own test runner
+    # matrix add <rule.json> — insert one rule at its hashed slot, never at the end (bin/matrix_slot.py)
     shift || true
+    if [ "${1:-}" = add ]; then shift; exec python3 "$DEVKIT_ROOT/bin/matrix_slot.py" add "$@"; fi
     python3 "$(find_script governance matrix_detect.py)" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" "$@"
     ;;
   allow-shared)
@@ -433,6 +435,9 @@ Commands:
   matrix [--write]    Regression matrix generated from this project's test runner (gradle,
                       swift, npm/pnpm/yarn/bun, pytest, go, cargo, flutter); --write activates it
                       (agent-kit profile does this when the profile only has a sample matrix)
+  matrix add <rule.json> [--matrix PATH]
+                      Insert one rule into .agents/regression_matrix.active.json at the hashed slot of its
+                      component (never at the end: two PRs adding rules then merge clean on GitHub)
   worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory]
                       Git worktree for a parallel agent (DETACHED at HEAD unless a branch is named),
                       set up like the main checkout: ignored local config copied, DevKit installed.

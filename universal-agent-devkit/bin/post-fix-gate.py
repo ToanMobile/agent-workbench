@@ -2317,38 +2317,22 @@ def load_active_matrix(matrix_path: str = None, base_ref: str = "HEAD"):
 
 def matrix_additions(base, current):
     """Id các test mà ma trận `current` THÊM so với `base`, hoặc None khi đó không phải thay đổi chỉ-thêm (GeelyEx2 PR #60, 18/10: một PR
-    chỉ thêm REG-HOOK-01 bị exit 2 "cần người review", pre-push và merge gate dừng). Chỉ-thêm: khoá top-level ngoài "rules" giữ nguyên; rule
-    cũ còn nguyên ở ĐẦU danh sách, bằng từng giá trị, rule mới chỉ nối ở đuôi (review 18/10: rule chèn đầu chạy trước suite base và tác
-    dụng phụ của nó vô hiệu được suite base); mỗi rule mới có ít nhất một test, mỗi test mới có id chưa có ở base — kể cả đích covered_by
-    của test base (id thêm "lấp" đích treo thì suite base bị đánh COVERED) —, không trùng nhau, có lệnh, và không covered_by (test mới
-    phải tự chạy). Thứ khác: None.
+    chỉ thêm REG-HOOK-01 bị exit 2 "cần người review", pre-push và merge gate dừng). Chỉ-thêm: khoá top-level ngoài "rules" giữ nguyên;
+    rule cũ còn nguyên, bằng từng giá trị, là DÃY CON đúng thứ tự (rule mới chèn ở khe băm, không nối cuối: hai PR cùng nối cuối luôn
+    CONFLICTING trên GitHub); mỗi rule mới có ít nhất một test, mỗi test mới có id chưa có ở base — kể cả đích covered_by của test base
+    (id thêm "lấp" đích treo thì suite base bị đánh COVERED) —, không trùng nhau, có lệnh, và không covered_by (test mới phải tự chạy);
+    component mới không trùng. Luật nằm ở bin/matrix_slot.py (dùng chung với merge driver và `agent-kit matrix add`). Rule chèn ĐẦU vẫn
+    chạy SAU suite base (review 18/10: tác dụng phụ của nó không được vô hiệu suite base): trust_additive_matrix trả base trước, rule
+    thêm sau, và lượt gate đưa test thêm xuống cuối. Thứ khác: None.
     ponytail: gate không chấm chất lượng lệnh test mới — rule mới `watch_files: ["**"]` với lệnh `true` vẫn XANH và làm file chưa có test
     thành "được phủ" (như một file test rỗng dưới suite cũ đã làm được); thêm kiểm tra lệnh no-op khi thấy một ca như vậy trong PR thật."""
     if not isinstance(base, dict) or not isinstance(current, dict):
         return None
     if {k: v for k, v in base.items() if k != "rules"} != {k: v for k, v in current.items() if k != "rules"}:
         return None
-    old, new = base.get("rules", []), current.get("rules", [])
-    if not isinstance(old, list) or not isinstance(new, list):
-        return None
-    added_rules = new[len(old):]
-    if new[:len(old)] != old or not added_rules:
-        return None
-    base_ids = {t[k] for r in old if isinstance(r, dict) for t in (r.get("mandatory_regression_tests") or [])
-                if isinstance(t, dict) for k in ("id", "covered_by") if isinstance(t.get(k), str)}
-    added = []
-    for rule in added_rules:
-        tests = rule.get("mandatory_regression_tests") if isinstance(rule, dict) else None
-        if not isinstance(tests, list) or not tests:
-            return None
-        for t in tests:
-            if not (isinstance(t, dict) and isinstance(t.get("id"), str) and t["id"].strip()
-                    and isinstance(t.get("command"), str) and t["command"].strip() and "covered_by" not in t):
-                return None
-            if t["id"] in base_ids or t["id"] in added:
-                return None
-            added.append(t["id"])
-    return added
+    import matrix_slot  # noqa: PLC0415 - bin/ is on sys.path
+    added_rules = matrix_slot.added_rules(base.get("rules", []), current.get("rules", []))
+    return None if added_rules is None else [t["id"] for rule in added_rules for t in rule["mandatory_regression_tests"]]
 
 
 def trust_additive_matrix(matrix, problem, matrix_path, base_ref: str):
@@ -2374,7 +2358,9 @@ def trust_additive_matrix(matrix, problem, matrix_path, base_ref: str):
     added = matrix_additions(base, cur)
     if not added or base != matrix:
         return matrix, problem, []
-    return cur, None, added
+    import matrix_slot  # noqa: PLC0415 - bin/ is on sys.path
+    # Rule base trước theo thứ tự base, rule thêm sau (INSTINCT-050): rule chèn ở khe băm không chạy trước suite base.
+    return {**cur, "rules": base.get("rules", []) + matrix_slot.added_rules(base.get("rules", []), cur["rules"])}, None, added
 
 
 def matrix_id_conflicts(matrix) -> dict:
