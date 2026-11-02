@@ -51,7 +51,7 @@ export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
 export SB_HEAVY_SLOT_DIR="$TMP/slots"
 # Tải mà heavy_slot.py (bọc lệnh verify) đọc: file riêng, tải thấp — không bao giờ tải thật của máy.
 export DEVKIT_SLOT_LOAD_FILE="$TMP/slot-load"; echo 1 > "$DEVKIT_SLOT_LOAD_FILE"
-LOCK="$WT/.claude/super-board/inflight/merge.lock"
+LOCK="$(cd "$WT" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/super-board/merge.lock"
 CFG="$TMP/cfg.json"; CFG2="$TMP/cfg2.json"
 # Verify đỏ (exit 3) để gate không merge; sleep 14 dài hơn --stale-after 5.
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo \\"KẾT LUẬN: FAIL\\"; sleep 14; exit 3"]}' > "$CFG"

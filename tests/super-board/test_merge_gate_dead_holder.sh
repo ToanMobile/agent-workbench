@@ -28,7 +28,7 @@ export PATH="$TMP/bin:$PATH"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_HEAVY_SLOT_DIR="$TMP/slots"
 CFG="$TMP/cfg.json"
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["true"]}' > "$CFG"
-LOCK="$R/.claude/super-board/inflight/merge.lock"
+LOCK="$(cd "$R" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/super-board/merge.lock"
 
 # pid chắc chắn đã chết: tiến trình con đã thoát và được wait.
 sleep 0 & DEAD=$!; wait "$DEAD" 2>/dev/null
