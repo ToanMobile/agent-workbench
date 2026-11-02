@@ -87,9 +87,7 @@ def short_cluster(flag):
 
 
 def segments(command):
-    """Split a shell command into simple-command token lists. Quotes are honoured; comments dropped; nothing runs."""
-    if shell_norm is not None:
-        command = shell_norm.drop_comments(command)   # a quote inside a comment no longer swallows the next line
+    """Split a shell command into simple-command token lists. Quotes are honoured; nothing runs."""
     out, tokens, cur, has, quote = [], [], "", False, None
     i = 0
 
@@ -151,7 +149,21 @@ def program(tokens):
 
 
 def pushes(command, cwd, depth=0):
-    """[(git_dir, flags, positional, repo_opt)] for every `git push` in the command (also inside `sh -c STR`)."""
+    """[(git_dir, flags, positional, repo_opt)] for every `git push` in the command (also inside `sh -c STR`).
+
+    Read twice when comments change the text: with comments dropped (a quote inside a comment no longer swallows the
+    next line) AND as written, because drop_comments does not know heredoc bodies, where a `# $(git push …)` line runs
+    (review 02/11 #871). A push either reading blocks is blocked."""
+    found = _pushes(command, cwd, depth)
+    if shell_norm is not None:
+        dropped = shell_norm.drop_comments(command)
+        if dropped != command:
+            found += _pushes(dropped, cwd, depth)
+    return found
+
+
+def _pushes(command, cwd, depth):
+    """pushes() for one reading of the command."""
     found, d = [], cwd
     for tokens in segments(command):
         tokens = program(tokens)
@@ -195,7 +207,9 @@ def pushes(command, cwd, depth=0):
             elif not re.match(r"^\d*[<>]", a):
                 positional.append(a)
             j += 1
-        found.append((git_dir, flags, positional, repo_opt))
+        found.append((git_dir, flags, positional, False))
+        if repo_opt:   # git still reads a first positional as the remote (review 02/11 #871): judge both readings
+            found.append((git_dir, flags, positional, True))
     return found
 
 

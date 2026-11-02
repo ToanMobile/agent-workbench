@@ -49,6 +49,21 @@ judge "a quote in a comment does not hide the next line (BUG-REV-gpp-comment)" "
 git push -f origin main" feat BLOCK
 judge "control: comment with a quote, then a plain push stays allowed" "echo hi # it's
 git push origin main" feat ALLOW
+# review Claude 02/11 (#871, P1): main's guard blocked these; both readings must still be judged (monotonic, INSTINCT-045)
+judge "--repo with a positional: git still reads it as the remote, force of the current branch main (P1-a)" \
+  "git push --repo=origin --force origin" main BLOCK
+judge "--repo origin -f origin on main (P1-a)" "git push --repo origin -f origin" main BLOCK
+judge "--repo=origin --no-verify origin on main (P1-a)" "git push --repo=origin --no-verify origin" main BLOCK
+judge "control: --repo=origin origin on main without force stays allowed" "git push --repo=origin origin" main ALLOW
+judge "a # line inside an unquoted heredoc still runs its \$( ) (P1-b)" "cat <<EOF
+# \$(git push -f origin main)
+EOF" feat BLOCK
+judge "a # line inside an unquoted heredoc, \${X:-\$( )} form (P1-b)" "cat <<EOF
+# \${X:-\$(git push --force origin main)}
+EOF" feat BLOCK
+judge "control: # line inside a heredoc with a harmless \$( ) stays allowed" "cat <<EOF
+# \$(echo hi)
+EOF" feat ALLOW
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
