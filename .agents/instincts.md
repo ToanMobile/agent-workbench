@@ -307,7 +307,7 @@ Mẫu ghi nhận:
 - **Ngày phát hiện:** 2026-10-13
 - **Hiện tượng lỗi:** A new tests/*/test_*.sh needs a line in tests/lib/test_durations.txt, and the gate only shows it when that test is selected
 - **Nguyên nhân:** test_run_impacted_order.sh fails on any tests/*/test_*.sh missing from tests/lib/test_durations.txt; 30 tests from earlier Dots were already unlisted at HEAD, so the first gate whose impacted set included the order test (Dot 28, 13/10) went red on 31 tests, not on its own
-- **Quy tắc phòng ngừa & Cách fix:** When adding a test file, add '&lt;seconds> &lt;path>' to tests/lib/test_durations.txt in the same commit; before a gate on a new test run bash tests/verification/test_run_impacted_order.sh directly (a number measured under load is fine: only the start order uses it)
+- **Quy tắc phòng ngừa & Cách fix:** SUPERSEDED 02/11 (PR1 durations): do NOT add a line to tests/lib/test_durations.txt (merge=union is local only, so the tracked file conflicted on GitHub: #883, #911). An unlisted test only warns (#365) and starts first; the nightly gate-full (bin/gate_full.py, DEVKIT_RECORD_DURATIONS=1 for `agent-kit test`) records real seconds into the untracked &lt;git common dir>/devkit/test_durations.measured.txt, which run_impacted.sh, heavy_slot and post-fix-gate read (measured wins; until then heavy_slot treats the selection as cpu)
 
 ---
 

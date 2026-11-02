@@ -1,22 +1,32 @@
 #!/usr/bin/env python3
 """Git merge driver for .agents/regression_matrix.active.json (agent-workbench #221).
 
-The gate trusts a matrix change only when the new rules sit at the END of "rules" (post-fix-gate.matrix_additions),
-so two PRs that each append a rule edit the same last lines and the second one to merge goes CONFLICTING.
-This driver merges the two sides as a union of appended rules: base rules, then what `ours` appended, then what
-`theirs` appended — still append-only against the base, so the gate keeps trusting it. The gate compares with
-origin/main, so the side that IS origin/main's matrix (merging main into a PR branch: `theirs`) goes first.
+The gate trusts a matrix change when it only INSERTS rules: the base rules stay, in order, as a subsequence
+(bin/matrix_slot.py, the one classifier the gate, this driver and `agent-kit matrix add` share). New rules go in at the
+hashed slot of their component, not at the end, so two PRs with different slots merge clean with plain git — GitHub does
+not run this driver. This driver merges by slot: before base rule k it puts what each side inserted there, the side that
+IS origin/main's matrix first (merging main into a PR branch: `theirs`; the gate compares with origin/main), then the
+other side. With no overlap that is exactly `git merge-file`'s result; with the same slot on both sides (or both
+appending at the end, the old way) it still merges where the text merge conflicts.
 
   matrix_merge_driver.py %O %A %B %P      (base, ours — the result is written here —, theirs, path)
 
 exit 0  merged (result in %A)
-exit 1  conflict: the same test id appended on both sides with different content (named on stderr), or a change
-        that is not an append (existing rule edited, top-level key changed on both sides): git's own text merge
+exit 1  conflict: the same test id inserted on both sides with different content (named on stderr), or a change
+        that is not insert-only (existing rule edited, top-level key changed on both sides): git's own text merge
         runs instead, so an overlap leaves the usual conflict markers.
 """
 import json
 import subprocess
 import sys
+from pathlib import Path
+
+# bin/matrix_slot.py của chính kit này (đường dẫn thật qua symlink .agents/devkit); không nạp được thì merge-file như cũ
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bin"))
+try:
+    import matrix_slot
+except ImportError:
+    matrix_slot = None
 
 
 def _load(path):
@@ -52,26 +62,35 @@ def _origin_rules(path):
 
 def merge(base, ours, theirs, origin_rules=None):
     """(merged dict, None) or (None, reason). A reason starting with 'id:' is a real duplicate, not a fallback."""
+    if matrix_slot is None:
+        return None, "bin/matrix_slot.py not found next to the driver"
     if origin_rules is not None and theirs["rules"] == origin_rules and ours["rules"] != origin_rules:
-        ours, theirs = theirs, ours   # main's additions first, the branch's after: append-only against origin/main
-    n = len(base["rules"])
-    if ours["rules"][:n] != base["rules"] or theirs["rules"][:n] != base["rules"]:
-        return None, "an existing rule was edited"
+        ours, theirs = theirs, ours   # main's insertions first, the branch's after: insert-only against origin/main
+    base_rules = base["rules"]
+    # [(k, rule)] per side; a side whose rules did not change inserts nothing (it may have changed a top-level key)
+    add_o, add_t = ([] if side["rules"] == base_rules else matrix_slot.split(base_rules, side["rules"]) for side in (ours, theirs))
+    if add_o is None or add_t is None:
+        return None, "an existing rule was edited (or an inserted rule is not insert-only)"
     top_b, top_o, top_t = _top(base), _top(ours), _top(theirs)
     if top_o != top_b and top_t != top_b and top_o != top_t:
         return None, "a top-level key changed on both sides"
-    add_o, add_t = ours["rules"][n:], theirs["rules"][n:]
-    taken = {i for r in add_o for i in _test_ids(r)}
-    kept = []
-    for rule in add_t:
-        if rule in add_o:   # the same rule appended on both sides: once
+    rules_o = [rule for _, rule in add_o]
+    taken = {i for r in rules_o for i in _test_ids(r)}
+    at = {}   # k -> rules inserted before base rule k (k == len(base): appended)
+    for k, rule in add_o:
+        at.setdefault(k, []).append(rule)
+    for k, rule in add_t:
+        if rule in rules_o:   # the same rule inserted on both sides: once, where ours put it
             continue
         dup = sorted(set(_test_ids(rule)) & taken)
         if dup:
             return None, f"id: test id {', '.join(dup)} added on both sides with different content"
-        kept.append(rule)
+        at.setdefault(k, []).append(rule)
     merged = dict(top_t if top_o == top_b else top_o)
-    merged["rules"] = base["rules"] + add_o + kept
+    merged["rules"] = [r for k in range(len(base_rules) + 1) for r in at.get(k, []) + base_rules[k:k + 1]]
+    if (add_o or add_t) and matrix_slot.split(base_rules, merged["rules"]) is None:
+        # mỗi phía hợp lệ nhưng bản gộp thì không (vd. cùng một component thêm ở cả hai phía): để merge-file quyết như GitHub
+        return None, "the merged insertions are not insert-only together (the same component added on both sides)"
     return merged, None
 
 

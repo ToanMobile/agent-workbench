@@ -704,12 +704,13 @@ def classify(command: str, project_dir: str = ".", recorded_s: Optional[float] =
 
 
 def selection_seconds(command: str, project_dir: str = ".", selection: Optional[list] = None) -> Optional[float]:
-    """Tổng giây (tuần tự, tests/lib/test_durations.txt cạnh script) của tập test mà `run_impacted.sh --list` chọn lúc này; None khi không
-    biết: lệnh không đúng dạng `bash <đường dẫn>/run_impacted.sh [--all]` của DevKit, `--list` lỗi / quá giờ (suite_cache.selection_list),
-    hay một test được chọn chưa có dòng thời lượng. selection (không None): tập người gọi đã đọc cho lệnh này — không sinh thêm một `--list`
-    (gate: tập của khoá, cùng lượt; review 25/10).
-    ponytail: test chưa có dòng thời lượng ⇒ cả tập là cpu (an toàn); đổi sang một mức mặc định mỗi test nếu thấy REG-DK-ALL-01 hay xếp
-    hàng chỉ vì test mới thiếu dòng."""
+    """Tổng giây (tuần tự) của tập test mà `run_impacted.sh --list` chọn lúc này. Thời lượng: tests/lib/test_durations.txt cạnh script,
+    rồi file đo KHÔNG track `<git common dir>/devkit/test_durations.measured.txt` (gate-full đêm ghi; đo thắng): test mới thiếu dòng ở
+    file track được file đo bù, PR không phải sửa file track (conflict trên GitHub vì merge=union chỉ có ở local). None khi không biết:
+    lệnh không đúng dạng `bash <đường dẫn>/run_impacted.sh [--all]` của DevKit, `--list` lỗi / quá giờ (suite_cache.selection_list),
+    hay một test được chọn không có dòng ở cả hai file. selection (không None): tập người gọi đã đọc cho lệnh này — không sinh thêm
+    một `--list` (gate: tập của khoá, cùng lượt; review 25/10).
+    ponytail: test chưa có dòng ở cả hai file ⇒ cả tập là cpu (an toàn) tới lượt gate-full đêm đầu tiên đo nó."""
     try:
         here = os.path.dirname(os.path.abspath(__file__))
         if here not in sys.path:
@@ -719,19 +720,49 @@ def selection_seconds(command: str, project_dir: str = ".", selection: Optional[
         sel = (selection if selection is not None else suite_cache.selection_list(project_dir, command)) if m else None
         if sel is None:
             return None
-        durations = {}
-        with open(os.path.join(os.path.dirname(os.path.join(str(project_dir), m.group("script"))), "lib", "test_durations.txt"),
-                  encoding="utf-8") as f:
-            for line in f:
-                p = line.split()
-                if len(p) >= 2 and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", p[0]):
-                    durations[p[1]] = max(durations.get(p[1], 0.0), float(p[0]))
+        tests_dir = os.path.dirname(os.path.join(str(project_dir), m.group("script")))
+        durations = _read_durations(os.path.join(tests_dir, "lib", "test_durations.txt"))
     except Exception as exc:   # noqa: BLE001 - không hỏi được tập: None (cpu, như trước)
         print(f"[heavy-slot] không đọc được tập --list của run_impacted.sh ({exc}); coi là cpu", file=sys.stderr, flush=True)
         return None
+    measured = measured_durations_path(tests_dir)
+    if measured:
+        try:
+            durations.update(_read_durations(measured))   # đo thắng file track
+        except FileNotFoundError:
+            pass
+        except Exception as exc:   # noqa: BLE001 - file đo hỏng / không đọc được: chỉ dùng file track
+            print(f"[heavy-slot] bỏ qua file thời lượng đo {measured} ({exc})", file=sys.stderr, flush=True)
     if any(t not in durations for t in sel):
         return None
     return sum(durations[t] for t in sel)
+
+
+def _read_durations(path: str) -> dict:
+    """`<giây> <đường dẫn>` mỗi dòng (cùng cách run_impacted.sh đọc: số trước, đường dẫn sau, trường thừa bỏ qua); trùng dòng lấy số lớn."""
+    durations = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            p = line.split()
+            if len(p) >= 2 and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", p[0]):
+                durations[p[1]] = max(durations.get(p[1], 0.0), float(p[0]))
+    return durations
+
+
+def measured_durations_path(tests_dir: str) -> Optional[str]:
+    """`<git common dir>/devkit/test_durations.measured.txt` của repo chứa tests_dir (tính từ thư mục script, không theo cwd); None khi
+    git không trả lời (không phải repo, git vắng, quá giờ). DEVKIT_DURATIONS_MEASURED_FILE (có đặt) thay đường dẫn đó, rỗng = không có
+    file đo: tests/lib/clean_git_env.sh đặt rỗng để test không đọc số đo thật của máy (tests/run_impacted.sh theo cùng luật)."""
+    if "DEVKIT_DURATIONS_MEASURED_FILE" in os.environ:
+        return os.environ["DEVKIT_DURATIONS_MEASURED_FILE"] or None
+    try:
+        r = subprocess.run(["git", "-C", tests_dir, "rev-parse", "--git-common-dir"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    common = r.stdout.strip()
+    if r.returncode != 0 or not common:
+        return None
+    return os.path.join(tests_dir, common, "devkit", "test_durations.measured.txt")
 
 
 @dataclass
