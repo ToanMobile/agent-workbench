@@ -36,6 +36,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # matrix_slot: module anh em trong bin/
+import matrix_slot  # noqa: E402
+
 CORE_FILE = ".agents/gate-core.txt"
 MATRIX_FILE = ".agents/regression_matrix.active.json"
 MAP_NAME = "gate-test-map.json"
@@ -518,8 +521,8 @@ def _load_matrix(project):
 def _matrix_append_readers(project, base, from_tree):
     """P6: test đọc ma trận THẬT khi ma trận trên đĩa chỉ NỐI rule so với merge-base(base, HEAD) (và so với base khi changed do caller
     chọn, như pin_to_head); không thì None (luật cũ: test nhắc tên ma trận + lõi). Chỉ-nối = bất biến của matrix_additions (post-fix-gate):
-    khoá top-level ngoài "rules" y nguyên, rule cũ là tiền tố y nguyên, ≥ 1 rule mới, mỗi rule mới có test {id, command} không covered_by,
-    id chưa có ở base (kể cả covered_by) và không trùng nhau; thêm: component của rule mới chưa có ở base, không trùng nhau. Đọc base bằng
+    khoá top-level ngoài "rules" y nguyên, còn lại do matrix_slot.added_rules (rule cũ là dãy con đúng thứ tự — rule chèn giữa cũng được —,
+    ≥ 1 rule mới, test {id, command} không covered_by, id/component chưa có ở base và không trùng nhau). Đọc base bằng
     `git show <ref>:./…` (project có thể là thư mục con), KHÔNG qua matrix_rules (lane_lock ghép base + hiện tại). Danh sách đọc-thật =
     đường dẫn test trong lệnh mandatory_regression_tests của mọi rule có MATRIX_FILE trong watch_files; lệnh không ra test nào ⇒ None."""
     if not base:
@@ -536,22 +539,8 @@ def _matrix_append_readers(project, base, from_tree):
                 return None
             if {k: v for k, v in old.items() if k != "rules"} != {k: v for k, v in cur.items() if k != "rules"}:
                 return None
-            n = len(old["rules"])
-            if cur["rules"][:n] != old["rules"] or len(cur["rules"]) == n:
+            if matrix_slot.added_rules(old["rules"], cur["rules"]) is None:   # một luật chỉ-thêm với post-fix-gate (rule chèn giữa cũng được)
                 return None
-            ids = {t[k] for r in old["rules"] if isinstance(r, dict) for t in (r.get("mandatory_regression_tests") or [])
-                   if isinstance(t, dict) for k in ("id", "covered_by") if isinstance(t.get(k), str)}
-            comps = {r.get("component") for r in old["rules"] if isinstance(r, dict)}
-            for r in cur["rules"][n:]:
-                ts = r.get("mandatory_regression_tests") if isinstance(r, dict) else None
-                if not isinstance(ts, list) or not ts or not isinstance(r.get("component"), str) or r["component"] in comps:
-                    return None
-                comps.add(r["component"])
-                for t in ts:
-                    if not (isinstance(t, dict) and isinstance(t.get("id"), str) and t["id"].strip() and isinstance(t.get("command"), str)
-                            and t["command"].strip() and "covered_by" not in t) or t["id"] in ids:
-                        return None
-                    ids.add(t["id"])
         readers = set()
         for r in cur["rules"]:
             if isinstance(r, dict) and MATRIX_FILE in (r.get("watch_files") or []):
