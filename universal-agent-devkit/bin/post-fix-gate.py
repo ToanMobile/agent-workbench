@@ -7068,10 +7068,12 @@ def main():
     # biên nhận không đóng mốc sentinel (stamp_sentinel cần mọi suite cache được chạy thật), nên lượt cưỡng bức sau vẫn là sentinel.
     keyed_ok = use_cache and not sentinel_run
     # B2 (audit 25/10): sổ PASS theo từng test của run_impacted.sh (tests/lib/per_test_cache.py) theo đúng chế độ khoá của lượt này: "1" dùng
-    # lại + ghi, "record" chỉ ghi (sentinel, --no-cache, DEVKIT_GATE_CACHE=0), "0" tắt (không có sc: DEVKIT_SUITE_CACHE=0, lượt không cưỡng bức;
-    # hay người dùng đặt sẵn DEVKIT_PER_TEST_CACHE=0). run_in_group chỉ đưa nó cho lệnh run_impacted.sh chuẩn. tests/gates/test_gate_per_test_cache.sh.
+    # lại + ghi, "record" chỉ ghi (sentinel, --no-cache, DEVKIT_GATE_CACHE=0), "0" tắt (không có sc: DEVKIT_SUITE_CACHE=0, lượt không cưỡng bức
+    # và không --scoped; hay người dùng đặt sẵn DEVKIT_PER_TEST_CACHE=0). run_in_group chỉ đưa nó cho lệnh run_impacted.sh chuẩn.
+    # tests/gates/test_gate_per_test_cache.sh. P4 (02/11): lượt --scoped (PR, merge gate) cũng bật — một test đỏ / TIMEOUT không bắt lượt sau
+    # trên CÙNG cây chạy lại mọi test đã PASS (khoá per-test là cả cây, ≤ 6 h); tests/gates/test_gate_scoped_per_test_cache.sh.
     if os.environ.get("DEVKIT_PER_TEST_CACHE") != "0":
-        PER_TEST_CACHE["mode"] = "0" if (sc is None or not force_reason) else ("1" if keyed_ok else "record")   # #645: lượt task giữ "0"
+        PER_TEST_CACHE["mode"] = "0" if (sc is None or not (force_reason or scoped)) else ("1" if keyed_ok else "record")   # #645: lượt task giữ "0"
     if sentinel_run:
         print(f"    {CYAN}▶ {tr('sentinel: lần chạy thật đủ suite gần nhất của repo đã quá hạn — lượt này không dùng khoá nội dung, chạy thật mọi suite cache được để kiểm cache', 'sentinel: the repo’s last real full run is too old — this run uses no content key and runs every cacheable suite for real to check the cache')}{RESET}")
     overlay_pre = capture_overlay_pre(args, matrix, project_dir, regression_tests) if run_tests else None   # BEFORE any suite runs

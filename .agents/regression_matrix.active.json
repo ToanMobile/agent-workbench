@@ -3054,6 +3054,24 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-scoped-per-test-cache-p4",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/lib/per_test_cache.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_gate_scoped_per_test_cache.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SCOPED-PER-TEST-CACHE-01",
+          "name": "PR 1 gate kẹt (P4): lượt --scoped bật sổ PASS per-test của run_impacted.sh — cùng cây, test đã PASS in ↺ (ptc_reuse > 0), chỉ test đỏ chạy lại; --scoped --no-cache và DEVKIT_GATE_CACHE=0 chỉ ghi (mọi test chạy thật)",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_scoped_per_test_cache.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

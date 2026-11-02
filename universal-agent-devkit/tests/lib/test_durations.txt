@@ -495,3 +495,5 @@
 1 tests/gates/test_gate_slot_aging.sh
 # gate kẹt và chậm PR 1 (02/11) P1: pool gate vé khác cỡ, ghép tham lam (< 1 s)
 1 tests/gates/test_gate_pool_mixed_size.sh
+# gate kẹt và chậm PR 1 (02/11) P4: sổ PASS per-test cho lượt --scoped (4 lượt gate fixture)
+12 tests/gates/test_gate_scoped_per_test_cache.sh
