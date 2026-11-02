@@ -519,6 +519,13 @@ def _blob_sha(ref: str, repo_path: str):
     return (res.stdout.strip() or None) if res.returncode == 0 else None
 
 
+def _absent(ref: str, repo_path: str) -> bool:
+    """True chỉ khi git xác nhận <ref> không có path đó (ls-tree rc 0, không dòng nào); git lỗi ⇒ False (không nới)."""
+    res = subprocess.run(["git", "-C", str(get_repo_root()), "ls-tree", "--name-only", ref, "--", repo_path],
+                         capture_output=True, text=True)
+    return res.returncode == 0 and not res.stdout.strip()
+
+
 def _merge_base(a: str, b: str):
     if (a, b) not in _MERGE_BASES:
         res = subprocess.run(["git", "-C", str(get_repo_root()), "merge-base", a, b], capture_output=True, text=True)
@@ -565,11 +572,15 @@ def since_test_weakened(since: str, repo_path: str, upstream=(), runner: bool = 
     # không đổi nó, hoặc với cùng một ref r: bản ở HEAD bằng bản ở ĐẦU r hiện tại (gộp nhánh vào r không đổi test này; đầu r đã qua
     # gate) VÀ bản ở <since> bằng bản ở merge-base(<since>, r) (ở mốc đã kiểm nhánh chưa sửa riêng). Không tin commit giữa chừng
     # trong lịch sử r (cha thứ nhất của merge foxtrot, commit WIP của PR, commit giữa của một lần push nhiều commit — audit T0004
-    # #834): bản HEAD khớp chúng mà khác đầu r thì vẫn xét như cũ. Test bị xoá ở HEAD không được nới (chặt hơn).
-    # ponytail: chỉ so với đầu r hiện tại; r đã đi tiếp và đổi lại test sau khi nhánh gộp thì đòi duyệt như main — #839 nếu thấy chặn oan.
+    # #834): bản HEAD khớp chúng mà khác đầu r thì vẫn xét như cũ. Test bị xoá ở HEAD chỉ được nới khi git xác nhận cả HEAD lẫn đầu r
+    # đều không có nó (trunk đã xoá; review 76eee591: test đã xoá không duyệt được nên chặn oan là kẹt lane); git lỗi ⇒ không nới.
+    # ponytail: chỉ so với đầu r hiện tại; nhánh theo dõi trunk (@{u} = origin/main) đã pull bản test của trunk rồi fetch thấy trunk sửa
+    # test đó lần nữa thì bị đòi duyệt (main không đòi vì tin commit của @{u}); pull/gộp r lần nữa là hết — #839 nếu gặp thật.
     mine, head = _blob_sha(since, repo_path), _blob_sha("HEAD", repo_path)
-    if mine is not None and (mine == head or head is not None and any(
-            head == _blob_sha(r, repo_path) and _merge_base(since, r) and mine == _blob_sha(_merge_base(since, r), repo_path)
+    gone = head is None and _absent("HEAD", repo_path)
+    if mine is not None and (mine == head or (head is not None or gone) and any(
+            (head == _blob_sha(r, repo_path) if head is not None else _absent(r, repo_path))
+            and _merge_base(since, r) and mine == _blob_sha(_merge_base(since, r), repo_path)
             for r in landed)):
         return False                                  # chỉ nội dung đã landed
     res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",

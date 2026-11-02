@@ -23,6 +23,9 @@
 # Audit T0004 #834 (merge foxtrot: cha thứ nhất là commit cục bộ của đồng đội, chưa từng là đầu origin/main):
 #  13. nhánh gộp T (cha thứ nhất của foxtrot) rồi trả bản test yếu + placeholder của M0 -> exit 1, liệt kê test_a, lazy-placeholder
 #  14. nhánh gộp commit WIP W1 trên FOX^1 (yếu test_a + placeholder) -> exit 1, liệt kê test_a, lazy-placeholder (main 704980ee bắt)
+# Review Claude 76eee591 (chặn oan nhánh theo dõi origin/main; test đã xoá không duyệt được nên lane kẹt):
+#  15. nhánh lane có @{u} = origin/main, gộp origin/main đã xoá test_c -> không liệt kê, exit 0 (như main)
+#  15b. main theo origin/main, pull --ff-only kéo về việc xoá test_c -> exit 3 như main (không có gì để kiểm), không phải 2
 # bash 3.2 compatible.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -260,6 +263,30 @@ gate
 if [ "$RC" = 1 ] && [ "$(touched)" = "tests/test_a.sh" ] && printf '%s' "$JSON" | grep -q 'lazy-placeholder'; then
   ok "14: gộp commit WIP trên cha thứ nhất của foxtrot: test_a vẫn bị liệt kê và placeholder vẫn bị chặn, exit 1"
 else bad "14: rc=$RC tests_touched='$(touched)' (mong 1, tests/test_a.sh và lazy-placeholder)"; show; fi
+
+# 15. nhánh lane tạo từ origin/main (autoSetupMerge: @{u} = origin/main) có commit code riêng; gộp origin/main đã xoá test_c (suite không
+#     chạy file này). Main 704980ee tin commit của @{u}: exit 0. Test đã xoá không duyệt được (file không còn), chặn oan là kẹt lane.
+mk c15
+mate_commit "printf '#!/bin/sh\n[ 7 = 7 ]\n' > tests/test_c.sh"
+git fetch -q origin && git branch -q --track lane origin/main && git switch -q lane && BASE="$(git rev-parse HEAD)" || exit 1
+printf 'def f():\n    return 2\n' > src/core.py && git commit -qam "lane: code"
+mate_commit "git rm -q tests/test_c.sh"
+merge_main
+[ "$(git rev-parse --symbolic-full-name @{u})" = "refs/remotes/origin/main" ] || exit 1
+gate
+if [ "$RC" = 0 ] && [ -n "$JSON" ] && [ -z "$(touched)" ]; then ok "15: lane theo origin/main gộp việc xoá test của main: không liệt kê, exit 0"
+else bad "15: rc=$RC tests_touched='$(touched)' (mong 0 và rỗng)"; show; fi
+
+# 15b. main theo origin/main, pull --ff-only kéo về việc xoá test_c của đồng đội: không còn file sống nào đổi -> exit 3 như main
+mk c15b
+git checkout -q main
+mate_commit "printf '#!/bin/sh\n[ 7 = 7 ]\n' > tests/test_c.sh"
+git pull -q --ff-only && BASE="$(git rev-parse HEAD)" || exit 1
+mate_commit "git rm -q tests/test_c.sh"
+git pull -q --ff-only || exit 1
+gate
+if [ "$RC" = 3 ]; then ok "15b: main pull --ff-only việc xoá test của đồng đội: exit 3 như main, không đòi duyệt"
+else bad "15b: rc=$RC tests_touched='$(touched)' (mong 3)"; show; fi
 
 [ "$FAILS" -eq 0 ] && { echo "gate since trunk merge: all passed"; exit 0; }
 echo "gate since trunk merge: $FAILS FAILED"; exit 1
