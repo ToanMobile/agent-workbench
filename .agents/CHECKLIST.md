@@ -1219,7 +1219,7 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-DK-REMOVE-REFLOG-SQUASH-01 | worktree remove: commit chỉ còn trong reflog mà trunk đã có patch (squash) thì gỡ được kèm refs/devkit/discarded; trunk chưa có patch thì vẫn từ chối UNREACHABLE (#421) | chưa chạy | bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh |
 
-## 📒 Sổ tay bug (145)
+## 📒 Sổ tay bug (146)
 
 | Trạng thái | Mã | Mô tả | Component | Test bảo vệ | Bằng chứng |
 |---|---|---|---|---|---|
@@ -1361,6 +1361,7 @@
 | ⏳ chưa chạy | BUG-20261024-fix-het-cac-cho-bi-ket-luon-di | Fix hết các chỗ bị kẹt luôn đi | - | REG-DK-ALL-01, tests/gates/test_gate_robustness.sh (ngoài matrix) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261024-tai-sao-tien-trinh-bi-ket-check-fix-dev | tại sao tiến trình bị kẹt check fix dev kit | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_run_bounded.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261027-1-the-backlog-xep-integrate-py-thieu-han | 1. Thẻ Backlog: xếp "integrate.py thiếu handler SIGTERM → scratch chứa .env/keystore bị bỏ lại" lên P2, trên 2 điểm P3… | - | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_integrate_signal_cleanup.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
+| ⏳ chưa chạy | BUG-20261028-check-cac-task-bi-blocked-nguyen-nhan-la | check các task bị blocked nguyên nhân là gì thế fix root cause rồi chuyển task về lại ready | - | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_worktree_remove_branch_rename.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261031-ao-3d-ve-60fps-khi-dung-yen | agent-office: cảnh 3D vẽ 60 khung/giây ở DPR 2 cả khi đứng yên / giảm chuyển động (~45% CPU renderer + ~44% GPU lúc rảnh), tab ẩn vẫn tải /api/state ~480 KB mỗi 3 giây | agent-office-perf | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_frame_pacing.py (trong suite), mcp-servers/agent-office/tests/test_poll.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
 | ⏳ chưa chạy | BUG-20261031-ao-dash-khong-hien-khi-drawer-mo | agent-office: bấm "Chỉ số" khi drawer (Vừa xảy ra / agent / repo) đang mở không hiện gì — bảng bật ngầm, CSS body.drawer-open ẩn .dash | agent-office-ui | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_ui_toolbar_account.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
 | ⏳ chưa chạy | BUG-20261031-ao-mobile-khung-agent-tran-mep-tren | agent-office điện thoại: khung "Ai đang làm gì" mọc lên quá mép trên (top -60px), nút + / − đè chữ, drawer/bảng chồng lên khung trái; chỗ bấm ⋯ / + / − / × / Ẩn dưới 44px | agent-office-ui | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_ui_toolbar_account.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
