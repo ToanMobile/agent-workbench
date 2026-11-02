@@ -457,4 +457,23 @@ PlayerController.Update () (at Assets/Scripts/PlayerController.cs:42)"; do
   landed "#827 'gì/nào' without yes/no particle '${p:0:40}…' → REPORTED row" "$out"
 done
 
+# Review #827 vòng 4: "hả" sau "gì/nào" vẫn hỏi lỗi gì ("lỗi gì hả?" = "lỗi gì?"), không hỏi có/không; xuống dòng trước tiểu
+# từ là hai mệnh đề ("vẫn crash⏎chưa": trả lời từng câu hỏi của agent). Ảnh bugs/ và stack trace Java/Python miễn (b): câu hỏi
+# có/không kèm bằng chứng vẫn là báo lỗi. Luật cũ ghi, vẫn phải ghi.
+i=0
+for p in "mở app lên trắng màn hình, lỗi gì hả?" \
+         "lỗi gì hả?
+TypeError: Cannot read properties of undefined (reading 'pages')
+    at openPdf (/app/src/reader.js:42:15)" \
+         "vẫn crash
+chưa" \
+         "Mở PDF vẫn crash
+Không, em dùng máy thật" \
+         "màn đọc có crash không? bugs/Screenshot_901.png" \
+         "màn hoá đơn có crash không?
+    at com.techlead.reader.DocView.open(DocView.kt:42)"; do
+  i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "kh$i")")"
+  landed "#827 'gì hả' / newline before particle / bugs/ or trace with a yes/no question '${p:0:40}…' → REPORTED row" "$out"
+done
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_bug_capture: all passed" || { echo "❌ test_bug_capture: $FAILS failed"; exit 1; }
