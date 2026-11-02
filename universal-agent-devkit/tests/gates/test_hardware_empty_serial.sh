@@ -8,6 +8,9 @@
 #   (cả dạng dính -s<số>) và -t thắng -s bất kể thứ tự: `adb -s emulator-5554 -s "" reboot`,
 #   `adb -s emulator-5554 -t 2 reboot` cũng lọt. Biến chưa biết trong -t/-s sau cũng phải bị từ chối như -s "$X".
 #   --serial không phải tuỳ chọn của adb 37 ("unknown command --serial"); cổng vẫn coi nó như -s cho chắc.
+#   (02/11, r31adb2, luật hội tụ INSTINCT-045) Luật mới chỉ áp cho lệnh đọc theo nháy; bản cắt thô (cắt cả trong nháy) giữ
+#   đúng như trước #829, nên mẫu tìm kiếm rg / grep -E / git grep / sed có chữ adb -s "" … trong nháy vẫn cho qua (corpus
+#   cuối file). Dạng lách mà bản trước #829 cũng cho qua là residual của thẻ #830, không kiểm ở đây.
 # Chỉ chạy hook — không bao giờ chạy lệnh. check() đặt $TMP/bin (adb giả) lên đầu PATH của hook: adb giả chỉ trả lời
 # get-serialno, ghi mọi lần gọi vào $ADB_FAKE_LOG và trả 97 với lệnh khác; dòng cuối của test đọc log đó.
 # HW_HOOK=<đường dẫn hook> chạy bản hook khác (bản chưa sửa: RED).
@@ -135,7 +138,24 @@ check 0 'echo $(date) adb reboot done'
 check 2d "$(printf '%s' "cat <<EOF
 it's fine
 EOF
-adb -s \"\" shell \"cd /sdcard; ls\"")"   # nháy đơn trong thân heredoc làm quote_split đọc sai: bản cắt thô vẫn chặn
+adb -s \"\" shell \"cd /sdcard; ls\"")"   # nháy đơn trong thân heredoc: bản đọc theo nháy bỏ thân đó (không shell nào đọc)
+check 2d "$(printf '%s\n%s\n%s\n%s' "cat > f <<'EOF'" "don't" 'EOF' "adb -s '' reboot")"
+check 2d "$(printf '%s\n%s\n%s' "bash <<'EOF'" 'adb -s "" reboot' 'EOF')"   # thân heredoc mà shell đọc là lệnh
+echo "— thân heredoc là chữ (không shell nào đọc): cho qua như trước #829"
+check 0 "$(printf '%s\n%s\n%s' "cat <<'EOF' | wc -l" 'adb -s "" reboot' 'EOF')"
+check 0 "$(printf '%s\n%s\n%s' "tee notes.md <<'EOF' >/dev/null" 'adb -s "" reboot' 'EOF')"
+check 0 "$(printf '%s\n%s\n%s' 'cat <<EOF' 'adb -s "" reboot' 'EOF')"
+check 0 "$(printf '%s\n%s\n%s' "gh pr create --title t --body-file - <<'EOF'" 'adb -s "" reboot' 'EOF')"
+check 0 "$(printf '%s\n%s\n%s\n%s' "cat > /tmp/r.sh <<'EOF'" "adb -s '' reboot" 'EOF' 'chmod +x /tmp/r.sh')"
+echo "— biến đã gán literal, rồi chữ printf / echo / source quanh nó: vẫn là biến đã biết (như trước #829)"
+check 0 'S=emulator-5554; printf "using %s\n" "$S"; adb -s "$S" reboot'
+check 0 'SERIAL=emulator-5554; printf "Installing on %s\n" "$SERIAL"; adb -s "$SERIAL" install -r app.apk'
+check 0 'S=emulator-5554; echo "let me reboot $S"; adb -s "$S" reboot'
+check 0 'S=emulator-5554; echo "local build on $S"; adb -s "$S" reboot'
+check 0 'source venv/bin/activate && S=emulator-5554 && adb -s "$S" install app.apk'
+check 0 '. ./setup.sh; S=emulator-5554; adb -s $S reboot'
+check 0 'grep "DEV=" config.txt; adb -s $DEV reboot' DEV=emulator-5554   # chữ DEV= trong nháy không phải phép gán
+check 0 'DEV=emulator-5554 adb -s $DEV reboot' DEV=emulator-5554        # shell bung $DEV trước phép gán tiền tố
 echo "— -s cuối cùng thắng, -t thắng -s (adb 37.0.1) → chặn"
 check 2d 'adb -s emulator-5554 -s "" reboot'
 check 2d 'adb -s emulator-5554 -s R58PHONE01 reboot'
@@ -161,16 +181,14 @@ check 2u "git commit -m 'use \`x'; adb -s \`echo R58PHONE01\` reboot"   # backti
 check 2u '__SUBST__=emulator-5554; adb -s $(echo R58PHONE01) reboot'   # chữ thay lệnh con không bị bung như biến
 check 2d 'X=$(echo "(") adb -s R58PHONE01 reboot; echo )'          # ngoặc trong nháy bên trong lệnh con
 check 2d 'X=$(echo "a ) b") adb -s R58PHONE01 reboot'
-check 2d 'X=$(case a in a) echo 1;; esac) adb -s R58PHONE01 reboot'   # ) của nhánh case bên trong lệnh con
 echo "— backtick markdown trong chuỗi nháy đơn (commit, comment) không phải lệnh adb chạy được → cho qua"
 check 0 "git commit -m 'fix: block \`adb -s \"\"\` on denylist'"
 check 0 "echo 'usage: \`adb -e\` or \`adb -d\`'"
 check 0 "rg '\`adb -s\`' docs/"
 check 0 "gh issue comment 829 --body 'tested \`adb -s \"\"\` case'"
-echo "— mở rộng tham số / biến bị gán lại trong lệnh: không đoán giá trị → không xác định được → chặn"
+echo "— mở rộng tham số trong -s: không đoán giá trị → không xác định được → chặn"
 check 2u 'S=emulator-5554; adb -s "${S##*}" reboot'          # ${S##*} = chuỗi rỗng
 check 2u 'S=emulator-5554; adb -s "${S/emulator-5554/R58PHONE01}" reboot'
-check 2u 'R31_U=""; adb -s "$R31_U" reboot' R31_U=emulator-5554   # env của hook không phải giá trị lúc chạy
 echo "— biến chưa biết ở chỗ subcommand (có thể bung ra -s …) → không xác định được → chặn"
 check 2u 'O="-s R58PHONE01"; adb $O reboot'
 check 2u 'adb ${O} reboot'
@@ -178,20 +196,16 @@ check 2u 'adb "$@" reboot'
 check 0 'C=reboot; adb -s emulator-5554 $C'   # biến đã biết
 check 2u 'O=-s; adb -s emulator-5554 $O R58PHONE01 reboot'   # biến bung ra tuỳ chọn: -s cuối mới thắng
 check 2u 'adb -s emulator-5554 $R31_ARGS reboot' R31_ARGS="-s R58PHONE01"
-echo "— lựa chọn thiết bị phải hỏi adb mà adb không trả lời được → không xác định được → chặn"
-check 2u 'adb -s "" reboot' FAKE_FAIL=1
+echo "— lựa chọn thiết bị phải hỏi adb: model:, dạng dính, adb treo (adb không trả lời được thì như adb trần: lệnh tự lỗi)"
 check 2 'adb -s "" reboot' FAKE_HANG=1                  # get-serialno treo: chặn (watchdog), không cho qua
 check 2d 'adb -s model:Phone reboot'                     # -s model:/usb:/product:/device: phân giải qua adb
 check 0 'adb -s model:Emu reboot'
 check 2u 'adb -s model:Phone reboot' FAKE_FAIL=1         # không phân giải được: không so chuỗi "model:Phone" với denylist
 check 2d 'adb -t2 reboot'                                # dạng dính
 check 2d 'adb -s0PHONE2 reboot'
-check 2u 'adb -sR58PHONE01 reboot'                       # adb 37 từ chối (-s requires an argument): không đoán
-check 2u 'adb -s emulator-5554 -t 2 reboot' FAKE_FAIL=1
 check 0 'adb -s emulator-5554 reboot' FAKE_FAIL=1   # serial literal duy nhất: không cần hỏi adb
 if [ -x /usr/bin/adb ] || [ -x /bin/adb ]; then echo "skip: có adb ở /usr/bin hay /bin, không dựng được PATH không có adb"
 else
-  check 2u 'adb -s "" reboot' PATH="$NOADB"
   check 0 'adb -s emulator-5554 reboot' PATH="$NOADB"
 fi
 check 0 'adb -s "" reboot' FAKE_DEFAULT=emulator-5554   # -s "" hỏi adb thật sự, không chặn mù
@@ -210,11 +224,6 @@ check 2d "$(printf '%s\n%s' "# don't touch phone" 'X=$(echo a b) adb -s R58PHONE
 check 2d "$(printf '%s\n%s' "X=\$( # it's" 'echo ok) adb -s R58PHONE01 reboot')"
 check 2d 'X=$(echo "$(echo ") a b")") adb -s R58PHONE01 reboot'   # lệnh con lồng trong nháy kép bên trong lệnh con
 check 2d "X=$(python3 -c 'print("$(echo " * 200 + "x" + ")" * 200)') adb -s R58PHONE01 reboot"   # lồng 200 tầng (quá trần đệ quy)
-echo "— biến bị đổi theo cách không phải NAME=literal (unset, printf -v, eval, source) → không tin literal cũ"
-check 2u 'S=emulator-5554; unset S; adb -s "$S" reboot'        # lúc chạy là -s "": adb tự chọn
-check 2u 'S=emulator-5554; printf -v S R58PHONE01; adb -s "$S" reboot'
-check 2u 'S=emulator-5554; eval S\=R58PHONE01; adb -s "$S" reboot'
-check 2u 'S=emulator-5554; . ./device.env; adb -s "$S" reboot'
 echo "— serial có ký tự mở rộng của shell / đối số từ stdin (xargs) → không xác định được"
 check 2u 'adb -s {R58PHONE01,} reboot'                          # brace expansion ra -s R58PHONE01
 check 2u 'echo R58PHONE01 | xargs -I{} adb -s {} reboot'
@@ -237,7 +246,7 @@ echo "— giữ nguyên: emulator, biến đã biết, host-only, override → c
 check 0 'adb -s emulator-5554 reboot'
 check 0 'adb -s emulator-5554 shell rm -rf /sdcard/Download'
 check 0 'S=emulator-5554; adb -s "$S" reboot'
-check 0 'adb -s R58PHONE01 -s emulator-5554 reboot'      # -s cuối là emulator
+check 2d 'adb -s R58PHONE01 -s emulator-5554 reboot'     # -s cuối là emulator, nhưng bản trước #829 tin -s đầu và chặn: giữ
 check 0 'adb -t 1 reboot'
 check 0 'adb -P "$R31_UNSET_PORT" -s emulator-5554 install app.apk'   # cổng server không đổi serial -s đã ghi
 check 0 'adb -s "" devices'
@@ -246,6 +255,49 @@ check 0 'adb -s "" shell rm -rf /sdcard/Download' HARDWARE_OVERRIDE=1
 echo "— -s là giá trị của tuỳ chọn khác: không được làm hook lỗi (IndexError); adb không phân giải được → chặn"
 check 2u 'adb -H -s reboot'              # -H "-s": không nối được server
 check 2u 'T=-s; adb -t "$T" reboot'      # -t "-s": transport id sai
+echo "— lệnh adb trong lệnh con (\$( ), backtick) cũng là lệnh: đọc theo nháy → chặn"
+check 2d 'X=$(adb -s "" reboot)'
+check 2d "echo \"\$(adb -s '' shell getprop ro.serialno)\""
+check 2d "X=\`adb -s '' reboot\`"
+check 2d 'X=$(echo $(adb -s "" shell pm clear com.ecarx.launcher))'
+echo "— lệnh tìm kiếm có cờ adb trong nháy (rg, grep -E, git grep, sed): không chạy adb → cho qua (luật hội tụ, điều 3)"
+while IFS= read -r c <&3; do check 0 "$c"; done 3<<'CORPUS'
+rg 'adb -s "" reboot|adb -t' universal-agent-devkit/
+rg 'adb -e|adb -s' universal-agent-devkit/
+rg 'adb -s|adb -t' .
+rg -n "adb -s ''|adb -t" hooks/
+rg 'foo|adb -s "" reboot' dir/
+rg "foo|adb -s '' reboot" dir/
+rg 'adb -s "" shell pm clear|adb -s "" shell rm' .
+rg 'adb -s "" reboot|adb -s "" shell rm -rf /sdcard/Download' .
+rg -n 'adb -t 2 reboot|adb -s emulator-5554 -t 2' hooks/
+rg 'x|adb -s "" install app.apk' .
+rg 'adb -s "" shell "cd /sdcard; ls"|adb -t' .
+rg 'adb -s "\$S"|adb -t "\$T"' .
+rg -e 'adb -s ""' -e 'adb -t 2' .
+grep -E "foo|adb -t 99 reboot" notes.txt
+grep -E 'adb -s ""|adb -t 2' notes.txt
+grep -En "adb -s ''|adb -s \"\"" hooks/a.sh
+grep -E "x|adb -s '' reboot" notes.txt
+grep -E 'x|adb -s "" shell rm -rf /sdcard/Download' notes.txt
+grep -rE 'adb -s|adb -t|adb -d' universal-agent-devkit/hooks
+grep -E "adb -t [0-9]+|adb -s [A-Z0-9]+" log.txt
+grep -E 'x|adb -s "" shell pm clear com.ecarx.launcher' notes.txt
+grep -E 'a|adb -s "" reboot|b' notes.txt
+grep -E "adb -s ''|adb -s \"\"|adb -t [0-9]" hooks/hardware_safety_gate.sh
+git grep -n 'adb -s "" reboot\|adb -t'
+git grep -E 'adb -s ""|adb -t' -- hooks/
+git grep -E 'x|adb -s "" reboot' -- hooks/
+git grep -E "adb -s \"\" reboot|adb -t 2" -- '*.sh'
+git log -G'adb -s ""|adb -t' --oneline
+sed -n '/adb -s ""/p;/adb -t/p' notes.txt
+sed -E 's/adb -s ""|adb -t 2/adb -s emulator-5554/' notes.txt
+sed -i '' 's/adb -s ""/adb -s emulator-5554/g; s/adb -t 2/adb -t 1/' notes.txt
+sed -n 's/.*\(adb -s [^ ]*\).*/\1/p;/adb -t/p' f
+sed -n '/x/p; /adb -s "" reboot/p' notes.txt
+sed -n "/adb -s ''/p;/adb -t 9/p" notes.txt
+CORPUS
+check 0 "$(printf '%s\n%s\n%s' "D=\$(date); cat <<'EOF' | wc -l" '1) adb reboot' 'EOF')"   # heredoc sau một lệnh con đã đóng
 
 # adb giả chỉ được hỏi get-serialno: lệnh thật (reboot, shell …) không bao giờ chạy
 if grep -v 'get-serialno$' "$ADB_FAKE_LOG" | grep -q .; then
