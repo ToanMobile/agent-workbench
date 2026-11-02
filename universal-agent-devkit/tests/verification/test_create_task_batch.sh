@@ -3,7 +3,8 @@
 # 23/10: mỗi việc nhỏ thành một thẻ → mỗi thẻ một PR, một merge-gate, một lần gate --full chạy đè nhau
 # (load 112 trên 12 lõi). Bây giờ: thẻ mới cùng loại (bug/feature/qa) tự nhập vào thẻ Backlog hợp nhất
 # (trùng file nhiều nhất, hòa thì thẻ mới nhất); mở thẻ riêng chỉ khi --new-card "<lý do>", thẻ cần người,
-# khác loại, không có thẻ Backlog, thẻ đã đủ MAX_BATCH việc, --from-file hoặc gh không đọc được board.
+# khác loại, không có thẻ Backlog/Ready chưa chạy, thẻ đã đủ trần AC, --from-file hoặc gh không đọc được board.
+# Ready đã có PR mở head `issue-<n>-` là đã chạy: không nhận thêm. `pr list` chỉ khi có thẻ Ready.
 # gh giả (đầu PATH): item-list trả FAKE_ITEMS, mọi lệnh ghi vào calls.jsonl. Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -45,6 +46,10 @@ if a[:2] == ["project", "item-list"] and os.environ.get("FAKE_SLEEP"):
     import time; time.sleep(float(os.environ["FAKE_SLEEP"]))
 if a[:2] == ["project", "item-list"] and os.path.exists(os.environ["FAKE_ITEMS"]):
     sys.stdout.write(open(os.environ["FAKE_ITEMS"]).read()); sys.exit(0)
+if a[:2] == ["pr", "list"]:
+    if os.environ.get("FAKE_PR_FAIL"):
+        sys.stderr.write("fake gh: pr list refused\n"); sys.exit(1)
+    print(os.environ.get("FAKE_PRS", "[]")); sys.exit(0)
 sys.stderr.write("fake gh: unexpected %r\n" % (a,)); sys.exit(99)
 PY
 chmod +x "$TMP/bin/gh"
@@ -141,17 +146,12 @@ items '[{"n":7}]'
 rc=$(run --needs-you "Cắm máy thật" "${NEWARGS[@]}")
 [ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && [ "$(edited)" = "NONE" ] && ok "8 --needs-you → thẻ riêng" || fail "8 rc=$rc create=$(called issue create)"
 
-# 9. Trần MAX_BATCH = 6 việc/thẻ tính cả việc gốc: thẻ đã đủ thì việc kế mở thẻ mới (PR > 400 dòng phải người duyệt).
+# 9. Không còn trần 6 việc vì PR > 400 dòng. Sáu mục Gộp thêm vẫn gom khi số mục AC còn dưới trần.
 big="## Problem\nx\n\n## Acceptance Criteria\n- [ ] cũ\n\n## Risk\n🟢\n"
-for i in 1 2 3 4 5; do big="$big\n## Gộp thêm: việc $i\nx\n"; done
+for i in 1 2 3 4 5 6; do big="$big\n## Gộp thêm: việc $i\nx\n"; done
 items "[{\"n\":7,\"body\":\"$big\"}]"
 rc=$(run "${NEWARGS[@]}")
-[ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && ok "9 thẻ đủ 6 việc (gốc + 5 gộp) → thẻ mới" || fail "9 rc=$rc create=$(called issue create)"
-big4="## Problem\nx\n\n## Acceptance Criteria\n- [ ] cũ\n\n## Risk\n🟢\n"
-for i in 1 2 3 4; do big4="$big4\n## Gộp thêm: việc $i\nx\n"; done
-items "[{\"n\":7,\"body\":\"$big4\"}]"
-rc=$(run "${NEWARGS[@]}")
-[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && ok "9b thẻ 5 việc (gốc + 4 gộp) còn nhận thêm" || fail "9b rc=$rc edit=$(edited)"
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && [ "$(called issue create)" = "0" ] && ok "9 sáu mục Gộp thêm vẫn gom (không tách vì số dòng)" || fail "9 rc=$rc edit=$(edited) create=$(called issue create)"
 
 # 10. gh không đọc được board → tạo thẻ như cũ (không chặn tạo việc vì lỗi mạng), có cảnh báo.
 rm -f "$FAKE_ITEMS"
@@ -459,5 +459,58 @@ rc=$(run --title "✨ [feature] hooks: việc I" --problem "vấn đề I" --ac 
 sec="$(ac_section "$(created_body)")"
 printf '%s\n' "$sec" | grep -qx -- "- \[ \] sau comment" && printf '%s\n' "$sec" | grep -qx -- "- \[ \] sau fence" \
   && ok "33i fence trong comment / comment trong fence không đổi trạng thái khối" || fail "33i AC=[$sec]"
+
+# 34. Ready chưa có PR mở là chưa chạy: cùng chủ đề thì gom vào đó.
+unset FAKE_PRS FAKE_PR_FAIL
+items '[{"n":7,"status":"Ready"}]'
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && [ "$(called issue create)" = "0" ] && [ "$(called pr list)" = "1" ] \
+  && ok "34 Ready chưa PR → gom vào #7" || fail "34 rc=$rc edit=$(edited) create=$(called issue create) pr=$(called pr list)"
+
+# 35. Ready #9 (số lớn) có PR head issue-9-*; Ready #7 chưa có PR, cùng chủ đề: gom vào #7.
+export FAKE_PRS='[{"headRefName":"issue-9-build"}]'
+items '[{"n":7,"status":"Ready"},{"n":9,"status":"Ready"}]'
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && [ "$(called issue create)" = "0" ] \
+  && ok "35 Ready số lớn có PR issue-9-* → gom vào Ready #7 chưa chạy" || fail "35 rc=$rc edit=$(edited) create=$(called issue create)"
+
+# 35b. Chỉ một thẻ Ready và thẻ đó đã có PR mở: mở thẻ mới.
+export FAKE_PRS='[{"headRefName":"issue-7-build"}]'
+items '[{"n":7,"status":"Ready"}]'
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "NONE" ] && [ "$(called issue create)" = "1" ] \
+  && ok "35b chỉ Ready đã có PR → thẻ mới" || fail "35b rc=$rc edit=$(edited) create=$(called issue create)"
+unset FAKE_PRS
+
+# 36. Ready khác scope nhưng trùng một đường dẫn file vẫn gom.
+items '[{"n":7,"status":"Ready","title":"✨ [feature] other: thẻ 7","body":"## Problem\nsửa universal-agent-devkit/bin/post-fix-gate.py\n\n## Acceptance Criteria\n- [ ] cũ\n\n## Risk\n🟢\n"}]'
+rc=$(run --title "✨ [feature] gate: việc C" --problem "đụng universal-agent-devkit/bin/post-fix-gate.py" --ac "- [ ] C")
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && ok "36 Ready khác scope, trùng file → gom" || fail "36 rc=$rc edit=$(edited)"
+
+# 37. pr list lỗi → không gom vào Ready (không biết thẻ nào đã chạy). Backlog vẫn nhận.
+export FAKE_PR_FAIL=1
+items '[{"n":9,"status":"Ready"},{"n":8}]'
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "8" ] && ok "37 pr list lỗi → bỏ Ready #9, gom Backlog #8" || fail "37 rc=$rc edit=$(edited)"
+items '[{"n":7,"status":"Ready"}]'
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && [ "$(edited)" = "NONE" ] \
+  && ok "37b chỉ có Ready và pr list lỗi → thẻ mới" || fail "37b rc=$rc create=$(called issue create) edit=$(edited)"
+unset FAKE_PR_FAIL
+
+# 37c. Đủ 100 PR mở, head issue-101-x đến issue-200-x: danh sách có thể bị cắt, cùng cách xử lý với pr list lỗi.
+prs='['
+for i in $(seq 101 200); do prs="$prs{\"headRefName\":\"issue-$i-x\"},"; done
+export FAKE_PRS="${prs%,}]"
+items '[{"n":9,"status":"Ready"},{"n":8}]'
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "8" ] && [ "$(called issue create)" = "0" ] \
+  && ok "37c đủ 100 PR mở → bỏ Ready #9, gom Backlog #8" || fail "37c rc=$rc edit=$(edited) create=$(called issue create)"
+unset FAKE_PRS
+
+# 38. Board chỉ có một thẻ Backlog: đếm `pr list` trong calls.jsonl.
+items '[{"n":7}]'
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && [ "$(called pr list)" = "0" ] && ok "38 chỉ Backlog không gọi pr list" || fail "38 rc=$rc pr=$(called pr list)"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

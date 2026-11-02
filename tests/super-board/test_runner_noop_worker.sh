@@ -4,8 +4,8 @@
 # Luật:
 #  - Worker lane qa/review thoát (lock chết) mà thẻ vẫn ở cột lúc giao VÀ không có comment mới trên issue thì là no-op:
 #    ghi một dòng vào sổ inflight/noops/<issue>.
-#  - Từ SB_NOOP_MAX (mặc định 2) no-op liên tiếp trở lên: thẻ sang Blocked kèm comment theo block-template (dòng cuối
-#    `blocked-by:  -`, kèm dòng cuối log worker; thẻ 📱 nếu dòng đó nhắc máy thật/thiết bị, còn lại ❓), không giao lại.
+#  - Từ SB_NOOP_MAX (mặc định 2) no-op liên tiếp trở lên: thẻ sang Blocked kèm comment theo block-template (kèm dòng cuối log worker; dòng cuối
+#    `blocked-by:  -` chỉ khi thẻ 📱 vì #529: no-op ❓ là việc agent; thẻ 📱 nếu dòng đó nhắc máy thật/thiết bị, còn lại ❓), không giao lại.
 #  - Worker đã chuyển cột hoặc đã comment thì không tính no-op và xoá sổ của thẻ.
 #  - Không đọc được số comment hiện tại: không kết luận gì (không tính, không xoá).
 #  - dispatch_lane ghi FROM_COL và COMMENTS0 (đọc trước khi worker chạy) vào lock cùng lần ghi; lane build do reclaim_dead_builds lo.

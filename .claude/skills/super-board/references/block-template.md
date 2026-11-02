@@ -6,17 +6,21 @@
 
 | Where | When | Who |
 |---|---|---|
-| Blocked | Card needs human action, or waits on another card | Any lane, from any workflow column |
+| Blocked | Card needs a person (needs-you, incl. a pre-flight `hold`: duplicate work or missing AC), a rebuild cap or a real red, work in another repo, or a zombie past its reclaim turns | Any lane, from any workflow column |
+| Ready + `waiting-on:#N` | Card only waits on another card (pre-flight `sequence`, file overlap, waiting for an open card to close) — never Blocked (#601); a new card is never moved to Blocked with a numbered `blocked-by:` just to wait | `super-board-waiting-on.py mark`; `sweep` drops the label when N closes |
 | Done (closed as not planned) | Card dropped on purpose: out of scope, won't do | Any lane; 🤷 comment below |
 
-Once moved, the card waits. **A card blocked only on other cards no longer waits for a human:**
-the wave planner sweeps `Blocked` at the start of every wave, and any card whose `## Blocked by`
-issues have all closed is moved back to `Ready` automatically, with a comment saying what cleared
-it. Everything else — credentials, permissions, product decisions — still waits for a person.
+Once moved, the card waits. **A card that only waits on other cards does not go to Blocked
+(#601):** it stays in `Ready` with the label `waiting-on:#N` (`super-board-waiting-on.py mark`), the
+planner and runner skip it, and `super-board-waiting-on.py sweep` drops the label once N is
+CLOSED/MERGED, so the card builds. `super-board-waiting-on.py migrate` moves older Blocked cards that
+only wait on open cards to `Ready` + `waiting-on:#N`. The wave planner still sweeps `Blocked` at the
+start of every wave, and any card whose `## Blocked by` issues have all closed is moved back to
+`Ready` automatically, with a comment saying what cleared it. Everything else — credentials, permissions, product decisions — still waits for a person.
 
-The runner marks those cards with the label `⏳ chờ thẻ khác` (planner `pending`), so the board tells
-"waiting on another card, nothing to do" from "needs a person"; it removes the label when the sweep
-frees the card. `super-board status` lists the two groups apart.
+The old label `⏳ chờ thẻ khác` (planner `pending`) is left only on legacy Blocked cards not yet
+migrated, so the board tells "waiting on another card, nothing to do" from "needs a person"; the
+runner removes it when the sweep frees the card. `super-board status` lists the two groups apart.
 
 That sweep is why the `blocked-by:` line below is mandatory. Before it existed, `Blocked` was
 terminal: on 2026-08-20 five cards sat there long after their blockers had merged, because the only
@@ -62,8 +66,14 @@ lanes already emit (`root-cause-hash:`, `gh-quota-on-exit:`, `move-mutation-resu
 same rule: **prose above for the human, one parseable line below for the loop.**
 
 - `blocked-by: 32, 91` — this card returns to `Ready` the moment both close. The sweep does it.
-- `blocked-by: -` — nothing on this board clears it. It waits for a person, and the sweep leaves it
-  alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` and `🙋` block.
+  Since #601 a numbered line is only for: older Blocked cards not yet migrated (`super-board-waiting-on.py migrate`
+  turns them into Ready + `waiting-on:#N`), the runner's suite fuse (`blocked-by: <kept card>`). A pre-flight
+  `hold — in progress` duplicate waits like a sequence (run.md): `waiting-on:#N`, stays Ready. A new card that only waits for another card to close uses `waiting-on:#N`
+  (stays Ready), never Blocked with this line.
+- `blocked-by: -` — nothing on this board clears it. It waits for a person (unless the orchestrator's standing decision
+  answers it, run.md → "Owner's standing decision"), and the sweep leaves it alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` and `🙋` block.
+- `blocked-by: agent` — the runner parked it (a crashed build worker, a no-op worker): agent work, no person, nothing to wait
+  for. Not human-gated, never swept (#529).
 
 Write only issues that are still OPEN: generate the line with
 `python3 .claude/bin/super-board-blocked-by.py line --repo <owner/name> <N,M…>` (closed numbers are dropped, its stderr gives the
@@ -86,11 +96,17 @@ A board view shows no comments. A card that waits for a person carries the mark 
 `🙋 Cần bạn: <exactly what the person must do> · xong thì <what next>` comment. On 2026-10-19 about 25
 person-only cards were dragged to Ready by mistake because nothing on the card said so.
 
+**Owner's standing decision.** A valid `[orchestrator] [decision]` comment on the card settles the AC or blocker it
+names (what counts as valid: `.claude/skills/super-board/references/decision-policy.md` → "Máy đọc thế nào"; `.claude/bin/super-board-decision.py` is the only
+judge): treat that AC as handled and do not raise the same blocker again. Never post `[decision]` yourself for the
+card you work on, under any header: when a choice is needed, write the Block (this template) and let the
+orchestrator decide (run.md → "Owner's standing decision").
+
 Every Block whose `blocked-by:` is `-` because a person must act — reason tags 🙋 🧑 🔐 🔑 💳, and 🛡/❓ **only** when a human credential, external console login, legal identity, real-human playtest cohort, or physical hardware not replaceable by an emulator is genuinely required — runs this right after posting the Block comment:
 
 > **Iron Law of Autonomous Execution (`NEVER` mark `needs-you` for agent-doable work):**
 > `needs-you` is strictly reserved for steps an agent **cannot** perform without a human (missing passwords/API keys/secrets, Play Console / App Store / Supabase / `@BotFather` login, legal/company filings, live DB migrations outside `allowed_envs`, ≥5 real human playtesters, or physical car/hardware driving).
-> Agents MUST **NEVER** mark `needs-you` or move to `Blocked` for work agents can do themselves: testing a PR on a machine or Android/iOS emulator (`PhoneConnect`, Xcode Simulator), rerunning `post-fix-gate --full` or waiting for CPU load, a suite that keeps timing out (it hangs or the machine is loaded: find which test hangs — `PYTHONFAULTHANDLER=1` + `kill -ABRT` — fix it or file a card; never ask a person to raise the limit or accept evidence instead of exit 0), cleaning up dirty worktrees, auto-approving test/regression matrices (`AUTO-APPROVE`), making technical/UI/architecture/scope decisions ("Decide, don't ask"), splitting oversized tickets (`< 400` lines), or running local CLI / GitHub Actions workflows (`gh workflow run`, `kokoro_vi.py`, `chmod +x`). `super-board-needs-you.py mark` mechanically rejects these actions with exit `64`.
+> Agents MUST **NEVER** mark `needs-you` or move to `Blocked` for work agents can do themselves: testing a PR on a machine or Android/iOS emulator (`PhoneConnect`, Xcode Simulator), rerunning `post-fix-gate --full` or waiting for CPU load, a suite that keeps timing out (it hangs or the machine is loaded: find which test hangs — `PYTHONFAULTHANDLER=1` + `kill -ABRT` — fix it or file a card; never ask a person to raise the limit or accept evidence instead of exit 0), cleaning up dirty worktrees, auto-approving test/regression matrices (`AUTO-APPROVE`), making technical/UI/architecture/scope decisions ("Decide, don't ask"), asking a person to split or shrink a card because of line count (related work stays one card; a positive `auto_max_lines` is the only size gate), or running local CLI / GitHub Actions workflows (`gh workflow run`, `kokoro_vi.py`, `chmod +x`). `super-board-needs-you.py mark` mechanically rejects these actions with exit `64`.
 
 ```
 python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N> \
@@ -109,7 +125,8 @@ python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N
 - A 🙋 merge hold (merge gate exit 7 or 8): `--next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"` — never "drag to Ready": only an exact
   `done` comment resumes it (`super-board-approval.py` `DONE`), so "done rồi" or "xong" do nothing.
 - `--action` is one line of at most 500 characters: shorten long commands, the full ones stay in the Block comment.
-- Never unmark a card a lane may still do. The person who did the step removes the label, or runs
+- Never unmark a card a lane may still do. The person who did the step (or the orchestrator, after a standing
+  decision) removes the label, or runs
   `super-board-needs-you.py unmark --repo <owner/name> --issue <N>` (the comment, and the `🙋` line of a
   `## Cần người` body section, become ✅ notes).
 - Exit 1 = a gh call failed: retry once, then name it in the lane report. The Block still stands.
@@ -132,7 +149,7 @@ closed as not planned (`gh issue close <N> --reason "not planned"`) and moves to
 | 📦    | Wrong-place                 | belongs on a different board / repo                                      |
 | 🎨    | Pure design                 | no measurable AC; needs design pass first                                |
 | 👯    | Duplicate                   | pre-flight: a merged PR already delivers it, or an open PR / card is building it |
-| ⏳    | Sequenced                   | pre-flight: an open PR touches the same files — waits on the issue that PR closes |
+| ⏳    | Sequenced                   | not a Block reason since #601: an open PR touches the same files → card stays Ready with `waiting-on:#N` (no Block comment) |
 | 🙋    | Needs you (human-only step) | merge gate exit 7 (merge_policy: money/auth/schema/size — review and merge it, or comment `done` to approve) or exit 8: a migration for a DB the robot may not touch, an allowed migrate command failed, a `needs-you:` step in the PR body, `migrations.human_steps` |
 
 ## 🙋 Needs you — a command only a human may run

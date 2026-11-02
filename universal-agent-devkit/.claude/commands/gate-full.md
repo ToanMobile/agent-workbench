@@ -1,0 +1,1 @@
+../../commands/gate-full.md

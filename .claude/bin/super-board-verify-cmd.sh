@@ -37,7 +37,8 @@ if [ "$RECORD" -eq 1 ] || [ "$MARK" -eq 1 ]; then
     # verify is that one gate line; with any other verify command nothing ran for it (OCR 24/10, F1/F3). The key covers every command.
     # The SHAPE counts, not a substring (OCR O1): no shell operator (`&&`, `;`, `|`, redirect, backtick, `$(`) so nothing else runs in that line.
     # The flags that relax a run (--auto-approve-tests…) are compared by the caller (post-fix-gate.py mark_merge_gate_receipt) against what it used:
-    # this repo's own verify line carries --auto-approve-tests, so they cannot be refused here.
+    # a board's verify line may carry such a flag, so they cannot be refused here. (#605: --auto-approve-tests approves nothing any more and
+    # this repo's line dropped it; an edited test passes only through a cross-review entry in .claude/audit-gate/approved_tests.json.)
     # The line must START with the gate (`[python3 ]<path>/post-fix-gate.py`): `true post-fix-gate.py` or `python3 other.py --x post-fix-gate.py` mention it without running it.
     # No `$` either: a variable or `$(…)` hides what runs.
     # The script's basename is exactly post-fix-gate.py (start of the word or right after a `/`: not-post-fix-gate.py is another script), the first word

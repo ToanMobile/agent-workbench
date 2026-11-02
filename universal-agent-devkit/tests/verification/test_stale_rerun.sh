@@ -195,4 +195,38 @@ b=$(t1); night DEVKIT_PER_TEST_CACHE=0; n4=$(( $(t1) - b )); b=$(t1); morning; m
 [ "$n4" = 1 ] && [ "$m4" = 1 ] && ok "DEVKIT_PER_TEST_CACHE=0 (user's off switch): nightly runs every test and records nothing" \
   || fail "off switch: nightly ran t1 $n4× (want 1), the next run on that tree ran it $m4× (want 1, nothing to reuse)"
 
+# #532: INT/TERM vào stale_rerun giết cả nhóm tiến trình của suite (Popen start_new_session), không để suite mồ côi; quá giờ vẫn SIGKILL.
+orphan() { # orphan <SIGNAL> — cha Python (SIGINT mặc định, không bị `&` của shell tắt) chạy _execute với suite ngủ 300 s; trả về "<exit cha> dead|alive"
+  python3 - "$1" "$DEVKIT_DIR/scripts/testing" "$TMP" <<'PY'
+import os, signal, subprocess, sys, time
+sig, kit, tmp = getattr(signal, "SIG" + sys.argv[1]), sys.argv[2], sys.argv[3]
+pidf = tmp + "/orphan.pid"
+if os.path.exists(pidf): os.remove(pidf)
+code = ("import sys, pathlib; sys.path.insert(0, %r); import stale_rerun as s; "
+        "s._execute(pathlib.Path(%r), 'sleep 300 & echo $! > %s; wait', 60)" % (kit, tmp, pidf))
+parent = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+for _ in range(80):
+    if os.path.exists(pidf) and os.path.getsize(pidf): break
+    time.sleep(0.1)
+child = int(open(pidf).read())
+parent.send_signal(sig)
+try: rc = parent.wait(timeout=10)
+except subprocess.TimeoutExpired: parent.kill(); rc = "hang"
+time.sleep(0.3)
+try: os.kill(child, 0); alive = True
+except ProcessLookupError: alive = False
+if alive: os.kill(child, signal.SIGKILL)
+print(rc, "alive" if alive else "dead")
+PY
+}
+for sig in INT TERM; do
+  res="$(orphan $sig)"
+  case "$res" in *" dead") ok "SIG$sig vào stale_rerun giết suite con (không còn PID sau khi cha thoát)";;
+    *) fail "SIG$sig: suite con mồ côi ($res)";; esac
+done
+python3 -c "
+import sys; sys.path.insert(0, '$DEVKIT_DIR/scripts/testing'); import stale_rerun as s, pathlib
+st, _, _ = s._execute(pathlib.Path('$TMP'), 'sleep 300', 1); sys.exit(0 if st == 'TIMEOUT' else 1)" \
+  && ok "quá giờ vẫn SIGKILL → TIMEOUT" || fail "timeout path changed"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_stale_rerun: all passed" || { echo "❌ test_stale_rerun: $FAILS failed"; exit 1; }

@@ -64,6 +64,30 @@ expect_in() { # name substring output
 expect_not_in() { # name substring output
   if printf '%s' "$3" | grep -q -- "$2"; then echo "✖ $1: contains '$2'"; FAILS=$((FAILS + 1)); else echo "✔ $1"; fi
 }
+# #605: test sửa chỉ được duyệt chéo — ghi mục {path, sha256, reviewer, author, task_id, reason} do "agent khác" duyệt
+cross_approve() {   # cross_approve <repo> <path>...
+  # Audit T0066 (#605): mục duyệt chỉ tính khi task_id có biên bản audit pass của antigravity-pm (ngoài repo, ở đây dưới $TMP)
+  # ghi `auditedHead: <sha>` của cây chứa đúng nội dung test hiện tại. `git stash create`: commit của cây làm việc, không đổi
+  # index/HEAD/refs; task_id riêng theo cây để lần duyệt sau không ghi đè biên bản của lần trước.
+  export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm-state"; export DEVKIT_PM_HOME_TEST=1   # fixture pm home dưới thư mục tạm (audit T0066 vòng 3: thiếu công tắc thì không tính)
+  python3 - "$@" <<'PY'
+import hashlib, json, os, subprocess, sys
+root, paths = sys.argv[1], sys.argv[2:]
+def git(*a):
+    return subprocess.run(["git", "-C", root, *a], capture_output=True, text=True).stdout.strip()
+head = git("stash", "create") or git("rev-parse", "HEAD")
+tid = "T-fixture-" + head[:12]
+td = os.path.join(os.environ["ANTIGRAVITY_PM_STATE_HOME"], "projects", "fixture", "tasks", tid); os.makedirs(td, exist_ok=True)
+with open(os.path.join(td, "task.json"), "w") as fh:
+    json.dump({"id": tid, "project": os.path.realpath(root),
+               "verdicts": {"audit": {"verdict": "pass", "reviewer": "pm", "notes": "fixture\nauditedHead: " + head}}}, fh)
+d = os.path.join(root, ".claude", "audit-gate"); os.makedirs(d, exist_ok=True)
+ap = [{"path": p, "sha256": hashlib.sha256(open(os.path.join(root, p), "rb").read()).hexdigest(), "reviewer": "antigravity",
+       "author": "claude", "task_id": tid, "reason": "fixture: diff test đã được agent khác đọc"} for p in paths]
+with open(os.path.join(d, "approved_tests.json"), "w") as fh:
+    json.dump({"approvals": ap}, fh)
+PY
+}
 gate_nomatrix() { CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --run-tests --allow-no-tests "$@" 2>&1; }
 secret_case() { # name file content
   make_repo "true"; mkdir -p "$(dirname "$2")"; printf '%s\n' "$3" > "$2"
@@ -94,7 +118,7 @@ fake_session() {
 import json, os, sys, time
 sid, tp = sys.argv[1], sys.argv[2]
 iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
-now = time.time() + float(os.environ.get("SESSION_SHIFT") or 0)
+now = float(os.environ.get("FIXTURE_NOW") or time.time()) + float(os.environ.get("SESSION_SHIFT") or 0)   # #699: one shared FIXTURE_NOW per case when set
 recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now - 600), "message": {"role": "user", "content": "fix it"}},
         {"type": "assistant", "sessionId": sid, "timestamp": iso(now - 590), "message": {"content": [
             {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git status"}}]}}]
@@ -112,10 +136,10 @@ PY
 # ledger_window <sid> <tool-use-id> <start> <end> — offsets in seconds from now (negative = past)
 ledger_window() {
   mkdir -p .claude/audit-gate
-  python3 -c 'import sys,time; n=time.time(); s,t,a,b=sys.argv[1:]
+  python3 -c 'import os,sys,time; n=float(os.environ.get("FIXTURE_NOW") or time.time()); s,t,a,b=sys.argv[1:]
 print("%s\tstart\t%.3f\t%s\n%s\tend\t%.3f\t%s" % (s, n+float(a), t, s, n+float(b), t))' "$@" >> .claude/audit-gate/bash_write_ledger.tsv
 }
-set_mtime() { python3 -c 'import os,sys,time; t=time.time()+float(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"; }
+set_mtime() { python3 -c 'import os,sys,time; t=float(os.environ.get("FIXTURE_NOW") or time.time())+float(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"; }
 existing_test_repo() {
   make_repo "true"
   mkdir -p src/test && echo "assert(true)" > src/test/CoreTest.kt && git add -A && git commit -qm t
@@ -124,11 +148,12 @@ existing_test_repo() {
 other_edit() {
   mkdir -p "$(dirname "$1")"
   python3 - "$@" <<'PY'
-import json, sys, time
+import json, os, sys, time
 tp, sid, path, use = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
 res = sys.argv[5] if len(sys.argv) > 5 else "none"
 iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".%03dZ" % int((t % 1) * 1000)
-now = time.time()
+time.sleep(float(os.environ.get("POSTFIX_FIXTURE_DELAY_S") or 0))   # #699: simulates a slow CPU between set_mtime and this write
+now = float(os.environ.get("FIXTURE_NOW") or time.time())   # #699: the same instant set_mtime used
 recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now + use - 30), "message": {"role": "user", "content": "go"}},
         {"type": "assistant", "sessionId": sid, "timestamp": iso(now + use), "message": {"content": [
             {"type": "tool_use", "id": "o1", "name": "Edit", "input": {"file_path": path, "old_string": "a", "new_string": "b"}}]}}]
@@ -145,7 +170,9 @@ other_case() { # <name> <expected> — this session: no write of the test, windo
   out="$(run_gate --run-tests --session s-me --transcript "$P/s-me.jsonl")"; local rc=$?
   if [ "$2" = 0 ]; then check "$1" 0 "$rc" "$out"; else check "$1" 2 "$rc" "$out" "PASS —"; fi
 }
-fresh_other() { existing_test_repo; rm -rf "$P"; mkdir -p "$P"; set_mtime src/test/CoreTest.kt -120
+# #699: ONE `now` per case (FIXTURE_NOW) for the mtime, every ledger window and every transcript timestamp; two clocks drifted apart on a slow CPU
+fresh_other() { existing_test_repo; rm -rf "$P"; mkdir -p "$P"; FIXTURE_NOW="$(python3 -c 'import time; print(repr(time.time()))')"; export FIXTURE_NOW
+  set_mtime src/test/CoreTest.kt -120
   ledger_window s-me m1 -590 -589; fake_session s-me "$P/s-me.jsonl"; }
 other_session_repo() {
   make_repo "true"
@@ -272,14 +299,16 @@ make_repo "true"
 mkdir -p src/test && echo "assert(true)" > src/test/CoreTest.kt && git add -A && git commit -qm t
 echo "fun ok() = 2" > src/Core.kt && echo "// weakened" > src/test/CoreTest.kt
 out="$(run_gate --run-tests)"; check "existing test edited in the change -> UNVERIFIED" 2 $? "$out" "PASS —"
-# #484: gate cha có DEVKIT_AUTO_APPROVE_TESTS=1 vẫn tự duyệt test sửa, nhưng suite nó chạy không được thấy biến này
+# #484: gate cha có DEVKIT_AUTO_APPROVE_TESTS=1, nhưng suite nó chạy không được thấy biến này
 # (gate lồng trong suite, như chính file này dưới agent-kit integrate, sẽ tự duyệt theo và các ca "existing test edited … -> UNVERIFIED" đỏ).
+# #605: biến này không còn duyệt gì; test sửa được duyệt chéo để suite chạy và ca kiểm biến môi trường còn ý nghĩa.
 make_repo "sh probe.sh"
 printf 'echo "${DEVKIT_AUTO_APPROVE_TESTS-unset}" > "%s/seen_auto_approve"\n' "$TMP" > probe.sh
 mkdir -p src/test && echo "assert(true)" > src/test/CoreTest.kt && git add -A && git commit -qm t
 echo "fun ok() = 2" > src/Core.kt && echo "// weakened" > src/test/CoreTest.kt
+cross_approve "$TMP/repo" src/test/CoreTest.kt
 out="$(DEVKIT_AUTO_APPROVE_TESTS=1 run_gate --run-tests)"
-check "DEVKIT_AUTO_APPROVE_TESTS=1 on the parent gate still auto-approves the edited test -> PASS" 0 $? "$out"
+check "DEVKIT_AUTO_APPROVE_TESTS=1 on the parent gate, edited test cross-reviewed -> PASS" 0 $? "$out"
 seen="$(cat "$TMP/seen_auto_approve" 2>/dev/null)"
 if [ "$seen" = "unset" ]; then echo "✔ the suite does not see DEVKIT_AUTO_APPROVE_TESTS"
 else echo "✖ the suite sees DEVKIT_AUTO_APPROVE_TESTS='$seen'"; FAILS=$((FAILS + 1)); fi
@@ -1009,10 +1038,16 @@ expect_in "a real AskUserQuestion approval is labelled as the user's" "người 
 # (AskUserQuestion)" — a user approval that never happened. The agent's approval says so.
 existing_test_repo; set_mtime src/test/CoreTest.kt -300
 rm -f "$TMP/tr/"*.jsonl
+# #605: --auto-approve-tests is self-approval: refused, the edited test stays UNVERIFIED; a cross-review entry approves it
 out="$(DEVKIT_TRANSCRIPTS_DIR="$TMP/tr" run_gate --run-tests --auto-approve-tests)"
-check "--auto-approve-tests: edited test approved -> PASS" 0 $? "$out"
+check "--auto-approve-tests: self-approval refused, edited test still UNVERIFIED" 2 $? "$out" "PASS —"
 expect_not_in "--auto-approve-tests is not labelled as the user's approval" "người dùng đã duyệt" "$out"
-expect_in "--auto-approve-tests is labelled as the agent's own approval" "agent tự duyệt" "$out"
+expect_in "--auto-approve-tests says self-approval is refused" "tự duyệt bị từ chối" "$out"
+cross_approve "$TMP/repo" src/test/CoreTest.kt
+out="$(DEVKIT_TRANSCRIPTS_DIR="$TMP/tr" run_gate --run-tests)"
+check "cross-review entry: edited test approved -> PASS" 0 $? "$out"
+expect_not_in "a cross-review is not labelled as the user's approval" "người dùng đã duyệt" "$out"
+expect_in "a cross-review is labelled with its reviewer" "duyệt chéo bởi antigravity" "$out"
 
 }
 

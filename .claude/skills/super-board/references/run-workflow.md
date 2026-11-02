@@ -177,6 +177,11 @@ Repeat until a done condition or halt gate fires:
    backstop — the guard exists so a wave does not start that the limit would
    cut off mid-lane. The legacy `claude-p` dispatcher does not run this guard.
 2. **Plan the wave** —
+   First `python3 .claude/bin/super-board-waiting-on.py migrate --config <config-path>` (Blocked cards
+   that only wait on other cards → Ready + `waiting-on:#N`), then
+   `python3 .claude/bin/super-board-waiting-on.py sweep --config <config-path>` (drops `waiting-on:#N`
+   once N is CLOSED/MERGED). Exit 79 (state unreadable) or 69 → skip that step this pass and go on;
+   never halt the run for it, the next wave retries. Then
    `bash .claude/bin/super-board-wave-plan.sh --config <config-path>` →
    Exit 9 is a verification-readiness halt: preserve work and claims, repair the
    owning project's `verify_commands`, then restart explicitly. No GitHub recovery probe,
@@ -210,8 +215,12 @@ Repeat until a done condition or halt gate fires:
    `## Blocked by` line to be fixed, and return every stranded Building card to
    `Ready` (below). Swept, resumed, approval-refresh and stranded cards are NOT in this pass's
    `cards`; they join the next wave. `waiting` lists Ready cards labelled `needs-you` / `human-gated`
-   (#95): only a person can move them, so they are never in `cards`; leave them, name them in the
-   summary, and they return once a person removes the label. It also lists, with a `why`, the cards
+   (#95): only a person (or the owner's standing decision) can move them, so they are never in `cards`. Before leaving them, apply
+   run.md → "Owner's standing decision" to them and to the 🙋/❓ cards in Blocked: a decided card moves column
+   and joins the next wave. Leave the rest, name them in the
+   summary, and they return once a person removes the label. It also lists Ready cards labelled
+   `waiting-on:#N` (#601): they wait on another card, need nobody, and return once the sweep drops
+   the label. It also lists, with a `why`, the cards
    labelled `needs-device` whose QA is next (in QA, or in Ready with `qa`) while no real device is
    online (`super-board-device-online.py`: emulators and denylisted serials do not count); they
    return once a phone is plugged in.
@@ -232,17 +241,22 @@ Repeat until a done condition or halt gate fires:
    (`Pre-flight` in `super-board-wave.js`, before `runLane('build')`) runs one cheap sub-agent per
    batch of up to 5 Ready cards: already merged? already in progress (open PR or another card)?
    same files as an open PR? unclear? It runs `super-board-preflight.sh`, posts the Block template
-   and moves held/sequenced cards to Blocked itself (run.md → "Builder pre-flight"). The summary
-   reports those as `preflight:blocked`; `preflight:failed` means pre-flight was blind and the card
-   stays in Ready for the next wave. Sequenced cards carry a `blocked-by:` line, so this same sweep
-   frees them when the overlapping PR's issue closes.
+   and moves held cards to Blocked itself (run.md → "Builder pre-flight"); the summary reports those
+   as `preflight:blocked`. A card sequenced behind an open card is never Blocked: the agent runs
+   `super-board-waiting-on.py mark`, the card stays in Ready with `waiting-on:#N`, and the summary
+   reports `preflight:waiting`; the `sweep` above drops the label when N closes. Two Ready cards
+   that share files, and neither has an open `issue-<N>-*` PR, fold instead: the higher is verdict
+   `merge`, its AC is copied verbatim onto the lower, the source closes as not planned, and that
+   card's column is Done. A peer that already started stays `sequence` (Ready, never Blocked).
+   `preflight:failed`
+   means pre-flight was blind and the card stays in Ready for the next wave.
    Wave width is every card the dependency graph says is free, in flight
    first (Review → QA → Ready), cut to `max_workers` when it is set (0 or
    absent = no cap). `max_workers` is the GitHub-limit valve: step 5 lowers it
    after a wave that hit the hourly limit. If `cards` is empty and
    Building/QA/Review counts are 0 → done. Cards the planner lists in `waiting`
    (a person, or a real device) are not counted in those columns. If empty but
-   cards sit in Blocked or `waiting` only → report and stop. This is unfinished work, not a completed-run calibration trigger.
+   cards sit in Blocked or `waiting` only (after the standing decision above) → report and stop. This is unfinished work, not a completed-run calibration trigger.
 3. **Claim** — for each card, `gh issue edit <n> --add-assignee <bot_identity>`,
    then VERIFY: re-read assignees (`gh issue view <n> --json assignees`) and
    proceed only if the list is exactly `[<bot_identity>]`. Adding an assignee
@@ -261,7 +275,7 @@ Repeat until a done condition or halt gate fires:
    `tier` is the run's model ladder: `'low'` when the user invoked
    `super-board run --low` (haiku/sonnet/opus by card complexity), `'high'`
    for `run --high` (opus for every card), omitted/`'medium'`
-   otherwise (sonnet/opus/session — the default). A `model_tier` key in the
+   otherwise (sonnet/opus/opus — the default). A `model_tier` key in the
    config sets the default; an explicit flag wins over config.
 5. **Reconcile** (when the run completes) — read the returned `cards`
    summary. If `halted: true`, any card is `halted`, or the GitHub helper's `--check`
@@ -292,12 +306,14 @@ Repeat until a done condition or halt gate fires:
    Next: wave 4 (3 cards)   |   ⏸ paused until 14:05   |   ✅ board drained
    ```
    A throttle hit adds one line: `🐢 GitHub hourly limit hit — max_workers 3 → 2 (config saved)`.
-   Merged and bounced cards are counts, not lines — they need nobody. Every
+   Merged and bounced cards are counts, not lines — they need nobody; so are
+   `waiting` cards (waiting on another card, in Ready). Every
    `human-gate`/`blocked` card gets its line and its owner: that is the
    human's queue. Never report a card as done that is not on the base branch.
 7. **Halt gates** — stop with a report if: 3 consecutive waves made zero
    progress (every card bounced/failed); block-rate exceeds
-   `block_rate_alert_pct` of initial Ready; or the user says stop. The halt
+   `block_rate_alert_pct` of initial Ready (`waiting` cards count as neither
+   blocked nor bounced/failed); or the user says stop. The halt
    note is four lines: `🛑 halted — <gate>` · the evidence (counts, the cards
    that kept bouncing) · what is left in flight or claimed · `Resume:
    /super-board run <slug> [--codex[=<model>]] [--low|--high]` (retain the run's choice) and who must act first.
@@ -385,7 +401,7 @@ up front (onboard → Permissions), so the first overnight run does not stall:
 
 Without them every Reviewer merge pauses for one interactive approval, so the
 backend is **attended-only**. With them, the gate still enforces
-`merge_policy` (money / auth / destructive schema / over `auto_max_lines` → human, exit 7) and `migrations`
+`merge_policy` (money / auth / destructive schema → human, exit 7; a line-count hold only when `auto_max_lines` is a positive number) and `migrations`
 (live DB → 🙋 needs you, exit 8), so the allowlist removes the prompt, not
 the policy. Pair auto-merge with a non-production `base_branch`.
 

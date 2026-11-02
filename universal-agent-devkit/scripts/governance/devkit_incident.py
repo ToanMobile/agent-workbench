@@ -60,6 +60,7 @@ IGNORE = re.compile("|".join([
     r"block-rate alert",                        # thẻ app bị chặn, không phải kit
     r"RUNAWAY \(daemon\)",                      # daemon tự hoãn giao việc rồi chạy tiếp (tải máy cao làm worker chậm); chỉ 🛑 halt là thẻ
     r"sleep \d+s killed by signal",
+    r"\[x\] PASS\b",                           # dòng kết quả test hồi quy xanh (chép vào runs/*.md) có thể chứa chữ RUNAWAY trong mô tả
     r"stop marker", r"stopping dispatcher loop", r"refusing to start", r"start overruled",
     r": holding\b", r"\btick —",
     r"auto-resumed", r"replayed OK",            # halt mạng đã tự hồi phục

@@ -124,7 +124,7 @@ v="$(tail -1 "$TMP/out" | python3 -c 'import json,sys; print(json.load(sys.stdin
 [ "$rc" = 2 ] && case "$v" in *"git diff HEAD -- src/test/CoreTest.kt"*commit*) true ;; *) false ;; esac \
   && ok "edited existing test: UNVERIFIED, verdict names the diff to review or commit" || fail "tests_touched verdict (rc=$rc): $v"
 v="$(CLAUDE_PROJECT_DIR="$P" python3 "$GATE" --matrix "$P/matrix.json" --run-tests --json -l en 2>&1 | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["verdict"])')"
-case "$v" in *"human review"*"git diff HEAD -- src/test/CoreTest.kt"*commit*) ok "EN verdict: human review of the test diff, or commit it" ;; *) fail "EN tests_touched verdict: $v" ;; esac
+case "$v" in *"cross-review"*"git diff HEAD -- src/test/CoreTest.kt"*commit*) ok "EN verdict: cross-review of the test diff, or commit it" ;; *) fail "EN tests_touched verdict: $v" ;; esac
 
 # 11. A new test appended to an existing test file (the usual RED test) changes no line of the
 #     old tests, so it is not an edited test; an appended skip marker still is.

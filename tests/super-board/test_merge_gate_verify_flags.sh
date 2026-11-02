@@ -60,7 +60,7 @@ gate_with() {  # gate_with <verify command>: log ở $TMP/g$i.log; $VLINE = lệ
   VLINE=$(grep -a -m1 'verify: ' "$TMP/g$i.log" | sed 's/^.*verify: //')
 }
 G="$TMP/abs/.agents/devkit/bin/post-fix-gate.py"
-FL='--diff origin/main --force-full'
+FL='--diff origin/main --scoped'
 want() {  # want <verify command> <expected command after flag insertion>
   gate_with "$1"
   if [ "$VLINE" = "$2" ]; then ok "flags placed for: $1"; else fail "for: $1 want [$2] got [$VLINE]"; fi

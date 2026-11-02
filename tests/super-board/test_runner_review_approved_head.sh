@@ -102,6 +102,51 @@ reset; pr_head "$H1"
 printf '{"comments":[{"authorAssociation":"OWNER","body":"approved-head:%s"},{"authorAssociation":"OWNER","body":"approved-head:%s"}]}' "$H1" "$H2" > "$TMP/comments-70.json"; tick
 is_full_review && ok "  … and a newer approval for another head voids the older one" || fail "older approval honoured over newer"
 
+# ── 5b. #605 Lane F: approved-head kèm `approved-by: {json}` = nguồn duyệt chéo; tự duyệt (reviewer == builder) bị từ chối.
+# audit T0066 vòng 2: task_id phải có biên bản audit pass của antigravity-pm với auditedHead == head PR (commit có trong repo).
+export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"   # PM state giả chỉ trong test này
+export DEVKIT_PM_HOME_TEST=1                 # fixture dưới thư mục tạm (audit T0066 vòng 3: thiếu công tắc thì không tính)
+pm_task() {   # pm_task <task_id> <auditedHead> [verdict]
+  mkdir -p "$TMP/pm/projects/p/tasks/$1"
+  jq -n --arg id "$1" --arg p "$(git rev-parse --show-toplevel)" --arg h "$2" --arg v "${3:-pass}" \
+    '{id:$id,project:$p,verdicts:{audit:{verdict:$v,reviewer:"pm",notes:("fixture\nauditedHead: "+$h)}}}' > "$TMP/pm/projects/p/tasks/$1/task.json"
+}
+git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m c1; RH0=$(git rev-parse HEAD)
+git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m c2; RH=$(git rev-parse HEAD)
+pm_task T0605-cross "$RH"; pm_task T0606-old "$RH0"; pm_task T0607-failed "$RH" fail
+BY_OK='{"reviewer":"antigravity","builder":"claude-builder","task_id":"T0605-cross","gate_receipt":"r1"}'
+reset; pr_head "$RH"; comment COLLABORATOR "approved-head:$RH
+approved-by: $BY_OK
+note: } trailing"; tick
+is_merge_only && ok "#605 cross-review marker (reviewer≠builder) at the head: merge-only" || fail "#605 valid marker not merge-only: $(prompt_of | cut -c1-200)"
+for t in T0999-forged T0606-old T0607-failed issue-605; do
+  reset; pr_head "$RH"; comment MEMBER "approved-head:$RH
+approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"claude-builder\",\"task_id\":\"$t\",\"gate_receipt\":\"r1\"}"; tick
+  is_full_review && ok "#605 approved-by task_id $t without a matching audit pass: rejected, full review" || fail "#605 task_id $t honoured"
+done
+reset; pr_head "$H1"; comment MEMBER "approved-head:$H1
+approved-by: {\"reviewer\":\"Claude-Builder\",\"builder\":\"claude-builder\",\"task_id\":\"t\",\"gate_receipt\":\"r\"}"; tick
+is_full_review && ok "#605 reviewer == builder (case-insensitive): self-review rejected, full review" || fail "#605 self-review honoured"
+reset; pr_head "$H2"; comment MEMBER "approved-head:$H1
+approved-by: $BY_OK"; tick
+is_full_review && ok "#605 marker on another head: full review" || fail "#605 head mismatch honoured"
+reset; pr_head "$H1"; comment MEMBER "approved-head:$H1
+approved-by: {not json"; tick
+is_full_review && ok "#605 malformed approved-by: rejected, no fallback to bare" || fail "#605 malformed marker honoured"
+reset; pr_head "$H1"; comment MEMBER "approved-head:$H1
+approved-by: {\"reviewer\":\"a\",\"builder\":\"b\",\"task_id\":\"\",\"gate_receipt\":\"r\"}"; tick
+is_full_review && ok "#605 empty task_id: rejected" || fail "#605 empty field honoured"
+reset; pr_head "$H1"; comment OWNER "approved-head:$H1"; tick
+is_merge_only && ok "#605 bare approved-head from the OWNER: still accepted" || fail "#605 bare OWNER approval lost"
+# #605 Lane H: approved-head trơn chỉ OWNER; MEMBER / COLLABORATOR trơn và trường số bị từ chối.
+reset; pr_head "$H1"; comment MEMBER "approved-head:$H1"; tick
+is_full_review && ok "#605 bare approved-head from a MEMBER: rejected (approved-by required), full review" || fail "#605 bare MEMBER approval honoured"
+reset; pr_head "$H1"; comment COLLABORATOR "approved-head:$H1"; tick
+is_full_review && ok "#605 bare approved-head from a COLLABORATOR: rejected, full review" || fail "#605 bare COLLABORATOR approval honoured"
+reset; pr_head "$H1"; comment MEMBER "approved-head:$H1
+approved-by: {\"reviewer\":1,\"builder\":2,\"task_id\":3,\"gate_receipt\":4}"; tick
+is_full_review && ok "#605 numeric approved-by fields: rejected (strings only)" || fail "#605 numeric approved-by honoured"
+
 # ── 6. hợp đồng viết: run.md bảo Reviewer ghi `approved-head:` trước khi chạy gate
 grep -q 'approved-head:' "$ROOT/.claude/skills/super-board/references/run.md" && ok "run.md tells the Reviewer to post approved-head:<sha> before the gate" || fail "run.md does not mention approved-head:"
 

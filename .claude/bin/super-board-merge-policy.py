@@ -23,8 +23,9 @@ unreadable metadata, so the gate fails safe to "human".
 
 Rules, from references/config-schema.json → merge_policy / migrations:
 - merge_policy.default "human" → everything waits for a human.
-- merge_policy.auto_max_lines (default 400; 0 = no cap): changed lines
-  (additions + deletions) above it → human ("big PR — please review"). Files
+- merge_policy.auto_max_lines (default 0; a positive number is the opt-in cap):
+  changed lines (additions + deletions) above a positive cap → human ("big PR —
+  please review"). 0, and a missing or null key, are no size cap. Files
   matching merge_policy.size_exclude (default: lockfiles, generated output,
   snapshots) and migration files (migrations.globs) do not count; migration
   lines are reported separately. Per-file counts come from `files[].additions/
@@ -32,6 +33,10 @@ Rules, from references/config-schema.json → merge_policy / migrations:
 - merge_policy.always_human.<category>: any label, path glob or added-line
   keyword match → human. Categories ship as money, auth, schema; setting
   always_human replaces them all (`{}` turns category gating off).
+- merge_policy.protected_paths (#605; default DEFAULT_PROTECTED_PATHS, a list replaces it, `[]` turns it off): a PR
+  that DELETES (or renames away) a matching file → human. Every deleted path counts (T0209): a REVIEWABLE_DELETE_GLOBS
+  path (matrix, memory, project rules) that is not SENSITIVE → "delete-reviewable", approved by the cross-review marker;
+  any other match → "delete-protected", the only human-only category (super-board-approval.py HUMAN_ONLY).
 - migrations: a changed path matching migrations.globs makes this a migration
   PR. Every env in allowed_envs with a command runs (a command of "-" means the
   deploy pipeline applies it: nothing to run). target_env not in allowed_envs, or
@@ -103,12 +108,19 @@ DEFAULT_ALWAYS_HUMAN = {
                      r"\btruncate [a-z_\"`\[]"],
     },
 }
+# #605: xoá các file được bảo vệ phải có người duyệt (luật chủ repo 28/10). `**/` để khớp cả file trong thư mục con.
+# T0209 (chủ repo 02/11): xoá REVIEWABLE_DELETE_GLOBS → delete-reviewable, marker duyệt chéo Antigravity thay `done`;
+# file nhạy cảm (SENSITIVE_DELETE_GLOBS, kể cả nằm trong thư mục reviewable) và protected_paths tự khai vẫn chỉ người.
+SENSITIVE_DELETE_GLOBS = ["**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json"]
+REVIEWABLE_DELETE_GLOBS = [".agents/regression_matrix.active.json", ".agents/local/memory/**", ".agents/local/rules/**"]
+DEFAULT_PROTECTED_PATHS = [*SENSITIVE_DELETE_GLOBS, *REVIEWABLE_DELETE_GLOBS]
+# giữ khớp PROTECTED_DELETE_DEFAULT của universal-agent-devkit/hooks/block-dangerous-git.sh (trừ .git/**: PR không xoá được)
 DEFAULT_MIGRATION_GLOBS = [
     "supabase/migrations/**", "prisma/migrations/**", "drizzle/**",
     "**/migrations/*.sql", "db/migrate/**", "alembic/versions/**",
 ]
 DEFAULT_ALLOWED_ENVS = ["test", "staging"]
-DEFAULT_AUTO_MAX_LINES = 400
+DEFAULT_AUTO_MAX_LINES = 0
 DEFAULT_SIZE_EXCLUDE = [
     # lockfiles
     "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/bun.lockb", "**/bun.lock",
@@ -155,6 +167,31 @@ def added_text(diff: str) -> str:
     """
     out = [line[1:] for line in diff.split("\n") if line.startswith("+")]
     return " ".join(" ".join(out).lower().split())
+
+
+def deleted_paths(diff: str) -> list[str]:
+    """Paths a unified git diff deletes: `deleted file mode`, `--- a/X` + `+++ /dev/null`, or `rename from X`.
+
+    Read from the diff headers, not `meta.files` (gh gives no change type there). A quoted path (special
+    characters) is unquoted only for the plain `"a/..."` form.
+    """
+    out, old, lines = [], None, diff.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("diff --git "):
+            old = None
+        elif line.startswith("--- "):
+            old = line[4:].strip().strip('"')
+            old = old[2:] if old.startswith("a/") else None
+            if old and i + 1 < len(lines) and lines[i + 1].startswith("+++ /dev/null"):
+                out.append(old)
+        elif line.startswith("rename from "):
+            out.append(line[len("rename from "):].strip().strip('"'))
+        elif line.startswith("deleted file mode") and i > 0:
+            # header `diff --git a/X b/X` sits just above; `--- a/X` follows when the file had content.
+            head = next((h for h in reversed(lines[:i]) if h.startswith("diff --git ")), "")
+            if " b/" in head:
+                out.append(head[len("diff --git "):].split(" b/", 1)[0].strip('"').removeprefix("a/"))
+    return list(dict.fromkeys(out))
 
 
 def comment_free(text: str) -> str:
@@ -231,6 +268,22 @@ def main() -> int:
                         if re.search(r, added) or re.search(r, added_nc)), None)
         if hit:
             human.append({"category": cat, "why": hit})
+    protected = policy.get("protected_paths")
+    protected = DEFAULT_PROTECTED_PATHS if protected is None else protected
+    # Xét MỌI path bị xoá (T0209): một file nhạy cảm hay một protected_paths tự khai là cả PR chờ người.
+    # Reviewable chỉ khi path khớp REVIEWABLE và KHÔNG khớp glob protected nào khác (protected_paths tự khai chồng lên
+    # thư mục reviewable, OCR T0209) hay nhóm nhạy cảm.
+    gone = {"delete-protected": None, "delete-reviewable": None}
+    other = [x for x in protected if x not in REVIEWABLE_DELETE_GLOBS]
+    for p in deleted_paths(diff):
+        g = matches(p, protected)
+        if not g:
+            continue
+        # Nhóm nhạy cảm so không phân biệt chữ hoa (Grok T0209): `.ENV`, `app.KEYSTORE` không được hạ xuống reviewable.
+        cat = ("delete-reviewable" if matches(p, REVIEWABLE_DELETE_GLOBS) and not matches(p, other)
+               and not matches(p.lower(), SENSITIVE_DELETE_GLOBS) else "delete-protected")
+        gone[cat] = gone[cat] or f"deletes {p} (matches {g})"
+    human.extend({"category": c, "why": w} for c, w in gone.items() if w)
 
     run, needs = [], []
     if mig_files:

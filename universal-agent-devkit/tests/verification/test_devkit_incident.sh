@@ -292,6 +292,12 @@ echo '[08:35:05] ⚠ RUNAWAY (daemon): no card reached Done in 240 dispatch cycl
 n=$(creates); scan >/dev/null
 [ "$(creates)" = "$n" ] && ok "RUNAWAY (daemon) → không thẻ" || fail "RUNAWAY (daemon) sinh thẻ lỗi kit: create=$(creates) (trước $n)"
 
+# 22c. #523: dòng kết quả test hồi quy PASS mà MÔ TẢ có chữ RUNAWAY (REG-SB-RUNNER-MERGE-QUEUE-01 chép vào docs/super-board/runs)
+#      là bản ghi test xanh, không phải runner báo RUNAWAY — không thành thẻ.
+printf '\033[92m[x] PASS\033[0m | \033[1mREG-SB-RUNNER-MERGE-QUEUE-01\033[0m : runner khi bật merge queue: không phạt no-op/RUNAWAY, gọi merge-queue --if-due mỗi tick\n' >> "$MA"
+n=$(creates); scan >/dev/null
+[ "$(creates)" = "$n" ] && ok "dòng PASS của test hồi quy chứa RUNAWAY → không thẻ" || fail "dòng PASS test hồi quy sinh thẻ runaway: create=$(creates) (trước $n)"
+
 # 23. Manifest do git theo dõi: checkout / ff ghi lại file (inode mới, birthtime mới) cùng nội dung — không đếm lại,
 #     không mở thẻ "hồi quy" giả sau khi thẻ đã đóng; manifest mới (pull) chỉ chứa dòng cũ cũng vậy.
 #     Tên nhánh của repo app (runner in "on branch '<x>'") không lên issue public và không tách chữ ký.

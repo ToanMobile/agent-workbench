@@ -32,7 +32,8 @@ mkrepo() {   # mỗi ca một thư mục riêng: origin bare + repo (checkout đ
   CASE=$((CASE + 1)); C="$TMP/c$CASE"; mkdir -p "$C"
   git init -q --bare -b main "$C/origin.git"
   git clone -q "$C/origin.git" "$C/repo" 2>/dev/null
-  ( cd "$C/repo" && mkdir -p .claude/bin && printf '#!/usr/bin/env bash\necho v1\n' > "$REL" \
+  unset SB_RELOAD_SWAPPED_SUM
+  ( cd "$C/repo" && mkdir -p .claude/bin && printf '#!/usr/bin/env bash\necho v1\n' > "$REL" && chmod 755 "$REL" \
     && echo base > other.txt && git add -A && git commit -qm v1 && git push -q origin HEAD:main 2>/dev/null )
   git clone -q "$C/origin.git" "$C/other" 2>/dev/null
   : > "$TMP/log"; : > "$TMP/notify"; : > "$TMP/exec"
@@ -89,6 +90,65 @@ mkrepo; push_other $'#!/usr/bin/env bash\nif then fi((('; self_reload_tick
 # ── 7. thay đổi local chưa commit chặn ff: notify, không exec
 mkrepo; echo dirty >> "$RELOAD_SELF"; push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
 [ "$(execs)" = 0 ] && [ "$(notes)" = 1 ] && ok "uncommitted edit blocks the fast-forward: notified, not exec'd" || fail "dirty: exec=$(execs) notify=$(notes)"
+
+# ── 7b. (#623) file KHÁC runner bị sửa chưa commit và origin cũng đổi file đó: ff không áp được, nhưng runner script sạch → vẫn nạp bản mới, không cảnh báo
+mkrepo; echo dirty >> other.txt
+( cd "$C/other" && git pull -q origin main 2>/dev/null; echo up >> other.txt; printf '#!/usr/bin/env bash\necho v2\n' > "$REL" && git add -A && git commit -qm next && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick
+[ "$(execs)" = 1 ] && [ "$(notes)" = 0 ] && grep -q v2 "$RELOAD_SELF" && grep -q dirty other.txt \
+  && ok "dirty unrelated file blocks the ff: runner script still reloaded, local edit kept, no warning" || fail "dirty-other: exec=$(execs) notify=$(notes) log=$(cat "$TMP/log")"
+
+# ── 7c. (#623) nạp liên tiếp v1→v2→v3 khi ff vẫn bị chặn: lần hai (đĩa = v2, HEAD = v1) vẫn nạp, không cảnh báo, bit +x giữ
+mkrepo; echo dirty >> other.txt
+( cd "$C/other" && echo up >> other.txt; printf '#!/usr/bin/env bash\necho v2\n' > "$REL" && git add -A && git commit -qm n2 && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick; RELOAD_RUN_SUM=$(git hash-object "$RELOAD_SELF")   # runner mới sau exec: bản đang chạy = v2
+( cd "$C/other" && echo up2 >> other.txt; printf '#!/usr/bin/env bash\necho v3\n' > "$REL" && git add -A && git commit -qm n3 && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick
+[ "$(execs)" = 2 ] && [ "$(notes)" = 0 ] && grep -q v3 "$RELOAD_SELF" && [ -x "$RELOAD_SELF" ] && grep -q dirty other.txt \
+  && ok "second reload (disk=v2, HEAD=v1) still applied: no warning, +x kept" || fail "v2->v3: exec=$(execs) notify=$(notes) log=$(cat "$TMP/log")"
+
+# ── 7d. (#623) runner bị sửa tay (đĩa khác HEAD và khác bản đang chạy) + ff bị chặn: giữ nguyên, cảnh báo
+mkrepo; echo dirty >> other.txt; echo '# hand' >> "$RELOAD_SELF"
+( cd "$C/other" && echo up >> other.txt; printf '#!/usr/bin/env bash\necho v2\n' > "$REL" && git add -A && git commit -qm n && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick
+[ "$(execs)" = 0 ] && [ "$(notes)" = 1 ] && grep -q '# hand' "$RELOAD_SELF" && ok "hand-edited runner kept and warned" || fail "hand-edit: exec=$(execs) notify=$(notes)"
+
+# ── 7f. (#623, audit T0087) runner KHỞI ĐỘNG khi file đã bị sửa tay (RELOAD_RUN_SUM = hash bản sửa tay) + ff bị chặn: sửa tay không bị mv -f xoá
+mkrepo; echo dirty >> other.txt; echo '# hand' >> "$RELOAD_SELF"; RELOAD_RUN_SUM=$(git hash-object "$RELOAD_SELF")
+( cd "$C/other" && echo up >> other.txt; printf '#!/usr/bin/env bash\necho v2\n' > "$REL" && git add -A && git commit -qm n && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick
+[ "$(execs)" = 0 ] && [ "$(notes)" = 1 ] && grep -q '# hand' "$RELOAD_SELF" && ok "runner started hand-edited: edit survives, warned" || fail "start-hand-edit: exec=$(execs) notify=$(notes)"
+mkrepo; echo dirty >> other.txt; echo '# staged' >> "$RELOAD_SELF"; git add "$REL"; RELOAD_RUN_SUM=$(git hash-object "$RELOAD_SELF")
+( cd "$C/other" && echo up >> other.txt; printf '#!/usr/bin/env bash\necho v2\n' > "$REL" && git add -A && git commit -qm n && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick
+[ "$(execs)" = 0 ] && grep -q '# staged' "$RELOAD_SELF" && [ -n "$(git diff --cached --name-only)" ] && ok "staged runner edit is never overwritten" || fail "staged-edit: exec=$(execs)"
+
+# ── 7g. (#623, audit T0087) sau một lần swap (đĩa v2, HEAD v1) file bẩn kia được dọn: lần đổi kế tiếp trả runner về HEAD rồi ff được (không khoá vĩnh viễn)
+mkrepo; echo dirty >> other.txt
+( cd "$C/other" && echo up >> other.txt; printf '#!/usr/bin/env bash\necho v2\n' > "$REL" && git add -A && git commit -qm n2 && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick; RELOAD_RUN_SUM=$(git hash-object "$RELOAD_SELF")
+git checkout -q -- other.txt   # phiên kia dọn file dở
+( cd "$C/other" && printf '#!/usr/bin/env bash\necho v3\n' > "$REL" && git add -A && git commit -qm n3 && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick
+[ "$(execs)" = 2 ] && [ "$(notes)" = 0 ] && grep -q v3 "$RELOAD_SELF" && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && [ -z "$(git status --porcelain)" ] \
+  && ok "after a swap, cleaned tree: runner restored to HEAD and main fast-forwarded" || fail "recover-ff: exec=$(execs) notify=$(notes) log=$(cat "$TMP/log")"
+
+# ── 7h. (#623, audit T0087) sau một lần swap, main lệch origin (đường finish #308): runner được trả về HEAD trước khi finish, finish không bị file dirty chặn
+mkrepo; echo dirty >> other.txt
+( cd "$C/other" && echo up >> other.txt; printf '#!/usr/bin/env bash\necho v2\n' > "$REL" && git add -A && git commit -qm n2 && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick; RELOAD_RUN_SUM=$(git hash-object "$RELOAD_SELF")
+git checkout -q -- other.txt; ( echo local2 > local.txt && git add local.txt && git commit -qm local2 )
+( cd "$C/other" && printf '#!/usr/bin/env bash\necho v3\n' > "$REL" && git add -A && git commit -qm n3 && git push -q origin HEAD:main 2>/dev/null )
+: > "$TMP/finish"; self_reload_tick
+[ -s "$TMP/finish" ] && [ -z "$(git status --porcelain -- "$REL")" ] && [ "$(execs)" = 2 ] && grep -q v3 "$RELOAD_SELF" \
+  && ok "after a swap, diverged main: runner restored, finish ran on a clean runner file" || fail "restore-finish: exec=$(execs) status=$(git status --porcelain -- "$REL") log=$(cat "$TMP/log")"
+
+# ── 7e. (#623) git show lỗi / bản rỗng / sai cú pháp: runner trên đĩa còn nguyên (không cắt về 0 byte), không file tạm sót
+leftovers() { ls "$C/repo/.claude/bin" | grep -vc '^super-board-run.sh$'; }
+mkrepo; before=$(git hash-object "$RELOAD_SELF"); reload_swap_self "origin/main:no/such/file"; rc=$?
+[ "$rc" != 0 ] && [ "$(git hash-object "$RELOAD_SELF")" = "$before" ] && [ -s "$RELOAD_SELF" ] && [ "$(leftovers)" = 0 ] && ok "git show failure: runner untouched, no temp left" || fail "show-fail: rc=$rc"
+mkrepo; push_other $'#!/usr/bin/env bash\nif then fi((('; git fetch -q origin; before=$(git hash-object "$RELOAD_SELF"); reload_swap_self "origin/main:$REL"; rc=$?
+[ "$rc" != 0 ] && [ "$(git hash-object "$RELOAD_SELF")" = "$before" ] && [ "$(leftovers)" = 0 ] && ok "syntax-broken new script never lands on disk" || fail "bad-syntax swap: rc=$rc"
 
 # ── 8. finish THẬT (không stub) trên main lệch origin (QA v1 #308): main nhận commit của origin, commit local còn nguyên, worktree tạm bị gỡ;
 #    xung đột thật: trả khác 0, main giữ nguyên.

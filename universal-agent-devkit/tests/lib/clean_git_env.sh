@@ -20,7 +20,7 @@ for _v in $(env | grep -E '^GIT_CONFIG_(KEY|VALUE)_[0-9]+=' | cut -d= -f1); do u
 unset _v
 # Host policy a test must not inherit (W1 R5c): on a host under 10 GiB free every `worktree add` would run gc over the test's own
 # fixture siblings, and under 3 GiB refuse. tests/worktree_git/test_worktree_limits.sh sets these itself.
-export WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0 WORKTREE_MAX=0
+export WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0
 # The user's own ~/.antigravity-pm.json must not steer a test: `giaoDefault: true` there makes the prompt hook add the standing "GIAO MẶC ĐỊNH BẬT"
 # order to every prompt it sees (2026-10-14). A test that wants a flag sets this variable itself after sourcing. The path can never hold
 # a file (/dev/null is no directory): the guessable ${TMPDIR:-/tmp}/agpm-test-no-global-config/… it replaces could be created in a shared
@@ -36,6 +36,8 @@ unset CI
 # nên bỏ lượt sentinel (26/10: test_gate_per_test_cache.sh P8 đỏ trong verify của PR #444; #167 từng vá riêng test_gate_sentinel.sh).
 # Test cần các biến này tự đặt sau khi nạp file này.
 unset DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_LOAD_WAIT_S
+# #528: cùng năm biến suite_env bỏ — test không kế thừa cờ worker của board.
+unset SB_BOARD_WORKER SB_MERGE_CALLER SB_MERGE_QUEUE SB_REPO_PATH SB_GITHUB_READ_STRICT
 # The machine's two heavy-verify slots (~/.claude/super-board/locks) belong to real merge gates and --full runs: a test's fake verify
 # (echo) queued behind them for up to 3600 s whenever no gate holding a slot started it (2026-10-20, test_merge_gate_ff.sh).
 # A test runs as if its caller held the slot; test_heavy_slot.sh unsets this to test the slots themselves.

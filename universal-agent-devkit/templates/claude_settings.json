@@ -82,6 +82,16 @@
         ]
       },
       {
+        "matcher": "Read|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/instincts_file_context.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {
