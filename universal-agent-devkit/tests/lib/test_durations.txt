@@ -65,6 +65,7 @@
 4 tests/gates/test_multi_session_gate.sh
 4 hooks/tests/test_stop_repeat.sh
 4 tests/gates/test_gate_since_test_edit.sh
+12 tests/gates/test_gate_since_trunk_merge.sh
 4 tests/verification/test_stale_deleted.sh
 4 tests/gates/test_push_gate_tags.sh
 4 tests/verification/test_adb_safe_exec.sh
