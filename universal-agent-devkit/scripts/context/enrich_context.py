@@ -833,15 +833,17 @@ KNOWN_BUGS_RE = re.compile(
 #   (a) prompt mở đầu "Bạn là phiên|lane <mã có chữ số>": lệnh của phiên điều phối giao thẻ cho một phiên agent;
 #   (b) MỌI từ lỗi đều đang bị hỏi tới: "sai gì ko?", "fail không", "kẹt ko", "bị lỗi gì không" — hỏi có hay không;
 #   (c) từ lỗi còn lại chỉ là nhãn lỗi/bug và prompt nói về việc theo dõi: checklist, backlog, "mục bug".
-# Ảnh trong bugs/ hay stack trace thì (b), (c) không áp dụng. Không đoán câu hỏi (dấu ?, "sao …") và không chia nhãn với
+# Ảnh trong bugs/ hay stack trace Java/Kotlin, Python (STACK_RE) thì (b), (c) không áp dụng. Không đoán câu hỏi (dấu ?, "sao …") và không chia nhãn với
 # triệu chứng: hai vòng làm thế đều làm mất bug thật mà luật cũ vẫn ghi ("sao app lỗi, mở PDF không được?").
 LANE_ORDER_RE = re.compile(r"\W*bạn là\s+(?:phiên|lane)\s+[\w-]*\d")   # "phiên mới", "phiên bản 2.3" không có số liền sau
 DEFECT_WORD_RE = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) + (r"s?(?!\w)" if len(w) <= 3 else r"\w*")
                                                      for w in map(normalize, DEFECT_WORDS)) + ")")   # từng chỗ mentions() thấy
-# Tiểu từ hỏi ngay sau từ lỗi và kết thúc mệnh đề: "sai gì ko?", "fail không nhé", "lỗi gì hay không". "crash chưa fix",
-# "văng ko mở được", "sai không đi được" là phủ định động từ sau, vẫn là báo lỗi; vì thế "đi" không phải tiểu từ hỏi.
-ASKED_RE = re.compile(r"\s+(?:gì|nào|(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa))(?!\w)"
-                      r"(?=[^\S\n]*(?:$|[?.!,;\n]|(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa|vậy|thế|nhỉ|hả|à|ạ|nhé|nha)(?!\w)))")
+# Hỏi có hay không ngay sau từ lỗi, rồi hết mệnh đề: "sai gì ko?", "fail không nhé", "lỗi gì hay không", "lỗi nào à?".
+# Không phải hỏi có/không, vẫn là báo lỗi: "crash chưa fix", "văng ko mở được", "sai gì không đi đúng làn" (phủ định động
+# từ sau; vì thế "đi" không là tiểu từ hỏi), "lỗi gì vậy?", "không biết bị lỗi gì, app tự thoát" (lỗi đã xảy ra, review #827).
+_ASKED_END = r"(?=(?:[^\S\n]*(?:vậy|thế|nhỉ|hả|à|ạ|nhé|nha)(?!\w))?[^\S\n]*(?:$|[?.!,;\n]))"
+ASKED_RE = re.compile(r"\s+(?:(?:gì|nào)[^\S\n]+)?(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa)(?!\w)" + _ASKED_END
+                      + r"|\s+(?:gì|nào)[^\S\n]+(?:à|hả)(?!\w)(?=[^\S\n]*(?:$|[?.!,;\n]))")
 SPACES_RE = re.compile(r"\s*")
 LABEL_WORDS = {"lỗi", "bug", "bugs"}
 TRACKING_RE = re.compile(r"(?<!\w)(?:checklist|backlog|mục bug)(?!\w)")

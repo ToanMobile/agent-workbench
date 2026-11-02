@@ -441,4 +441,20 @@ t0 = time.process_time(); ec.bug_report("\n" * 80000 + "sao lỗi?"); cpu = time
 assert cpu < 1.0, "%.2f s CPU" % cpu
 PY
 
+# Review #827 vòng 3: "gì/nào" không kèm tiểu từ có/không ("lỗi gì vậy?", "không biết bị lỗi gì, …") hay kèm "không" phủ định
+# động từ sau ("sai gì không đi đúng làn") là lỗi đã xảy ra, không phải hỏi có hay không: luật cũ ghi, vẫn phải ghi.
+i=0
+for p in "xe chạy sai gì không đi đúng làn" "app bị lỗi gì ko vào được" "lỗi gì không biết, mở PDF không được" \
+         "không biết bị lỗi gì, app cứ tự thoát khi mở PDF" "log báo xe bị lỗi gì?" "lỗi gì thế này?" \
+         "Lỗi gì vậy anh, mở app lên là màn hình trắng" \
+         "lỗi gì vậy em?
+TypeError: Cannot read properties of undefined (reading 'pages')
+    at openPdf (/app/src/reader.js:42:15)" \
+         "build Unity lỗi gì vậy?
+NullReferenceException: Object reference not set to an instance of an object
+PlayerController.Update () (at Assets/Scripts/PlayerController.cs:42)"; do
+  i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "kw$i")")"
+  landed "#827 'gì/nào' without yes/no particle '${p:0:40}…' → REPORTED row" "$out"
+done
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_bug_capture: all passed" || { echo "❌ test_bug_capture: $FAILS failed"; exit 1; }
