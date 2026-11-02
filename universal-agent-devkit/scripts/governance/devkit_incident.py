@@ -193,7 +193,7 @@ BRANCH = re.compile(r"\bbranch '[^']*'")   # runner: "main checkout is on branch
 
 
 def classify_board(line: str):
-    # Chữ sau "last log line:" là output của worker (việc của repo app, hook riêng của người dùng như `tuios`), không
+    # Chữ sau "last log line:" là output của worker (việc của repo app, hook riêng của người dùng như `example-hook`), không
     # phải lời runner: không phân loại theo nó.
     line = line.split("last log line:", 1)[0]
     line = BRANCH.sub("branch «branch»", line)   # tên nhánh của repo app: không lên issue public, không tách chữ ký

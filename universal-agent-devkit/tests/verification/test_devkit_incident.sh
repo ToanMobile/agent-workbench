@@ -96,7 +96,7 @@ cat >> "$MB" <<'EOF'
 [11:01:01] error connecting to api.github.com
 [11:01:02] ⚠ block-rate alert: 3/5 (60%)
 [11:01:03] ⚠ sleep 30s killed by signal 15 — runner keeps going; stop a board only with super-board-stop.sh
-[11:01:04] ⚠ worker of #9 (lane qa) ended 30s after dispatch (a crash or a very quick exit) — early end 1 of this lane in 600s; last log line: SessionEnd hook [tuios agent-hook] failed: tuios: command not found
+[11:01:04] ⚠ worker of #9 (lane qa) ended 30s after dispatch (a crash or a very quick exit) — early end 1 of this lane in 600s; last log line: SessionEnd hook [example-hook agent-hook] failed: example-hook: command not found
 EOF
 rc=$(scan)
 [ "$(creates)" = 1 ] && ok "nhiễu (mạng, block-rate, sleep) → không thẻ" || fail "nhiễu tạo thẻ: create=$(creates)"
