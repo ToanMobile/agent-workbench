@@ -6999,11 +6999,17 @@ def main():
             src = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t)   # "cache": false
             # #645 lượt task / --scoped: chỉ suite cache được theo khoá chính xác — không run_impacted.sh (tập chọn theo lịch sử git, `--list`
             # mỗi lượt), không Gradle (đồ thị build ngầm, P0-2); FAIL của chúng vẫn vào sổ khoá ở khối F1 sau các suite
-            if task_keyed and not (suite_cacheable(src)[0] and not PRECOMMIT_HEAVY.search(t.get("command") or "")):
+            # #851: runner run_impacted.sh chuẩn được xét ở lượt này khi khoá CHÍNH XÁC của nó theo input tập chọn có thật (khác khoá cả cây:
+            # runner có dấu devkit-selection-inputs, đồ thị dựng được); không thì như #645 (chạy, không khoá)
+            sel_task = task_keyed and bool(suite_cache_mod().selection_keyable(src))
+            if task_keyed and not sel_task and not (suite_cacheable(src)[0] and not PRECOMMIT_HEAVY.search(t.get("command") or "")):
                 continue
             if t.get("command") and not t.get("matrix_added") and suite_keyable(src):
                 try:
-                    KEYS[id(t)] = sc.keys(t)
+                    ks = sc.keys(t)
+                    if sel_task and (not ks[0] or ks[0] == ks[1]):
+                        continue
+                    KEYS[id(t)] = ks
                     if task_keyed:
                         TASK_PRECISE.add(id(t))
                 except Exception as e:   # noqa: BLE001 - khoá không tính được: suite này chạy
