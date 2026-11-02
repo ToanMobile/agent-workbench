@@ -586,7 +586,7 @@ at once, default 3; the queue lock is never held while a verify waits for a slot
           verify). Your evidence is void: leave the card in Review with a `[reviewer]`
           comment naming both shas; the next wave reviews the new head
      7 → merge_policy: a human merges this one. Stdout carries one
-          `human-gate: <money|auth|schema|size|default|policy> — <evidence>` line per
+          `human-gate: <money|auth|schema|size|default|policy|delete-protected|delete-reviewable> — <evidence>` line per
           hit. Card Review → **Blocked** with the 🙋 template: `Why blocked` names the
           category and evidence; `To unblock` = "[ ] review PR #<P> and merge it
           yourself" OR "[ ] comment `done` to approve — the next wave merges it";

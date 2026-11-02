@@ -374,4 +374,106 @@ PY
 
 bash "$KIT" bugs bogus >/dev/null 2>&1; [ $? = 2 ] && ok "unknown bugs action → exit 2" || fail "bad action accepted"
 
+# ── #827: câu hỏi, lệnh về checklist/backlog, lệnh giao việc của phiên điều phối không phải báo bug ──
+# 01/11 câu hỏi "… check có đang dùng cũ hay sai gì ko?" và lệnh "Hook đã tự ghi câu hỏi … thành một mục bug trong checklist
+# tạo 1 task …" thành dòng REPORTED. Chỉ bỏ bớt so với luật cũ, theo 3 luật: (a) "Bạn là phiên|lane <mã có chữ số>";
+# (b) mọi từ lỗi đều bị hỏi tới; (c) chỉ còn nhãn lỗi/bug và prompt nói về checklist, backlog, mục bug.
+n0="$(nbugs)"
+i=0
+for p in "REG-DK-ALL-GATES-01 tôi nhớ đã tách ra nhỏ rồi và nhanh hơn rồi mà check có đang dùng cũ hay sai gì ko?" \
+         "Hook đã tự ghi câu hỏi của anh thành một mục bug trong checklist tạo 1 task fix gốc vụ này đây là high siêu nghiêm trọng đưa vô ready" \
+         "Bạn là lane r30bug. Việc: thẻ #827 (high, Ready). Hook prompt ghi câu hỏi thành bug REPORTED; sửa gốc, test ĐỎ trên code cũ, kẹt thì ghi BLOCKED." \
+         "Bạn là phiên r23cl9, tiếp nối r23cl8: PR #742 vẫn crash ở gate, kẹt thì ghi BLOCKED" \
+         "test có fail không?" "test có fail ko" "app có bị lỗi gì không?" "check có đang dùng cũ hay bị sai gì ko?" \
+         "review module thanh toán xem có sai gì không nhé" "có task nào kẹt ko" "app có bị lỗi gì hay ko?" "nãy h dev kit chưa có lỗi nào à?" \
+         "đưa toàn bộ các issues, bugs, task, roadmap lên hết backlog chưa?" "hiện lỗi trong checklist còn bao nhiêu?" \
+         "gặp lỗi thì tạo task lên backlog nhé"; do
+  i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "k$i")")"
+  nothing "#827 question / tracking / lane order '${p:0:40}…' → no row" "$out"
+done
+# Giữ recall bằng luật cũ: các ca hồi quy của review #827 vòng 1–2 (câu kể "không đi được", câu hỏi kể triệu chứng "mở … không
+# được", trace C#/JS/NDK/Dart, "lỗi 500 khi …", thẻ/card/task là tên trong sản phẩm, URL issue/PR, câu hỏi chỉ có nhãn, "Bạn là
+# phiên mới/dịch viên/bản …") luật cũ ghi và vẫn phải ghi.
+i=0
+for p in "xe chạy sai không đi đúng làn" "chỉ đường sai không đi được" "app văng không đi tiếp được" \
+         "bản đồ hiển thị sai không đi theo xe" "app crash k đi vào được màn hình chính" \
+         "sao app lỗi, mở PDF không được?" "app lỗi đăng nhập không được, sao vậy?" "lỗi mở file không được, xem giúp được không?" \
+         "sao build release lỗi, cài APK không được?" "sao lỗi không đăng nhập được?" \
+         "sao lại lỗi thế này khi bấm Play?
+NullReferenceException: Object reference not set to an instance of an object
+PlayerController.Update () (at Assets/Scripts/PlayerController.cs:42)" \
+         "sao lại lỗi thế này khi xếp kệ?
+IndexOutOfRangeException: Index was outside the bounds of the array.
+  at ShelfManager.PlaceItem (System.Int32 slot) [0x0001a] in Assets/Scripts/ShelfManager.cs:88" \
+         "sao lại lỗi thế này khi mở reader?
+TypeError: Cannot read properties of undefined (reading 'pages')
+    at openPdf (/app/src/reader.js:42:15)" \
+         "sao mở PDF lại lỗi thế này?
+#00 pc 000000000004a2b4 /data/app/com.office.reader/lib/arm64/libpdfium.so" \
+         "sao lại lỗi thế này ở màn đọc Flutter?
+#0      _ReaderState.build (package:reader/main.dart:57:23)" \
+         "lỗi gì vậy?
+java.lang.IllegalStateException: closed
+	at com.techlead.reader.DocView.open(DocView.kt:42)" \
+         "sao mở màn cài đặt lại lỗi NullPointerException?" \
+         "tại sao lại lỗi 500 khi thanh toán?" "sao lỗi màn thanh toán khi bấm Lưu?" "sao lại lỗi thế này khi mở file PDF?" \
+         "sao bấm nút Lưu lại ra lỗi 500?" "sao đăng nhập Google lại báo có lỗi?" "sao lỗi ko mở được file PDF?" \
+         "sửa lỗi tạo thẻ ngân hàng mới" "sửa lỗi xoá thẻ tín dụng trong ví" "sửa lỗi cập nhật card thanh toán" \
+         "sửa lỗi gắn thẻ ngân hàng vào ví" "bấm vô thẻ thanh toán có lỗi 500" "sửa lỗi xoá thẻ #1 trong ví thanh toán" \
+         "sau khi merge https://github.com/org/repo/pull/810 thì có lỗi đăng nhập Google" "lỗi ghi file trong task export" \
+         "sửa lỗi màn tạo task" "sửa lỗi không tạo được task" "fix bug create card screen" "lỗi lên level không cộng thẻ" \
+         "lỗi nút ghi issue trong app" "sửa lỗi render PDF giống https://github.com/barteksc/AndroidPdfViewer/issues/1234" \
+         "sửa lỗi đăng nhập giúp mình được không?" "giải thích lỗi NullPointer ở màn login" "sao vẫn còn lỗi?" \
+         "app lỗi màn hình trắng khi mở PDF, sao vậy?" "Sao kê tháng 10 có lỗi xuất PDF" \
+         "Bạn là phiên mới à, sao app vẫn bị crash khi mở file PDF?" "Bạn là phiên bản 2.3 rồi mà app vẫn văng khi mở PDF" \
+         "sao app crash chưa fix?" "sao app văng ko mở được?" "tổng tiền ở giỏ hàng hiển thị sai?" \
+         "sau khi merge PR #810 thì app bị crash khi mở file PDF" "sao còn lỗi ở màn chọn bài? bugs/Screenshot_827.png"; do
+  i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "kr$i")")"
+  landed "#827 report kept as before '${p:0:40}…' → REPORTED row" "$out"
+done
+# STACK_RE "^\s*at" với re.M quét bậc hai trên dòng trống (80 000 dòng: 9 s, hook timeout 10 s). Đo CPU, không đo giờ tường.
+python3 - "$DEVKIT_DIR/scripts/context/enrich_context.py" <<'PY' && ok "#827 bug_report tuyến tính: 80 000 dòng trống < 1 s CPU" \
+  || fail "#827 bug_report bậc hai trên dòng trống"
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+t0 = time.process_time(); ec.bug_report("\n" * 80000 + "sao lỗi?"); cpu = time.process_time() - t0
+assert cpu < 1.0, "%.2f s CPU" % cpu
+PY
+
+# Review #827 vòng 3: "gì/nào" không kèm tiểu từ có/không ("lỗi gì vậy?", "không biết bị lỗi gì, …") hay kèm "không" phủ định
+# động từ sau ("sai gì không đi đúng làn") là lỗi đã xảy ra, không phải hỏi có hay không: luật cũ ghi, vẫn phải ghi.
+i=0
+for p in "xe chạy sai gì không đi đúng làn" "app bị lỗi gì ko vào được" "lỗi gì không biết, mở PDF không được" \
+         "không biết bị lỗi gì, app cứ tự thoát khi mở PDF" "log báo xe bị lỗi gì?" "lỗi gì thế này?" \
+         "Lỗi gì vậy anh, mở app lên là màn hình trắng" \
+         "lỗi gì vậy em?
+TypeError: Cannot read properties of undefined (reading 'pages')
+    at openPdf (/app/src/reader.js:42:15)" \
+         "build Unity lỗi gì vậy?
+NullReferenceException: Object reference not set to an instance of an object
+PlayerController.Update () (at Assets/Scripts/PlayerController.cs:42)"; do
+  i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "kw$i")")"
+  landed "#827 'gì/nào' without yes/no particle '${p:0:40}…' → REPORTED row" "$out"
+done
+
+# Review #827 vòng 4: "hả" sau "gì/nào" vẫn hỏi lỗi gì ("lỗi gì hả?" = "lỗi gì?"), không hỏi có/không; xuống dòng trước tiểu
+# từ là hai mệnh đề ("vẫn crash⏎chưa": trả lời từng câu hỏi của agent). Ảnh bugs/ và stack trace Java/Python miễn (b): câu hỏi
+# có/không kèm bằng chứng vẫn là báo lỗi. Luật cũ ghi, vẫn phải ghi.
+i=0
+for p in "mở app lên trắng màn hình, lỗi gì hả?" \
+         "lỗi gì hả?
+TypeError: Cannot read properties of undefined (reading 'pages')
+    at openPdf (/app/src/reader.js:42:15)" \
+         "vẫn crash
+chưa" \
+         "Mở PDF vẫn crash
+Không, em dùng máy thật" \
+         "màn đọc có crash không? bugs/Screenshot_901.png" \
+         "màn hoá đơn có crash không?
+    at com.techlead.reader.DocView.open(DocView.kt:42)"; do
+  i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "kh$i")")"
+  landed "#827 'gì hả' / newline before particle / bugs/ or trace with a yes/no question '${p:0:40}…' → REPORTED row" "$out"
+done
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_bug_capture: all passed" || { echo "❌ test_bug_capture: $FAILS failed"; exit 1; }
