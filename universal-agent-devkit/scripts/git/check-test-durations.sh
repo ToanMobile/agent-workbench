@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # check-test-durations.sh — called by git-pre-commit.sh. WARNS (stderr, exit 0, #365) about a commit that ADDS a
-# tests/*/test_*.sh of the DevKit which tests/lib/test_durations.txt does not list, and prints the line to
-# add. The list is only a start-order hint (a test it does not list starts first), so a gap never blocks a
-# commit. Same list, same line format `<seconds> <path>` as run_impacted.sh; the list is read
+# tests/*/test_*.sh of the DevKit which tests/lib/test_durations.txt does not list, and prints its default line. No PR has to edit
+# the tracked list (it conflicted on GitHub: merge=union is local only): the nightly gate-full measures each test into
+# <git common dir>/devkit/test_durations.measured.txt (tests/run_impacted.sh). The list is only a start-order hint (a test it
+# does not list starts first), so a gap never blocks a commit. Same list, same line format `<seconds> <path>` as run_impacted.sh; the list is read
 # from the INDEX, so a line staged in the same commit counts and one left in the working tree does not.
 # Nothing to compare (kit outside the repo, no staged list, no added test, any git error): exit 0.
 # DEVKIT_ROOT overrides the kit folder (tests). bash 3.2 compatible.
@@ -32,7 +33,7 @@ EOF
 
 {
   echo "warning: tests/lib/test_durations.txt does not list the new test(s); they start first (default duration), nothing is blocked."
-  echo "Add to ${DUR} and stage it (seconds = a rough measured duration; only the start order uses it):"
+  echo "No need to edit ${DUR}: the nightly gate-full (agent-kit test) measures every test into an untracked file; default estimate until then:"
   for rel in $missing; do printf '    5 %s\n' "$rel"; done
 } >&2
 exit 0

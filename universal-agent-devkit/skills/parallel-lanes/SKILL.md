@@ -25,7 +25,7 @@ Xếp lane đường găng và lane nặng chạy trước, giới hạn số la
 - Nghi ngờ thì đóng (fail closed): không cắt, không bỏ qua phần mà thứ gì đó còn có thể chạy.
 - Pid/định danh kiểm lại dưới khoá, ngay trước khi giết.
 - Test không phụ thuộc máy chủ: tên host `Mac` làm git mất identity; wrapper `#!/bin/sh` mới tạo có thể mất >1,5 s ở lần chạy đầu.
-- Test mới cần exec bit + một dòng trong `tests/lib/test_durations.txt`.
+- Test mới cần exec bit; KHÔNG thêm dòng vào `tests/lib/test_durations.txt` (gate-full đêm tự đo vào file không track; file track từng conflict trên GitHub).
 - Không trích đường dẫn tài liệu đã báo là sắp xoá.
 - Mỗi lane làm trong worktree riêng (`agent-kit worktree add`, hoặc EnterWorktree trong trunk mode); không ai ghi vào main.
 

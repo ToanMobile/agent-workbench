@@ -80,6 +80,10 @@ case "$CMD" in
     # when it waits for the timing-test file (run_impacted.sh sees its parent gone); its parallel phase runs on to its end.
     # ABSOLUTE: run_impacted.sh does a `cd` into the kit, so the file it is told to wait for (prefix.done) would otherwise be looked for
     # in the wrong folder under a relative TMPDIR (TMPDIR=rt) and the pool would wait its 15 minutes.
+    # DEVKIT_RECORD_DURATIONS=1 (set by the nightly bin/gate_full.py only): the pool records each PASS test's seconds in the untracked
+    # <git common dir>/devkit/test_durations.measured.txt, so no PR has to edit tests/lib/test_durations.txt. Handed to the pool alone:
+    # the suites that run beside it do not inherit it.
+    REC_DUR="${DEVKIT_RECORD_DURATIONS:-}"; unset DEVKIT_RECORD_DURATIONS
     # ponytail: SIGKILL of this shell runs no trap, so this dir stays in TMPDIR (a few small files); upgrade if that ever piles up.
     TEST_BASE="${TMPDIR:-/tmp}"; case "$TEST_BASE" in /*) ;; *) TEST_BASE="$PWD/$TEST_BASE" ;; esac
     TEST_TMP="$(mktemp -d "$TEST_BASE/agent-kit-test.XXXXXX")"
@@ -102,7 +106,7 @@ case "$CMD" in
     start_pool() { # set -m for this launch only: bash gives the job its own process group and leaves its signals at the default
       { # (a "child setpgid ... Operation not permitted" warning, seen on an overloaded machine, would go to this stderr: dropped)
         set -m
-        DEVKIT_ALONE_AFTER_FILE="$TEST_TMP/prefix.done" bash "$DEVKIT_ROOT/tests/run_impacted.sh" --all </dev/null >"$TEST_TMP/pool.out" 2>"$TEST_TMP/pool.err" &   # parallel: the sequential loop took ~19 min, past health's 900 s
+        DEVKIT_RECORD_DURATIONS="$REC_DUR" DEVKIT_ALONE_AFTER_FILE="$TEST_TMP/prefix.done" bash "$DEVKIT_ROOT/tests/run_impacted.sh" --all </dev/null >"$TEST_TMP/pool.out" 2>"$TEST_TMP/pool.err" &   # parallel: the sequential loop took ~19 min, past health's 900 s
         POOL_PID=$!
         set +m
       } 2>/dev/null

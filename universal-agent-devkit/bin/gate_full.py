@@ -923,7 +923,10 @@ def cmd_run(args) -> int:
         ak = os.path.join(scratch, "universal-agent-devkit", "bin", "agent-kit")
         if not override and os.path.isfile(ak):
             run.log("$ bash universal-agent-devkit/bin/agent-kit test")
-            kit_rc, kit_out = sh(["bash", ak, "test"], cwd=scratch, timeout=KIT_TEST_TIMEOUT_S, env=env)
+            # DEVKIT_RECORD_DURATIONS=1: run_impacted.sh --all ghi giây thật từng test PASS vào file đo không track
+            # <git common dir>/devkit/test_durations.measured.txt (scratch chung common dir với repo) — PR không phải sửa test_durations.txt
+            kit_rc, kit_out = sh(["bash", ak, "test"], cwd=scratch, timeout=KIT_TEST_TIMEOUT_S,
+                                 env=dict(env, DEVKIT_RECORD_DURATIONS="1"))
             run.raw(kit_out)
             run.log("agent-kit test exit %d" % kit_rc)
         verdict, checks = collect_red(run, scratch, kit_rel or "universal-agent-devkit", gate_rc, gate_out_full, kit_rc, kit_out)
