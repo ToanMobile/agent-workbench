@@ -176,6 +176,17 @@ JOBS="$(jobs_now)"
 # at all once the process that started this run is gone: a SIGKILLed `agent-kit test` leaves no trap to stop its pool).
 # Not set: no wait. Read once and unset, so no test started below (some run their own copy of this runner) sees it.
 after="${DEVKIT_ALONE_AFTER_FILE:-}"; unset DEVKIT_ALONE_AFTER_FILE
+# PR1 (durations): `--all` với DEVKIT_RECORD_DURATIONS=1 (chỉ gate-full đêm đặt: bin/gate_full.py → agent-kit test) ghi giây thật của
+# từng test PASS vào file đo KHÔNG track <git common dir>/devkit/test_durations.measured.txt (cùng định dạng `<giây> <path>`; đọc ở bước
+# xếp thứ tự bên dưới, bin/heavy_slot.py và post-fix-gate.py; đo thắng). Đọc một lần rồi gỡ: runner lồng trong test không ghi gì.
+# DEVKIT_DURATIONS_MEASURED_FILE (có đặt) thay đường dẫn, rỗng = không file đo (tests/lib/clean_git_env.sh). PR không còn sửa file track.
+record_dur=""; [ "${1:-}" = "--all" ] && [ "${DEVKIT_RECORD_DURATIONS:-}" = 1 ] && record_dur=1
+unset DEVKIT_RECORD_DURATIONS
+mdur=""
+if [ "${DEVKIT_DURATIONS_MEASURED_FILE+set}" = set ]; then mdur="$DEVKIT_DURATIONS_MEASURED_FILE"
+elif gcd="$(git rev-parse --git-common-dir 2>/dev/null)" && [ -n "$gcd" ] && gcd="$(cd "$gcd" 2>/dev/null && pwd -P)" && [ -n "$gcd" ]; then
+  mdur="$gcd/devkit/test_durations.measured.txt"
+fi
 parent="$PPID"   # whoever started this run (agent-kit): the wait below ends when that process is gone, a SIGKILL leaves no trap to tell us
 out="$(mktemp -d "${TMPDIR:-/tmp}/dk-run-XXXXXX" 2>/dev/null)" && [ -n "$out" ] && [ -d "$out" ] \
   || { echo "run_impacted.sh: mktemp -d failed" >&2; exit 2; }
@@ -253,6 +264,7 @@ run_one() { # <test> <out dir>
   _dk_clean_tdir
   trap - EXIT INT TERM HUP
   echo "$rc" >"$o.rc"
+  echo "$((SECONDS - t0))" >"$o.sec" 2>/dev/null || true   # file đo (record_dur): chỉ đọc khi test PASS
   # B2 (audit 25/10): kết quả ghi NGAY khi test xong — một TIMEOUT của cả suite (gate giết nhóm) không còn xoá PASS đã có
   [ -n "${DEVKIT_PTC:-}" ] && python3 -I "$DEVKIT_PTC" record "$2" "$1" "$rc" >"$o.ptc" 2>&1
   # #427 / log trống khi quá 900 s (27/10): ✔/✖ chỉ in ở vòng cuối, gate giết suite thì log rỗng. Một dòng tiến độ ra stderr ngay khi
@@ -370,10 +382,12 @@ done
 # Start the longest tests first (tests/lib/test_durations.txt: `<seconds> <path>`; a test it does not list starts first, as it
 # may be slow): a 137 s test that starts last becomes the tail of the whole run. ONLY the start order of $parallel changes: $selected
 # (what runs, what is printed, in which order) is untouched, and the reordered list is used only if it holds exactly the same tests.
+# File đo không track ($mdur, PR1) đọc SAU file track: dòng đo thắng; một trong hai đọc được là đủ.
 dur="tests/lib/test_durations.txt"
-if [ -n "$parallel" ] && [ -r "$dur" ]; then
-  ordered="$(printf '%s\n' $parallel | LC_ALL=C awk -v F="$dur" '
-    BEGIN { while ((getline l < F) > 0) { n = split(l, a, /[ \t]+/); if (n >= 2 && a[1] ~ /^[0-9]+(\.[0-9]+)?$/) d[a[2]] = a[1] + 0 } }
+if [ -n "$parallel" ] && { [ -r "$dur" ] || { [ -n "$mdur" ] && [ -r "$mdur" ]; }; }; then
+  ordered="$(printf '%s\n' $parallel | LC_ALL=C awk -v F="$dur" -v M="$mdur" '
+    function rd(f,  l, n, a) { if (f == "") return; while ((getline l < f) > 0) { n = split(l, a, /[ \t]+/); if (n >= 2 && a[1] ~ /^[0-9]+(\.[0-9]+)?$/) d[a[2]] = a[1] + 0 }; close(f) }
+    BEGIN { rd(F); rd(M) }
     { print (($0 in d) ? d[$0] : 1000000000), NR, $0 }' 2>/dev/null | LC_ALL=C sort -k1,1nr -k2,2n 2>/dev/null | cut -d' ' -f3- 2>/dev/null)"
   [ "$(printf '%s\n' $ordered | LC_ALL=C sort)" = "$(printf '%s\n' $parallel | LC_ALL=C sort)" ] && parallel="$ordered"
 fi
@@ -411,6 +425,27 @@ for t in $selected; do
     echo "✖ $t"; { dk_fail_lines "$o.log"; tail -n 20 "$o.log" 2>/dev/null; } | sed 's/^/    /'; rc=1
   fi
 done
+# PR1: ghi file đo (chỉ --all + DEVKIT_RECORD_DURATIONS=1). Gộp: test PASS lượt này thay số cũ, mọi dòng khác giữ (test đỏ giữ số cũ,
+# không nhảy lên đầu lượt sau). Ghi nguyên tử (tmp cùng thư mục + mv); mọi lỗi ghi bỏ qua, không đổi exit code.
+if [ -n "$record_dur" ] && [ -n "$mdur" ]; then
+  newdur=""
+  for t in $selected; do
+    [ -f "$t" ] || continue; is_reused "$t" && continue
+    o="$out/$(printf '%s' "$t" | tr '/' '_')"
+    [ "$(cat "$o.rc" 2>/dev/null)" = 0 ] || continue
+    sec="$(cat "$o.sec" 2>/dev/null)"; case "$sec" in ''|*[!0-9]*) continue ;; esac
+    newdur="$newdur$sec $t
+"
+  done
+  if [ -n "$newdur" ] && mkdir -p "${mdur%/*}" 2>/dev/null && mtmp="$(mktemp "${mdur%/*}/.measured.XXXXXX" 2>/dev/null)"; then
+    if printf '%s' "$newdur" | LC_ALL=C awk -v M="$mdur" '
+         { n = split($0, a, / /); if (n >= 2) { d[a[2]] = a[1]; o[++k] = a[2] } }
+         END { while ((getline l < M) > 0) { n = split(l, a, /[ \t]+/); if (n >= 2 && a[1] ~ /^[0-9]+(\.[0-9]+)?$/ && !(a[2] in d)) { d[a[2]] = a[1]; o[++k] = a[2] } }
+               for (i = 1; i <= k; i++) print d[o[i]], o[i] }' >"$mtmp" 2>/dev/null && [ -s "$mtmp" ]; then
+      mv -f "$mtmp" "$mdur" 2>/dev/null || rm -f "$mtmp" 2>/dev/null
+    else rm -f "$mtmp" 2>/dev/null; fi
+  fi
+fi
 # #472 D: hit-rate của sổ per-test (post-fix-gate đọc dòng này ghi vào runs.jsonl); chỉ khi sổ bật
 [ -n "$DEVKIT_PTC" ] && echo "per_test_cache: reuse=$n_reuse ran=$n_ran"
 exit "$rc"
