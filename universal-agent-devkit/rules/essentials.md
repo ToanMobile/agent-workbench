@@ -54,10 +54,10 @@ calibration, the paired oracle and the gate (core-rules §4).
 - **Git — commit and push yourself** (a project or user rule that forbids it wins: stop and wait
   for the order). A finished task
   is committed and pushed without asking, only your own paths (`git commit -m … -- <paths>`, never
-  `git add -A`/`commit -a`). Before a push: `git fetch`, then as its own command `git pull --ff-only` (or
-  `--no-rebase --no-edit` when both moved; check its exit code; a conflict → skill conflict, ask only for a
-  business decision), re-run the step 3 gate after any pull, merge or conflict fix, then `git push origin <branch>`,
-  never `<sha>:<branch>`. Every commit and push needs the latest gate on that content at exit 0, or
+  `git add -A`/`commit -a`). Before a push: `git fetch`, then alone `git pull --ff-only` (or
+  `--no-rebase --no-edit` when both moved; check exit code; a conflict → skill conflict, ask only for a
+  business decision), re-run the step 3 gate after any pull, merge or conflict fix (not a clean PR base merge),
+  then `git push origin <branch>`, never `<sha>:<branch>`. Every commit and push needs the latest gate on that content at exit 0, or
   exit 2 whose only reason is an edited test an Antigravity audit passed; a trunk-push repo moves
   main only through `agent-kit integrate`. Never commit secrets (`.env`, keystores,
   `local.properties`, `google-services.json`, tokens); mask them in proof. Details: core-rules §19.
