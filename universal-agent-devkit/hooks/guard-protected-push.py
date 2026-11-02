@@ -141,6 +141,13 @@ def program(tokens):
     if shell_norm is not None:
         tokens = shell_norm.inline_script(tokens)
         return tokens[shell_norm.prefix_end(tokens):]
+    return bare_program(tokens)
+
+
+def bare_program(tokens):
+    """tokens after VAR= and one sudo/command/env: the only `cd` the guard follows (review L 02/11 #871). A `cd` behind
+    nohup/nice/timeout runs in a child, and one behind if/while/!/a redirect may never run or may fail, so the push
+    after it still runs in the old directory."""
     while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
         tokens = tokens[1:]
     if tokens and tokens[0] in ("sudo", "command", "env"):
@@ -165,8 +172,8 @@ def pushes(command, cwd, depth=0):
 def _pushes(command, cwd, depth):
     """pushes() for one reading of the command."""
     found, d = [], cwd
-    for tokens in segments(command):
-        tokens = program(tokens)
+    for raw in segments(command):
+        tokens = program(raw)
         if not tokens:
             continue
         cmd, args = tokens[0], tokens[1:]
@@ -175,8 +182,10 @@ def _pushes(command, cwd, depth):
             if script:
                 found += pushes(script, d, depth + 1)
             continue
-        if cmd == "cd" and args and "$" not in args[0]:
-            d = os.path.normpath(os.path.join(d, os.path.expanduser(args[0])))
+        if cmd == "cd":
+            bare = bare_program(raw)
+            if bare[:1] == ["cd"] and len(bare) > 1 and "$" not in bare[1]:
+                d = os.path.normpath(os.path.join(d, os.path.expanduser(bare[1])))
             continue
         if os.path.basename(cmd) != "git":
             continue

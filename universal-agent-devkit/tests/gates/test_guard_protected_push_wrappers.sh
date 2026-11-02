@@ -65,6 +65,28 @@ judge "control: # line inside a heredoc with a harmless \$( ) stays allowed" "ca
 # \$(echo hi)
 EOF" feat ALLOW
 
+# review L 02/11 (#871, Antigravity + Claude P1): /repo is on main, every other directory on feat. A `cd` behind a wrapper
+# (runs in a child) or a block that may not run leaves the shell in /repo, so the push after it is a force push of main.
+judge_dir() {
+  local name="$1" cmd="$2" want="$3" got
+  got="$(python3 -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("gpp", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+reason = mod.check(sys.argv[2], "/repo", {"main", "master"}, lambda d: "main" if d == "/repo" else "feat")
+print("ALLOW" if reason is None else "BLOCK")
+' "$HOOK" "$cmd" 2>&1)"
+  if [ "$got" = "$want" ]; then echo "✔ $name"; else echo "✖ $name: got $got, want $want"; FAILS=$((FAILS + 1)); fi
+}
+for c in "nohup cd /feat; git push -f" "timeout 5 cd /feat; git push -f" "nice cd /feat && git push -f" \
+         "while false; do cd /feat; done; git push -f" "if false; then cd /feat; fi; git push --force" \
+         "! cd /feat && git push -f" "2>/dev/null cd /feat || git push -f"; do
+  judge_dir "a cd that does not move the shell is not followed: $c" "$c" BLOCK
+done
+judge_dir "control: a plain cd is followed (feat there)" "cd /feat; git push -f" ALLOW
+judge_dir "control: VAR= / command before cd is followed as before" "A=1 command cd /feat && git push -f" ALLOW
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 git init -q -b main "$TMP/repo"
