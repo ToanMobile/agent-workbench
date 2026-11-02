@@ -827,35 +827,26 @@ IS_THERE_A_BUG_RE = re.compile(
 KNOWN_BUGS_RE = re.compile(
     r"((?<!\w)(?:các|những|mấy|mọi|tất cả|all|\d+|tổng số|số lượng|số|link|gắn|viết test cho|test cho"
     r"|list|danh sách|checklist)\s+(?:\w+\s+)?)bugs?(?!\w)")
-# Câu hỏi và lệnh về việc đang theo dõi không phải báo bug (#827, 01/11: "… check có đang dùng cũ hay sai gì ko?" và
-# "Hook đã tự ghi câu hỏi của anh thành một mục bug trong checklist tạo 1 task fix gốc …" thành dòng REPORTED). Một
-# luật, không thêm bộ lọc theo mẫu câu. Mỗi từ lỗi là một trong ba loại:
-#   - BỊ HỎI TỚI ("sai gì ko", "fail không", "kẹt ko", "bị lỗi gì không"): hỏi có hay không, không phải báo bug, bỏ hẳn;
-#   - TRIỆU CHỨNG, điều người dùng thấy hỏng: crash, văng, treo, sai, fail, "bị xoá", "bị lỗi", "báo lỗi", "lỗi khi …",
-#     "không mở", stack trace, ảnh trong bugs/;
-#   - NHÃN chỉ gọi tên lỗi: danh từ lỗi / bug còn lại.
-# Có triệu chứng thì ghi dòng, kể cả trong câu hỏi ("sao app văng khi mở PDF?") hay lệnh về thẻ ("nhiều task bị blocked").
-# Chỉ có nhãn thì ghi, trừ câu hỏi và lệnh về việc theo dõi (checklist, backlog, mục bug, "tạo/đưa/chuyển … task/thẻ",
-# thẻ hay issue theo số). Số thẻ / PR không bao giờ chặn triệu chứng: "sau khi merge PR #810 app crash" là báo hồi quy.
-LABEL_RE = re.compile(r"(?<!\w)(?:lỗi|bugs?)(?!\w)")
-# Tiểu từ hỏi chỉ tính khi nó kết thúc mệnh đề: "sai gì ko?", "kẹt ko"; "crash chưa fix?", "văng ko mở được" là phủ định
-# của động từ sau, vẫn là triệu chứng (OCR #827).
+# #827 (01/11): câu hỏi "… check có đang dùng cũ hay sai gì ko?", lệnh "Hook đã tự ghi câu hỏi … thành một mục bug trong
+# checklist tạo 1 task …" và lệnh giao việc "Bạn là lane r30bug …" thành dòng REPORTED. bug_report chỉ BỎ BỚT so với luật
+# trên (từ lỗi nào cũng ghi), không bao giờ ghi thêm, theo 3 luật chắc chắn:
+#   (a) prompt mở đầu "Bạn là phiên|lane <mã có chữ số>": lệnh của phiên điều phối giao thẻ cho một phiên agent;
+#   (b) MỌI từ lỗi đều đang bị hỏi tới: "sai gì ko?", "fail không", "kẹt ko", "bị lỗi gì không" — hỏi có hay không;
+#   (c) từ lỗi còn lại chỉ là nhãn lỗi/bug và prompt nói về việc theo dõi: checklist, backlog, "mục bug".
+# Ảnh trong bugs/ hay stack trace thì (b), (c) không áp dụng. Không đoán câu hỏi (dấu ?, "sao …") và không chia nhãn với
+# triệu chứng: hai vòng làm thế đều làm mất bug thật mà luật cũ vẫn ghi ("sao app lỗi, mở PDF không được?").
+LANE_ORDER_RE = re.compile(r"\W*bạn là\s+(?:phiên|lane)\s+[\w-]*\d")   # "phiên mới", "phiên bản 2.3" không có số liền sau
+DEFECT_WORD_RE = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) + (r"s?(?!\w)" if len(w) <= 3 else r"\w*")
+                                                     for w in map(normalize, DEFECT_WORDS)) + ")")   # từng chỗ mentions() thấy
+# Tiểu từ hỏi ngay sau từ lỗi và kết thúc mệnh đề: "sai gì ko?", "fail không nhé", "lỗi gì hay không". "crash chưa fix",
+# "văng ko mở được", "sai không đi được" là phủ định động từ sau, vẫn là báo lỗi; vì thế "đi" không phải tiểu từ hỏi.
 ASKED_RE = re.compile(r"\s+(?:gì|nào|(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa))(?!\w)"
-                      r"(?=[^\S\n]*(?:$|[?.!,;\n]|(?:không|ko|k|chưa|vậy|thế|nhỉ|hả|à|ạ|nhé|nha|đi)(?!\w)))")
-DEFECT_AFTER_BI_RE = re.compile(r"\s+(?:lỗi|bugs?|vấn đề|issues?|sai|fail\w*|hỏng)(?!\w)")
-SEEN_LABEL_RE = re.compile(r"(?<!\w)(?:bị|báo|gặp|dính|hiện)\s+\Z")   # "bị lỗi", "báo lỗi": lỗi đã xảy ra
-LABEL_WHEN_RE = re.compile(r"\s+(?:khi|lúc)(?!\w)")                  # "lỗi khi build release"
-SYMPTOM_WORDS_RE = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) + (r"s?(?!\w)" if len(w) <= 3 else r"\w*")
-                                                       for w in DEFECT_WORDS if w not in ("lỗi", "bug")) + ")")
-# [ \t]*, không \s*: với re.M, \s nuốt cả xuống dòng nên mỗi dòng trống quét lại phần sau (40 KB dòng trống: 2,3 s).
+                      r"(?=[^\S\n]*(?:$|[?.!,;\n]|(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa|vậy|thế|nhỉ|hả|à|ạ|nhé|nha)(?!\w)))")
+SPACES_RE = re.compile(r"\s*")
+LABEL_WORDS = {"lỗi", "bug", "bugs"}
+TRACKING_RE = re.compile(r"(?<!\w)(?:checklist|backlog|mục bug)(?!\w)")
+# [ \t]*, không \s*: với re.M, \s nuốt cả xuống dòng nên mỗi dòng trống quét lại phần sau (80 000 dòng trống: 9 s).
 STACK_RE = re.compile(r"traceback \(most recent call last\)|^[ \t]*at [\w$.<>]+\([^)\n]*:\d+\)", re.M)
-# checklist / backlog / mục bug luôn là việc theo dõi; task, thẻ, card, ticket, issue, ready cũng là tên trong sản phẩm
-# ("sửa lỗi card thanh toán", "task runner") nên chỉ tính khi là đối tượng của động từ quản lý việc (OCR #827).
-TRACKING_RE = re.compile(r"(?<!\w)(?:checklist|backlog|mục bug)(?!\w)"
-                         r"|(?<!\w)(?:tạo|đưa|chuyển|gom|cập nhật|update|xoá|xóa|đóng|close|move|create|link|gắn|ghi|làm|lên|vô)"
-                         r"\s+(?:[^\s.;:!?]+\s+){0,3}?(?:thẻ|tasks?|cards?|tickets?|issues?|ready)(?!\w)"
-                         r"|(?<!\w)(?:thẻ|issues?|tickets?|tasks?)\s*#\d+(?!\w)")
-TRACKED_URL_RE = re.compile(r"(?<![\w.])(?:github|gitlab)\.com/[^\s/]+/[^\s/]+/(?:-/)?(?:issues|pull|merge_requests)/\d+(?!\w)")
 
 # Agent and harness prompts are not the user's bug reports. Grok (2026-09-25, OfficeReader)
 # runs the prompt hook for its own sub-agents too, and "You are a hostile code reviewer. Do
@@ -870,12 +861,10 @@ TRACKED_URL_RE = re.compile(r"(?<![\w.])(?:github|gitlab)\.com/[^\s/]+/[^\s/]+/(
 # "As an AI/assistant …", "Bạn là (một) <vai>", "(Hãy) đóng vai …". A user's report that just
 # starts with those words ("You are right, but it still crashes", "Bạn là dev Android thì xem
 # giúp: app crash …", "Your task is to fix the crash") is still recorded (review 2026-09-25).
-# "Bạn là phiên r23cl9 …" / "Bạn là lane r30bug …" là lệnh giao việc của phiên điều phối cho một phiên agent (#827: 64 dòng
-# REPORTED giả ở agent-workbench trong 2 ngày, vì thẻ được giao luôn tả triệu chứng); "phiên bản" (version) không phải vai.
 ROLE_OPENING = re.compile(
     r"^\W*((you are|you're|act as)\s+(a|an|the)\s+\w|your role is\b|as an? (ai|assistant|language model)\b|"
     r"(bạn là|mày là)\s+(một\s+)?(reviewer|agent|trợ lý|chuyên gia|kỹ sư|kiểm thử viên|planner|writer|auditor|"
-    r"người (viết|đánh giá|kiểm|review)|phiên(?!\s*bản)|lane)\b|(hãy\s+)?đóng vai\b)", re.I)
+    r"người (viết|đánh giá|kiểm|review))\b|(hãy\s+)?đóng vai\b)", re.I)
 SCHEMA_MARKERS = [re.compile(p, re.I) for p in (
     r'"input_schema"\s*:', r'"\$schema"\s*:', r'"properties"\s*:\s*\{', r'"type"\s*:\s*"object"',
     r'"parameters"\s*:\s*\{', r'"required"\s*:\s*\[', r"<tool_call\b", r"<function_calls>", r"</invoke>",
@@ -918,43 +907,31 @@ def probe_payload(payload):
     return not non_claude(payload)
 
 
-def _defect_kinds(p_lower):
-    """Loại của các từ lỗi KHÔNG bị hỏi tới trong p_lower (đã bỏ đường dẫn, tập bug đã biết): tập con của
-    {"symptom", "label"}; rỗng khi mọi từ lỗi đều đang bị hỏi ("test có fail ko", "app có bị lỗi gì không nhé") (#827)."""
-    kinds = set()
-    for regex in (SYMPTOM_WORDS_RE, DEFECT_RE, LABEL_RE):
-        for m in regex.finditer(p_lower):
-            if m.group(0) == "bị":   # "bị gì?", "bị xoá", "bị lỗi khi …": đã có chuyện xảy ra, trừ "bị sai gì ko"
-                n = DEFECT_AFTER_BI_RE.match(p_lower, m.end())
-                if n and ASKED_RE.match(p_lower, n.end()):
-                    continue
-                return {"symptom"}
-            if ASKED_RE.match(p_lower, m.end()):   # "sai gì ko?", "fail không nhé": hỏi có hay không
-                continue
-            if regex is LABEL_RE and not (SEEN_LABEL_RE.search(p_lower, max(0, m.start() - 8), m.start())
-                                          or LABEL_WHEN_RE.match(p_lower, m.end())):
-                kinds.add("label")
-                continue
-            return {"symptom"}
-    return kinds
-
-
 def bug_report(prompt):
-    """Prompt tả một lỗi đáng ghi dòng REPORTED: còn từ lỗi không bị hỏi tới sau khi bỏ tập bug đã biết, đường dẫn
-    và câu hỏi "có lỗi gì không"; câu hỏi hay lệnh về việc theo dõi chỉ ghi khi có triệu chứng (#827)."""
+    """Prompt đáng ghi dòng REPORTED: luật cũ (ảnh bugs/ hoặc một từ lỗi, sau khi bỏ đường dẫn, tập bug đã biết và câu
+    "có lỗi gì không") trừ (a) lệnh giao việc "Bạn là phiên|lane <mã>", (b) mọi từ lỗi đều bị hỏi tới, (c) chỉ còn nhãn
+    lỗi/bug trong prompt về checklist, backlog, mục bug (#827)."""
     first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
     # A wrapped message (<cross-session-message …>, <task-notification>) is not the user's report.
-    if not first or first.startswith("<"):
+    if not first or first.startswith("<") or LANE_ORDER_RE.match(normalize(first)):
         return False
     p_norm = normalize(prompt)
     p_norm = OUTDATED_RE.sub("outdatedterm", IS_THERE_A_BUG_RE.sub(" ", NOT_A_REPORT_RE.sub(" ", p_norm)))
     p_lower = KNOWN_BUGS_RE.sub(r"\1 ", PATHLIKE_RE.sub(" ", p_norm))
-    if BUG_EVIDENCE_RE.search(p_norm) or STACK_RE.search(p_norm):
+    if BUG_EVIDENCE_RE.search(p_norm):
         return True
-    kinds = _defect_kinds(p_lower)
-    if "symptom" in kinds:
+    if not (mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
+        return False
+    if STACK_RE.search(p_norm):
         return True
-    return bool(kinds) and not (TRACKING_RE.search(p_lower) or TRACKED_URL_RE.search(p_norm) or is_question(p_norm.strip()))
+    found = sorted(list(DEFECT_WORD_RE.finditer(p_lower)) + list(DEFECT_RE.finditer(p_lower)), key=lambda m: m.start())
+    asked = set()
+    for m in reversed(found):   # từ sau trước: "bị" chỉ bị hỏi tới khi từ lỗi liền sau nó bị hỏi tới ("bị lỗi gì không");
+        # "bị gì?" ("log báo xe bị gì?") hỏi chuyện gì đã xảy ra, vẫn là báo lỗi như luật cũ
+        if (SPACES_RE.match(p_lower, m.end()).end() in asked) if m.group(0) == "bị" else ASKED_RE.match(p_lower, m.end()):
+            asked.add(m.start())
+    live = [m.group(0) for m in found if m.start() not in asked]
+    return bool(live) and not (set(live) <= LABEL_WORDS and TRACKING_RE.search(p_lower))
 
 
 def capture_bug(prompt, dossier, project_root, session, payload=None):
@@ -1192,16 +1169,12 @@ def _ask(regex, text):
     return ""
 
 
-def is_question(norm):
-    """norm (đã normalize, strip) là câu hỏi: xét mấy chữ đầu (trừ câu dẫn "Why …:") hoặc mấy chữ cuối."""
-    return bool((QUESTION_START_RE.match(norm) and not norm.split("\n", 1)[0].rstrip().endswith(":"))
-                or QUESTION_END_RE.search(norm[-80:]))
-
-
 def parallel_split(prompt):
     """Why this request can be split across agents ("4 repo", "danh sách 3 việc", "nhiều agent"…), or "" when it cannot."""
     norm = normalize(prompt).strip()
-    if len(norm) < 8 or norm.startswith("/") or harness_prompt(prompt) or is_question(norm):
+    if len(norm) < 8 or norm.startswith("/") or harness_prompt(prompt) \
+            or (QUESTION_START_RE.match(norm) and not norm.split("\n", 1)[0].rstrip().endswith(":")) \
+            or QUESTION_END_RE.search(norm[-80:]):
         return ""
     text = FENCE_RE.sub(" ", norm)
     reason = _ask(SPLIT_REPOS_RE, text)   # one file in several repos is still one lane per repo
