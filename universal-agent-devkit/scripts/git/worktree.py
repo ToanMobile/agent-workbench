@@ -2108,7 +2108,14 @@ def _iter_blockers(cwd, wt, shown, budget, rows=None):
         if hidden is None:
             detail.append("  " + tr("Không đọc được danh sách file git ẩn (skip-worktree / assume-unchanged): coi như còn sửa chưa đem về",
                                     "The files git hides (skip-worktree / assume-unchanged) could not be listed: treated as edited and not brought back"))
-        detail.append("  " + tr("Đem về trước", "Bring them back first") + f": agent-kit worktree diff {shlex.quote(shown)} | git apply --3way")
+        if (lost and not hidden and all(p.startswith(".claude/agent-memory/") for p in lost) and _trunk_mode(cwd)
+                and git(wt, "symbolic-ref", "-q", "HEAD", check=False).returncode == 0):
+            # #416: tracked agent-memory notes a subagent wrote in a lane worktree. Main is merge-only in trunk mode, so `git apply` there
+            # is refused: the notes ride on the lane's own branch (the PR) instead.
+            detail.append("  " + tr("Commit lên nhánh của worktree (main chỉ để gộp)", "Commit them on the worktree's branch (main is merge-only)")
+                          + f": git -C {shlex.quote(shown)} add -- .claude/agent-memory && git -C {shlex.quote(shown)} commit -m 'docs: agent-memory notes'")
+        else:
+            detail.append("  " + tr("Đem về trước", "Bring them back first") + f": agent-kit worktree diff {shlex.quote(shown)} | git apply --3way")
         if any(p in BOOKKEEPING for p in lost):
             detail.append("  " + tr("File sổ sách checklist: `diff` bỏ chúng; thêm --with-checklist để đem về, hoặc hỏi người dùng có bỏ thay đổi đó không",
                                     "Checklist bookkeeping: `diff` leaves it out; add --with-checklist to bring it back, or ask the user whether to drop the change"))

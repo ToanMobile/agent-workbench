@@ -512,9 +512,9 @@ def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = ""
 def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: bool = False) -> bool:
     """True when this test existed at `since`, a LOCAL-ONLY commit of `since..HEAD` (one not
     reachable from `upstream`; no upstream → every range commit) touches it, and its change to
-    the working tree is not append-only — counted from the latest range commit touching it whose
-    message holds a `Test-approved-by:` line (that commit's content was audited), else from
-    `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate.
+    the working tree is not append-only — counted from the latest range commit (any path, an empty
+    one included) whose message holds a `Test-approved-by:` line that push_gate accepts and whose
+    auditedHead is at or after `since` (that tree was audited), else from `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate.
     runner: a suite runner script (A2), judged by test_change_is_append_only(runner=True)."""
     root = str(get_repo_root())
     if object_info(since, repo_path) is None:
@@ -524,16 +524,22 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
                            capture_output=True, text=True)
     if local.returncode == 0 and not local.stdout.strip():
         return False                                  # only upstream commits touch it
+    # Không pathspec (#630): luồng audit #605 kết thúc bằng một commit RỖNG mang trailer, `-- <path>` không bao giờ liệt kê nó
+    # (_trailer_cross_review cũng quét cả range). Đổi lại phải kiểm auditedHead sau `since` như _trailer_cross_review.
     res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
-                          "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD",
-                          "--", repo_path], capture_output=True, text=True)
+                          "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD"],
+                         capture_output=True, text=True)
     if res.returncode != 0:
         return True                                   # cannot read the range: fail closed
     # The line counts only as push_gate counts it (2026-10-09): a real trailer whose task has antigravity-pm's audit pass
     # record; a line the agent writes itself is no audit (tests/gates/test_gate_since_test_edit.sh).
     base = since
     for sha in res.stdout.split():                    # newest first
-        if _push_gate().approved(root, f"{sha}^!")[0]:
+        ok, note = _push_gate().approved(root, f"{sha}^!")
+        m = re.search(r"antigravity\s+(\S+)", note or "") if ok else None
+        head = _push_gate().audited_head(root, m.group(1)) if m else None
+        # auditedHead trước `since` (task cũ, commit rỗng ở nhánh phụ gộp vào range) kéo base lùi về cây yếu cũ: không duyệt.
+        if head and _push_gate().head_after(root, since, head):
             base = sha
             PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
             break
@@ -763,7 +769,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
         try:
             with open(appr_file, encoding="utf-8") as afh:
                 saved = json.load(afh)
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, RecursionError) as e:   # RecursionError: JSON lồng quá sâu, không phải ValueError
             # fail-closed: file duyệt không đọc được thì không duyệt gì, và nói rõ cho agent
             saved = None
             APPROVAL_REJECTS.extend((f, _cur_sha(f), f"approved_tests.json không đọc được ({type(e).__name__})") for f in mtimes)
@@ -4498,6 +4504,11 @@ HANG_TEST_LINE = re.compile(r"(?i)test|✔|✖|▶|^ok\b|^not ok\b")
 # #427 / hang giả 27/10: dòng cuối của ảnh ps — tuổi (giây) của tiến trình CÓ CON trẻ nhất trong cả cây suite (mọi tiến trình, không chỉ
 # 12 dòng in ra). hang_report đọc dòng này: một cây con mới (một test mới) vừa bắt đầu thì suite vẫn đang tiến triển, chưa phải treo. Lá
 # không tính: vòng poll của một suite kẹt (`sleep 5` của unity-batch.sh, `grep` chờ marker) sinh lá mới liên tục mà không tiến triển.
+# #473: run_impacted.sh prints `· start <test>` when a test begins and `· done rc=N Ns <test>` when it ends: the tests of a hung suite that are
+# started and not done are the ones that hang (the last line naming a test is often a FINISHED one: the pool runs them in parallel).
+HANG_START_RE = re.compile(r"^· start (\S+)$")
+HANG_DONE_RE = re.compile(r"^· done rc=\S+ \d+s (\S+)$")
+HANG_TAIL_LINES = 3   # lines of the suite's own output kept on a TIMEOUT that is not a HANG
 HANG_YOUNGEST_LINE = "# youngest process: {} s"
 HANG_YOUNGEST_RE = re.compile(r"^# youngest process: (\d+) s$", re.M)
 PS_ETIME_RE = re.compile(r"^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$")   # cột etime của ps: [[dd-]hh:]mm:ss
@@ -7760,6 +7771,14 @@ def main():
         last test line it printed plus the `ps` snapshot of its process group in output_tail; under load it stays a plain TIMEOUT, and so does
         a suite still making progress (#427: its youngest process that has a child is younger than min(timeout/2, 120) s)."""
         body, _, snap = (out or "").partition(HANG_SNAPSHOT_MARK)
+        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+        # Ảnh của chính lượt này luôn nằm cuối out (rpartition: output của gate lồng không lẫn vào).
+        youngest = HANG_YOUNGEST_RE.search((out or "").rpartition(HANG_SNAPSHOT_MARK)[2])
+        # #473: a TIMEOUT that is not a HANG still says where it stopped: the last lines it printed and the age of its youngest parent process.
+        # a heading line first (the Stop hook shows line 0 as the reason); each line cut, as the HANG line is
+        t["output_tail"] = "\n".join([tr("quá giờ — dòng cuối suite in ra:", "timed out — last lines the suite printed:")]
+                                     + [ln[:300] for ln in (lines[-HANG_TAIL_LINES:] or ["(no output)"])]
+                                     + ([HANG_YOUNGEST_LINE.format(youngest.group(1))] if youngest else []))
         try:
             import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
             load, busy = _capacity.load(), _capacity.busy_load()
@@ -7770,20 +7789,23 @@ def main():
             return
         # #427 / hang giả 27/10: tải thấp chưa đủ. REG-DK-ALL-01 hết 900 s ở đuôi tuần tự (tải ~15 < 36) khi test đang chạy mới 6 s và
         # tiến trình lá mới sinh — vẫn bị gọi HANG. Chỉ gọi HANG khi tiến trình CÓ CON trẻ nhất của cây đã sống ≥ min(timeout/2, 120) s
-        # (không cây con nào mới bắt đầu ngần ấy lâu; lá của vòng poll không tính, xem HANG_YOUNGEST_LINE). Ảnh của chính lượt này luôn nằm cuối out (rpartition: output của gate lồng không lẫn vào).
+        # (không cây con nào mới bắt đầu ngần ấy lâu; lá của vòng poll không tính, xem HANG_YOUNGEST_LINE).
         # Không đọc được tuổi (ps hỏng, không dòng nào, thiếu dòng youngest): giữ cách cũ, chỉ xét tải.
-        youngest = HANG_YOUNGEST_RE.search((out or "").rpartition(HANG_SNAPSHOT_MARK)[2])
         if youngest and int(youngest.group(1)) < min(args.timeout / 2, 120):
             return
-        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
-        last = next((ln for ln in reversed(lines) if HANG_TEST_LINE.search(ln)), lines[-1] if lines else "(no output)")
+        done = {m.group(1) for m in (HANG_DONE_RE.match(ln) for ln in lines) if m}
+        running = list(dict.fromkeys(m.group(1) for m in (HANG_START_RE.match(ln) for ln in lines) if m and m.group(1) not in done))
         t["hang"] = True
         shown = [ln for ln in snap.strip().splitlines() if not HANG_YOUNGEST_RE.match(ln)]   # dòng tuổi chỉ để quyết định, không chiếm chỗ
-        t["output_tail"] = "\n".join(shown[:7] + [
-            tr(f"HANG (tải {load:.1f} < {busy}): test cuối suite in ra: {last[:200]}",
-               f"HANG (load {load:.1f} < {busy}): last test line the suite printed: {last[:200]}")])
-        log_warn(tr(f"{t.get('id')}: quá giờ lúc máy rảnh (tải {load:.1f}) — TREO, không phải chậm; test cuối: {last[:120]}",
-                    f"{t.get('id')}: timed out on an idle machine (load {load:.1f}) — a HANG, not slow; last test: {last[:120]}"))
+        if running:   # #473: named by start/done markers: the test(s) still running, not the one that ended last
+            what = ", ".join(running[:3]) + (f" (+{len(running) - 3})" if len(running) > 3 else "")
+            vi, en = f"test đang chạy: {what[:200]}", f"running test(s): {what[:200]}"
+        else:
+            last = next((ln for ln in reversed(lines) if HANG_TEST_LINE.search(ln)), lines[-1] if lines else "(no output)")
+            vi, en = f"test cuối suite in ra: {last[:200]}", f"last test line the suite printed: {last[:200]}"
+        t["output_tail"] = "\n".join(shown[:7] + [tr(f"HANG (tải {load:.1f} < {busy}): {vi}", f"HANG (load {load:.1f} < {busy}): {en}")])
+        log_warn(tr(f"{t.get('id')}: quá giờ lúc máy rảnh (tải {load:.1f}) — TREO, không phải chậm; {vi[:130]}",
+                    f"{t.get('id')}: timed out on an idle machine (load {load:.1f}) — a HANG, not slow; {en[:130]}"))
 
     def _run_suite(t, cmd, mode, env):
         started = time.perf_counter()
