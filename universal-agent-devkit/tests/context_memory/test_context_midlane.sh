@@ -158,4 +158,17 @@ printf '{"session_id":"s-pyc","transcript_path":"%s","cwd":"%s","hook_event_name
 new_pyc="$(find "$DEVKIT_DIR/scripts" -name '*.pyc' -newer "$TMP/mark" 2>/dev/null | head -3)"
 [ -z "$new_pyc" ] && ok "không có prefix pycache: không ghi .pyc vào cây kit" || fail "hook giữa lượt ghi bytecode vào cây kit: $new_pyc"
 
+# ── 7. transcript là thư mục: không mở, log stderr (review PR #878) ─────────────
+o="$(post "$P" '{"session_id":"s-dir"}')"
+[ "$(warns "$o")" = 0 ] && ! printf '%s' "$o" | grep -q '^RC ' && printf '%s' "$o" | grep '^STDERR' | grep -q 'transcript' \
+  && ok "transcript là thư mục: exit 0, im, log stderr" || fail "transcript là thư mục: $(printf '%s' "$o" | head -3)"
+
+# ── 8. json.py cài sẵn ở cwd không được nạp (review PR #878, như tests/gates/test_hook_python_isolation.sh) ──
+printf 'open(%s, "w").write("x")\n' "'$TMP/shadow-loaded'" > "$P/json.py"
+printf '{"session_id":"s-shadow","transcript_path":"%s","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"Bash"}' "$TR2" "$P" \
+  | ( cd "$P" && CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/prompt_context.sh" --midlane >"$TMP/shadow.out" 2>&1 )
+rm -f "$P/json.py"
+[ ! -e "$TMP/shadow-loaded" ] && grep -q 'Context phiên' "$TMP/shadow.out" \
+  && ok "json.py ở cwd không được nạp, cảnh báo vẫn ra" || fail "hook giữa lượt nạp json.py từ cwd ($(head -c 200 "$TMP/shadow.out"))"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_context_midlane: all passed" || { echo "❌ test_context_midlane: $FAILS failed"; exit 1; }

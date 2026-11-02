@@ -107,14 +107,15 @@ if [ "${1:-}" = "--midlane" ]; then
   # của repo không che được stdlib); enrich_context được import nên bytecode của nó vào PYTHONPYCACHEPREFIX ở trên.
   # Test: tests/context_memory/test_context_midlane.sh.
   printf '%s' "${PAYLOAD}" | CLAUDE_PROJECT_DIR="${REPO_ROOT}" python3 -c '
-import json, os, sys
-sys.path[0] = sys.argv[1]
+import sys
+sys.path[0] = sys.argv[1]   # TRƯỚC mọi import khác: với -c, sys.path[0] là cwd (json.py cài sẵn sẽ chạy, review PR #878)
+import json, os
 try:
     d = json.loads(sys.stdin.read() or "{}")
     if not isinstance(d, dict) or d.get("agent_id"):
         sys.exit(0)
     tp = d.get("transcript_path")
-    if isinstance(tp, str) and tp and not os.access(tp, os.R_OK):
+    if isinstance(tp, str) and tp and not (os.path.isfile(tp) and os.access(tp, os.R_OK)):   # thư mục/FIFO: open() treo hoặc lỗi
         print(f"prompt_context --midlane: transcript không đọc được, bỏ qua cảnh báo bối cảnh: {tp}", file=sys.stderr)
         sys.exit(0)
     os.environ["CONTEXT_WARN_TOKENS"] = os.environ.get("CONTEXT_WARN_TOKENS") or "250000"
