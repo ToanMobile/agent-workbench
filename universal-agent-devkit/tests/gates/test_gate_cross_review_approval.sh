@@ -76,6 +76,12 @@ run_gate
 if [ "$RC" = 2 ] && has "sha256 lệch"; then ok "4: sha256 lệch -> exit 2"
 else bad "4: sha256 lệch: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
+# 4b. #630: approved_tests.json lồng quá sâu (RecursionError, không phải ValueError) -> exit 2, nói rõ lý do, không traceback
+python3 -c 'print("[" * 200000)' > "$APPR"
+run_gate
+if [ "$RC" = 2 ] && has "không đọc được (RecursionError)" && ! has "Traceback"; then ok "4b: JSON lồng sâu -> exit 2, in lý do, không sập"
+else bad "4b: JSON lồng sâu: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
 # 5. dạng cũ {path: sha256} đúng nội dung, không nguồn -> exit 2, "cần duyệt lại" + path + sha hiện tại
 printf '{"tests/test_old.sh": "%s"}\n' "$SHA" > "$APPR"
 run_gate
