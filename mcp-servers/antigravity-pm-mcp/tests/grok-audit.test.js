@@ -10,10 +10,13 @@ import { execFileSync } from 'node:child_process';
 import { loadConfig } from '../src/config.js';
 import { createTask, recordDispatch, taskFile, hashFile } from '../src/tasks.js';
 import { TOOLS_BY_NAME } from '../src/tools.js';
+import * as tools from '../src/tools.js';
 import { tmpDir, tmpProject, cleanup, writeFile, sampleTaskArgs } from './helpers.js';
 
 const call = (name, args) => TOOLS_BY_NAME.get(name).handler(args);
 delete process.env.DEVKIT_AGENT_ID;   // builder mac dinh claude, khong phu thuoc agent dang chay test
+// F2: danh tinh nguoi goi doc ca env cua phien Grok; test chay trong phien Grok khong duoc thanh "nguoi goi grok" ngoai y muon.
+for (const k of ['GROK_SESSION_ID', 'GROK_WORKSPACE_ROOT', 'GROK_HOOK_EVENT']) delete process.env[k];
 
 function repo() {
   const dir = tmpProject({ projectName: 'grok-audit', testCommand: 'echo ok' });
@@ -178,6 +181,156 @@ test('G6 khong co grok: pm_dispatch tu choi, khong ghi lan giao; agent=grok chi 
     });
     assert.equal((disk(cfg, task).dispatches || []).length, 0);
     assert.equal(fs.existsSync(repOf(dir, task)), false);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// ---- Dot 2 sua sau review (F1, F2, G3, F5) ----------------------------------------------------------------------------------
+
+/** Dat tam env (undefined = xoa) trong luc chay fn, tra lai nhu cu sau do. */
+async function withEnv(vars, fn) {
+  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(vars)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  try { return await fn(); } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+const grokRan = (fake) => fs.existsSync(path.join(fake.d, 'argv.txt'));
+const commitFile = (dir, name, body) => {
+  writeFile(path.join(dir, name), body);
+  execFileSync('git', ['add', name], { cwd: dir });
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', name], { cwd: dir });
+  return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+};
+
+test('F1 audit pass co auditedHead noi vao verdicts.auditHistory (chi-them); verdict fail sau khong xoa head pass cu', async () => {
+  const { dir, cfg, task, head } = repo();
+  try {
+    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    await call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head, notes: 'ok' });
+    const h1 = disk(cfg, task).verdicts.auditHistory;
+    assert.ok(Array.isArray(h1), 'verdicts.auditHistory phai la mang');
+    assert.equal(h1.length, 1);
+    assert.deepEqual(Object.keys(h1[0]).sort(), ['at', 'auditedHead', 'reviewer']);
+    assert.equal(h1[0].auditedHead, head);
+    assert.equal(h1[0].reviewer, 'grok');
+    assert.ok(Date.parse(h1[0].at) > 0);
+    // verdict fail sau do: verdicts.audit thanh fail nhung head pass cu van trong lich su
+    await call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'fail', findings: ['a.txt:1 sai'] });
+    let t = disk(cfg, task);
+    assert.equal(t.verdicts.audit.verdict, 'fail');
+    assert.deepEqual(t.verdicts.auditHistory, h1);
+    // commit moi, audit pass lan hai: noi them, giu thu tu
+    const head2 = commitFile(dir, 'b.txt', 'b\n');
+    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    await call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head2 });
+    t = disk(cfg, task);
+    assert.deepEqual(t.verdicts.auditHistory.map((x) => x.auditedHead), [head, head2]);
+    assert.equal(t.verdicts.audit.auditedHead, head2);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('F2 callerAgent: DEVKIT_AGENT_ID chuan hoa > env phien Grok > env phien Claude > ""', () => {
+  const f = tools.callerAgent;
+  assert.equal(typeof f, 'function', 'tools.js phai export callerAgent(env)');
+  const cases = [
+    [{ DEVKIT_AGENT_ID: 'Grok-Build ', CLAUDECODE: '1' }, 'grok'],
+    [{ DEVKIT_AGENT_ID: 'grok-4.7' }, 'grok'],
+    [{ DEVKIT_AGENT_ID: 'Antigravity' }, 'antigravity'],
+    [{ DEVKIT_AGENT_ID: 'codex', GROK_SESSION_ID: 's' }, 'codex'],
+    [{ DEVKIT_AGENT_ID: '  ', GROK_SESSION_ID: 's' }, 'grok'],
+    [{ GROK_WORKSPACE_ROOT: '/w', CLAUDECODE: '1' }, 'grok'],
+    [{ GROK_HOOK_EVENT: 'PreToolUse', CLAUDE_CODE_SESSION_ID: 'x' }, 'grok'],
+    [{ GROK_SESSION_ID: '', CLAUDECODE: '1' }, 'claude'],
+    [{ CLAUDECODE: '1' }, 'claude'],
+    [{ CLAUDE_CODE_SESSION_ID: 'abc' }, 'claude'],
+    [{ CLAUDECODE: '0' }, ''],
+    [{}, ''],
+  ];
+  for (const [env, want] of cases) assert.equal(f(env), want, JSON.stringify(env));
+});
+
+test('F2 pm_dispatch audit agent=grok tu choi khi nguoi goi PM la grok (tu duyet), ke ca force; grok khong chay', async () => {
+  for (const env of [{ GROK_HOOK_EVENT: 'PostToolUse' }, { GROK_SESSION_ID: 's1' }, { DEVKIT_AGENT_ID: 'Grok-4.7' }]) {
+    const { dir, cfg, task } = repo();
+    const fake = fakeGrok();
+    try {
+      await withEnv(env, () => withGrok(fake, () => assert.rejects(
+        call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', force: true }), /tu duyet/, JSON.stringify(env))));
+      assert.equal((disk(cfg, task).dispatches || []).length, 0, JSON.stringify(env));
+      assert.equal(grokRan(fake), false, JSON.stringify(env));
+      assert.equal(fs.existsSync(repOf(dir, task)), false, JSON.stringify(env));
+    } finally {
+      cleanup(dir);
+    }
+  }
+});
+
+test('F2 pm_verdict: nguoi goi la grok (env phien Grok, khong DEVKIT_AGENT_ID) + reviewer grok = tu duyet, khong auditedHead/history', async () => {
+  const { dir, cfg, task, head } = repo();
+  try {
+    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const out = await withEnv({ GROK_SESSION_ID: 's2' },
+      () => call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head }));
+    assert.match(out, /trung builder/);
+    const t = disk(cfg, task);
+    assert.equal(t.verdicts.audit.verdict, 'pass');
+    assert.equal(t.verdicts.audit.auditedHead, undefined);
+    assert.equal((t.verdicts.auditHistory || []).length, 0);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('G3 pm_verdict chuan hoa builders va reviewer (grok-build / grok-4.7 -> grok) truoc khi so tu duyet', async () => {
+  const cases = [
+    { agentId: 'grok-build', reviewer: 'grok' },
+    { agentId: 'grok', reviewer: 'grok-4.7' },
+    { agentId: 'Grok-4.7', reviewer: 'GROK-build' },
+  ];
+  for (const c of cases) {
+    const { dir, cfg, task, head } = repo();
+    try {
+      // lan giao audit grok "cua PM" ghi truc tiep (pm_dispatch tu choi nguoi goi grok — F2); bao cao + sha khop
+      const at = new Date(Date.now() - 2000).toISOString();
+      writeFile(repOf(dir, task), JSON.stringify({ phase: 'AUDIT', verdict: 'pass', reviewer: c.reviewer, auditedHead: head }));
+      recordDispatch(cfg, task, { kind: 'audit', agent: 'grok', model: 'grok-4.7', at, extra: { auditedHead: head, reportSha256: hashFile(repOf(dir, task)) } });
+      const out = await withEnv({ DEVKIT_AGENT_ID: c.agentId },
+        () => call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head }));
+      assert.match(out, /trung builder/, JSON.stringify(c));
+      const t = disk(cfg, task);
+      assert.equal(t.verdicts.audit.auditedHead, undefined, JSON.stringify(c));
+      assert.equal((t.verdicts.auditHistory || []).length, 0, JSON.stringify(c));
+    } finally {
+      cleanup(dir);
+    }
+  }
+});
+
+test('F5 pm_dispatch audit agent=grok tu choi khi cay lam viec co thay doi da theo doi (git status khong rong); untracked thi duoc', async () => {
+  const { dir, cfg, task } = repo();
+  const fake = fakeGrok();
+  try {
+    writeFile(path.join(dir, 'a.txt'), 'a sua chua commit\n');
+    await withGrok(fake, () => assert.rejects(
+      call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', force: true }), /git status/));
+    assert.equal((disk(cfg, task).dispatches || []).length, 0);
+    assert.equal(grokRan(fake), false);
+    assert.equal(fs.existsSync(repOf(dir, task)), false);
+    // da stage cung bi tu choi
+    execFileSync('git', ['add', 'a.txt'], { cwd: dir });
+    await withGrok(fake, () => assert.rejects(
+      call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }), /git status/));
+    assert.equal(grokRan(fake), false);
+    // tra cay ve sach, chi con file untracked: duoc audit
+    execFileSync('git', ['reset', '-q', '--hard'], { cwd: dir });
+    writeFile(path.join(dir, 'moi.txt'), 'untracked\n');
+    await withGrok(fake, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    assert.equal(grokRan(fake), true);
+    assert.equal(disk(cfg, task).dispatches.at(-1).agent, 'grok');
   } finally {
     cleanup(dir);
   }

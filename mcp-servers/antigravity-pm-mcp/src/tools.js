@@ -85,6 +85,28 @@ export function pathspecArgs(pathspec) {
   return parts.length ? ['--', ...parts] : [];
 }
 
+/** grok, grok-4.7, grok-build... la Grok (khong khop "grokx"). */
+const laGrok = (x) => /^grok(?![a-z0-9])/.test(String(x || '').trim().toLowerCase());
+/** Ten agent chuan hoa, cung luat push_gate.normalize_reviewer: grok* -> grok, antigravity(-*) -> antigravity, con lai chu thuong. */
+function normalizeAgent(x) {
+  const v = String(x || '').trim().toLowerCase();
+  if (laGrok(v)) return 'grok';
+  if (v === 'antigravity' || v.startsWith('antigravity-')) return 'antigravity';
+  return v;
+}
+/**
+ * Danh tinh agent goi PM (dot 2 F2, cung luat push_gate.session_agent): DEVKIT_AGENT_ID chuan hoa neu co; khong thi "grok" khi
+ * env co GROK_SESSION_ID / GROK_WORKSPACE_ROOT / GROK_HOOK_EVENT; khong thi "claude" khi CLAUDECODE=1 hoac CLAUDE_CODE_SESSION_ID;
+ * khong thi "" (khong biet).
+ */
+export function callerAgent(env = process.env) {
+  const id = normalizeAgent(env.DEVKIT_AGENT_ID);
+  if (id) return id;
+  if (['GROK_SESSION_ID', 'GROK_WORKSPACE_ROOT', 'GROK_HOOK_EVENT'].some((k) => env[k])) return 'grok';
+  if (env.CLAUDECODE === '1' || env.CLAUDE_CODE_SESSION_ID) return 'claude';
+  return '';
+}
+
 /** Cong chan kem bang chung do duoc tu git ngay luc goi. */
 async function gateNow(cfg, task) {
   return gate(cfg, task, await gateCtx(cfg, task));
@@ -720,6 +742,14 @@ export const TOOLS = [
       if (kind === 'audit' && args.agent === 'grok') {
         // Chu repo 03/11/2026: Grok tam thay Antigravity audit khi agy bi gioi han. Reviewer chi duoc tin vi PM TU chay grok va TU ghi
         // audit-agent.json; sha256 cua file luu vao lan giao de pm_verdict chan ban ghi de tay.
+        // F2: nguoi goi PM la grok thi grok audit viec cua chinh no = tu duyet (force khong bo qua).
+        if (callerAgent() === 'grok') fail('Nguoi goi PM la grok — grok khong audit duoc viec cua chinh no (tu duyet). Nho agent khac audit.');
+        // F5: audit phai dung bytes cua HEAD: cay lam viec co thay doi da theo doi (ke ca da stage) thi tu choi; loi git = tu choi.
+        const st = await run('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: cfg.projectRoot, timeoutMs: 60000 });
+        if (st.spawnFailed || st.timedOut || st.code !== 0) fail(`Khong doc duoc git status cua project (exit ${st.code}${st.timedOut ? ', qua han' : ''}) — khong chay grok.`);
+        if (String(st.stdout).trim()) {
+          fail(`git status --porcelain --untracked-files=no khong rong — cay lam viec khac HEAD, grok se audit bytes chua commit:\n${tail(String(st.stdout).trimEnd(), 20)}\nCommit hoac bo thay doi roi giao lai.`);
+        }
         const grok = grokPath();
         if (!grok) fail(`Khong tim thay grok chay duoc (${process.env.ANTIGRAVITY_PM_GROK || '~/.grok/bin/grok'}). Cai grok hoac tro ANTIGRAVITY_PM_GROK vao dung file.`);
         const head = headCommitOf(cfg.projectRoot);
@@ -851,7 +881,6 @@ export const TOOLS = [
       const lastAuditD = (task.dispatches || []).filter((d) => d.kind === 'audit')
         .reduce((a, d) => (!a || (Date.parse(d.at) || 0) >= (Date.parse(a.at) || 0) ? d : a), null);
       const auditAgent = lastAuditD ? (lastAuditD.agent || 'antigravity') : null;
-      const laGrok = (x) => /^grok(?![a-z0-9])/.test(String(x || '').trim().toLowerCase());
       if (['audit', 'review'].includes(args.kind) && !task.implementDispatchedAt && !(args.kind === 'audit' && coAudit)) {
         fail(`Chua giao trien khai (pm_dispatch kind=implement) — chua co gi de ${args.kind}.`);
       }
@@ -901,10 +930,11 @@ export const TOOLS = [
         if (String(rep.verdict || '').toLowerCase() !== 'pass') fail(`audit-agent.json ghi verdict "${rep.verdict ?? '(thieu)'}", khong phai pass — khong ghi auditedHead.`);
         const repHead = typeof rep.auditedHead === 'string' ? rep.auditedHead : AUDITED_HEAD.exec(String(rep.notes || ''))?.[1];
         if (repHead !== auditedHead) fail(`audit-agent.json ghi auditedHead ${repHead || '(thieu)'}, khac ${auditedHead} — auditor chua audit cay nay.`);
-        // Builder: agent goi PM (DEVKIT_AGENT_ID, mac dinh claude); task da giao implement thi Antigravity cung la builder.
-        const reviewer = typeof rep.reviewer === 'string' ? rep.reviewer.trim().toLowerCase() : '';
-        const builders = [process.env.DEVKIT_AGENT_ID || 'claude', ...(task.implementDispatchedAt ? ['antigravity'] : [])]
-          .map((b) => String(b).trim().toLowerCase());
+        // Builder: agent goi PM (DEVKIT_AGENT_ID, mac dinh claude) va danh tinh doc tu env phien (callerAgent, F2); task da giao
+        // implement thi Antigravity cung la builder. G3: ca builders lan reviewer chuan hoa (grok-4.7, grok-build -> grok) truoc khi so.
+        const reviewer = typeof rep.reviewer === 'string' ? normalizeAgent(rep.reviewer) : '';
+        const builders = [...new Set([normalizeAgent(process.env.DEVKIT_AGENT_ID) || 'claude', callerAgent(),
+          ...(task.implementDispatchedAt ? ['antigravity'] : [])].map(normalizeAgent).filter(Boolean))];
         if (!reviewer) fail('audit-agent.json thieu reviewer — khong biet ai audit, khong ghi auditedHead.');
         if (laGrok(reviewer) && auditAgent !== 'grok') fail(`audit-agent.json ghi reviewer "${rep.reviewer}" nhung lan giao audit gan nhat khong phai grok do PM chay — khong ghi auditedHead.`);
         // Reviewer trung builder (luong /giao: Antigravity build roi audit): van ghi ket luan audit nhung KHONG ghi auditedHead
