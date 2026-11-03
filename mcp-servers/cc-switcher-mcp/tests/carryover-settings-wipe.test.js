@@ -11,7 +11,7 @@ function createTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-switcher-audit-'));
   fs.writeFileSync(
     path.join(dir, 'settings.json'),
-    JSON.stringify({ currentProviderClaude: 'finos' }, null, 2),
+    JSON.stringify({ currentProviderClaude: 'finos_toan' }, null, 2),
   );
   return {
     dir,
@@ -44,9 +44,9 @@ test('switchProfile: an unparsable CC Switch settings.json is left alone, never 
   const tmp = createTempDir();
   try {
     const f = path.join(tmp.dir, 'settings.json');
-    fs.writeFileSync(f, '{ "currentProviderClaude": "finos", "keep": 1, ');   // truncated JSON
-    switchProfile({ stateDir: tmp.dir, target: 'finos_team', nowMs: Date.now(), enforceCooldown: false });
-    assert.equal(fs.readFileSync(f, 'utf8'), '{ "currentProviderClaude": "finos", "keep": 1, ');
+    fs.writeFileSync(f, '{ "currentProviderClaude": "finos_toan", "keep": 1, ');   // truncated JSON
+    switchProfile({ stateDir: tmp.dir, target: 'finos_linh', nowMs: Date.now(), enforceCooldown: false });
+    assert.equal(fs.readFileSync(f, 'utf8'), '{ "currentProviderClaude": "finos_toan", "keep": 1, ');
   } finally {
     tmp.cleanup();
   }

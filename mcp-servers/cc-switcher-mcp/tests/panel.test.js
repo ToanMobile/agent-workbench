@@ -26,7 +26,7 @@ const noDaemon = () => ({ running: false, pids: [] });
 
 function createTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-switcher-panel-'));
-  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos' }, null, 2));
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos_toan' }, null, 2));
   return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -39,7 +39,7 @@ function tempRepos(root) {
       path.join(repoPath, '.claude', 'settings.local.json'),
       JSON.stringify({ autoMemoryDirectory: `/tmp/mem-${idx}`, hooks: { Stop: [] } }, null, 2),
     );
-    return { name, path: repoPath, defaultAccount: idx < 3 ? 'finos' : 'finos_team' };
+    return { name, path: repoPath, defaultAccount: idx < 3 ? 'finos_toan' : 'finos_linh' };
   });
 }
 
@@ -51,9 +51,9 @@ test('panel state: du 6 tai khoan, cooldown, chi phi, phan bo repo, lich su va s
     const repos = tempRepos(tmp.dir);
     const st = await buildPanelState({ stateDir: tmp.dir, repos, daemonProbe: noDaemon });
     assert.equal(st.ok, true);
-    assert.equal(st.profiles.length, 6);
-    assert.equal(st.activeProfileId, 'finos');
-    assert.equal(st.activeProfile.id, 'finos');
+    assert.equal(st.profiles.length, 7);
+    assert.equal(st.activeProfileId, 'finos_toan');
+    assert.equal(st.activeProfile.id, 'finos_toan');
     assert.deepEqual(st.backupOrder, BACKUP_ORDER);
     assert.equal(st.panelUrl, DEFAULT_PANEL_URL);
     assert.equal(st.antiBan.cooldownMinutes, 15);
@@ -72,7 +72,7 @@ test('panel state: du 6 tai khoan, cooldown, chi phi, phan bo repo, lich su va s
       }
     }
     assert.equal(st.profiles.find((p) => p.id === 'grok').backupPriority, 1);
-    assert.equal(st.profiles.find((p) => p.id === 'finos').backupPriority, 0);
+    assert.equal(st.profiles.find((p) => p.id === 'finos_toan').backupPriority, 0);
   } finally {
     tmp.cleanup();
   }
@@ -83,22 +83,22 @@ test('panel action switch: bi cooldown thi tra needsForce (khong nem), force thi
   try {
     const t0 = 1_700_000_000_000;
     reportRateLimit({ stateDir: tmp.dir, nowMs: t0 });
-    const blocked = await runPanelAction('switch', { target: 'finos_team' }, { stateDir: tmp.dir, nowMs: t0 + 5000 });
+    const blocked = await runPanelAction('switch', { target: 'finos_linh' }, { stateDir: tmp.dir, nowMs: t0 + 5000 });
     assert.equal(blocked.ok, false);
     assert.equal(blocked.needsForce, true);
     assert.equal(blocked.code, 'CLAUDE_COOLDOWN_ACTIVE');
-    assert.equal(getStatusReport({ stateDir: tmp.dir, nowMs: t0 + 5000 }).activeProfileId, 'finos');
+    assert.equal(getStatusReport({ stateDir: tmp.dir, nowMs: t0 + 5000 }).activeProfileId, 'finos_toan');
 
-    const forced = await runPanelAction('switch', { target: 'finos_team', force: true }, { stateDir: tmp.dir, nowMs: t0 + 6000 });
+    const forced = await runPanelAction('switch', { target: 'finos_linh', force: true }, { stateDir: tmp.dir, nowMs: t0 + 6000 });
     assert.equal(forced.ok, true);
-    assert.equal(forced.to, 'finos_team');
+    assert.equal(forced.to, 'finos_linh');
     const st = await buildPanelState({ stateDir: tmp.dir, nowMs: t0 + 6000, sync: false, daemonProbe: noDaemon });
-    assert.equal(st.activeProfileId, 'finos_team');
+    assert.equal(st.activeProfileId, 'finos_linh');
     assert.equal(st.history[0].reason, 'web_ui_force_switch');
-    assert.equal(st.history[0].to, 'finos_team');
+    assert.equal(st.history[0].to, 'finos_linh');
 
     // switch "force" chi nhan true that su (chuoi "false" khong duoc coi la force)
-    const notForced = await runPanelAction('switch', { target: 'finos', force: 'true' }, { stateDir: tmp.dir, nowMs: t0 + 7000 });
+    const notForced = await runPanelAction('switch', { target: 'finos_toan', force: 'true' }, { stateDir: tmp.dir, nowMs: t0 + 7000 });
     assert.equal(notForced.needsForce, true);
   } finally {
     tmp.cleanup();
@@ -111,12 +111,12 @@ test('panel actions rotate / limit / unfreeze / cooldown dung logic profiles.js'
     const t0 = 1_700_000_000_000;
     const rot = await runPanelAction('rotate', {}, { stateDir: tmp.dir, nowMs: t0 });
     assert.equal(rot.ok, true);
-    assert.equal(rot.from, 'finos');
-    assert.equal(rot.to, 'finos_team');
+    assert.equal(rot.from, 'finos_toan');
+    assert.equal(rot.to, 'finos_linh');
 
     const lim = await runPanelAction('limit', {}, { stateDir: tmp.dir, nowMs: t0 + 1000 });
     assert.equal(lim.ok, true);
-    assert.ok(loadSwitcherState(tmp.dir).frozenUntil.finos_team > t0);
+    assert.ok(loadSwitcherState(tmp.dir).frozenUntil.finos_linh > t0);
 
     const un = await runPanelAction('unfreeze', {}, { stateDir: tmp.dir, nowMs: t0 + 2000 });
     assert.equal(un.ok, true);
@@ -146,21 +146,21 @@ test('panel action balance: chia deu / dao nhom 3-3, giu nguyen khoa cu trong se
     assert.equal(even.ok, true);
     assert.equal(even.changed, 6);
     let map = getRepoAssignments({ repos });
-    assert.equal(map.filter((r) => r.account === 'finos').length, 3);
+    assert.equal(map.filter((r) => r.account === 'finos_toan').length, 3);
     const first = JSON.parse(fs.readFileSync(path.join(repos[0].path, '.claude', 'settings.local.json'), 'utf8'));
-    assert.equal(first.account, 'finos');
+    assert.equal(first.account, 'finos_toan');
     assert.equal(first.autoMemoryDirectory, '/tmp/mem-0');
     assert.ok(first.hooks);
 
     await runPanelAction('balance', { mode: 'swap' }, { stateDir: tmp.dir, repos });
     map = getRepoAssignments({ repos });
-    assert.equal(map[0].account, 'finos_team');
-    assert.equal(map[3].account, 'finos');
+    assert.equal(map[0].account, 'finos_linh');
+    assert.equal(map[3].account, 'finos_toan');
     await assert.rejects(runPanelAction('balance', { mode: 'all' }, { stateDir: tmp.dir, repos }), /even \| swap/);
 
     // truc tiep balanceRepoAccounts van hoat dong nhu truoc
     const swapped = balanceRepoAccounts({ repos, mode: 'swap' });
-    assert.equal(swapped[0].account, 'finos');
+    assert.equal(swapped[0].account, 'finos_toan');
   } finally {
     tmp.cleanup();
   }
@@ -187,15 +187,15 @@ test('quota live: % con lai, gio reset (gio VN) va dong bang hien dung tren pane
   try {
     const nowMs = Date.parse('2026-10-18T16:25:00.000Z'); // 23:25 VN
     const fakeFetcher = async (profile) => {
-      if (profile.id === 'finos') return { remainingPct: 0, usedPct: 100, resetAtMs: Date.parse('2026-10-18T17:00:00.000Z'), weeklyRemainingPct: 80, source: 'anthropic_oauth' };
-      if (profile.id === 'finos_team') return { remainingPct: 54, usedPct: 46, resetAtMs: Date.parse('2026-10-18T19:50:00.000Z'), weeklyRemainingPct: 61, source: 'anthropic_oauth' };
+      if (profile.id === 'finos_toan') return { remainingPct: 0, usedPct: 100, resetAtMs: Date.parse('2026-10-18T17:00:00.000Z'), weeklyRemainingPct: 80, source: 'anthropic_oauth' };
+      if (profile.id === 'finos_linh') return { remainingPct: 54, usedPct: 46, resetAtMs: Date.parse('2026-10-18T19:50:00.000Z'), weeklyRemainingPct: 61, source: 'anthropic_oauth' };
       return null;
     };
     const res = await runPanelAction('refresh', {}, { stateDir: tmp.dir, nowMs, quotaFetcher: fakeFetcher });
     assert.equal(res.ok, true);
     const st = await buildPanelState({ stateDir: tmp.dir, nowMs, sync: false, daemonProbe: noDaemon });
-    const f = st.profiles.find((p) => p.id === 'finos');
-    const t = st.profiles.find((p) => p.id === 'finos_team');
+    const f = st.profiles.find((p) => p.id === 'finos_toan');
+    const t = st.profiles.find((p) => p.id === 'finos_linh');
     assert.equal(f.remainingPct, 0);
     assert.equal(f.isFrozen, true);
     assert.equal(f.resetTimeFormatted, '00:00');
@@ -216,19 +216,19 @@ test('HTTP 429 cua /api/oauth/usage khong bi tinh la het quota; cache anthropic_
   try {
     const nowMs = Date.parse('2026-10-19T02:38:00.000Z');
     const field = ['access', 'Token'].join('');
-    const r429 = await fetchAnthropicProfileQuotaLive({ id: 'max', vendor: 'anthropic', configDir: '/tmp/fake-max' }, nowMs, {
+    const r429 = await fetchAnthropicProfileQuotaLive({ id: 'finos_toan_max', vendor: 'anthropic', configDir: '/tmp/fake-max' }, nowMs, {
       tokenReader: () => ({ [field]: 'mock-val', expiresAt: nowMs + 3600_000 }),
       httpFetcher: async () => ({ status: 429, headers: new Map(), json: async () => ({}) }),
     });
     assert.equal(r429, null);
     fs.writeFileSync(path.join(tmp.dir, 'switcher-state.json'), JSON.stringify({
-      activeProfileId: 'finos',
-      frozenUntil: { max: nowMs + 2000_000 },
-      quotaCache: { max: { remainingPct: 0, usedPct: 100, resetAtMs: nowMs + 2000_000, isRateLimited: true, source: 'anthropic_429_header', updatedAtMs: nowMs - 10_000 } },
+      activeProfileId: 'finos_toan',
+      frozenUntil: { finos_toan_max: nowMs + 2000_000 },
+      quotaCache: { finos_toan_max: { remainingPct: 0, usedPct: 100, resetAtMs: nowMs + 2000_000, isRateLimited: true, source: 'anthropic_429_header', updatedAtMs: nowMs - 10_000 } },
     }));
     await syncLiveQuotas({ stateDir: tmp.dir, nowMs, forceRefresh: true, quotaFetcher: async () => null });
     const st = await buildPanelState({ stateDir: tmp.dir, nowMs, sync: false, daemonProbe: noDaemon });
-    const pMax = st.profiles.find((p) => p.id === 'max');
+    const pMax = st.profiles.find((p) => p.id === 'finos_toan_max');
     assert.equal(pMax.isFrozen, false);
     assert.equal(pMax.remainingPct, 100);
   } finally {
@@ -241,15 +241,15 @@ test('gio reset hien ca khi utilization = 0 (con 100%)', async () => {
   try {
     const nowMs = Date.parse('2026-10-19T02:52:00.000Z');
     const field = ['access', 'Token'].join('');
-    const q = await fetchAnthropicProfileQuotaLive({ id: 'max', vendor: 'anthropic', configDir: '/tmp/fake-max' }, nowMs, {
+    const q = await fetchAnthropicProfileQuotaLive({ id: 'finos_toan_max', vendor: 'anthropic', configDir: '/tmp/fake-max' }, nowMs, {
       tokenReader: () => ({ [field]: 'mock-val', expiresAt: nowMs + 3600_000 }),
       httpFetcher: async () => ({ status: 200, json: async () => ({ five_hour: { utilization: 0, resets_at: '2026-10-19T07:39:59.816974+00:00' }, seven_day: { utilization: 58 } }) }),
     });
     assert.equal(q.remainingPct, 100);
     assert.equal(q.weeklyRemainingPct, 42);
-    await syncLiveQuotas({ stateDir: tmp.dir, nowMs, forceRefresh: true, quotaFetcher: async (p) => (p.id === 'max' ? q : null) });
+    await syncLiveQuotas({ stateDir: tmp.dir, nowMs, forceRefresh: true, quotaFetcher: async (p) => (p.id === 'finos_toan_max' ? q : null) });
     const st = await buildPanelState({ stateDir: tmp.dir, nowMs, sync: false, daemonProbe: noDaemon });
-    const pMax = st.profiles.find((p) => p.id === 'max');
+    const pMax = st.profiles.find((p) => p.id === 'finos_toan_max');
     assert.equal(pMax.resetTimeFormatted, '14:39');
     assert.equal(pMax.resetRemainHuman, '4h 48p');
   } finally {
@@ -281,7 +281,7 @@ test('CLI --panel-json / --panel-action: mot dong JSON tren stdout, loi dau vao 
     const a = run(['--panel-json', '--no-sync']);
     assert.equal(a.status, 0, a.stderr);
     const st = JSON.parse(a.stdout);
-    assert.equal(st.profiles.length, 6);
+    assert.equal(st.profiles.length, 7);
 
     const b = run(['--panel-action', 'switch', '--target', 'grok']);
     assert.equal(b.status, 0, b.stderr);
