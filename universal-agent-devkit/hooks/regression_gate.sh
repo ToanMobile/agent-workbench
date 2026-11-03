@@ -38,9 +38,12 @@
 # 2026-09-28: 100 of 214 blocks re-ran the suites on unchanged content). Not re-used: a block
 # with an edited existing test (cleared by the user's answer, not by the tree) or a BUSY item.
 # The reminder that follows such an edit ("waiting for a person to review the test diff", never a block)
-# is re-used by the SAME session for REGRESSION_GATE_TOUCHED_RECHECK_S seconds (default 300; 0 = run the
-# gate on every Stop) on the same content, without running the gate (OfficeReader 2026-10-08: 58 of 71
-# Stop runs, 31-37 s each); a BUSY suite, another session, other content or a new commit never re-use it.
+# is re-used by the SAME session on the same content AND the same approval sources (bin/approval_digest.py: the
+# ledger, approved_hashes.json, the antigravity-pm audit records the ledger and trailers name, the answers of the user
+# that name a changed file, the trunk tip), without running the gate (OfficeReader 2026-10-08: 58 of 71 Stop runs,
+# 31-37 s each; 03/11: 36 repeats a day after the old 300 s window ran out, ~47 s each). Ceiling: REGRESSION_GATE_TOUCHED_RECHECK_S
+# when set, else DEVKIT_GATE_CACHE_MAX_S (default 21600 s); 0 = run the gate on every Stop. A BUSY suite, another session,
+# other content, a new commit, a moved approval source or a digest that cannot be computed never re-use it.
 # REGRESSION_GATE_TOUCHED_RECHECK_S=0 runs the GATE on every Stop (the answer of the user and the verdict are judged again) but it does not start a
 # suite that already passed on the same content: the gate keeps the suites a Stop run passed (budget_pass.json, bin/post-fix-gate.py) and the next
 # run on identical inputs re-uses them, for DEVKIT_GATE_CACHE_MAX_S seconds (default 21600, i.e. 6 h). A suite that starts to fail on unchanged
@@ -746,19 +749,36 @@ if _sk_fp is not None and state.get("untested_fp") == _sk_fp:
 # An edited existing test that only a person can clear (the "tests-touched reminder" at the end): the
 # gate result of this session for this exact content is known, so a repeat Stop prints the stored
 # reminder and does not run the gate. 2026-10-08, OfficeReader (10 sessions in one checkout): 58 of 71
-# Stop gate runs in 17 h were this repeat, 31-37 s each. The gate runs again after
-# REGRESSION_GATE_TOUCHED_RECHECK_S (300 s, 0 = every stop), so the answer of the user still clears it. Runs again = judges again
+# Stop gate runs in 17 h were this repeat, 31-37 s each. The gate runs again as soon as an approval source moves (approval_digest
+# below: the answer of the user, a ledger entry, a PM verdict that lands later), and at the latest after the ceiling
+# (REGRESSION_GATE_TOUCHED_RECHECK_S when set, else DEVKIT_GATE_CACHE_MAX_S, 21600 s; 0 = every stop). 03/11: the old fixed 300 s
+# window re-ran the gate 36 times a day on unchanged content and sources, ~47 s each. Runs again = judges again
 # (static audits, edited tests, the answer of the user), nothing more: since 2026-10-15 it starts no suite that already passed on this content (the
 # budget_pass.json record of bin/post-fix-gate.py, DEVKIT_GATE_CACHE_MAX_S, default 21600 s = 6 h), so REGRESSION_GATE_TOUCHED_RECHECK_S=0 does not
 # re-check suites either; DEVKIT_GATE_CACHE=0 does.
 # Never reused: by another session, for other content or another commit range (the key holds fp, which
 # also names verified_head..HEAD, and the tree fingerprint), after a run that was not this outcome, or
 # when the reminder came with a BUSY suite. Limit: gitignored files the gate reads (proof images under
-# reports/ and .claude/audit-gate/) are outside the key, as they already are for pass_fp; the window bounds it.
+# reports/ and .claude/audit-gate/) are outside the key, as they already are for pass_fp; the ceiling bounds it.
+# The approval digest is computed ONCE, before the run, and stored with the reminder: a source that moves while the gate runs
+# (the gate itself rewrites approved_hashes.json) costs one more run, never a reminder that hides a source the gate never judged.
+_cap_raw = os.environ.get("REGRESSION_GATE_TOUCHED_RECHECK_S")
 try:
-    _recheck_s = float(os.environ.get("REGRESSION_GATE_TOUCHED_RECHECK_S", "300"))
+    _recheck_s = float(_cap_raw if _cap_raw is not None and _cap_raw.strip()
+                       else (os.environ.get("DEVKIT_GATE_CACHE_MAX_S") or "21600"))
 except ValueError:
-    _recheck_s = 300.0
+    _recheck_s = 0.0      # garbage: no reuse, the gate runs (nan compares False below: the same)
+_adig = None
+if _tkey is not None:
+    try:
+        sys.path.insert(0, os.path.dirname(gate))
+        import approval_digest
+        _hself = os.environ.get("HOOK_SELF", "")
+        _adig = approval_digest.digest(repo, str(data.get("transcript_path") or ""), status.decode("utf-8", "surrogateescape"), commit_base,
+                                       (gate, _hself, os.path.join(os.path.dirname(_hself), "devkit_harness.py") if _hself else ""))
+    except Exception as e:
+        note("approval digest failed (the reminder is not reused): %r" % e)
+        _adig = None
 _t = state["touched"].get(sid) if isinstance(state.get("touched"), dict) else None
 if _recheck_s > 0 and _tkey is not None and isinstance(_t, dict) and _t.get("key") == _tkey \
         and isinstance(_t.get("lines"), list):
@@ -766,7 +786,11 @@ if _recheck_s > 0 and _tkey is not None and isinstance(_t, dict) and _t.get("key
         _age = time.time() - float(_t.get("at"))
     except (TypeError, ValueError, OverflowError):
         _age = -1.0
-    if 0 <= _age < _recheck_s:
+    if not (0 <= _age < _recheck_s):
+        note(f"tests-touched reminder fp={fp}: past the ceiling ({_recheck_s:.0f} s), the gate runs")
+    elif _adig is None or _t.get("adig") != _adig:
+        note(f"tests-touched reminder fp={fp}: approval sources moved or unknown, the gate runs")
+    else:
         note(f"tests-touched reminder fp={fp} (reused, no run)")
         remind(_t["lines"])
         sys.exit(0)
@@ -1053,7 +1077,7 @@ if res.returncode == 2 and touched and not failing and not problem and not uncov
     if _tkey is not None and not busy:     # a BUSY suite has not run: its line must not outlive the lock
         if not isinstance(state.get("touched"), dict):
             state["touched"] = {}
-        state["touched"][sid] = {"key": _tkey, "lines": lines[1:], "at": time.time()}
+        state["touched"][sid] = {"key": _tkey, "lines": lines[1:], "at": time.time(), "adig": _adig}
     if state.get("touched_fp") == fp:
         save_state()
         note(f"tests-touched reminder fp={fp}")
