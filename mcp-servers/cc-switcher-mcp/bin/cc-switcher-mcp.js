@@ -60,6 +60,18 @@ if (argv.includes('--panel-json') || argv.includes('--panel-action')) {
   }
 }
 
+// Doi id 4 tai khoan tren may (ghim account cua cac repo + switcher-state.json). --dry-run chi in ke hoach, khong ghi gi.
+if (argv.includes('--migrate-ids')) {
+  const { migrateIds } = await import('../src/migrate-ids.js');
+  try {
+    process.stdout.write(`${JSON.stringify({ ok: true, ...migrateIds({ stateDir: argValue('--state-dir'), dryRun: argv.includes('--dry-run') }) })}\n`);
+    process.exit(0);
+  } catch (err) {
+    process.stdout.write(`${JSON.stringify({ ok: false, code: err?.code || 'INTERNAL_ERROR', error: err?.message || String(err) })}\n`);
+    process.exit(1);
+  }
+}
+
 const { main } = await import('../src/server.js');
 const { TOOLS_BY_NAME } = await import('../src/tools.js');
 const { startSwitcherDaemon } = await import('../src/daemon.js');
@@ -81,20 +93,22 @@ process.on('uncaughtException', (err) => {
 });
 
 if (argv.includes('--help') || argv.includes('-h')) {
-  process.stdout.write(`cc-switcher-mcp — MCP Server & Auto-Switcher Daemon chong ban cho 6 profile CC Switch
+  process.stdout.write(`cc-switcher-mcp — MCP Server & Auto-Switcher Daemon chong ban cho 7 profile CC Switch
 
 Cach dung:
   (khong tham so)           Chay MCP server qua giao thuc stdio
   --daemon                  Chay Daemon theo doi log 429 & gui canh bao Telegram (dieu khien qua web /cc-switcher)
-  --doctor / --status       In trang thai 6 profile, Cooldown va thong ke token/chi phi
-  --switch <1..6|id>        Chuyen nhanh sang profile chi dinh
+  --doctor / --status       In trang thai 7 profile, Cooldown va thong ke token/chi phi
+  --switch <1..7|id>        Chuyen nhanh sang profile chi dinh
   --rotate                  Xoay vong sang profile an toan tiep theo
   --panel-json              In JSON trang thai cho bang dieu khien web (Agent Office /cc-switcher)
       [--refresh] [--no-sync] [--state-dir <dir>]
   --panel-action <ten>      Thuc hien thao tac tu bang dieu khien web, in JSON ket qua
       ten: refresh | switch --target <id> [--force] | rotate | limit | unfreeze | balance --mode even|swap | cooldown --minutes <0..1440>
-            | repo_assign --repo <path> --account <finos|finos_team|max>
+            | repo_assign --repo <path> --account <finos_toan|finos_linh|finos_toan_max|finos_lua>
             | repo_add --repo <path> --account <id> [--name <ten>] | repo_remove --repo <path>
+  --migrate-ids             Doi id cu (finos, finos_team, max, antigravity) sang id moi trong ghim account cua repo va state
+      [--dry-run] [--state-dir <dir>]   (khong doi ten thu muc ~/.claude-*, khong cham ~/.zshrc va cc-switch.db)
   --tools                   Liet ke danh sach MCP tools
   --help                    Hien thi tro giup
 `);

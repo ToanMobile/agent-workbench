@@ -885,9 +885,16 @@ ACCOUNT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 CONFIG_DIR_RE = re.compile(r"^\.claude(?:-([A-Za-z0-9][A-Za-z0-9._-]{0,63}))?$")
 
 
+# 4 tài khoản đã đổi tên (cc-switcher); thư mục ~/.claude-finos... giữ nguyên nên tên suy từ thư mục/log cũ đổi sang tên mới khi hiển thị.
+LEGACY_ACCOUNT_IDS = {"finos": "finos_toan", "finos_team": "finos_linh", "max": "finos_toan_max", "antigravity": "antigravity_ultra"}
+
+
 def safe_account(name):
-    """Tên hồ sơ của account pool (finos, finos_team, max…); chuỗi lạ (có dấu cách, =, /, quá dài) thì None, không đưa ra API."""
-    return name if isinstance(name, str) and ACCOUNT_NAME_RE.match(name) else None
+    """Tên hồ sơ của account pool (finos_toan, finos_linh, finos_toan_max…; tên cũ finos, finos_team, max đổi sang tên mới);
+    chuỗi lạ (có dấu cách, =, /, quá dài) thì None, không đưa ra API."""
+    if not (isinstance(name, str) and ACCOUNT_NAME_RE.match(name)):
+        return None
+    return LEGACY_ACCOUNT_IDS.get(name, name)
 
 
 def account_of_config_dir(path):
@@ -899,7 +906,7 @@ def account_of_config_dir(path):
     m = CONFIG_DIR_RE.match(base)
     if not m:
         return None, None
-    return m.group(1), base
+    return safe_account(m.group(1)), base
 
 
 def session_account(s: dict, accounts=None):
@@ -907,7 +914,7 @@ def session_account(s: dict, accounts=None):
     Phiên không có dòng đó (điều phối, gõ tay): đoán từ thư mục cấu hình chứa transcript (~/.claude-finos/projects/… → finos)."""
     hit = (accounts or {}).get(s.get("id")) if not s.get("subagent") else None
     if hit:
-        return {"account": hit.get("account"), "configDir": hit.get("configDir")}
+        return {"account": safe_account(hit.get("account")), "configDir": hit.get("configDir")}
     if s.get("account") or s.get("configDir"):  # demo / phiên đã gắn sẵn
         acc = safe_account(s.get("account"))
         cdir = account_of_config_dir(s.get("configDir"))[1]
@@ -2763,8 +2770,10 @@ def open_phone_tunnel(state_dir: str) -> str:
 # Chỉ phục vụ chính máy Mac: qua tunnel điện thoại (kể cả có key) trả 403, vì trang đổi được tài khoản Claude.
 CC_ACTIONS = {"refresh", "switch", "rotate", "limit", "unfreeze", "balance", "cooldown",
               "repo_assign", "repo_add", "repo_remove"}
-CC_CLAUDE_ACCOUNTS = {"finos", "finos_team", "max"}   # repo chỉ gán được tài khoản Claude (CLAUDE_CONFIG_DIR=~/.claude-<id>)
-CC_PROFILES = {"finos", "finos_team", "max", "antigravity", "antigravity_pro", "grok"}
+# repo chỉ gán được tài khoản Claude; id cũ (finos, finos_team, max, antigravity) vẫn nhận làm bí danh, cc-switcher-mcp chuẩn hoá sang id mới
+CC_CLAUDE_ACCOUNTS = {"finos_toan", "finos_linh", "finos_toan_max", "finos_lua", "finos", "finos_team", "max"}
+CC_PROFILES = {"finos_toan", "finos_linh", "finos_toan_max", "antigravity_ultra", "antigravity_pro", "grok", "finos_lua",
+               "finos", "finos_team", "max", "antigravity"}
 CC_BALANCE_MODES = {"even", "swap"}
 _cc_lock = threading.Lock()   # một thao tác ghi một lúc: bấm hai nút liền không ghi chồng switcher-state.json
 
@@ -2812,7 +2821,7 @@ def cc_switcher_args(body: dict) -> list:
         if action != "repo_remove":
             account = body.get("account")
             if account not in CC_CLAUDE_ACCOUNTS:
-                raise ValueError("Repo chỉ gán được tài khoản Claude: finos, finos_team, max")
+                raise ValueError("Repo chỉ gán được tài khoản Claude: finos_toan, finos_linh, finos_toan_max, finos_lua")
             args += ["--account", account]
         if action == "repo_add" and body.get("name") not in (None, ""):
             name = body.get("name")

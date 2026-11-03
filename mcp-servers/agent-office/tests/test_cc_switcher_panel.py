@@ -106,8 +106,8 @@ class CcSwitcherPanel(unittest.TestCase):
         self.assertEqual(code, 200, raw[:300])
         st = json.loads(raw)
         self.assertTrue(st["ok"])
-        self.assertEqual(len(st["profiles"]), 6)
-        self.assertEqual(st["activeProfileId"], "finos")
+        self.assertEqual(len(st["profiles"]), 7)
+        self.assertEqual(st["activeProfileId"], "finos_toan")
         self.assertTrue(st["health"]["telegram"]["configured"])
         text = raw.decode("utf-8")
         self.assertNotIn(SECRET, text)
@@ -144,7 +144,7 @@ class CcSwitcherPanel(unittest.TestCase):
         code, _ = self.req("GET", "/api/cc-switcher/state", host="evil.example")
         self.assertEqual(code, 403)
         st = json.loads(self.req("GET", "/api/cc-switcher/state")[1])
-        self.assertEqual(st["activeProfileId"], "finos")
+        self.assertEqual(st["activeProfileId"], "finos_toan")
 
 
     def settings(self):
@@ -156,18 +156,18 @@ class CcSwitcherPanel(unittest.TestCase):
         self.assertEqual(code, 200, raw[:300])
         res = json.loads(raw)
         rows = res["state"]["repoAssignments"]
-        self.assertEqual([(r["name"], r["path"], r["account"]) for r in rows], [("Demo Repo", self.repo, "finos")])
+        self.assertEqual([(r["name"], r["path"], r["account"]) for r in rows], [("Demo Repo", self.repo, "finos_toan")])
         row = rows[0]
         for k in ("group", "effective", "differs", "worktrees", "lastUsedAtMs", "lastUsedAccount", "pinnedInFile"):
             self.assertIn(k, row)
         self.assertEqual(row["effective"]["kind"], "assigned")
-        self.assertEqual(res["state"]["claudeAccounts"], ["finos", "finos_team", "max"])
+        self.assertEqual(res["state"]["claudeAccounts"], ["finos_toan", "finos_linh", "finos_toan_max", "finos_lua"])
 
         code, raw = self.post({"action": "repo_assign", "repo": self.repo, "account": "max"})
         self.assertEqual(code, 200, raw[:300])
-        self.assertEqual(self.settings(), {"hooks": {"Stop": []}, "account": "max"})
+        self.assertEqual(self.settings(), {"hooks": {"Stop": []}, "account": "finos_toan_max"})
         st = json.loads(self.req("GET", "/api/cc-switcher/state")[1])
-        self.assertEqual(st["repoAssignments"][0]["account"], "max")
+        self.assertEqual(st["repoAssignments"][0]["account"], "finos_toan_max")
 
         for bad in ({"action": "repo_assign", "repo": self.repo, "account": "grok"},
                     {"action": "repo_assign", "repo": "relative/path", "account": "finos"},
@@ -177,7 +177,7 @@ class CcSwitcherPanel(unittest.TestCase):
                     {"action": "repo_remove"}):
             code, _ = self.post(bad)
             self.assertEqual(code, 400, bad)
-        self.assertEqual(self.settings()["account"], "max")
+        self.assertEqual(self.settings()["account"], "finos_toan_max")
 
         # ghi repo cũng phải có header và chỉ từ máy Mac
         code, _ = self.req("POST", "/api/cc-switcher/action", body={"action": "repo_remove", "repo": self.repo})
@@ -185,7 +185,7 @@ class CcSwitcherPanel(unittest.TestCase):
         code, _ = self.post({"action": "repo_remove", "repo": self.repo}, host="abc.trycloudflare.com",
                             headers={**TUNNEL, "X-Agent-Office-Key": KEY})
         self.assertEqual(code, 403)
-        self.assertEqual(self.settings()["account"], "max")
+        self.assertEqual(self.settings()["account"], "finos_toan_max")
 
         code, raw = self.post({"action": "repo_remove", "repo": self.repo})
         self.assertEqual(code, 200, raw[:300])

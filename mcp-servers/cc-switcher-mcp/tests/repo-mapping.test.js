@@ -26,7 +26,7 @@ function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-switcher-repos-'));
   const stateDir = path.join(root, 'state');
   fs.mkdirSync(stateDir);
-  fs.writeFileSync(path.join(stateDir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos' }));
+  fs.writeFileSync(path.join(stateDir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos_toan' }));
   // defaults:false -> khong co 6 repo that trong danh sach
   fs.writeFileSync(path.join(stateDir, 'repos.json'), JSON.stringify({ custom: [], hidden: [], defaults: false }));
   const mkRepo = (name, settings) => {
@@ -38,7 +38,7 @@ function setup() {
     }
     return p;
   };
-  const homes = { finos: path.join(root, 'h-finos'), finos_team: path.join(root, 'h-team'), max: path.join(root, 'h-max') };
+  const homes = { finos_toan: path.join(root, 'h-finos'), finos_linh: path.join(root, 'h-team'), finos_toan_max: path.join(root, 'h-max') };
   return { root, stateDir, mkRepo, homes, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 const readSettings = (p) => JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.local.json'), 'utf8'));
@@ -67,18 +67,18 @@ test('listKnownRepos: truyen repos ma khong truyen stateDir thi khong tron danh 
 test('panel state: hang repo co nhom, duong dan, tai khoan gan, tai khoan thuc te, worktree, lan dung cuoi', async () => {
   const t = setup();
   try {
-    const a = t.mkRepo('alpha', { account: 'finos', hooks: {} });
+    const a = t.mkRepo('alpha', { account: 'finos_toan', hooks: {} });
     const b = t.mkRepo('beta', { hooks: {} });
-    const c = t.mkRepo('gamma', { account: 'max' });
+    const c = t.mkRepo('gamma', { account: 'finos_toan_max' });
     for (const p of [a, b, c]) addRepoRaw(t.stateDir, p);
     // worktree git cua alpha
     const wt = path.join(t.root, 'code', 'alpha-wt');
     fs.mkdirSync(path.join(a, '.git', 'worktrees', 'alpha-wt'), { recursive: true });
     fs.writeFileSync(path.join(a, '.git', 'worktrees', 'alpha-wt', 'gitdir'), `${wt}/.git\n`);
     // phien Claude: alpha dung qua finos_team (worktree .claude) moi hon finos
-    const old = path.join(t.homes.finos, 'projects', claudeProjectKey(a));
-    const newer = path.join(t.homes.finos_team, 'projects', `${claudeProjectKey(a)}--claude-worktrees-issue-1`);
-    const other = path.join(t.homes.max, 'projects', `${claudeProjectKey(a)}-other`); // repo khac ten gan giong: bo qua
+    const old = path.join(t.homes.finos_toan, 'projects', claudeProjectKey(a));
+    const newer = path.join(t.homes.finos_linh, 'projects', `${claudeProjectKey(a)}--claude-worktrees-issue-1`);
+    const other = path.join(t.homes.finos_toan_max, 'projects', `${claudeProjectKey(a)}-other`); // repo khac ten gan giong: bo qua
     for (const d of [old, newer, other]) fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(old, 's1.jsonl'), '{}');
     fs.writeFileSync(path.join(newer, 's2.jsonl'), '{}');
@@ -89,24 +89,24 @@ test('panel state: hang repo co nhom, duong dan, tai khoan gan, tai khoan thuc t
     fs.utimesSync(path.join(other, 's3.jsonl'), tOther, tOther);
     // max cham 429 -> gamma tam chay khac hang (Grok)
     const nowMs = Date.parse('2026-10-31T04:00:00Z');
-    reportRateLimit({ stateDir: t.stateDir, profileId: 'max', nowMs });
+    reportRateLimit({ stateDir: t.stateDir, profileId: 'finos_toan_max', nowMs });
 
     const st = await buildPanelState({ stateDir: t.stateDir, nowMs, sync: false, daemonProbe: noDaemon, claudeHomes: t.homes });
-    assert.deepEqual(st.claudeAccounts, ['finos', 'finos_team', 'max']);
+    assert.deepEqual(st.claudeAccounts, ['finos_toan', 'finos_linh', 'finos_toan_max', 'finos_lua']);
     const row = (n) => st.repoAssignments.find((r) => r.name === n);
     assert.equal(st.repoAssignments.length, 3);
 
     const ra = row('alpha');
     assert.equal(ra.path, a);
-    assert.equal(ra.account, 'finos');
+    assert.equal(ra.account, 'finos_toan');
     assert.equal(ra.pinnedInFile, true);
     assert.equal(ra.group, 'Tự thêm');
     assert.equal(ra.effective.kind, 'assigned');
-    assert.equal(ra.effective.account, 'finos');
+    assert.equal(ra.effective.account, 'finos_toan');
     assert.equal(ra.differs, false);
     assert.deepEqual(ra.worktrees, [wt]);
     assert.equal(ra.lastUsedAtMs, tNew.getTime());
-    assert.equal(ra.lastUsedAccount, 'finos_team');
+    assert.equal(ra.lastUsedAccount, 'finos_linh');
 
     const rb = row('beta');
     assert.equal(rb.pinnedInFile, false);
@@ -134,12 +134,12 @@ function addRepoRaw(stateDir, p) {
 
 test('effectiveRepoAccount: thieu thu muc, account la, tat ca du phong khoa', () => {
   const byId = {
-    finos: { id: 'finos', isFrozen: true, shortLabel: 'FinOS', resetTimeFormatted: '15:00' },
-    grok: { id: 'grok', isFrozen: true }, antigravity: { id: 'antigravity', isFrozen: true }, antigravity_pro: { id: 'antigravity_pro', isFrozen: true },
+    finos_toan: { id: 'finos_toan', isFrozen: true, shortLabel: 'FinOS', resetTimeFormatted: '15:00' },
+    grok: { id: 'grok', isFrozen: true }, antigravity_ultra: { id: 'antigravity_ultra', isFrozen: true }, antigravity_pro: { id: 'antigravity_pro', isFrozen: true },
   };
   assert.equal(effectiveRepoAccount({ pathExists: false }, byId).kind, 'missing');
   assert.equal(effectiveRepoAccount({ pathExists: true, pinnedInFile: true, account: 'zzz' }, byId).kind, 'unknown');
-  const e = effectiveRepoAccount({ pathExists: true, pinnedInFile: true, account: 'finos' }, byId);
+  const e = effectiveRepoAccount({ pathExists: true, pinnedInFile: true, account: 'finos_toan' }, byId);
   assert.equal(e.kind, 'blocked');
   assert.match(e.note, /15:00/);
 });
@@ -147,27 +147,27 @@ test('effectiveRepoAccount: thieu thu muc, account la, tat ca du phong khoa', ()
 test('repo_assign: ghi account, giu khoa khac; chi tai khoan Claude; repo la bi tu choi', async () => {
   const t = setup();
   try {
-    const a = t.mkRepo('alpha', { account: 'finos', hooks: { Stop: [] }, autoMemoryDirectory: '/tmp/m' });
+    const a = t.mkRepo('alpha', { account: 'finos_toan', hooks: { Stop: [] }, autoMemoryDirectory: '/tmp/m' });
     addRepoRaw(t.stateDir, a);
-    const res = await runPanelAction('repo_assign', { repo: a, account: 'max' }, { stateDir: t.stateDir });
+    const res = await runPanelAction('repo_assign', { repo: a, account: 'finos_toan_max' }, { stateDir: t.stateDir });
     assert.equal(res.ok, true);
-    assert.equal(res.repo.previous, 'finos');
+    assert.equal(res.repo.previous, 'finos_toan');
     assert.match(res.message, /alpha/);
     const s = readSettings(a);
-    assert.equal(s.account, 'max');
+    assert.equal(s.account, 'finos_toan_max');
     assert.deepEqual(s.hooks, { Stop: [] });
     assert.equal(s.autoMemoryDirectory, '/tmp/m');
-    assert.equal(getRepoAssignments({ stateDir: t.stateDir })[0].account, 'max');
+    assert.equal(getRepoAssignments({ stateDir: t.stateDir })[0].account, 'finos_toan_max');
 
     await assert.rejects(runPanelAction('repo_assign', { repo: a, account: 'grok' }, { stateDir: t.stateDir }), (e) => e.code === 'INVALID_INPUT');
-    await assert.rejects(runPanelAction('repo_assign', { repo: '/etc', account: 'finos' }, { stateDir: t.stateDir }), /không nằm trong danh sách/);
-    await assert.rejects(runPanelAction('repo_assign', { account: 'finos' }, { stateDir: t.stateDir }), /Thiếu đường dẫn/);
-    assert.equal(readSettings(a).account, 'max');
+    await assert.rejects(runPanelAction('repo_assign', { repo: '/etc', account: 'finos_toan' }, { stateDir: t.stateDir }), /không nằm trong danh sách/);
+    await assert.rejects(runPanelAction('repo_assign', { account: 'finos_toan' }, { stateDir: t.stateDir }), /Thiếu đường dẫn/);
+    assert.equal(readSettings(a).account, 'finos_toan_max');
     // repo chua co .claude: tao file moi
     const b = t.mkRepo('beta', null);
     addRepoRaw(t.stateDir, b);
-    setRepoAccount({ stateDir: t.stateDir, repoPath: b, account: 'finos_team' });
-    assert.deepEqual(readSettings(b), { account: 'finos_team' });
+    setRepoAccount({ stateDir: t.stateDir, repoPath: b, account: 'finos_linh' });
+    assert.deepEqual(readSettings(b), { account: 'finos_linh' });
   } finally { t.cleanup(); }
 });
 
@@ -178,20 +178,20 @@ test('repo_add / repo_remove: chi them thu muc git that, khong trung; go thi xoa
     const notGit = path.join(t.root, 'plain');
     fs.mkdirSync(notGit);
     const opts = { stateDir: t.stateDir };
-    await assert.rejects(runPanelAction('repo_add', { repo: 'relative/x', account: 'finos' }, opts), /tuyệt đối/);
-    await assert.rejects(runPanelAction('repo_add', { repo: notGit, account: 'finos' }, opts), /không phải Git repo/);
-    await assert.rejects(runPanelAction('repo_add', { repo: path.join(t.root, 'nope'), account: 'finos' }, opts), /Không thấy thư mục/);
-    await assert.rejects(runPanelAction('repo_add', { repo: a, account: 'antigravity' }, opts), /tài khoản Claude/);
-    await assert.rejects(runPanelAction('repo_add', { repo: a, account: 'finos', name: '<script>' }, opts), /Tên repo/);
-    await assert.rejects(runPanelAction('repo_add', { repo: '/', account: 'finos' }, opts), /không phải \/ hay thư mục home/);
+    await assert.rejects(runPanelAction('repo_add', { repo: 'relative/x', account: 'finos_toan' }, opts), /tuyệt đối/);
+    await assert.rejects(runPanelAction('repo_add', { repo: notGit, account: 'finos_toan' }, opts), /không phải Git repo/);
+    await assert.rejects(runPanelAction('repo_add', { repo: path.join(t.root, 'nope'), account: 'finos_toan' }, opts), /Không thấy thư mục/);
+    await assert.rejects(runPanelAction('repo_add', { repo: a, account: 'antigravity_ultra' }, opts), /tài khoản Claude/);
+    await assert.rejects(runPanelAction('repo_add', { repo: a, account: 'finos_toan', name: '<script>' }, opts), /Tên repo/);
+    await assert.rejects(runPanelAction('repo_add', { repo: '/', account: 'finos_toan' }, opts), /không phải \/ hay thư mục home/);
 
-    const added = await runPanelAction('repo_add', { repo: `${a}/`, account: 'finos_team', name: 'Alpha App' }, opts);
+    const added = await runPanelAction('repo_add', { repo: `${a}/`, account: 'finos_linh', name: 'Alpha App' }, opts);
     assert.equal(added.ok, true);
-    assert.equal(readSettings(a).account, 'finos_team');
+    assert.equal(readSettings(a).account, 'finos_linh');
     let reg = loadRepoRegistry(t.stateDir);
     assert.deepEqual(reg.custom.map((r) => [r.name, r.path]), [['Alpha App', a]]);
     assert.equal(reg.defaults, false);
-    await assert.rejects(runPanelAction('repo_add', { repo: a, account: 'finos' }, opts), /đã có trong danh sách/);
+    await assert.rejects(runPanelAction('repo_add', { repo: a, account: 'finos_toan' }, opts), /đã có trong danh sách/);
 
     const removed = await runPanelAction('repo_remove', { repo: a }, opts);
     assert.equal(removed.ok, true);
@@ -208,18 +208,18 @@ test('go repo mac dinh -> an (hidden), them lai -> hien lai; dung repos truyen v
   const t = setup();
   try {
     fs.writeFileSync(path.join(t.stateDir, 'repos.json'), JSON.stringify({ custom: [], hidden: [] }));
-    const a = t.mkRepo('alpha', { account: 'finos', keep: 1 });
-    const repos = [{ name: 'alpha', path: a, defaultAccount: 'finos' }];
+    const a = t.mkRepo('alpha', { account: 'finos_toan', keep: 1 });
+    const repos = [{ name: 'alpha', path: a, defaultAccount: 'finos_toan' }];
     removeRepo({ stateDir: t.stateDir, repos, repoPath: a });
     assert.deepEqual(loadRepoRegistry(t.stateDir).hidden, [a]);
     assert.equal(listKnownRepos({ stateDir: t.stateDir, repos }).length, 0);
     assert.deepEqual(readSettings(a), { keep: 1 });
-    addRepo({ stateDir: t.stateDir, repos, repoPath: a, account: 'max' });
+    addRepo({ stateDir: t.stateDir, repos, repoPath: a, account: 'finos_toan_max' });
     const reg = loadRepoRegistry(t.stateDir);
     assert.deepEqual(reg.hidden, []);
     assert.equal(reg.custom.length, 0);
     assert.equal(listKnownRepos({ stateDir: t.stateDir, repos })[0].source, 'default');
-    assert.equal(readSettings(a).account, 'max');
+    assert.equal(readSettings(a).account, 'finos_toan_max');
   } finally { t.cleanup(); }
 });
 
@@ -229,15 +229,15 @@ test('CLI --panel-action repo_add / repo_assign / repo_remove voi --state-dir ta
     const a = t.mkRepo('alpha', { hooks: {} });
     const env = { ...process.env, CC_SWITCHER_QUIET: '1' };
     const run = (args) => spawnSync(process.execPath, [BIN, ...args, '--state-dir', t.stateDir], { env, encoding: 'utf8', timeout: 20000 });
-    let r = run(['--panel-action', 'repo_add', '--repo', a, '--account', 'finos', '--name', 'Alpha']);
+    let r = run(['--panel-action', 'repo_add', '--repo', a, '--account', 'finos_toan', '--name', 'Alpha']);
     assert.equal(r.status, 0, r.stderr);
     let out = JSON.parse(r.stdout.trim());
     assert.equal(out.ok, true);
     assert.equal(out.state.repoAssignments.length, 1);
     assert.equal(out.state.repoAssignments[0].name, 'Alpha');
-    r = run(['--panel-action', 'repo_assign', '--repo', a, '--account', 'finos_team']);
+    r = run(['--panel-action', 'repo_assign', '--repo', a, '--account', 'finos_linh']);
     out = JSON.parse(r.stdout.trim());
-    assert.equal(out.state.repoAssignments[0].account, 'finos_team');
+    assert.equal(out.state.repoAssignments[0].account, 'finos_linh');
     r = run(['--panel-action', 'repo_assign', '--repo', a, '--account', 'grok']);
     assert.equal(r.status, 2);
     r = run(['--panel-action', 'repo_remove', '--repo', a]);

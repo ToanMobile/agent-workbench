@@ -15,7 +15,7 @@ const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src')
 
 function createTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-switcher-tg-'));
-  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos' }, null, 2));
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos_toan' }, null, 2));
   return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -56,7 +56,7 @@ test('tin nhan /status, /switch, nut ban phim cu: chi tra link web, go ban phim 
       assert.ok(!JSON.stringify(s.body).includes('inline_keyboard'));
     }
     const report = getStatusReport({ stateDir: tmp.dir });
-    assert.equal(report.activeProfileId, 'finos', 'Telegram khong duoc doi tai khoan nua');
+    assert.equal(report.activeProfileId, 'finos_toan', 'Telegram khong duoc doi tai khoan nua');
     assert.equal(report.policy.claudeSwitchCooldownSec, 900, '/cooldown khong con tac dung');
   } finally {
     tmp.cleanup();
@@ -84,7 +84,7 @@ test('bam nut cu (sw:, fsw:, act:, cd:) tren tin nhan cu: toast chi duong + go h
     for (const c of clears) assert.deepEqual(c.body.reply_markup, { inline_keyboard: [] });
     assert.equal(calls.some((c) => c.method === 'editMessageText'), false);
     const report = getStatusReport({ stateDir: tmp.dir });
-    assert.equal(report.activeProfileId, 'finos');
+    assert.equal(report.activeProfileId, 'finos_toan');
     assert.equal(report.policy.claudeSwitchCooldownSec, 900);
   } finally {
     tmp.cleanup();

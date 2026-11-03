@@ -11,7 +11,7 @@ function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-switcher-balance-corrupt-'));
   const stateDir = path.join(root, 'state');
   fs.mkdirSync(stateDir);
-  fs.writeFileSync(path.join(stateDir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos' }));
+  fs.writeFileSync(path.join(stateDir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos_toan' }));
   fs.writeFileSync(path.join(stateDir, 'repos.json'), JSON.stringify({ custom: [], hidden: [], defaults: false }));
   const mkRepo = (name, rawSettings) => {
     const p = path.join(root, 'code', name);
@@ -30,13 +30,13 @@ for (const mode of ['even', 'swap']) {
     try {
       const truncated = '{"hooks": {';
       const arrayJson = '[1, 2]';
-      const good = t.mkRepo('good', JSON.stringify({ hooks: { Stop: [] }, account: 'finos' }));
+      const good = t.mkRepo('good', JSON.stringify({ hooks: { Stop: [] }, account: 'finos_toan' }));
       const broken = t.mkRepo('broken', truncated);
       const notObject = t.mkRepo('not-object', arrayJson);
       const repos = [
-        { name: 'good', path: good, defaultAccount: 'finos' },
-        { name: 'broken', path: broken, defaultAccount: 'finos_team' },
-        { name: 'not-object', path: notObject, defaultAccount: 'finos_team' },
+        { name: 'good', path: good, defaultAccount: 'finos_toan' },
+        { name: 'broken', path: broken, defaultAccount: 'finos_linh' },
+        { name: 'not-object', path: notObject, defaultAccount: 'finos_linh' },
       ];
 
       const res = balanceRepoAccounts({ repos, stateDir: t.stateDir, mode });
@@ -46,7 +46,7 @@ for (const mode of ['even', 'swap']) {
 
       const goodSettings = JSON.parse(fs.readFileSync(settingsFile(good), 'utf8'));
       assert.deepEqual(goodSettings.hooks, { Stop: [] });
-      assert.equal(goodSettings.account, mode === 'swap' ? 'finos_team' : 'finos');
+      assert.equal(goodSettings.account, mode === 'swap' ? 'finos_linh' : 'finos_toan');
 
       const byName = Object.fromEntries(res.map((r) => [r.name, r]));
       assert.equal(byName.good.account, goodSettings.account);

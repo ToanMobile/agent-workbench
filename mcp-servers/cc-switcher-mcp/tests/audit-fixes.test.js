@@ -23,7 +23,7 @@ function createTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-switcher-audit-'));
   fs.writeFileSync(
     path.join(dir, 'settings.json'),
-    JSON.stringify({ currentProviderClaude: 'finos' }, null, 2),
+    JSON.stringify({ currentProviderClaude: 'finos_toan' }, null, 2),
   );
   return {
     dir,
@@ -87,12 +87,12 @@ test('Audit Fix 3: switchProfile sang dung profile dang active khong reset moc l
   const tmp = createTempDir();
   try {
     const t1 = 1_700_000_000_000;
-    switchProfile({ stateDir: tmp.dir, target: 'finos_team', nowMs: t1, enforceCooldown: false });
+    switchProfile({ stateDir: tmp.dir, target: 'finos_linh', nowMs: t1, enforceCooldown: false });
     assert.equal(loadSwitcherState(tmp.dir).lastClaudeSwitchAtMs, t1);
 
     // Goi lai switchProfile vao chinh finos_team o t2 -> khong duoc ghi de lastClaudeSwitchAtMs thanh t2
     const t2 = t1 + 120_000;
-    switchProfile({ stateDir: tmp.dir, target: 'finos_team', nowMs: t2, enforceCooldown: true });
+    switchProfile({ stateDir: tmp.dir, target: 'finos_linh', nowMs: t2, enforceCooldown: true });
     assert.equal(loadSwitcherState(tmp.dir).lastClaudeSwitchAtMs, t1);
   } finally {
     tmp.cleanup();
