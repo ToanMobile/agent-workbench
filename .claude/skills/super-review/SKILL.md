@@ -184,10 +184,10 @@ two complete builds. In order, no shortcuts:
    `gh pr view <PR> --json state,mergeCommit` must report `MERGED` plus a commit sha,
    and that sha must be an ancestor of the base branch
    (`git merge-base --is-ancestor <sha> origin/<base>`).
-4. Only then: close the issue, move card Review → **Done**, post the ✅ comment citing
-   the merge commit sha. Exception (T0054): the gate printed `ac-open: #N` — the PR merged with AC lines still
+4. Only then: close the issue, move card Review → **Done** (gate posts `✅ merged`, same repo; not by hand).
+   Exception (T0054): the gate printed `ac-open: #N` — the PR merged with AC lines still
    unproven, so the gate kept the issue open with label `ac-open` and moved the card to Ready. Do NOT close it or
-   move it to Done (card.sh refuses exit 5); post the merged comment and stop.
+   move it to Done (card.sh refuses exit 5); the gate posted ⏳ ac-open: stop.
 5. Merge refused (failing checks, conflicts, branch protection) → card Review →
    **Blocked** with the §4 Block template naming the blocker. Never leave it in Review;
    a card left in Review gets re-picked and re-reviewed indefinitely.
