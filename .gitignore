@@ -50,6 +50,8 @@ __pycache__/
 
 # agent-workbench is public: personal agent memory and machine-local agent config stay local
 .agents/local/memory/
+# per-checkout canary flags read by super-board scripts (needs_you_guard_v2, dependency_unblock_v1)
+.agents/local/flags.json
 .gemini/settings.json
 .claude/agent-memory/
 .claude/hooks/
