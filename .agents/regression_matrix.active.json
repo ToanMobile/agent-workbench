@@ -3387,6 +3387,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-merge-gate-scratch-live-lock",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_scratch_live_lock.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-SCRATCH-LIVE-LOCK-01",
+          "name": "03/11 (merge gate #940): scratch của merge gate khoá bằng worktree lock khi gate còn sống — lệnh remove trần giữa lúc verify bị từ chối; cleanup/keep mở khoá trước khi gỡ",
+          "command": "bash tests/super-board/test_merge_gate_scratch_live_lock.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
