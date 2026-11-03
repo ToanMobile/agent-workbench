@@ -235,32 +235,39 @@ def logline(text):
                      | getattr(os, "O_CLOEXEC", 0), 0o666)
         try:
             if stat.S_ISREG(os.fstat(fd).st_mode):
-                os.write(fd, f"[{datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] {text}\n".encode("utf-8"))
+                os.write(fd, f"[{datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] {text}\n".encode("utf-8", "replace"))   # a lone surrogate in a path / sid must not raise past the hold
         finally:
             os.close(fd)
     except OSError:
         return   # no log folder / not writable: the diagnostic line is lost, the Stop's exit and text stay as they are
 
+STATE_MAX_BYTES = 1 << 20   # the state holds at most 50 sessions (a few KB): anything bigger is not ours
+
 def read_state():
     """The saved state, {} when it cannot be read. Same folder as the log (agent-writable): opened without waiting and never through a
     link, a regular file only (a FIFO waited until the 13 s alarm, whose fail-open exit 0 dropped the hold), and deep JSON's RecursionError
-    caught (its traceback became exit 0 in the shell). Unreadable = no state: the ordinary hold, never a release (recheck 03/11 H1)."""
+    caught (its traceback became exit 0 in the shell), and a file over STATE_MAX_BYTES not read at all (a GB file outran the alarm or raised
+    MemoryError). Unreadable = no state: the ordinary hold, never a release (recheck 03/11 H1)."""
     try:
         fd = os.open(state_path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
     except OSError:
         return {}
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > STATE_MAX_BYTES:
             return {}
-        chunks = []
-        while True:
-            chunk = os.read(fd, 1 << 20)
+        chunks, size = [], 0
+        while size <= STATE_MAX_BYTES:   # the file may grow after fstat: read one byte past the cap at most
+            chunk = os.read(fd, 1 << 16)
             if not chunk:
                 break
             chunks.append(chunk)
+            size += len(chunk)
+        if size > STATE_MAX_BYTES:
+            return {}
         loaded = json.loads(b"".join(chunks).decode("utf-8"))
         return loaded if isinstance(loaded, dict) else {}
-    except (OSError, ValueError, RecursionError):
+    except (OSError, ValueError, RecursionError, MemoryError):
         return {}
     finally:
         os.close(fd)

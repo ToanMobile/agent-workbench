@@ -110,5 +110,17 @@ stop s7; rc=$?
   && ok "deep-JSON state: read as no state (no RecursionError traceback), the hold 1/3 keeps exit 2" \
   || fail "deep-JSON state: rc=$rc (want 2 with 'Lần giữ 1/3'); err: $(grep -m1 -E 'Error|Lần giữ' "$TMP/err")"
 
+# ── 7. H1 (review FX4 03/11): an oversized STATE file (> 1 MiB; the real one holds at most 50 sessions) is no state ─────────────
+# Read whole, a GB file outran the 13 s alarm or raised MemoryError (exit 1 → shell exit 0): the hold dropped. A padded copy of a
+# state already at 3/3 shows it: read, the 4th Stop is released by the cap (exit 0); ignored, it is the ordinary hold 1/3 (exit 2).
+rm -rf "$P/.claude/audit-gate/worktree_merge_gate.state"
+stop s8; stop s8; stop s8
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pad"]="x"*(1<<21); json.dump(d, open(p, "w"))' \
+  "$P/.claude/audit-gate/worktree_merge_gate.state"
+stop s8; rc=$?
+[ "$rc" = 2 ] && grep -q "Lần giữ 1/3" "$TMP/err" \
+  && ok "oversized state (> 1 MiB): read as no state, the hold 1/3 keeps exit 2 (not the cap release)" \
+  || fail "oversized state: rc=$rc (want 2 with 'Lần giữ 1/3'); err: $(head -1 "$TMP/err") out: $(head -c 120 "$TMP/out")"
+
 [ "$FAILS" = 0 ] && { echo "✅ test_worktree_merge_gate_block_reason_log: all checks passed"; exit 0; }
 echo "❌ test_worktree_merge_gate_block_reason_log: $FAILS check(s) failed"; exit 1

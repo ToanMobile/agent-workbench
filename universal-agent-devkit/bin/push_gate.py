@@ -551,8 +551,8 @@ def session_agents():
 
 
 # Vòng kiểm lại H3: tập ký tự strip CHUNG với normalizeAgent của PM (mcp-servers/antigravity-pm-mcp/src/tools.js AGENT_WS) = hợp của
-# str.strip() Python (có \x1c-\x1f, \x85) và trim() JS (có ﻿), viết tường minh như #629.
-_AGENT_WS = "\t\n\v\f\r \x1c-\x1f\x85\xa0  -     　﻿"
+# str.strip() Python (có \x1c-\x1f, \x85) và trim() JS (có \ufeff), viết tường minh như #629.
+_AGENT_WS = "\t\n\v\f\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
 _AGENT_TRIM = re.compile(f"^[{_AGENT_WS}]+|[{_AGENT_WS}]+$")
 _GROK_NAME = re.compile(r"grok(?![a-z0-9])")
 _ANTIGRAVITY_NAME = re.compile(r"antigravity(?:$|[-_.])")
