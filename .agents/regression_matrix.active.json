@@ -3234,6 +3234,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-merge-gate-approve-request",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_approve_button_request.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-APPROVE-REQUEST-01",
+          "name": "PR #924: gate tự gửi nút Approve (standalone, --preflight khi queue tắt) thì tự đăng đúng một comment PR chứa dòng approval-request: của head; chạy lại không đăng trùng; train/queue khi queue bật không comment, không nút; đăng lỗi chỉ log, exit 7/8 giữ nguyên; --dry-run không đăng",
+          "command": "bash tests/super-board/test_merge_gate_approve_button_request.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

@@ -282,11 +282,24 @@ pr_title() {
   if [ -n "$SUBJECT" ]; then printf '%s' "$SUBJECT"; return 0; fi
   gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
 }
+APPROVAL_REQ_LINE=   # dòng approval-request: lần approval_request gần nhất in ra (rỗng = chưa có request)
 needs_you_notify() {
   # Queue bật: train / queue gọi thì không gửi (queue gửi đúng một lần ở nhánh exit 7/8); #453: theo BÊN GỌI, không theo cờ, nên
   # /super-review --standalone --dry-run ngoài board vẫn gửi nút. Queue tắt: gửi như gate cũ. Train gọi --preflight cho mọi PR và PR rớt
   # preflight rời đợt trước lượt --dry-run, nên preflight im lặng khi queue tắt = PR exit 7/8 mất nút duyệt (R2).
   if [ "$MERGE_QUEUE_ON" -eq 1 ]; then case "${SB_MERGE_CALLER-}" in train|queue) return 0 ;; esac; fi
+  # PR #924: bot chỉ ghi `done` khi PR/issue có block approval-request tin cậy ghim đúng head; gate tự gửi nút thì tự đăng request
+  # (một lần: comment đã có đúng dòng đó thì thôi). Đọc lỗi thì vẫn đăng (request trùng vô hại, thiếu request = nút hỏng). Chỉ request,
+  # không bao giờ đăng duyệt; đăng lỗi chỉ log, nút vẫn gửi, exit giữ nguyên; --dry-run không ghi GitHub.
+  if [ -n "$APPROVAL_REQ_LINE" ]; then
+    if [ "$DRY" -eq 1 ]; then
+      say "dry run: would post the approval-request on PR #${PR} for head ${HEAD_SHA:0:7}"
+    elif ! grep -qxF -- "$APPROVAL_REQ_LINE" <<<"$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json comments -q '.comments[].body' 2>/dev/null || true)"; then
+      gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "[merge-gate] [blocker] 🛑 needs a person · head ${HEAD_SHA:0:7}
+${APPROVAL_REQ_LINE}" >/dev/null 2>&1 \
+        || say "warning: could not post the approval-request comment on PR #${PR} (head ${HEAD_SHA:0:7}); the Approve button still goes out but the bot will refuse it until a writer posts the approval-request line above"
+    fi
+  fi
   board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
@@ -464,8 +477,13 @@ approval_check() {
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')
 }
 approval_request() {
-  python3 "$HERE/super-board-approval.py" --request --repo "$REPO" --pr "$PR" \
-    --head "$HEAD_SHA" --plan "$PLAN"
+  # In nguyên như cũ, nhớ dòng approval-request: để needs_you_notify đăng lên PR khi chính gate gửi nút (PR #924).
+  local out rc=0
+  out=$(python3 "$HERE/super-board-approval.py" --request --repo "$REPO" --pr "$PR" \
+    --head "$HEAD_SHA" --plan "$PLAN") || rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out"
+  APPROVAL_REQ_LINE=$(printf '%s\n' "$out" | grep '^approval-request: ' | tail -1) || APPROVAL_REQ_LINE=
+  return "$rc"
 }
 HUMAN=$(echo "$PLAN" | jq -r '.human[] | "human-gate: \(.category) — \(.why)"')
 if [ -n "$HUMAN" ] || [ "$(echo "$PLAN" | jq '.needs_you | length')" -gt 0 ]; then
