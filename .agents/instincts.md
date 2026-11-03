@@ -805,3 +805,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Phân loại rủi ro theo diff chỉ xét đường dẫn mới của rename
 - **Nguyên nhân:** numstat rename {a => tests}/x: loại trừ theo đường dẫn mới làm file merge-gate dời vào tests/ hoặc thành .md tụt về S
 - **Quy tắc phòng ngừa & Cách fix:** Rename là thuộc vùng được canh khi đường dẫn cũ HOẶC mới thuộc vùng đó; test có ca git mv ra khỏi vùng
+
+---
+
+### [INSTINCT-103] Test miễn trừ (exemption) dùng câu không chạm luật nào nên không phân biệt được
+- **Ngày phát hiện:** 2026-11-03
+- **Hiện tượng lỗi:** Test miễn trừ (exemption) dùng câu không chạm luật nào nên không phân biệt được
+- **Nguyên nhân:** test_needs_you_guard_v2_exempt.sh E1/E2: câu 'phải nhận' (Bật auto-approve … không có tests/) không khớp luật V2 nào, nên bỏ miễn trừ vẫn exit 0; test xanh mà không chứng minh gì (đợt 2, 03/11)
+- **Quy tắc phòng ngừa & Cách fix:** Mỗi câu kiểm một miễn trừ phải là câu luật SẼ từ chối nếu không có miễn trừ đó: kiểm bằng mutant gỡ miễn trừ → test phải đỏ; thêm từ khoá miễn trừ mới thì cùng lúc thêm ca dạng tên file (_NOT_FILE)

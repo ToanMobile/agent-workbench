@@ -3359,6 +3359,21 @@
       ]
     },
     {
+      "component": "super-board-needs-you-guard-v2-dependabot-file",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        "tests/super-board/test_needs_you_guard_v2_dependabot_file.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-GUARD-V2-03",
+          "name": "Review r1 đợt 2 (03/11): miễn dependabot của needs-you v2 không áp cho tên file (.github/dependabot.yml, test-dependabot-*.sh → 64); chữ Dependabot thường vẫn miễn (bật auto-approve cho Dependabot → 0)",
+          "command": "bash tests/super-board/test_needs_you_guard_v2_dependabot_file.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-merge-gate-card-merged-comment",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
