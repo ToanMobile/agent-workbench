@@ -1802,8 +1802,18 @@ dependency_gate() {
     log "⚠ dependency gate #${issue}: no readable openBlockers for it in the deps output — dispatching without it"
     return 0
   fi
+  # `## Blocked by` ghi chính thẻ (`- #7` trên #7): deps đếm nó là mở, mark từ chối (64) → thẻ kẹt Ready mãi. Bỏ mục đó.
+  case ",${open}," in *",${issue},"*)
+    open=$(printf '%s' "$open" | jq -Rr --arg n "$issue" 'split(",") | map(select(. != $n)) | join(",")' 2>/dev/null) || open=""
+    log "⚠ dependency gate #${issue}: its ## Blocked by lists #${issue} itself — that entry ignored"
+  esac
   [ -n "$open" ] || return 0
   wout=$(python3 "$(waiting_on_helper)" mark --config "$CONFIG_PATH" --issue "$issue" --on "$open" --why="## Blocked by: #${open//,/, #} still open" 2>>"$RUN_MANIFEST") || orc=$?
+  # 64 = đầu vào sai: thử lại mỗi tick không bao giờ thành, giao như cũ. 69/79 (tạm thời) và output lạ (65) vẫn giữ.
+  if [ "$orc" -eq 64 ]; then
+    log "⚠ dependency gate #${issue}: waiting-on mark refused the input (exit 64) — dispatching without it"
+    return 0
+  fi
   [ "$orc" -ne 0 ] || wlabels=$(printf '%s' "$wout" | jq -ce '.labels | arrays' 2>/dev/null) || orc=65
   if [ "$orc" -ne 0 ]; then
     log "⚠ dependency gate #${issue}: ## Blocked by #${open//,/, #} still open but waiting-on mark failed (exit ${orc}) — not dispatched, stays in Ready, retrying next tick"
