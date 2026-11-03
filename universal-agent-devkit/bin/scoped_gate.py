@@ -70,15 +70,13 @@ PY_FROM = re.compile(r"^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+(?:\(([^)
 PY_COMMENT = re.compile(r"#[^\n]*")
 PY_IMPORT = re.compile(r"^[ \t]*import[ \t]+([\w.]+(?:[ \t]*,[ \t]*[\w.]+)*)", re.M)
 SH_SOURCE = re.compile(r"(?:^[ \t]*|[;&|({][ \t]*)(?:source|\.)[ \t]+([^\n;&|)]+)", re.M)
-# test CHẠY file (_runs): dòng không phải chú thích có lệnh chạy, tên file trên dòng đó hoặc trong phép gán của biến dòng đó dùng
-RUN_CMD = re.compile(r"(?<![\w$/.-])[\"']?(?:bash|sh|zsh|python3?|node|exec|source)[\"']?[ \t,]|(?:^|[;&|(])[ \t]*\.[ \t]+", re.M)
-FILE_TOK = re.compile(r"[\w.+-]+\.\w+")
-VAR_REF = re.compile(r"\$\{?([A-Za-z_]\w*)")
-ASSIGN = re.compile(r"^[ \t]*(?:local[ \t]+|export[ \t]+|readonly[ \t]+)?([A-Za-z_]\w*)=(.*)$", re.M)
-# stem test gọi như LỆNH: lệnh con dispatcher (`agent-kit <stem>`, `$AK <stem>`, ["bash", AK, "<stem>"]), `-m <gói.>stem`, từ đầu lệnh
+# stem test GỌI (_calls): lệnh con dispatcher (`agent-kit <stem>`, `$AK <stem>`, ["bash", AK, "<stem>"]), `-m <gói.>stem`, từ đầu lệnh,
+# import Python ở bất kỳ đâu (`python3 -c "…; import x"`, heredoc `a; import x`, importlib.import_module("x"))
 DISPATCH = re.compile(r"(?:agent-kit|\bAK\b|\bAGENT_KIT\b)[\"'}\]]*[ \t,]+[\"']?([\w-]+)")
 MODULE = re.compile(r"-m[ \t]+([\w.]+)")
 CMD_WORD = re.compile(r"(?:^|[;&|(`!]|\bthen\b|\bdo\b)[ \t]*(?:exec[ \t]+|time[ \t]+)?([\w./+-]+)", re.M)
+PY_ANY_IMPORT = re.compile(r"\b(?:from[ \t]+([\w.]+)[ \t]+)?import[ \t]+([\w.]+(?:[ \t]*,[ \t]*[\w.]+)*)|import_module\([\"']([\w.]+)")
+COMMENT_AT = re.compile(r"(?:^|[ \t])#")                    # chú thích shell: `#` đầu dòng hoặc sau khoảng trắng
 TEST_RE = [re.compile(p) for p in (
     r"(^|/)tests/(.+/)?test_[^/]*\.(sh|py)$",
     r"(^|/)hooks/tests/[^/]+\.sh$",
@@ -327,38 +325,40 @@ def _stem_in_scope(test, target, fileset, text):
     return os.path.basename(root) in body or (parent + "/" + stem) in body or (parent + "." + stem) in body
 
 
-def _runs(body):
-    """(basename test CHẠY, tên lệnh test gọi) của nội dung test. Chạy: `bash|sh|zsh|python3|node|exec|source|.` (cả dạng list
-    ["bash", …] trong heredoc) trên một dòng không phải chú thích ⇒ mọi tên file trên dòng đó, và của phép gán các biến dòng đó dùng
-    (`MONO=".../x.sh"; bash "$MONO"`). Lệnh: DISPATCH, MODULE (mảnh cuối), CMD_WORD (basename)."""
-    assigned = {}
-    for name, rest in ASSIGN.findall(body):
-        assigned.setdefault(name, set()).update(os.path.basename(x) for x in FILE_TOK.findall(rest))
-    ran = set()
+def _calls(body):
+    """Tên (mảnh cuối, basename) test gọi như lệnh hoặc import: DISPATCH, MODULE, CMD_WORD, PY_ANY_IMPORT."""
+    names = set(DISPATCH.findall(body)) | {m.rsplit(".", 1)[-1] for m in MODULE.findall(body)}
+    names |= {os.path.basename(w) for w in CMD_WORD.findall(body)}
+    for frm, grp, dyn in PY_ANY_IMPORT.findall(body):
+        names |= {m.strip().rsplit(".", 1)[-1] for m in grp.split(",") + [frm, dyn] if m.strip()}
+    return names
+
+
+def _only_commented(body, name):
+    """Mọi dòng chứa `name` đều có nó sau `#` chú thích (đầu dòng hay sau khoảng trắng)."""
     for line in body.splitlines():
-        if line.lstrip().startswith("#") or not RUN_CMD.search(line):
+        i = line.find(name)
+        if i < 0:
             continue
-        ran.update(os.path.basename(x) for x in FILE_TOK.findall(line))
-        for v in VAR_REF.findall(line):
-            ran |= assigned.get(v, set())
-    cmds = set(DISPATCH.findall(body)) | {m.rsplit(".", 1)[-1] for m in MODULE.findall(body)}
-    cmds |= {os.path.basename(w) for w in CMD_WORD.findall(body)}
-    return ran, cmds
+        m = COMMENT_AT.search(line)
+        if m is None or m.start() > i:
+            return False
+    return True
 
 
-def _weak_edge(test, target, body, runs):
-    """Cạnh test→target (stem trần, hoặc nhắc tên test khác không phải import / source) là YẾU, trừ khi test CHẠY target: test khác thì
-    test shell chạy nó (_runs; test .py / .js gọi subprocess không phân tích được ⇒ giữ mạnh), stem thì test gọi nó như lệnh (lệnh con
-    dispatcher, -m, từ đầu lệnh) hoặc nêu `<thư mục cha>/<stem>` / `<cha>.<stem>` (require("../src/x")). Không đọc được test ⇒ mạnh
-    (thừa test, không thiếu). ponytail: test chạy một TEST khác qua wrapper truyền tên rời (`run_case <tên>`) thì cạnh thành yếu; nâng
-    khi escape_check của gate-full đêm báo lọt lưới qua cạnh như vậy."""
+def _weak_edge(test, target, body, calls):
+    """Cạnh test→target (stem trần, hoặc nhắc tên test khác không phải import / source) là YẾU khi test không CHẠY target: test khác
+    thì test shell chỉ nhắc tên nó trong chú thích (nhắc ở chỗ khác — chạy qua vòng for, dòng nối, timeout, biến, chuỗi — là mạnh; test
+    .py / .js giữ mạnh), stem thì test không gọi nó (_calls) và không nêu `<thư mục cha>/<stem>` / `<cha>.<stem>` (require("../src/x")).
+    Không đọc được test ⇒ mạnh (thừa test, không thiếu). ponytail: test gọi stem qua đường không thấy trong chữ (tên ghép lúc chạy,
+    `"$1.py"`) thì cạnh thành yếu; nâng khi bisect / trace của gate-full đêm chỉ ra commit đỏ chỉ nối với test qua cạnh yếu."""
     if body is None:
         return False
     if is_test(target):
-        return test.endswith((".sh", ".bash")) and os.path.basename(target) not in runs[0]
+        return test.endswith((".sh", ".bash")) and _only_commented(body, os.path.basename(target))
     stem = os.path.basename(target).rsplit(".", 1)[0]
     parent = os.path.basename(os.path.dirname(target))
-    return stem not in runs[1] and not (parent and ((parent + "/" + stem) in body or (parent + "." + stem) in body))
+    return stem not in calls and not (parent and ((parent + "/" + stem) in body or (parent + "." + stem) in body))
 
 
 def build_graph(project, _files=None, _code=None, _reads=None, _weak=None):
@@ -472,9 +472,9 @@ def build_graph(project, _files=None, _code=None, _reads=None, _weak=None):
             if not cand:
                 continue
             body = read_test(t)
-            runs = _runs(body) if body is not None else None
+            calls = _calls(body) if body is not None else None
             for b in cand:
-                if _weak_edge(t, b, body, runs):
+                if _weak_edge(t, b, body, calls):
                     graph[t].discard(b)
                     _weak.setdefault(b, set()).add(t)
                 else:
@@ -553,10 +553,11 @@ def _reach(start, adj, barrier=()):
 
 def test_map(project, graph=None, barrier=None, weak=None, code=None):
     """{file: sorted [test]}: T phủ F khi F trong bao đóng bắc cầu tham chiếu của T (T phủ chính nó; không đi xuyên file lõi); cạnh yếu
-    T→X (`weak`) phủ X và bao đóng cạnh code (import / source) của X, như decide."""
+    T→X (`weak`) phủ X và bao đóng cạnh code (import / source) của X, như decide. Không truyền graph (truy vết commit của gate_full):
+    đồ thị đầy đủ như trước, không tách cạnh yếu — tập file liên quan rộng hơn tập decide chọn."""
     if graph is None:
-        code, weak = {}, {}
-        graph = build_graph(project, _code=code, _weak=weak)
+        code = {}
+        graph = build_graph(project, _code=code)
     barrier = core_nodes(project, graph, code=code) if barrier is None else barrier
     out = {}
     for t in graph:

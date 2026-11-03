@@ -57,6 +57,17 @@ printf '#!/usr/bin/env bash\nsubtool9 --help\n' > "$K/tests/x/test_cmd_word.sh"
 printf '#!/usr/bin/env bash\npython3 - <<'"'"'PY'"'"'\nimport os, subprocess\nAK = os.path.join("bin", "agent-kit")\nsubprocess.run(["bash", AK, "wt2", "add"])\nPY\n' > "$K/tests/x/test_dispatch_list.sh"
 printf '#!/usr/bin/env bash\npython3 - <<'"'"'PY'"'"'\nimport subprocess\nsubprocess.run(["bash", "tests/y/test_b.sh"])\nPY\n' > "$K/tests/x/test_runs_heredoc.sh"
 printf '#!/usr/bin/env bash\nLIB="$(dirname "$0")/../y/test_b.sh"\n. "$LIB"\n' > "$K/tests/x/test_sources_var.sh"
+# j. (review Claude 03/11) import Python giữa dòng / import_module là chạy thật: đích chạy helper5.sh theo tên
+printf 'import subprocess\ndef main():\n    subprocess.run(["bash", "helper5.sh"])\n' > app/tools/gen5.py
+printf '#!/usr/bin/env bash\necho helper5\n' > app/tools/helper5.sh
+printf '#!/usr/bin/env bash\npython3 -c "import sys; sys.path.insert(0, \\"app/tools\\"); import gen5; gen5.main()"\n' > "$K/tests/x/test_inline_import.sh"
+printf 'import importlib, sys\nsys.path.insert(0, "app/tools")\nimportlib.import_module("gen5").main()\n' > "$K/tests/x/test_import_module.py"
+# k. (review Claude 03/11) test shell chạy test khác không qua `bash <tên>` cùng dòng: vòng for, dòng nối, chạy thẳng, timeout
+printf '#!/usr/bin/env bash\nfor t in test_b.sh; do\n  bash "$(dirname "$0")/../y/$t"\ndone\n' > "$K/tests/x/test_runs_for.sh"
+printf '#!/usr/bin/env bash\nbash \\\n  "$(dirname "$0")/../y/test_b.sh"\n' > "$K/tests/x/test_runs_cont.sh"
+printf '#!/usr/bin/env bash\n"$(dirname "$0")/../y/test_b.sh" || exit 1\n' > "$K/tests/x/test_runs_direct.sh"
+printf '#!/usr/bin/env bash\ntimeout 60 "$(dirname "$0")/../y/test_b.sh"\n' > "$K/tests/x/test_runs_timeout.sh"
+printf '#!/usr/bin/env bash\nok() { :; }   # tests/y/test_b.sh asks for this\nok\n' > "$K/tests/x/test_trailing_comment.sh"
 git add -A && git commit -qm init
 
 fail=0
@@ -90,6 +101,13 @@ check "i. command word subtool9 stays transitive"     app/bin/helper9.sh        
 check "i. list dispatcher in heredoc transitive"      "$K/scripts/git/helper2.sh"   "$K/tests/x/test_dispatch_list.sh" 1
 check "i. heredoc list running the other test"        "$K/scripts/tool.sh"          "$K/tests/x/test_runs_heredoc.sh" 1
 check "i. . \"\$VAR\" sourcing the other test"          "$K/scripts/tool.sh"          "$K/tests/x/test_sources_var.sh" 1
+check "j. python3 -c '…; import gen5' transitive"     app/tools/helper5.sh          "$K/tests/x/test_inline_import.sh" 1
+check "j. importlib.import_module('gen5') transitive" app/tools/helper5.sh          "$K/tests/x/test_import_module.py" 1
+check "k. for-loop running the other test"           "$K/scripts/tool.sh"          "$K/tests/x/test_runs_for.sh" 1
+check "k. continued line running the other test"     "$K/scripts/tool.sh"          "$K/tests/x/test_runs_cont.sh" 1
+check "k. running the other test directly"           "$K/scripts/tool.sh"          "$K/tests/x/test_runs_direct.sh" 1
+check "k. timeout running the other test"            "$K/scripts/tool.sh"          "$K/tests/x/test_runs_timeout.sh" 1
+check "k. trailing comment naming it: one step"      "$K/scripts/tool.sh"          "$K/tests/x/test_trailing_comment.sh" 0
 
 # g. khoá cache (suite_cache gọi build_graph không có _weak) giữ cạnh stem; h. explain khớp decide
 out="$(python3 - "$SB" "$SG_DIR" "$K" <<'PY'
