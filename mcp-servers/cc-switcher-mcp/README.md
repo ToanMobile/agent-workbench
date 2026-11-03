@@ -11,6 +11,10 @@ MCP Server và Auto-Switcher Daemon trên macOS dành cho 7 profile đã cấu h
 5. `antigravity_pro` — `5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Argon High)`
 6. `grok` — `6. Grok CLI — grok-4.7 (xhigh)`
 
+### Antigravity nhiều profile
+
+`agy` không có biến chọn thư mục cấu hình, chỉ tách tài khoản qua `HOME`. Chỉ `agy` gõ trong zsh tương tác dùng khoá `agyAccount`; `switchProfile` trả `HOME` trong `env`; `antigravity-pm-mcp` (`/giao`) chưa đọc `agyAccount`. Mỗi profile AGY có HOME riêng (`~/.agy-antigravity_ultra`, `~/.agy-antigravity_pro`; trong đó chỉ `.gemini` là thật, còn lại là symlink về HOME thật). Hàm `agy()` trong `~/.zshrc` đọc khoá `agyAccount` trong `.claude/settings.local.json` của repo (khoá riêng, không đụng `account` của Claude) rồi đặt `HOME`. `agy-profile <tên>` ghi khoá đó và dựng thư mục; lần đầu phải đăng nhập tài khoản trong thư mục mới. `.gemini` của profile bắt đầu RỖNG: MCP server, skill, `GEMINI.md` và trusted folders trong `~/.gemini` thật không tự có, phải cài lại hoặc symlink từng mục (trừ file token tài khoản).
+
 ## Các MCP Tools cung cấp
 
 - `switcher_status`: Xem trạng thái thực tế của 7 profile, thời gian Cooldown chống ban và thống kê token/chi phí từ `~/.cc-switch/cc-switch.db`.

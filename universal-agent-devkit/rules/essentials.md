@@ -84,11 +84,11 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
    `.agents/local/rules/` file the index names.
 2. A code or bug prompt: run the failing oracle and see RED before editing production, then the
    same oracle GREEN after. Keep the command log and the exit code.
-3. From the repo root, once: `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`.
-   Exit 0 is required; this scoped run writes the task receipt, the proof for step 5 (build, QA, review,
-   merge queue and `agent-kit integrate` run the same). Nobody runs `--full` by hand for a task: the
-   `gate-full` skill runs it nightly. Any other exit: paste the last 30 log lines, fix, repeat; a
-   dry-run, `--help` or a single Gradle test does not replace it. Details: core-rules §19.
+3. Once per handover, on the final tree after review fixes (large task: gate, audit, fix, gate), from the
+   repo root: `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`. Exit 0 is
+   required; it writes the task receipt, step 5's proof. Mid-task: only the step 2 oracle and changed
+   tests (`bash <test>`), reply CHƯA XONG. Nobody runs `--full` by hand for a task. Other exit: paste the
+   last 30 log lines, fix, repeat; a dry-run, `--help` or one Gradle test never counts.
 4. A proof image blocks like exit 0, unless the change surely cannot show on a screen: a backend
    profile, or every changed file is tooling, tests, docs or logs (exact list: core-rules §19;
    `hooks/proof_gate.sh` applies it). Then write "ảnh: không cần — <reason>" in line 3 and skip this

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test hồi quy #307 (23/10): không có cách xác nhận một cây sạch. `--full` trên worktree sạch tại HEAD = exit 3 (không có thay đổi để
-# kiểm); `--diff <ref cũ>` qua một merge sửa ma trận không chỉ-nối-cuối = exit 2 (ma trận không tin được) dù 63/63 suite xanh.
+# kiểm); `--diff <ref cũ>` qua một merge sửa ma trận không chỉ-thêm (sửa rule base) = exit 2 (ma trận không tin được) dù 63/63 suite xanh.
 # Chế độ `--tree HEAD`: chạy đủ suite trên cây sạch ở HEAD, tin ma trận ĐÃ COMMIT của chính cây đó, ghi biên nhận theo cây cho proof_gate.
 # Mỗi ca chặn chỉ khác ca cho qua đúng một biến (cây bẩn, suite đỏ).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
@@ -29,23 +29,26 @@ JSON
   git add -A && git commit -qm init && git push -q origin main ) || exit 1
 BASE="$(git -C "$REPO" rev-parse HEAD)"
 
-# Một commit sửa ma trận KHÔNG chỉ-nối-cuối (chèn rule mới lên đầu): --diff <BASE> không tin được ma trận (exit 2), cây sạch ở HEAD thì có.
+# Một commit sửa ma trận KHÔNG chỉ-thêm: --diff <BASE> không tin được ma trận (exit 2), cây sạch ở HEAD thì có. Chèn rule mới lên đầu
+# nay là chỉ-thêm hợp lệ (#920, bin/matrix_slot.py), nên rule base Core cũng bị sửa (thêm watch_files) — đó là phần không chỉ-thêm.
 ( cd "$REPO" && cat > templates/regression_matrix.json <<'JSON'
 {"project":"t","rules":[{"component":"Head","watch_files":["result.sh"],
  "mandatory_regression_tests":[{"id":"REG-0","name":"head","command":"true"}]},
- {"component":"Core","watch_files":["src/core.py"],
+ {"component":"Core","watch_files":["src/core.py","result.sh"],
  "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"sh result.sh"}]}]}
 JSON
-  git commit -qam "ma trận sửa không chỉ nối cuối" && git push -q origin main ) || exit 1
+  git commit -qam "ma trận sửa không chỉ thêm" && git push -q origin main ) || exit 1
 
 gate() { local d="$1"; shift; CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --no-checklist --run-tests "$@" >"$TMP/gate" 2>&1; }
 
 # A0. Triệu chứng của issue: --full trên cây sạch, không --diff, không upstream phía trước: exit 3.
 gate "$REPO" --full; rc=$?
 [ "$rc" = 3 ] && ok "A0 --full on a clean tree: exit 3 (nothing to audit), the symptom" || fail "A0 expected exit 3, got $rc"
-# A1. Triệu chứng 2: --diff qua commit sửa ma trận không chỉ-nối-cuối: exit 2.
-gate "$REPO" --full --diff "$BASE"; rc=$?
-[ "$rc" = 2 ] && ok "A1 --diff across a non-additive matrix edit: exit 2 (matrix untrusted), the symptom" || fail "A1 expected exit 2, got $rc"
+# A1. Triệu chứng 2: --diff qua commit sửa ma trận không chỉ-thêm: exit 2, đúng vì ma trận không tin được (không phải lý do khác).
+gate "$REPO" --full --diff "$BASE" --lang en; rc=$?
+[ "$rc" = 2 ] && grep -q 'was modified relative to' "$TMP/gate" \
+  && ok "A1 --diff across a non-additive matrix edit: exit 2 (matrix untrusted), the symptom" \
+  || fail "A1 expected exit 2 with 'was modified relative to', got $rc"
 
 # T1. Cây sạch ở HEAD, ma trận đã commit, suite xanh: --tree HEAD exit 0 và suite chạy thật.
 gate "$REPO" --full --tree HEAD; rc=$?
