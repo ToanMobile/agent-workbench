@@ -3234,6 +3234,36 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-session-card-hook",
+      "watch_files": [
+        "universal-agent-devkit/hooks/session_card.sh",
+        "universal-agent-devkit/tests/gates/test_session_card_hook.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SESSION-CARD-01",
+          "name": "03/11 chủ repo: task bắt đầu từ chat có đúng MỘT thẻ board (nhãn session, cột Building) từ lần sửa file đầu; bỏ qua subagent, lane issue-N, repo không board, file ngoài repo; không chặn, thử lại 3 lần",
+          "command": "bash universal-agent-devkit/tests/gates/test_session_card_hook.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-session-cards",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_skips_session_cards.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-WB-SESSION-CARD-RECLAIM-01",
+          "name": "03/11: reclaim_stranded_building không trả thẻ Building nhãn session (task từ chat, phiên đang làm) về Ready; thẻ thường vẫn về Ready",
+          "command": "bash tests/super-board/test_runner_skips_session_cards.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
