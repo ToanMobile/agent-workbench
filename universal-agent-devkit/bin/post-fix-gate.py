@@ -5282,7 +5282,9 @@ def acquire_test_run_lock(project_dir, cap=None, sid=None):
                     # start time): classified again here, a live holder of this session is BUSY (fast same_session), never read-only exit 0.
                     holder = (seen if seen is not None and seen["raw"] == now and not seen["sid_match"]
                               else _test_run_lock_holder(state / TEST_RUN_LOCK, sid))
-                    _note_busy_holder(holder, "same_session" if holder["same_session"] else "")
+                    # Final review P3-2: at give-up (not the at-once cut) a live holder of this session whose start time ps could not read
+                    # back is still this session's: BUSY, fail closed.
+                    _note_busy_holder(holder, "same_session" if holder["same_session"] or (holder["sid_match"] and holder["alive"]) else "")
                 fh.close()
                 return None, False
             if not said:

@@ -593,10 +593,10 @@ def audit_reviewer(top, task_id, legacy=False):
         named = normalize_reviewer(audit.get("reviewer"))
         if named in ("", "pm"):
             named = "antigravity"
-        if named not in ("antigravity", "grok"):
-            continue
-        if named == last_agent or (legacy and named == "antigravity" and not audits):
-            return named
+        # Review cuối P3-1: biên bản đầu tiên có head hợp lệ là biên bản audited_head trả về; reviewer chỉ lấy từ chính nó, không mượn
+        # reviewer của một biên bản cùng task id khác (dự án PM khác cùng repo) khi biên bản này không xác định được.
+        ok = named in ("antigravity", "grok") and (named == last_agent or (legacy and named == "antigravity" and not audits))
+        return named if ok else None
     return None
 
 

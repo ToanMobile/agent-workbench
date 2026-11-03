@@ -246,4 +246,21 @@ OUT="$(approved_rc DEVKIT_AGENT_ID=claude)"; RC=$?
 if [ "$RC" = 0 ]; then ok "R10c: approved() trailer grok, phiên không phải grok -> nhận"
 else bad "R10c: đối chứng approved(): rc=$RC, $OUT"; fi
 
+# R11 (review cuối P3-1). Hai biên bản cùng task id (dự án PM khác nhau, cùng repo): A (sắp trước) có head mới, reviewer grok nhưng
+#     lượt audit gần nhất là antigravity (đang chờ) -> reviewer không xác định; B có reviewer antigravity trên head cũ. reviewer và head
+#     phải lấy từ CÙNG một biên bản: audit_reviewer None, không mượn "antigravity" của B. R11c đối chứng: chỉ B -> antigravity.
+mk "$TMP/r11"; M0="$(git rev-parse main)"; X="$(pr_commit "$V1" "PR sửa test")"; P11="$(pwd -P)"
+mkdir -p "$TMP/pm/projects/p-a-r11/tasks/T0901" "$TMP/pm/projects/p-b-r11/tasks/T0901"
+printf '{"id":"T0901","project":"%s","dispatches":[{"kind":"audit","agent":"grok","at":"2026-11-03T01:00:00Z"},{"kind":"audit","agent":"antigravity","at":"2026-11-03T02:00:00Z"}],"verdicts":{"audit":{"verdict":"pass","round":1,"reviewer":"grok","notes":"ok","auditedHead":"%s"}}}\n' \
+  "$P11" "$X" > "$TMP/pm/projects/p-a-r11/tasks/T0901/task.json"
+printf '{"id":"T0901","project":"%s","dispatches":[{"kind":"audit","agent":"antigravity","at":"2026-11-02T00:00:00Z"}],"verdicts":{"audit":{"verdict":"pass","round":1,"reviewer":"antigravity","notes":"ok","auditedHead":"%s"}}}\n' \
+  "$P11" "$M0" > "$TMP/pm/projects/p-b-r11/tasks/T0901/task.json"
+pair_r11() { (cd "$TMP/r11" && python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(p.audit_reviewer(".", "T0901", legacy=True), (p.audited_head(".", "T0901") or "")[:10])' "$DEVKIT_DIR/bin" 2>&1); }
+OUT="$(pair_r11)"
+if [ "$OUT" = "None ${X:0:10}" ]; then ok "R11: reviewer và head cùng một biên bản (A): reviewer không xác định"
+else bad "R11: reviewer/head lấy từ hai biên bản: $OUT (muốn None ${X:0:10})"; fi
+rm -rf "$TMP/pm/projects/p-a-r11"; OUT="$(pair_r11)"
+if [ "$OUT" = "antigravity ${M0:0:10}" ]; then ok "R11c: chỉ biên bản B -> antigravity, head B"
+else bad "R11c: đối chứng biên bản B: $OUT"; fi
+
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

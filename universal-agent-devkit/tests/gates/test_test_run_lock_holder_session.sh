@@ -17,6 +17,7 @@
 #   K  (wave 2 fix G1) every suite re-used by content key (suite cache), same-session live holder: BUSY exit 4, never exit 0
 #   L  (recheck H2) every suite re-used, the first look sees ANOTHER session's live holder, then this session's run holds the lock before
 #      the short wait ends: the give-up look classifies it again: BUSY exit 4 (fast same_session), never the read-only exit 0
+#   M  (final review P3-2) same-session live holder whose start time ps cannot read: BUSY exit 4 at give-up, never the read-only exit 0
 # bash 3.2 compatible; every gate run is under tests/lib/tlimit.py; a private SB_HEAVY_SLOT_DIR (never the real machine pool).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
@@ -299,6 +300,25 @@ elif [ "$RC" = 4 ] && grep -q '"busy": true' "$TMP/out" && [ "$busy" = true ] &&
   ok "L: holder turned this session's during the short wait: BUSY exit 4 after ${lw} s, busy_holder $bh"
 else
   bad "L: rc=$RC (want 4, never the read-only 0 behind its own session's run), runs.jsonl busy=$busy, busy_holder $bh (want fast same_session)"
+fi
+
+# ── M (final review P3-2): same-session live holder whose start time ps cannot read (ps stalls under load): BUSY at give-up ────────
+# A `ps` shim on the gate's PATH fails every lstart query (pid_start None), the holder itself recorded a real start. Before the fix the
+# give-up look kept same_session False (start unknown), read_only stayed on and the Stop run said exit 0 behind its own session's run.
+make_repo
+gate -- --full --no-checklist; seed=$RC
+mkdir -p "$TMP/psbin"
+printf '#!/bin/sh\ncase "$*" in *lstart*) exit 1 ;; esac\nexec /bin/ps "$@"\n' > "$TMP/psbin/ps"; chmod +x "$TMP/psbin/ps"
+hold_lock S-1
+stop_gate S-1 DEVKIT_REUSE_LOCK_WAIT_S=2 PATH="$TMP/psbin:$PATH"
+release
+row="$(lastrow)"; set -- $row; busy="$2"; bh="${row#* * * }"
+if [ "$seed" != 0 ]; then
+  bad "M: setup went wrong: seed --full rc=$seed"
+elif [ "$RC" = 4 ] && grep -q '"busy": true' "$TMP/out" && [ "$busy" = true ] && [ "$(holder_field "$bh" fast)" = '"same_session"' ]; then
+  ok "M: same-session holder, start time unreadable: BUSY exit 4 at give-up, busy_holder $bh"
+else
+  bad "M: rc=$RC (want 4, never the read-only 0 when ps cannot read its own session's holder), busy=$busy, busy_holder $bh"
 fi
 
 echo
