@@ -31,6 +31,7 @@ cat > "$TMP/gatebin/super-board-approval.py" <<'PY'
 #!/usr/bin/env python3
 import glob, json, os, re, sys
 a = sys.argv
+open(os.environ["FAKE_DIR"] + "/approval.calls", "a").write(" ".join(a[1:]) + "\n")  # mục 15 kiểm lần gọi
 head, pr = a[a.index("--head") + 1], a[a.index("--pr") + 1]
 line = 'approval-request: {"head":"%s","pr":%s,"repo":"o/r","scope":"%s"}' % (head, pr, "a" * 64)
 if "--request" in a:
@@ -272,5 +273,49 @@ clear_comments 8; : > "$TMP/gh.calls"; : > "$TMP/notify.log"
 [ "$RC" -eq 8 ] && grep -q 'FAILED: migrate test' "$TMP/err" && [ "$(ncomments 8)" = 0 ] && [ "$(napprove)" = 1 ] \
   && ! grep -q 'by hand' "$TMP/err" && ! grep -q 'no clear verdict' "$TMP/err" \
   && ok "approved=true, migration failed: exit 8, no PR comment, no hand-post advice, button sent" || fail "approved + failed migration: $(why 8)"
+
+# ── 14. (Grok P1) SB_NOTIFY_SKIP=1: board_notify không gửi nút nên gate không đăng request (trước PR #924 gate không ghi gì).
+clear_comments 5
+gate 5 SB_NOTIFY_SKIP=1 -- --config "$CFG_HUMAN_OFF" --expect-head "$H"
+[ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 0 ] && [ "$(napprove)" = 0 ] && ! grep -q ' pr comment ' "$TMP/gh.calls" \
+  && grep -qxF "$REQ5" "$TMP/out" \
+  && ok "SB_NOTIFY_SKIP=1: no button, no PR comment, request still on stdout, exit 7" || fail "notify skip: $(why)"
+
+# ── 15. (Grok P1) Migration lỗi, policy không human / needs_you: approval_check chưa chạy nên APPROVAL rỗng. Gate tự đọc phán quyết
+#        (approval.py kiểm, không --request, phải được gọi), không có request → đăng request, nút gửi, exit 8.
+git -C "$R" branch -q --no-track issue-9-x main
+WT9="$R/.claude/worktrees/review-9"; git -C "$R" worktree add -q "$WT9" issue-9-x
+mkdir -p "$WT9/db/migrate"; echo 'create table u (id int);' > "$WT9/db/migrate/001_add.sql"
+git -C "$WT9" add db; git -C "$WT9" commit -qm mig9; git -C "$R" push -q origin issue-9-x
+H9=$(git -C "$R" rev-parse issue-9-x); echo "$H9" > "$TMP/pr9.head"
+git -C "$R" diff origin/main issue-9-x > "$TMP/pr9.diff"
+printf '{"files":[{"path":"db/migrate/001_add.sql"}],"labels":[],"body":"","additions":1,"deletions":0,"changedFiles":1}' > "$TMP/pr9.meta"
+REQ9="approval-request: {\"head\":\"$H9\",\"pr\":9,\"repo\":\"o/r\",\"scope\":\"$(printf 'a%.0s' $(seq 64))\"}"
+clear_comments 9; : > "$TMP/gh.calls"; : > "$TMP/notify.log"; : > "$TMP/approval.calls"
+( cd "$WT9" && env SB_MERGE_RECHECK_DELAY_S=0 SB_MERGE_AUTO_POLL_S=1 \
+    bash "$GATE" --pr 9 --config "$CFG_MIG" --expect-head "$H9" --lock-timeout 5 ) >"$TMP/out" 2>"$TMP/err"; RC=$?
+[ "$RC" -eq 8 ] && grep -q 'FAILED: migrate test' "$TMP/err" && grep -v -- '--request' "$TMP/approval.calls" | grep -q -- "--head $H9" \
+  && ok "failed migration, no human/needs_you: exit 8 and the approval check is run on the spot" \
+  || fail "on-the-spot check: $(why 9) calls=[$(tr '\n' '|' < "$TMP/approval.calls")]"
+[ "$(ncomments 9)" = 1 ] && [ "$(nreq 9 "$REQ9")" = 1 ] && [ "$(napprove)" = 1 ] \
+  && ok "failed migration, no human/needs_you: the request is posted and the button sent" || fail "on-the-spot post: $(why 9)"
+
+# ── 16. (Grok P2) Kiểm lỗi / không đọc được bằng chứng: không đăng và không khuyên người đăng tay (comment tay thành block mới nhất,
+#        có thể bỏ rơi một `done` mà lần kiểm không đọc được).
+for e in FAKE_APPROVAL_FAIL=1 FAKE_APPROVAL_UNVERIFIED=1; do
+  clear_comments 5
+  gate 5 "$e" -- --config "$CFG_HUMAN_OFF" --expect-head "$H"
+  [ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 0 ] && [ "$(napprove)" = 1 ] && ! grep -qi 'by hand' "$TMP/err" \
+    && ! grep -qi 'post the approval-request line' "$TMP/err" && grep -q 'approval-request not posted' "$TMP/err" \
+    && ok "$e: no PR comment, no hand-post advice, button sent, exit 7" || fail "$e advice: $(why)"
+done
+
+# ── 17. Lần đọc phán quyết tại chỗ (mục 15) lỗi: không fatal, không đăng, nút vẫn gửi, exit 8 giữ nguyên.
+clear_comments 9; : > "$TMP/gh.calls"; : > "$TMP/notify.log"; : > "$TMP/approval.calls"
+( cd "$WT9" && env FAKE_APPROVAL_FAIL=1 SB_MERGE_RECHECK_DELAY_S=0 SB_MERGE_AUTO_POLL_S=1 \
+    bash "$GATE" --pr 9 --config "$CFG_MIG" --expect-head "$H9" --lock-timeout 5 ) >"$TMP/out" 2>"$TMP/err"; RC=$?
+[ "$RC" -eq 8 ] && [ "$(ncomments 9)" = 0 ] && [ "$(napprove)" = 1 ] && grep -q 'approval-request not posted' "$TMP/err" \
+  && grep -v -- '--request' "$TMP/approval.calls" | grep -q -- "--head $H9" \
+  && ok "on-the-spot check fails: non-fatal, no PR comment, button sent, exit 8" || fail "on-the-spot failure: $(why 9)"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

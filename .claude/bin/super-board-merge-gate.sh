@@ -294,6 +294,14 @@ needs_you_notify() {
   # bằng chứng không đọc được (đăng có thể đè một `done`) thì không đăng. Chỉ request, không bao giờ duyệt; lỗi chỉ log, nút vẫn gửi,
   # exit giữ nguyên; --dry-run không ghi GitHub. approved=true (người đã `done` / duyệt chéo, nhưng migration lỗi sau verify): im lặng,
   # không đăng, không khuyên đăng tay (request mới sẽ đè lần duyệt đó).
+  # Grok review: SB_NOTIFY_SKIP=1 (board_notify không gửi nút) thì không đăng gì, như trước PR #924. APPROVAL rỗng (approval_check chưa
+  # chạy: migration lỗi khi policy không human / needs_you) thì đọc phán quyết ngay bằng đúng lệnh của approval_check, nhưng không fatal.
+  if [ "${SB_NOTIFY_SKIP:-0}" = "1" ]; then return 0; fi
+  if [ -n "$APPROVAL_REQ_LINE" ] && [ -z "${APPROVAL:-}" ]; then
+    git -C "$REPO_PATH" fetch origin "$HEAD_REF" --quiet 2>/dev/null || :
+    APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
+      --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || APPROVAL=
+  fi
   if [ -n "$APPROVAL_REQ_LINE" ] \
     && [ "$(printf '%s' "${APPROVAL:-}" | jq -r '.approved == true' 2>/dev/null || true)" != true ]; then
     case "$(printf '%s' "${APPROVAL:-}" | jq -r '.why // empty' 2>/dev/null || true)" in
@@ -306,7 +314,7 @@ ${APPROVAL_REQ_LINE}" >/dev/null 2>&1 \
             || say "warning: could not post the approval-request comment on PR #${PR} (head ${HEAD_SHA:0:7}); the Approve button still goes out but the bot will refuse it until a writer posts the approval-request line above"
         fi ;;
       "waiting for a trusted human to comment done on the current request"|"waiting for a cross-review marker or a trusted human done on the current request") : ;;
-      *) say "approval-request not posted on PR #${PR}: the approval check gave no clear verdict ($(printf '%s' "${APPROVAL:-}" | jq -r '.why // "none"' 2>/dev/null || echo none)); post the approval-request line above by hand if the Approve button is refused" ;;
+      *) say "approval-request not posted on PR #${PR}: the approval check gave no clear verdict ($(printf '%s' "${APPROVAL:-}" | jq -r '.why // "none"' 2>/dev/null || echo none)); approval state unclear, so no request is posted — check the PR and its linked issue before posting anything" ;;
     esac
   fi
   board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
@@ -470,6 +478,7 @@ PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$M
 # The label is display-only. A request posted before `done` pins the exact head
 # and policy/commands. Re-read trusted approval evidence; never mint it here.
 APPROVED=false
+APPROVAL=        # phán quyết approval.py; không nhận giá trị từ môi trường của bên gọi (hàm gửi nút đọc nó)
 APPROVED_HEAD=   # #262: head người đã duyệt, đọc từ biên nhận cũ (nếu có) trước khi kiểm duyệt
 # #570: gate không còn đẩy merge commit lên nhánh PR nên không còn ghi biên nhận approved-merge-heads; head PR giữ nguyên X và
 # chính X là head người duyệt. Biên nhận Y→X do bản gate cũ để lại vẫn được đọc ở đây cho tới khi nhánh đó đóng.
