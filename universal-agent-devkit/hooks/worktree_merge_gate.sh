@@ -224,6 +224,16 @@ except (Exception, SystemExit) as e:
     session_lock, lock_error = None, e   # without it a lock held by another live session is not seen: more worktrees count as ours (held, capped), and the hold text says so
 
 state_path = os.path.join(repo, ".claude", "audit-gate", "worktree_merge_gate.state")
+log_path = os.path.join(repo, ".claude", "audit-gate", "worktree_merge_gate.log")
+
+def logline(text):
+    """One line per hold / release (#wave2-8): append only, never creates the folder, never changes the exit."""
+    try:
+        with open(log_path, "a", encoding="utf-8") as lf:
+            lf.write(f"[{datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] {text}\n")
+    except OSError:
+        return   # no log folder / not writable: the diagnostic line is lost, the Stop's exit and text stay as they are
+
 try:
     with open(state_path, encoding="utf-8") as sf:
         state = json.load(sf)
@@ -795,16 +805,34 @@ def line(r):
     return f"  - {r['path']} [{where}] ahead={'?' if r['ahead'] is None else r['ahead']} dirty={'?' if r['dirty'] is None else r['dirty']}{lost}"
 
 listing = "\n".join(line(r) for r in pending)
+
+def why(r):   # one short cause per pending worktree for the log line (the full text goes to stderr)
+    if r.get("am_status") == "conflict":
+        return "conflict"
+    if r.get("kind") == "gone":
+        return "gone"
+    if r.get("reason"):
+        return "unchecked"
+    if r.get("am"):
+        return "automerge: " + str(r["am"])[:80]
+    if not r.get("unintegrated"):
+        return "merged-not-removed"
+    return f"ahead={r.get('ahead')} dirty={r.get('dirty')}"
+
+log_ctx = (f"sid={sid[:36]} pending={len(pending)} "
+           + ", ".join(f"{r.get('path')} ({why(r)})" for r in pending[:5]) + (" …" if len(pending) > 5 else ""))[:600]
 could_not_run = any(r.get("reason") and r.get("kind") != "gone" for r in pending)   # "gone": checked, a commit is missing
 lock_note = ("⚠ session_lock.py không import được (" + type(lock_error).__name__ + "): khóa của phiên khác không thấy được, nên worktree của phiên khác có thể bị tính nhầm là của phiên này.\n"
              if session_lock is None else "")
 if d.get("stop_hook_active"):   # #708: Stop này đến ngay sau một lần chặn: không chặn vòng nữa, nói một dòng; việc còn nợ vẫn nhớ, không tính vào "Lần giữ N/3"
     save()
+    logline(f"release: stop_hook_active (no second hold right after a hold) {log_ctx}")
     print(json.dumps({"systemMessage": f"⚠ WORKTREE-MERGE GATE: stop_hook_active (Stop ngay sau một lần chặn) nên không chặn nữa; còn {len(pending)} worktree chưa về trunk "
                       "(`agent-kit worktree status`), lần dừng sau sẽ nhắc lại"}, ensure_ascii=False))
     sys.exit(0)
 if held >= 3:
     save()   # the debt survives the cap: the next session is held on it
+    logline(f"release: cap {held}/3 holds on this pending set{' (gate could not run)' if could_not_run else ''} {log_ctx}")
     head = ("⚠ WORKTREE-MERGE GATE: cổng KHÔNG chạy được (lỗi nội bộ / không đọc được git dir) nên không biết worktree còn việc CHƯA về trunk hay không:\n"
             if could_not_run else "⚠ WORKTREE-MERGE GATE: phiên dừng khi worktree vẫn còn việc CHƯA về trunk:\n")
     advice = "`git worktree list` (kiểm tra bằng tay)" if could_not_run else "`agent-kit worktree finish <path>` (tự gộp + gỡ) hoặc `agent-kit worktree status`"
@@ -813,6 +841,7 @@ if held >= 3:
     sys.exit(0)
 sessions[sid] = {"fp": fp, "n": held + 1}
 if not save():
+    logline(f"release: state not saved (cannot count holds) {log_ctx}")
     sys.exit(0)   # cannot count the holds: never risk blocking every stop
 
 # What to do now: a CONFLICT is resolved in the worktree (its own folder: safe), then the next Stop finishes the merge by itself.
@@ -846,6 +875,7 @@ if could_not_run:
                        "SAU KHI kiểm tra thư mục đó đã mất hoặc không còn cần.")
     error_note += (" WORKTREE_MERGE_GATE=0 phải đặt trong môi trường TRƯỚC khi khởi động phiên (không đặt được cho một lần dừng của phiên đang chạy); "
                    "sau 3 lần giữ cổng vẫn cho qua.\n")
+logline(f"BLOCK hold {held + 1}/3 {log_ctx}")
 sys.stderr.write(
     "⛔ WORKTREE-MERGE GATE: worktree phải được GỘP vào nhánh chính rồi XOÁ trước khi dừng — để lại là trunk thiếu code:\n"
     + listing + "\n" + error_note + (own_note + "\n" if own_note else "") + "".join(n + "\n" for n in pr_notes) +
