@@ -733,6 +733,10 @@ def approved(top, rng):
         if reviewer != word:
             whys.append(f"{APPROVED} {word} {task_id}: biên bản PM ghi reviewer {reviewer or 'không xác định'}, khác `{word}`")
             continue
+        # Review cuối F-1: luật H4 cho mọi đường gọi (fallback push, _covered, since_test_weakened), không chỉ _trailer_cross_review.
+        if reviewer in session_agents():
+            whys.append(f"{APPROVED} {word} {task_id}: reviewer {reviewer} thuộc danh tính phiên (tự duyệt)")
+            continue
         # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
         # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
         # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.

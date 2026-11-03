@@ -236,4 +236,14 @@ run_gate_env "$TMP/r9" DEVKIT_AGENT_ID=codex
 if [ "$RC" = 0 ] && has "duyệt chéo bởi grok (thay Antigravity) (task T0891-r9)"; then ok "R9c: trailer grok, DEVKIT_AGENT_ID=codex không env grok -> nhận"
 else bad "R9c: đối chứng codex không grok: rc=$RC, $(tailout)"; fi
 
+# R10 (review cuối F-1). push_gate.approved() (fallback push không biên nhận, _covered, since_test_weakened) cũng từ chối trailer
+#     grok trong phiên grok; R10c đối chứng không env grok -> nhận. Repo r8: commit rỗng mang trailer grok trên cây đã audit.
+approved_rc() { (cd "$TMP/r8" && env "$@" python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate; ok, why = push_gate.approved(".", "main..HEAD"); print(why); sys.exit(0 if ok else 2)' "$DEVKIT_DIR/bin" 2>&1); }
+OUT="$(approved_rc GROK_SESSION_ID=g-1)"; RC=$?
+if [ "$RC" = 2 ] && has "tự duyệt"; then ok "R10: approved() trailer grok, phiên grok -> không duyệt (tự duyệt)"
+else bad "R10: approved() trailer grok trong phiên grok: rc=$RC, $OUT"; fi
+OUT="$(approved_rc DEVKIT_AGENT_ID=claude)"; RC=$?
+if [ "$RC" = 0 ]; then ok "R10c: approved() trailer grok, phiên không phải grok -> nhận"
+else bad "R10c: đối chứng approved(): rc=$RC, $OUT"; fi
+
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }
