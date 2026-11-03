@@ -734,6 +734,8 @@ def _scoped_pick(pfg, scratch: str, c: str, rules: list, matrix_rel: str = ""):
     """(file test PR của c chạy thật, mã suite chạy cả lệnh, file đổi) — như post-fix-gate --scoped (~6815–6835) TẠI c, base = cha:
     decide + no_full; luật ma trận có watch_files khớp file đổi chạy cả lệnh (trừ runner kit: run_impacted.sh chỉ chạy file scoped chọn);
     test py/js không luật nào chạy (skip, #741) không chạy ở PR và kéo [core-smoke]. None khi c không có cha (commit gốc).
+    Ma trận như gate PR: của cha + luật chỉ-thêm (load_active_matrix + trust_additive_matrix của post-fix-gate, không chép).
+    ponytail: chưa áp follow_matrix_renames (PR git mv file test mà lệnh ma trận nhắc) — thêm khi đo thấy lọt lưới giả ở PR đổi tên test.
     ponytail: luật có impacted_command (Gradle/Unity ở app) chạy tập con impacted ở PR, không cả lệnh — vẫn tính "chạy cả suite" nên có thể
     đếm thiếu lọt lưới; tách khi đo thấy đêm đỏ ở suite impacted mà escape_rate = 0."""
     import scoped_gate
@@ -743,13 +745,12 @@ def _scoped_pick(pfg, scratch: str, c: str, rules: list, matrix_rel: str = ""):
     files = [f for f in git_out(scratch, "diff", "--name-only", "--no-renames", c + "^", c).splitlines() if not pfg.is_devkit_artifact(f)]
     if git(scratch, "checkout", "-q", "-f", "--detach", c)[0] != 0:   # cây đứng sai thì đồ thị sai: không tái dựng
         return None
-    if matrix_rel:   # luật của chính PR (ma trận tại c, như gate PR đọc base + luật thêm ở đuôi), không phải của đỉnh đêm
-        try:
-            with open(os.path.join(scratch, matrix_rel), encoding="utf-8") as f:
-                rules = [r for r in json.load(f).get("rules") or [] if isinstance(r, dict)]
-        except (OSError, ValueError, AttributeError):
-            pass
     pfg.get_project_dir = lambda: pfg.Path(scratch)
+    pfg.REPO_ROOT = None   # gốc repo của gate tính lại từ scratch (cache toàn module)
+    if matrix_rel:   # luật như gate PR (~6584): ma trận của CHA + chỉ luật thêm; PR sửa luật có sẵn thì luật của cha quyết, không phải của c
+        path = os.path.join(scratch, matrix_rel)
+        matrix, _, _ = pfg.trust_additive_matrix(*pfg.load_active_matrix(path, c + "^"), path, c + "^")
+        rules = [r for r in (matrix.get("rules") if isinstance(matrix, dict) else None) or [] if isinstance(r, dict)]
     covers = pfg.checklist_covers()
     dec = scoped_gate.no_full(scoped_gate.decide(scratch, c + "^", needs_no_test=pfg.needs_no_test, matrix_rules=rules, changed=files),
                               scratch)
@@ -769,7 +770,8 @@ def _scoped_pick(pfg, scratch: str, c: str, rules: list, matrix_rel: str = ""):
         scoped_gate.add_core_smoke(dec, scratch)
         added, _, _ = pfg.scoped_suites(dec, rules, selected, covers, skip=skipped)   # py/js của core-smoke cũng không chạy ở PR
         whole |= {t.get("id") for _, t in added if not pfg._KIT_RUNNER.search(t.get("command") or "")}
-    ran = set(dec.get("tests") or []) | set(dec.get("smoke") or []) | set(dec.get("core_smoke") or [])
+    # bỏ skipped TRƯỚC: file py/js bị bỏ chỉ khỏi SCOPED-EXTRA, lệnh suite chạy cả lệnh có nhắc nó thì nó vẫn chạy (thêm ở dưới)
+    ran = (set(dec.get("tests") or []) | set(dec.get("smoke") or []) | set(dec.get("core_smoke") or [])) - set(skipped)
     # suite chạy cả lệnh: file trong lệnh của nó cũng đã chạy, dù file đó thuộc mã suite khác (một file test, nhiều mã)
     for r in rules:
         for t in r.get("mandatory_regression_tests") or []:
@@ -779,7 +781,7 @@ def _scoped_pick(pfg, scratch: str, c: str, rules: list, matrix_rel: str = ""):
                 except ValueError:
                     toks = (t.get("command") or "").split()
                 ran |= {p for p in toks if not os.path.isabs(p) and os.path.isfile(os.path.join(scratch, p))}
-    return ran - set(skipped), whole, files
+    return ran, whole, files
 
 
 def escape_check(run: Run, repo: str, scratch: str, sha: str, matrix_path, slug: str) -> None:

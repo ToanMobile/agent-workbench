@@ -24,6 +24,7 @@
 #   t15. decide ném lỗi ở một commit ⇒ chỉ commit đó không vào mẫu, các suite khác vẫn đo, có ghi chú.
 #   (review Claude 03/11) t16. REG-M-01 (test_b.sh, ứng viên c1): ở c1 luật F chạy cả lệnh `bash …/test_b.sh` — file đó ĐÃ chạy dù mang
 #   mã suite khác ⇒ không lọt. Cả bộ: checked 9, lọt 4 (B E J K), rate 0.444.
+#   (03/11) t17–t19 trên repo giả thứ hai: luật cha + luật chỉ-thêm (như gate PR), thứ tự `ran - skipped` (xem khối cuối).
 # Thẻ giả qua DEVKIT_GATE_FULL_CARD_CMD; slug rỗng nên không gọi gh (PATH giữ nguyên: python3 mặc định như gate). Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -158,6 +159,74 @@ chk "t15. decide lỗi ở c2: B/D/K (chỉ ứng viên c2) rơi khỏi mẫu, c
   '[ "$(j "(d[\"checked\"], sorted(e[\"id\"] for e in d[\"escaped\"]))")" = "(6, ['"'"'REG-E-01'"'"', '"'"'REG-J-01'"'"'])" ] && grep -q "đồ thị hỏng" "$T/log3/summary-latest.md"' "$OUT $(grep -i ghi "$T/log3/summary-latest.md" 2>/dev/null)"
 OUT="$(run_drive none "$T/log2")"
 chk "t7. không ứng viên kiểm được: không thẻ, rate null" '[ "$(j "(d[\"checked\"], d[\"rate\"], d[\"escaped\"])")" = "(0, None, [])" ] && [ ! -s "$T/cards-none.log" ]' "$OUT"
+
+# Repo giả thứ hai (độ chính xác của bước đo, 03/11):
+#   t17. c4 "(#31)" sửa bin/p.py VÀ sửa watch_files của luật P có sẵn (docs/** → bin/p.py): gate PR chạy ma trận của CHA (load_active_matrix
+#        + trust_additive_matrix, sửa luật cũ không được tin) ⇒ luật cha không chọn REG-P-01 ⇒ lọt;
+#   t18. c5 "(#32)" sửa bin/q.py và NỐI luật N (watch bin/q.py): luật chỉ-thêm của chính PR được tin ⇒ REG-N-01 không lọt;
+#   t19. ở c5 tests/test_q.py bị bỏ (skip, không luật nào chạy py) nhưng luật W (watch test_w.sh, gate thêm cả lệnh) chạy
+#        `python3 …/test_q.py` ⇒ file đó ĐÃ chạy, REG-Q-01 không lọt.
+R2="$T/repo2"
+g init -q "$R2"
+K2="$R2/universal-agent-devkit"
+mkdir -p "$K2/tests" "$K2/bin" "$R2/.agents"
+printf '#!/bin/sh\nexit 0\n' >"$K2/tests/test_p.sh"
+printf '#!/bin/sh\nexit 0\n' >"$K2/tests/test_n.sh"
+printf '#!/bin/sh\n# chạy bin/q.py\nexit 0\n' >"$K2/tests/test_w.sh"
+printf '# chạy bin/q.py\nprint(1)\n' >"$K2/tests/test_q.py"
+printf 'print("p1")\n' >"$K2/bin/p.py"
+printf 'print("q1")\n' >"$K2/bin/q.py"
+cp "$R/.agents/gate-core.txt" "$R2/.agents/gate-core.txt"; cp "$K/tests/test_s.sh" "$K2/tests/test_s.sh"
+cat >"$R2/matrix.json" <<'JSON'
+{"rules": [
+ {"component": "P", "watch_files": ["docs/**"], "mandatory_regression_tests": [{"id": "REG-P-01", "command": "bash universal-agent-devkit/tests/test_p.sh"}]},
+ {"component": "W", "watch_files": ["universal-agent-devkit/tests/test_w.sh"], "mandatory_regression_tests": [{"id": "REG-W-01", "command": "python3 universal-agent-devkit/tests/test_q.py"}]}
+]}
+JSON
+g -C "$R2" add -A && g -C "$R2" commit -qm base
+printf 'print("p2")\n' >"$K2/bin/p.py"
+python3 - "$R2/matrix.json" <<'PYM'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["rules"][0]["watch_files"] = ["universal-agent-devkit/bin/p.py"]
+json.dump(d, open(sys.argv[1], "w"))
+PYM
+g -C "$R2" commit -qam "🐛 [fix] p (#31)"
+C4="$(g -C "$R2" rev-parse HEAD)"
+printf 'print("q2")\n' >"$K2/bin/q.py"
+python3 - "$R2/matrix.json" <<'PYM'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["rules"].append({"component": "N", "watch_files": ["universal-agent-devkit/bin/q.py"],
+                   "mandatory_regression_tests": [{"id": "REG-N-01", "command": "bash universal-agent-devkit/tests/test_n.sh"}]})
+json.dump(d, open(sys.argv[1], "w"))
+PYM
+g -C "$R2" commit -qam "🐛 [fix] q (#32)"
+C5="$(g -C "$R2" rev-parse HEAD)"
+g -C "$R2" worktree add -q --detach "$T/scratch2" "$C5"
+cat >"$T/drive2.py" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.environ["BIN"])
+import gate_full
+repo, scratch, c4, c5, logdir = sys.argv[1:6]
+run = gate_full.Run(logdir)
+run.info.update({"result": "red", "ref": "origin/main", "sha": c5, "red": ["REG-P-01", "REG-N-01", "REG-Q-01"], "group_b": []})
+k = "universal-agent-devkit/tests/"
+run.info["trace"] = {"last_green": "", "range": "r", "commits": [], "tests": [
+    {"id": "REG-P-01", "files": [k + "test_p.sh"], "candidates": [{"sha": c4, "pr": 31, "issues": [], "confidence": "nghi", "why": "x", "hit": True}]},
+    {"id": "REG-N-01", "files": [k + "test_n.sh"], "candidates": [{"sha": c5, "pr": 32, "issues": [], "confidence": "nghi", "why": "x", "hit": True}]},
+    {"id": "REG-Q-01", "files": [k + "test_q.py"], "candidates": [{"sha": c5, "pr": 32, "issues": [], "confidence": "nghi", "why": "x", "hit": True}]}]}
+gate_full.escape_check(run, repo, scratch, c5, os.path.join(repo, "matrix.json"), "")
+run.finish()
+print(json.dumps(run.info["escape"], ensure_ascii=False))
+PY
+OUT="$(CARD_LOG="$T/cards-edit.log" DEVKIT_GATE_FULL_CARD_CMD="$T/card.sh" BIN="$DEVKIT_DIR/bin" \
+  python3 "$T/drive2.py" "$R2" "$T/scratch2" "$C4" "$C5" "$T/log4" 2>"$T/err-edit.txt" | tail -1)"
+[ -n "$OUT" ] || { bad "t17–t19. escape_check repo 2 không chạy được" "$(tail -5 "$T/err-edit.txt")"; OUT='{"checked": -1, "escaped": []}'; }
+chk "t17. PR sửa luật P có sẵn: luật CHA quyết ⇒ REG-P-01 lọt" '[ "$(j "\"REG-P-01\" in [e[\"id\"] for e in d[\"escaped\"]]")" = True ]' "$OUT"
+chk "t18. luật N chỉ-thêm của chính PR được tin ⇒ REG-N-01 không lọt" '[ "$(j "\"REG-N-01\" in [e[\"id\"] for e in d[\"escaped\"]]")" = False ]' "$OUT"
+chk "t19. test_q.py bị bỏ nhưng lệnh suite W chạy nó ⇒ REG-Q-01 không lọt" '[ "$(j "\"REG-Q-01\" in [e[\"id\"] for e in d[\"escaped\"]]")" = False ]' "$OUT"
+chk "t17–t19. checked 3, đúng một lọt (REG-P-01)" '[ "$(j "(d[\"checked\"], [e[\"id\"] for e in d[\"escaped\"]])")" = "(3, ['"'"'REG-P-01'"'"'])" ]' "$OUT"
 
 echo
 [ "$fails" -eq 0 ] && { echo "PASS test_gate_full_escape"; exit 0; }
