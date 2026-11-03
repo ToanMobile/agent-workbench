@@ -87,7 +87,8 @@ export function pathspecArgs(pathspec) {
 
 /** grok, grok-4.7, grok-build... la Grok (khong khop "grokx"). */
 const laGrok = (x) => /^grok(?![a-z0-9])/.test(String(x || '').trim().toLowerCase());
-/** Ten agent chuan hoa nhu push_gate.normalize_reviewer (grok -> grok, antigravity(-*) -> antigravity, con lai chu thuong), rieng grok rong hon: laGrok coi ca grok_x, grok.x, "grok build" la grok (so tu duyet chat hon). */
+/** Ten agent chuan hoa gan nhu push_gate.normalize_reviewer (grok -> grok, antigravity(-*) -> antigravity, con lai chu thuong). Lech co chu y: grok rong hon
+ *  (laGrok coi ca "grok build", "grok:" la grok — so tu duyet chat hon); antigravity chi nhan "antigravity-*", khong nhan "_"/"." nhu ban Python. */
 function normalizeAgent(x) {
   const v = String(x || '').trim().toLowerCase();
   if (laGrok(v)) return 'grok';
