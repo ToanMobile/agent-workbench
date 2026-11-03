@@ -7,10 +7,14 @@
 #  A1-A3: ĐỎ trên code cũ ("auditedHead không nằm sau base") — merge main vào PR, scratch main+PR, scratch merge gate (PR + main, trailer).
 #  R1-R4: vẫn từ chối — replay audit cũ hơn sau khi test được làm mạnh; auditedHead đã nằm trên main; audit tới qua merge nhánh bỏ dở
 #         (second parent); main đổi chính test đó sau audit. Mỗi ca có đối chứng chỉ khác đúng một điểm.
+#  Sửa sau review đợt 2: R5 (G2) main đổi test mà PR chưa gộp main; R6 (F1) audit mới hơn bị ghi đè thành fail vẫn tính qua
+#  verdicts.auditHistory; R7 (F3/G3) author alias grok-build / phiên grok = reviewer PM grok -> tự duyệt; R8 (F2) trailer grok
+#  trong phiên grok (GROK_SESSION_ID) không duyệt. Đều có đối chứng.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 unset DEVKIT_AUTO_APPROVE_TESTS DEVKIT_TRANSCRIPTS_DIR TARGET_DIR DEVKIT_AGENT_ID CLAUDE_CODE_SESSION_ID DEVKIT_SESSION_ID CLAUDE_SESSION_ID
 unset WORKTREE_TRUNK_MODE DEVKIT_GATE_MERGE_CHECK CI
+unset CLAUDECODE GROK_SESSION_ID GROK_WORKSPACE_ROOT GROK_HOOK_EVENT   # danh tính phiên (push_gate.session_agent): từng ca tự đặt
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)" || exit 1
@@ -139,5 +143,81 @@ if [ "$(git rev-parse HEAD:tests/t.sh)" != "$(git rev-parse "$X:tests/t.sh")" ];
 approve "$TMP/r4" T0841-r4; run_gate "$TMP/r4"
 if refused "nhánh đích đã đổi"; then ok "R4: main đổi chính test sau audit -> từ chối"
 else bad "R4: main đổi test sau audit: rc=$RC, $(tailout)"; fi
+
+# ── Đợt 2, sửa sau review (F1, G2, F3/G3, F2) ─────────────────────────────────────────────────────────────────────────────
+pm_task_grok() {   # pm_task_grok <task-id> <project> <auditedHead>: audit pass do PM tự chạy grok (reviewer grok, lượt audit gần nhất grok)
+  mkdir -p "$TMP/pm/projects/p-$1/tasks/$1"
+  printf '{"id":"%s","project":"%s","dispatches":[{"kind":"audit","agent":"grok","at":"2026-11-03T00:00:00Z"}],"verdicts":{"audit":{"verdict":"pass","round":1,"reviewer":"grok","notes":"ok","auditedHead":"%s"}}}\n' \
+    "$1" "$(cd "$2" && pwd -P)" "$3" > "$TMP/pm/projects/p-$1/tasks/$1/task.json"
+}
+pm_task_failed() {   # pm_task_failed <task-id> <project> <head> <yes|no>: verdicts.audit bị ghi đè thành fail; yes = auditHistory còn giữ head pass
+  local hist=""
+  [ "$4" = yes ] && hist=",\"auditHistory\":[{\"auditedHead\":\"$3\",\"reviewer\":\"antigravity\",\"at\":\"2026-11-02T00:00:00Z\"}]"
+  mkdir -p "$TMP/pm/projects/p-$1/tasks/$1"
+  printf '{"id":"%s","project":"%s","verdicts":{"audit":{"verdict":"fail","round":2,"reviewer":"pm","notes":"fail"}%s}}\n' \
+    "$1" "$(cd "$2" && pwd -P)" "$hist" > "$TMP/pm/projects/p-$1/tasks/$1/task.json"
+}
+approve_as() {   # approve_as <repo> <task-id> <reviewer> <author>
+  mkdir -p "$1/.claude/audit-gate"
+  python3 - "$1" "$2" "$3" "$4" <<'PY'
+import hashlib, json, os, sys
+root, tid, rv, au = sys.argv[1:5]
+sha = hashlib.sha256(open(os.path.join(root, "tests/t.sh"), "rb").read()).hexdigest()
+json.dump({"approvals": [{"path": "tests/t.sh", "sha256": sha, "reviewer": rv, "author": au, "task_id": tid, "reason": "fixture"}]},
+          open(os.path.join(root, ".claude/audit-gate/approved_tests.json"), "w"))
+PY
+}
+run_gate_env() { local d="$1"; shift; OUT="$(cd "$d" && env "$@" CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --matrix "$d/matrix.json" --lang vi --run-tests --diff main 2>&1)"; RC=$?; }
+
+# R5 (G2). main đổi chính test đó sau audit, PR CHƯA gộp main -> từ chối (code cũ so base cũ của PR: nhận)
+mk "$TMP/r5"; X="$(pr_commit "$V1" "PR sửa test")"; pm_task T0851-r5 "$TMP/r5" "$X"
+git checkout -q main && printf "$V3" > tests/t.sh && git commit -qam "main đổi test" && git checkout -q feat
+approve "$TMP/r5" T0851-r5; run_gate "$TMP/r5"
+if refused "nhánh đích đã đổi"; then ok "R5: main đổi test sau audit, PR chưa gộp main -> từ chối"
+else bad "R5: main đổi test, PR chưa gộp: rc=$RC, $(tailout)"; fi
+# R5c. đối chứng: main tiến KHÔNG chạm test, PR chưa gộp main -> nhận
+mk "$TMP/r5c"; X="$(pr_commit "$V1" "PR sửa test")"; pm_task T0852-r5c "$TMP/r5c" "$X"
+main_moves; approve "$TMP/r5c" T0852-r5c; run_gate "$TMP/r5c"
+if accepted T0852-r5c; then ok "R5c: main tiến không chạm test, PR chưa gộp -> nhận"
+else bad "R5c: đối chứng main không chạm test: rc=$RC, $(tailout)"; fi
+
+# R6 (F1). replay qua verdict fail: T0861 pass ở X1 (V1); T0862 pass ở X2 (V2) rồi verdicts.audit bị ghi đè thành fail, auditHistory
+#     còn X2; chép test về V1, khai T0861 -> từ chối (audit mới hơn)
+mk "$TMP/r6"; X1="$(pr_commit "$V1" "V1")"; pm_task T0861-r6 "$TMP/r6" "$X1"
+X2="$(pr_commit "$V2" "V2 làm mạnh")"; pm_task_failed T0862-r6 "$TMP/r6" "$X2" yes
+pr_commit "$V1" "chép về V1" >/dev/null
+approve "$TMP/r6" T0861-r6; run_gate "$TMP/r6"
+if refused "audit mới hơn"; then ok "R6: audit mới hơn bị ghi đè thành fail vẫn còn trong auditHistory -> từ chối replay"
+else bad "R6: replay qua verdict fail: rc=$RC, $(tailout)"; fi
+# R6c. đối chứng: cùng chuỗi, biên bản fail KHÔNG có auditHistory (biên bản cũ) -> nhận như hôm nay
+mk "$TMP/r6c"; X1="$(pr_commit "$V1" "V1")"; pm_task T0863-r6c "$TMP/r6c" "$X1"
+X2="$(pr_commit "$V2" "V2 làm mạnh")"; pm_task_failed T0864-r6c "$TMP/r6c" "$X2" no
+pr_commit "$V1" "chép về V1" >/dev/null
+approve "$TMP/r6c" T0863-r6c; run_gate "$TMP/r6c"
+if accepted T0863-r6c; then ok "R6c: biên bản fail không có auditHistory -> như trước (nhận)"
+else bad "R6c: đối chứng không history: rc=$RC, $(tailout)"; fi
+
+# R7 (F3/G3). reviewer PM grok, author ghi "grok-build" -> tự duyệt, từ chối; R7b phiên là grok (GROK_WORKSPACE_ROOT) -> từ chối;
+#     R7c đối chứng author claude, không env grok -> nhận
+mk "$TMP/r7"; X="$(pr_commit "$V1" "PR sửa test")"; pm_task_grok T0871-r7 "$TMP/r7" "$X"
+approve_as "$TMP/r7" T0871-r7 grok grok-build; run_gate "$TMP/r7"
+if refused "tự duyệt"; then ok "R7: author grok-build = reviewer PM grok -> từ chối (tự duyệt)"
+else bad "R7: author alias grok: rc=$RC, $(tailout)"; fi
+approve_as "$TMP/r7" T0871-r7 grok claude; run_gate_env "$TMP/r7" GROK_WORKSPACE_ROOT="$TMP/r7"
+if refused "tự duyệt"; then ok "R7b: phiên là grok (GROK_WORKSPACE_ROOT), reviewer PM grok -> từ chối (tự duyệt)"
+else bad "R7b: phiên grok, mục author claude: rc=$RC, $(tailout)"; fi
+run_gate "$TMP/r7"
+if [ "$RC" = 0 ] && has "duyệt chéo bởi grok (thay Antigravity) (task T0871-r7)"; then ok "R7c: author claude, phiên không phải grok -> nhận"
+else bad "R7c: đối chứng author claude: rc=$RC, $(tailout)"; fi
+
+# R8 (F2). trailer `Test-approved-by: grok`, phiên là grok (GROK_SESSION_ID, không DEVKIT_AGENT_ID) -> không duyệt; R8c không env -> nhận
+mk "$TMP/r8"; X="$(pr_commit "$V1" "PR sửa test")"; pm_task_grok T0881-r8 "$TMP/r8" "$X"
+git commit -q --allow-empty -m "audit" -m "Test-approved-by: grok T0881-r8"
+run_gate_env "$TMP/r8" GROK_SESSION_ID=g-1
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi"; then ok "R8: trailer grok, phiên là grok -> không duyệt (exit 2)"
+else bad "R8: trailer grok trong phiên grok: rc=$RC, $(tailout)"; fi
+run_gate "$TMP/r8"
+if [ "$RC" = 0 ] && has "duyệt chéo bởi grok (thay Antigravity) (task T0881-r8)"; then ok "R8c: trailer grok, phiên không phải grok -> nhận"
+else bad "R8c: đối chứng trailer grok: rc=$RC, $(tailout)"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

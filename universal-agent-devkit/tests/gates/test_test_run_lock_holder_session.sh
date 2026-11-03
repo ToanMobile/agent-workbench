@@ -14,6 +14,7 @@
 #   H  stale_rerun: while it waits for a gate's lock it does not empty the gate's record; holding the lock it writes who=stale_rerun and
 #      empties the record before it lets go
 #   J  the gate's own record names its session and who=gate
+#   K  (wave 2 fix G1) every suite re-used by content key (suite cache), same-session live holder: BUSY exit 4, never exit 0
 # bash 3.2 compatible; every gate run is under tests/lib/tlimit.py; a private SB_HEAVY_SLOT_DIR (never the real machine pool).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
@@ -248,6 +249,25 @@ sys.exit(0 if r.get("sid") == "S-7" and r.get("who") == "gate" and isinstance(r.
   ok "J: the gate holding the lock recorded {pid, pid_start, sid S-7, who gate}: $(cat "$MARK/rec")"
 else
   bad "J: rc=$RC (want 0), record seen by the suite: '$(cat "$MARK/rec" 2>/dev/null)' (want sid S-7, who gate)"
+fi
+
+# ── K (wave 2 fix G1): every suite re-used by CONTENT KEY (suite cache, no receipt), same-session live holder: BUSY exit 4 ─────────
+# Before the fix reused_pass() left KEYED suites out, nothing turned UNTESTED and the Stop run said exit 0 (the hook then writes pass_fp).
+make_repo
+gate DEVKIT_SUITE_CACHE=1 -- --full --no-checklist; seed=$RC
+rm -f "$GD/full_pass.json"   # no receipt to re-use: the suite comes back by its content key alone
+hold_lock S-1
+stop_gate S-1 DEVKIT_SUITE_CACHE=1 POSTFIX_GATE_FORCE_FULL=1   # a forced Stop run (CI / POSTFIX_GATE_FORCE_FULL) re-uses by key
+release
+row="$(lastrow)"; set -- $row; busy="$2"
+if [ "$seed" != 0 ]; then
+  bad "K: setup went wrong: seed --full rc=$seed"
+elif ! grep -q 'content key' "$TMP/out"; then
+  bad "K: setup went wrong: the suite was not re-used by content key (rc=$RC); out: $(grep -E 'PASS|UNTESTED' "$TMP/out" | head -2)"
+elif [ "$RC" = 4 ] && grep -q '"busy": true' "$TMP/out" && [ "$busy" = true ]; then
+  ok "K: every suite re-used by content key, same-session live holder: BUSY exit 4, busy true"
+else
+  bad "K: rc=$RC (want 4, never exit 0 behind its own session's run), runs.jsonl busy=$busy; out: $(grep -E 'VERDICT|UNTESTED' "$TMP/out" | head -2)"
 fi
 
 echo

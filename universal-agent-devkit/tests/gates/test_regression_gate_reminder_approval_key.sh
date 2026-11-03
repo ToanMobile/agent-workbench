@@ -8,6 +8,7 @@
 # RED on the old hook: (a) a reminder older than 300 s with the same content and digest re-ran the gate; (b) a PM verdict that
 # lands after the ledger entry, (c) an answer of the user in a transcript that is not the newest file, were not seen inside
 # the window. (d) REGRESSION_GATE_TOUCHED_RECHECK_S=0 still runs the gate on every Stop (guard, green on both).
+# (e) wave 2 fix F4: an audit pass (verdicts.auditHistory included) of a task that no ledger entry or trailer names moves the digest.
 # The gate cache is off so every gate run starts the suite: the suite run count tells that the gate ran.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
@@ -141,6 +142,24 @@ d = json.load(open(p)); d["messages"] = ["status ping"]; json.dump(d, open(p, "w
 PY
 before=$(runs); stop X=1
 [ "$(runs)" = "$before" ] && ok "(b) a PM field outside verdicts/audit dispatches: still reused" || fail "(b) unrelated PM field re-ran the gate (runs $before -> $(runs))"
+
+# (e) wave 2 fix F4/F1: an audit pass of a task that neither the ledger nor a trailer names (its verdicts.audit since overwritten by
+#     a fail, the pass kept in verdicts.auditHistory) can make the gate refuse the entry ("a newer audit on the branch"): it moves the digest
+python3 - "$X" "$ANTIGRAVITY_PM_STATE_HOME" "$(git rev-parse HEAD)" <<'PY'
+import json, os, sys
+repo, pm, head = sys.argv[1], sys.argv[2], sys.argv[3]
+d = os.path.join(pm, "projects", "repo-abc", "tasks", "T0002-other")
+os.makedirs(d, exist_ok=True)
+json.dump({"id": "T0002-other", "project": os.path.realpath(repo),
+           "verdicts": {"audit": {"verdict": "fail", "notes": "fail"},
+                        "auditHistory": [{"auditedHead": head, "reviewer": "antigravity", "at": "2026-11-03T01:00:00Z"}]}},
+          open(os.path.join(d, "task.json"), "w"))
+PY
+before=$(runs); stop X=1
+[ "$(runs)" -gt "$before" ] && ok "(e) an audit pass (auditHistory) of a task no ledger entry or trailer names: the next stop runs the gate" \
+  || fail "(e) an unnamed task's audit pass did not move the approval digest (reminder reused, runs $before -> $(runs))"
+before=$(runs); stop X=1
+[ "$(runs)" = "$before" ] && ok "(e) unchanged: the repeat is reused" || fail "(e) repeat after the unnamed audit ran the gate (runs $before -> $(runs))"
 
 # (c) an answer of the user in a candidate transcript that is NOT the newest file: the gate runs again
 python3 - "$TMP/tr/other.jsonl" "$TP" <<'PY'
