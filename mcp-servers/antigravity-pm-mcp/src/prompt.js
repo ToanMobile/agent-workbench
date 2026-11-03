@@ -326,6 +326,36 @@ export function buildAuditPrompt(cfg, task, scope = '') {
 }
 
 /**
+ * Brief AUDIT cho grok (PM tu chay `grok -p` o che do plan, chi doc). Grok KHONG ghi file: PM doc dong VERDICT cuoi cua no roi tu
+ * ghi audit-agent.json (reviewer grok, auditedHead = head duoi day).
+ */
+export function buildGrokAuditPrompt(cfg, task, { head, scope = '' }) {
+  const paths = contractPaths(cfg, task);
+  const base = task.implementBaseCommit || task.baseCommit;
+  return [
+    `# AUDIT doc lap cho task ${task.id}: ${task.title}`,
+    '',
+    'Ban la Auditor doc lap (thay Antigravity). Ban KHONG phai nguoi viet code nay va KHONG duoc sua bat ky file nao.',
+    `Project: ${cfg.projectRoot}`,
+    `Commit can audit: ${head}${base && base !== head ? ` (so voi goc: git diff ${base} ${head})` : ''}`,
+    `Ho so task: ${paths.dir} (doc brief.md, plan.md, result.json neu co)`,
+    '',
+    '## Viec can lam',
+    '1. Doc THAT SU cac file da thay doi o commit tren (git show / git diff) va test di kem.',
+    '2. Truy tim: sai logic, hoi quy (guard/test bi xoa hoac lam mem), truong hop bien, loi nuot exit code / exception.',
+    '3. Doi chieu voi Definition of Done ben duoi.',
+    scope ? `4. PM yeu cau soi ky them: ${scope}` : '',
+    READ_ONLY_RUN_RULE,
+    '',
+    dodBlock(task, cfg),
+    noFabricationBlock(),
+    '## KET LUAN',
+    '- Liet ke phat hien (file:dong + sai gi). Dong CUOI CUNG cua cau tra loi la dung MOT trong ba dong sau, dung nguyen van, dung rieng mot dong:',
+    '  `VERDICT: PASS` (khong con loi chan) · `VERDICT: REVISE` (can sua) · `VERDICT: FAIL` (sai co ban).',
+  ].filter(Boolean).join('\n');
+}
+
+/**
  * Tin nhan danh thuc hoi thoai im lau (pm_status nudge=true). Do tren may that 12/09/2026:
  * send-message danh thuc duoc hoi thoai da im 11 phut. Tin nhan ngan, khong doi hoi gi moi.
  */

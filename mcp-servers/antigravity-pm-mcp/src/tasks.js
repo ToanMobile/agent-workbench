@@ -369,7 +369,7 @@ export function freshness(cfg, task) {
   };
 }
 
-export function recordVerdict(cfg, task, { kind, verdict, findings = [], notes = '', reviewer = 'pm', auditedHead }) {
+export function recordVerdict(cfg, task, { kind, verdict, findings = [], notes = '', reviewer = 'pm', actor = reviewer, auditedHead }) {
   if (!VERDICT_KINDS.includes(kind)) throw new Error(`kind phai thuoc ${VERDICT_KINDS.join('|')}`);
   if (!['pass', 'fail'].includes(verdict)) throw new Error('verdict phai la pass hoac fail');
   // Vong cua ket luan = vong PM DA XEM (ban nguoi goi dang cam), khong phai vong moi hon neu co rework chen giua.
@@ -388,7 +388,7 @@ export function recordVerdict(cfg, task, { kind, verdict, findings = [], notes =
     };
     // Review dat cua vong nay => danh sach finding chua dong coi nhu da xu ly.
     if (kind === 'review' && verdict === 'pass' && t.round === round) t.openFindings = [];
-    addHistory(t, reviewer, `verdict_${kind}`, `${verdict}${findings.length ? ` (${findings.length} phat hien)` : ''}`);
+    addHistory(t, actor, `verdict_${kind}`, `${verdict}${findings.length ? ` (${findings.length} phat hien)` : ''}`);
   });
 }
 
@@ -607,7 +607,11 @@ export function recordDispatch(cfg, task, rec) {
       model: rec.model || t.model,
       round,
       promptFile: rec.promptFile || null,
-      at: nowIso(),
+      // rec.at: moc PM chot TRUOC khi chay reviewer (grok) — bao cao ghi sau moc nay moi qua kiem mtime cua pm_verdict.
+      at: rec.at || nowIso(),
+      // agent cua lan giao audit: 'antigravity' | 'grok'; ban ghi cu khong co truong nay = antigravity (chi co duong agy).
+      ...(rec.agent && { agent: rec.agent }),
+      ...(rec.extra || {}),
     });
     addHistory(t, 'pm', `dispatch_${rec.kind}`, rec.conversationId || '');
   });
