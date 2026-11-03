@@ -49,6 +49,8 @@ export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
 # Slot nặng riêng của test: slot toàn máy có thể đang bị merge gate thật giữ (chờ tới 3600 s).
 export SB_HEAVY_SLOT_DIR="$TMP/slots"
+# PR3: heartbeat chỉ chạy khi verify giữ khoá (chế độ bi quan, PR có test sửa, vòng verify cuối): cả file dùng SB_MERGE_OPTIMISTIC=0.
+export SB_MERGE_OPTIMISTIC=0
 # Tải mà heavy_slot.py (bọc lệnh verify) đọc: file riêng, tải thấp — không bao giờ tải thật của máy.
 export DEVKIT_SLOT_LOAD_FILE="$TMP/slot-load"; echo 1 > "$DEVKIT_SLOT_LOAD_FILE"
 LOCK="$WT/.claude/super-board/inflight/merge.lock"

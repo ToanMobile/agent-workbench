@@ -200,7 +200,10 @@ def priority_name() -> str:
 # ── Hàng đợi vé (một thư mục mỗi pool) ─────────────────────────────────────────────────────────────────────────
 def queue_order(tickets: list, now: float) -> list:
     """Thứ tự phục vụ: (mức ưu tiên, vé của lượt đã bắt đầu trước, thời lượng ước tính − thời gian đã chờ, lúc đến). Việc dài chờ lâu dần lên
-    đầu; một lượt đã chạy suite đầu thì chạy cho xong, không nhường lại cho lượt mới đến (#338)."""
+    đầu; một lượt đã chạy suite đầu thì chạy cho xong, không nhường lại cho lượt mới đến (#338). Mức ưu tiên lão hoá (P2, 02/11): mỗi
+    DEVKIT_SLOT_PRIO_AGE_S (450 s; 0, rác hay âm thì mặc định) đã chờ thì lên một mức, tới merge (0) thì thôi — vé chờ lâu không bị đói."""
+    age_s = _env_float("DEVKIT_SLOT_PRIO_AGE_S", 450.0) or 450.0
+
     def key(t):
         try:
             est = float(t.get("est_s"))
@@ -210,8 +213,10 @@ def queue_order(tickets: list, now: float) -> list:
             t0 = float(t.get("t0"))
         except (TypeError, ValueError):
             t0 = now
-        return (PRIORITY.get(t.get("prio"), PRIORITY["interactive"]), 0 if t.get("cont") else 1, est - max(0.0, now - t0), t0,
-                str(t.get("name") or ""))
+        waited = max(0.0, now - t0)
+        base, steps = PRIORITY.get(t.get("prio"), PRIORITY["interactive"]), waited // age_s
+        prio = base - int(steps) if steps < base else 0   # steps NaN/vô cực (t0 rác) cũng thành 0, không ném
+        return (prio, 0 if t.get("cont") else 1, est - waited, t0, str(t.get("name") or ""))
     return sorted(tickets, key=key)
 
 
@@ -271,15 +276,17 @@ def _read_tickets(qdir: str, now: float) -> list:
     return out
 
 
-def _write_ticket(qdir: str, prio: str, est_s: float, wait_s: float, label: str, cont: bool = False) -> Optional[str]:
-    """Ghi vé của tiến trình này; None khi không ghi được (khi đó không xếp hàng, chỉ tranh khoá như trước)."""
+def _write_ticket(qdir: str, prio: str, est_s: float, wait_s: float, label: str, cont: bool = False,
+                  n: Optional[int] = None) -> Optional[str]:
+    """Ghi vé của tiến trình này; None khi không ghi được (khi đó không xếp hàng, chỉ tranh khoá như trước). n: số path lượt xin thấy
+    (P1, 02/11: vé đứng sau ghép chỗ trống theo n của vé đứng trước)."""
     try:
         os.makedirs(qdir, mode=0o700, exist_ok=True)
         name = f"{os.getpid()}-{random.getrandbits(48):012x}.json"
         tmp = os.path.join(qdir, "." + name + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"pid": os.getpid(), "prio": prio, "est_s": float(est_s), "t0": time.time(), "wait_s": float(wait_s),
-                       "label": str(label)[:120], "cont": bool(cont)}, f)
+                       "label": str(label)[:120], "cont": bool(cont), "n": n}, f)
         os.replace(tmp, os.path.join(qdir, name))
         return name
     except OSError as exc:
@@ -287,11 +294,38 @@ def _write_ticket(qdir: str, prio: str, est_s: float, wait_s: float, label: str,
         return None
 
 
-def _rank(qdir: str, name: Optional[str]) -> int:
+def _ahead(qdir: str, name: Optional[str]) -> list:
+    """Các vé đứng trước vé `name` theo queue_order; rỗng khi không xếp hàng hay vé đã mất."""
     if not name:
-        return 0
-    order = [t.get("name") for t in queue_order(_read_tickets(qdir, time.time()), time.time())]
-    return order.index(name) if name in order else 0
+        return []
+    order = queue_order(_read_tickets(qdir, time.time()), time.time())
+    names = [t.get("name") for t in order]
+    return order[:names.index(name)] if name in names else []
+
+
+def _rank(qdir: str, name: Optional[str]) -> int:
+    return len(_ahead(qdir, name))
+
+
+def _ticket_n(ticket: dict, size: int) -> int:
+    """Số path vé đó thấy; thiếu, hỏng hay không dương thì `size` (coi như thấy hết)."""
+    try:
+        n = int(ticket.get("n"))
+    except (TypeError, ValueError, OverflowError):
+        return size
+    return n if n > 0 else size
+
+
+def _pick_free(free: list, ahead: list, size: int) -> Optional[int]:
+    """Ghép tham lam (P1, 02/11) trên chỉ số 0-based trong paths (pool_paths: paths[i] = <pool>-(i+1).lock, nên vé cỡ n thấy đúng
+    i < n): các vé đứng trước, theo n tăng dần, mỗi vé giữ chỗ chỉ số trống LỚN NHẤT < n của nó; còn dư thì trả chỉ số nhỏ nhất, hết
+    thì None. Không vé nào đứng trước ⇒ chỉ số nhỏ nhất (như cũ)."""
+    left = sorted(free)
+    for n in sorted(_ticket_n(t, size) for t in ahead):
+        fit = [i for i in left if i < n]
+        if fit:
+            left.remove(fit[-1])
+    return left[0] if left else None
 
 
 def _try_lock_path(path: str) -> Optional[IO[str]]:
@@ -402,29 +436,35 @@ def acquire_pool(pool: str, paths: list, *, wait_s: float, prio: Optional[str] =
     jitter_max = min(0.5, poll_s * 0.25)
     t_start = time.monotonic()
     deadline = t_start + max(0.0, wait_s)
-    ticket = _write_ticket(qdir, prio or priority_name(), DEFAULT_EST_S if est_s is None else est_s, wait_s, label, cont)
+    ticket = _write_ticket(qdir, prio or priority_name(), DEFAULT_EST_S if est_s is None else est_s, wait_s, label, cont,
+                           n=len(paths))
     logged = False
+    last_log = t_start
     try:
         while True:
             # Vé đứng đầu hàng (hạng 0, hoặc không xếp hàng): lấy slot trống đầu tiên rồi thôi — không thăm mọi khoá (luồng khác cùng
-            # tiến trình đang thăm sẽ thấy 0 slot trống và mất một vòng chờ). Vé đứng sau: thăm mọi khoá, số khoá lấy được = số slot
-            # trống; chỉ giữ một khi hạng nhỏ hơn số đó, còn lại nhả ngay để vé đứng trước lấy ở vòng thăm của nó.
+            # tiến trình đang thăm sẽ thấy 0 slot trống và mất một vòng chờ). Vé đứng sau: thăm mọi khoá, được tập slot trống; ghép
+            # tham lam với các vé đứng trước (_pick_free, P1 02/11: vé ít path hơn không giữ chỗ slot nó không thấy), còn chỗ dư thì
+            # giữ một, còn lại nhả ngay để vé đứng trước lấy ở vòng thăm của nó.
             first = _rank(qdir, ticket) == 0
-            got = []
-            for path in paths:
+            got = []   # (chỉ số trong paths, fh, path)
+            for i, path in enumerate(paths):
                 fh = _try_lock_path(path)
                 if fh is not None:
-                    got.append((fh, path))
+                    got.append((i, fh, path))
                     if first:
                         break
-            if got and _rank(qdir, ticket) < len(got):
-                for fh, _ in got[1:]:
-                    _unlock(fh)
+            pick = _pick_free([g[0] for g in got], _ahead(qdir, ticket), len(paths)) if got else None
+            keep = None
+            for g in got:
+                if g[0] == pick:
+                    keep = g
+                else:
+                    _unlock(g[1])
+            if keep is not None:
                 if pool == "gate" and wait_s > 0:
-                    _write_gate_held(got[0][1])
-                return PoolHandle(pool, fh=got[0][0], path=got[0][1], waited_s=time.monotonic() - t_start)
-            for fh, _ in got:
-                _unlock(fh)
+                    _write_gate_held(keep[2])
+                return PoolHandle(pool, fh=keep[1], path=keep[2], waited_s=time.monotonic() - t_start)
             now = time.monotonic()
             if now >= deadline:
                 return PoolHandle(pool, timed_out=True, waited_s=now - t_start)
@@ -432,6 +472,12 @@ def acquire_pool(pool: str, paths: list, *, wait_s: float, prio: Optional[str] =
                 print(f"[heavy-slot] pool {pool} ({len(paths)} slot) đang bận{f' — {label}' if label else ''}; "
                       f"đang chờ (tối đa {wait_s:g}s, ưu tiên {prio or priority_name()})...", file=sys.stderr, flush=True)
                 logged = True
+            if now - last_log >= 60.0:
+                ahead = _ahead(qdir, ticket)
+                print(f"[heavy-slot] pool {pool}: chờ {now - t_start:.0f}s — hạng {len(ahead)}, vé trước (n) "
+                      f"{[_ticket_n(t, len(paths)) for t in ahead]}, {len(paths)} slot, thấy {len(got)} trống"
+                      f"{f' — {label}' if label else ''}", file=sys.stderr, flush=True)
+                last_log = now
             time.sleep(min(poll_s + random.uniform(0.0, jitter_max), max(0.0, deadline - now)))
     finally:
         if ticket:
@@ -658,12 +704,13 @@ def classify(command: str, project_dir: str = ".", recorded_s: Optional[float] =
 
 
 def selection_seconds(command: str, project_dir: str = ".", selection: Optional[list] = None) -> Optional[float]:
-    """Tổng giây (tuần tự, tests/lib/test_durations.txt cạnh script) của tập test mà `run_impacted.sh --list` chọn lúc này; None khi không
-    biết: lệnh không đúng dạng `bash <đường dẫn>/run_impacted.sh [--all]` của DevKit, `--list` lỗi / quá giờ (suite_cache.selection_list),
-    hay một test được chọn chưa có dòng thời lượng. selection (không None): tập người gọi đã đọc cho lệnh này — không sinh thêm một `--list`
-    (gate: tập của khoá, cùng lượt; review 25/10).
-    ponytail: test chưa có dòng thời lượng ⇒ cả tập là cpu (an toàn); đổi sang một mức mặc định mỗi test nếu thấy REG-DK-ALL-01 hay xếp
-    hàng chỉ vì test mới thiếu dòng."""
+    """Tổng giây (tuần tự) của tập test mà `run_impacted.sh --list` chọn lúc này. Thời lượng: tests/lib/test_durations.txt cạnh script,
+    rồi file đo KHÔNG track `<git common dir>/devkit/test_durations.measured.txt` (gate-full đêm ghi; đo thắng): test mới thiếu dòng ở
+    file track được file đo bù, PR không phải sửa file track (conflict trên GitHub vì merge=union chỉ có ở local). None khi không biết:
+    lệnh không đúng dạng `bash <đường dẫn>/run_impacted.sh [--all]` của DevKit, `--list` lỗi / quá giờ (suite_cache.selection_list),
+    hay một test được chọn không có dòng ở cả hai file. selection (không None): tập người gọi đã đọc cho lệnh này — không sinh thêm
+    một `--list` (gate: tập của khoá, cùng lượt; review 25/10).
+    ponytail: test chưa có dòng ở cả hai file ⇒ cả tập là cpu (an toàn) tới lượt gate-full đêm đầu tiên đo nó."""
     try:
         here = os.path.dirname(os.path.abspath(__file__))
         if here not in sys.path:
@@ -673,19 +720,49 @@ def selection_seconds(command: str, project_dir: str = ".", selection: Optional[
         sel = (selection if selection is not None else suite_cache.selection_list(project_dir, command)) if m else None
         if sel is None:
             return None
-        durations = {}
-        with open(os.path.join(os.path.dirname(os.path.join(str(project_dir), m.group("script"))), "lib", "test_durations.txt"),
-                  encoding="utf-8") as f:
-            for line in f:
-                p = line.split()
-                if len(p) >= 2 and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", p[0]):
-                    durations[p[1]] = max(durations.get(p[1], 0.0), float(p[0]))
+        tests_dir = os.path.dirname(os.path.join(str(project_dir), m.group("script")))
+        durations = _read_durations(os.path.join(tests_dir, "lib", "test_durations.txt"))
     except Exception as exc:   # noqa: BLE001 - không hỏi được tập: None (cpu, như trước)
         print(f"[heavy-slot] không đọc được tập --list của run_impacted.sh ({exc}); coi là cpu", file=sys.stderr, flush=True)
         return None
+    measured = measured_durations_path(tests_dir)
+    if measured:
+        try:
+            durations.update(_read_durations(measured))   # đo thắng file track
+        except FileNotFoundError:
+            pass
+        except Exception as exc:   # noqa: BLE001 - file đo hỏng / không đọc được: chỉ dùng file track
+            print(f"[heavy-slot] bỏ qua file thời lượng đo {measured} ({exc})", file=sys.stderr, flush=True)
     if any(t not in durations for t in sel):
         return None
     return sum(durations[t] for t in sel)
+
+
+def _read_durations(path: str) -> dict:
+    """`<giây> <đường dẫn>` mỗi dòng (cùng cách run_impacted.sh đọc: số trước, đường dẫn sau, trường thừa bỏ qua); trùng dòng lấy số lớn."""
+    durations = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            p = line.split()
+            if len(p) >= 2 and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", p[0]):
+                durations[p[1]] = max(durations.get(p[1], 0.0), float(p[0]))
+    return durations
+
+
+def measured_durations_path(tests_dir: str) -> Optional[str]:
+    """`<git common dir>/devkit/test_durations.measured.txt` của repo chứa tests_dir (tính từ thư mục script, không theo cwd); None khi
+    git không trả lời (không phải repo, git vắng, quá giờ). DEVKIT_DURATIONS_MEASURED_FILE (có đặt) thay đường dẫn đó, rỗng = không có
+    file đo: tests/lib/clean_git_env.sh đặt rỗng để test không đọc số đo thật của máy (tests/run_impacted.sh theo cùng luật)."""
+    if "DEVKIT_DURATIONS_MEASURED_FILE" in os.environ:
+        return os.environ["DEVKIT_DURATIONS_MEASURED_FILE"] or None
+    try:
+        r = subprocess.run(["git", "-C", tests_dir, "rev-parse", "--git-common-dir"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    common = r.stdout.strip()
+    if r.returncode != 0 or not common:
+        return None
+    return os.path.join(tests_dir, common, "devkit", "test_durations.measured.txt")
 
 
 @dataclass

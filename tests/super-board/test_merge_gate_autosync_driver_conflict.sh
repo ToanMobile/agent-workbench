@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# 02/11 (PR #916 đụng #911): gần như PR nào cũng nối đuôi .agents/regression_matrix.active.json (merge=devkit-matrix) và
-# test_durations.txt (merge=union); driver chỉ có ở local nên PR merge sau bị GitHub báo CONFLICTING và merge gate thoát 14, mỗi lần
-# một vòng gộp-push-chạy-lại bằng tay. Ngoại lệ hẹp của #570 (merge gate, khối "đồng bộ nhánh PR"). Hành vi mong đợi, mỗi ý có assert:
+# 02/11 (PR #916 đụng #911): gần như PR nào cũng nối đuôi .agents/regression_matrix.active.json (merge=devkit-matrix); driver chỉ có
+# ở local nên PR merge sau bị GitHub báo CONFLICTING và merge gate thoát 14, mỗi lần một vòng gộp-push-chạy-lại bằng tay
+# (test_durations.txt, merge=union, không còn track từ #920; fixture vẫn dùng d.txt merge=union làm ví dụ driver thứ hai). Ngoại lệ hẹp của #570 (merge gate, khối "đồng bộ nhánh PR"). Hành vi mong đợi, mỗi ý có assert:
 #   a) CONFLICTING, hai phía chỉ cùng nối đuôi file có driver đặt tên, gộp local sạch ⇒ gate đẩy merge commit (cha 1 = head đã review,
 #      cha 2 = base) lên nhánh PR ở remote (fast-forward), verify chạy trên đúng commit đó, merge với --match-head-commit = head mới, exit 0
 #   b) có file hai phía cùng sửa mà không có driver đặt tên ⇒ exit 14 như cũ, không đẩy gì, không verify
@@ -77,6 +77,13 @@ setup() {
   git -C "$R" worktree add -q "$WT" issue-61-x
   echo m-pr >> "$WT/m.txt"; echo d-pr >> "$WT/d.txt"; echo 61 > "$WT/f61"
   [ "${SHARED_PLAIN:-0}" = 1 ] && printf '1-pr\n2\n3\n4\n5\n6\n' > "$WT/s.txt"
+  # GATTR=1: the PR itself edits .gitattributes (could swap the named driver of a shared file)
+  [ "${GATTR:-0}" = 1 ] && printf 'z.txt merge=union\n' >> "$WT/.gitattributes"
+  # BIGLIST=1: ~120 KB of changed file names, so `git diff --name-only | grep -q` would SIGPIPE git before it finishes writing
+  if [ "${BIGLIST:-0}" = 1 ]; then
+    mkdir -p "$WT/big"
+    for i in $(seq 1 1000); do : > "$WT/big/$(printf 'f%04d-%0100d' "$i" 0)"; done
+  fi
   git -C "$WT" add -A; git -C "$WT" commit -qm card61
   git -C "$R" push -q origin issue-61-x
   X=$(git -C "$R" rev-parse issue-61-x)
@@ -165,6 +172,21 @@ echo extra >> "$D/other/f61"; git -C "$D/other" -c user.email=o@example.invalid 
 gate --expect-head "$X"
 [ "$RC1" -eq 11 ] && [ "$RC" -eq 6 ] && [ ! -e "$D/merge-args" ] && ok "f: a commit pushed on top of the gate's merge: exit 6 (head moved)" \
   || fail "f: first exit $RC1, second exit $RC, want 11 then 6"
+
+# g) the PR edits .gitattributes: its own attributes are never trusted to name the driver ⇒ exit 14, nothing pushed
+GATTR=1 setup gattr; gate --expect-head "$X"
+[ "$RC" -eq 14 ] && [ "$ORIGIN_HEAD" = "$X" ] && [ ! -e "$D/verify-ran" ] && ok "g: PR changes .gitattributes: exit 14, nothing pushed, no verify" \
+  || fail "g: gate exit $RC, origin ${ORIGIN_HEAD:0:8} (want ${X:0:8}): $(grep 'merge-gate' "$D/gate.log" | tail -3)"
+grep -q 'the PR changes a .gitattributes file' "$D/gate.log" && ok "g: log names the reason" || fail "g: reason line missing"
+
+# g2) same with a huge changed-file list (pipefail + grep -q early exit must not turn the guard fail-open)
+GATTR=1 BIGLIST=1 setup gattr_big; gate --expect-head "$X"
+[ "$RC" -eq 14 ] && [ "$ORIGIN_HEAD" = "$X" ] && [ ! -e "$D/verify-ran" ] && ok "g2: .gitattributes edit among 1000 changed files: exit 14, nothing pushed" \
+  || fail "g2: gate exit $RC, origin ${ORIGIN_HEAD:0:8} (want ${X:0:8}): $(grep 'merge-gate' "$D/gate.log" | tail -3)"
+
+# h) --preflight on a CONFLICTING PR: exit 14 as before, nothing pushed (the train must never sync a branch)
+setup preflight; gate --expect-head "$X" --preflight
+[ "$RC" -eq 14 ] && [ "$ORIGIN_HEAD" = "$X" ] && ok "h: --preflight: exit 14, nothing pushed" || fail "h: gate exit $RC, origin ${ORIGIN_HEAD:0:8}"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_autosync_driver_conflict: PASS"; exit 0; } || { echo "test_merge_gate_autosync_driver_conflict: FAIL ($FAILS)"; exit 1; }
