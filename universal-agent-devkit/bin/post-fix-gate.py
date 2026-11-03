@@ -6884,6 +6884,9 @@ def main():
     # DEVKIT_SCOPED_TESTS), đặt ở khối --scoped ở trên, trước khi dựng sc. tests/gates/test_gate_impacted_cache.sh.
     # ponytail: env chọn test vào khoá của mọi suite (suite_cache.SuiteCache.keys: "sel" trong phần đầu) nên lượt scoped và impacted không dùng chung PASS; tách khi đo
     # thấy hai loại lượt chạy xen nhau trên cùng nội dung.
+    # #914 mục 8: merge check của `worktree finish` (DEVKIT_GATE_MERGE_CHECK=1) cố ý KHÔNG vào task_keyed, nên per-test cache ở đó vẫn tắt.
+    # Lý do: khoá per-test là cả cây, mà cây gộp của finish gần như luôn mới (main vừa tiến) ⇒ chỉ lần thử lại cùng cây mới trúng; runs.jsonl
+    # 31/10-03/11 có 3/81 lượt merge_point TIMEOUT lúc đo (merge_point gồm cả scratch của train / integrate, không riêng finish: số đại diện); chưa đo số ca phải chạy lại cùng cây. Bật lại khi đo thấy lượt thử lại ở finish.
     task_keyed = bool(run_tests and not force_reason and not args.since and not _stop_like
                       and os.environ.get("DEVKIT_GATE_MERGE_CHECK") != "1")
     if run_tests and (force_reason or task_keyed):
