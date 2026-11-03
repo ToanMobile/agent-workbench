@@ -89,6 +89,18 @@ class CcSwitcherPanel(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn('id="btnCcs"', raw.decode("utf-8"))  # nút mở trang từ Xưởng agent
 
+    def test_static_html_path_blocked_over_tunnel(self):
+        # #757: /cc-switcher.html is the same page as /cc-switcher; it must not be reachable through the tunnel either
+        h = {**TUNNEL, "X-Agent-Office-Key": KEY}
+        code, _ = self.req("GET", "/cc-switcher.html", host="abc.trycloudflare.com", headers=h)
+        self.assertEqual(code, 403)
+        # same file through other spellings (dot segment, case-insensitive FS, trailing slash)
+        for alias in ("/./cc-switcher.html", "/CC-Switcher.html", "/cc-switcher.html/"):
+            code, _ = self.req("GET", alias, host="abc.trycloudflare.com", headers=h)
+            self.assertEqual(code, 403, alias)
+        code, _ = self.req("GET", "/cc-switcher.html")
+        self.assertEqual(code, 200)
+
     def test_state_has_six_accounts_and_no_secrets(self):
         code, raw = self.req("GET", "/api/cc-switcher/state")
         self.assertEqual(code, 200, raw[:300])

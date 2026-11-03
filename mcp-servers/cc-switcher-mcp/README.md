@@ -1,6 +1,6 @@
 # CC Switcher MCP (`cc-switcher-mcp`)
 
-MCP Server và Auto-Switcher Daemon trên macOS dành cho 7 profile đã cấu hình sẵn trong **CC Switch**, tích hợp **Anti-Ban Guard** (nghỉ an toàn 15 phút giữa các tài khoản Claude, đóng băng 5 giờ khi chạm giới hạn `429`) và điều khiển 2 chiều từ điện thoại qua **Telegram Bot**.
+MCP Server và Auto-Switcher Daemon trên macOS dành cho 7 profile đã cấu hình sẵn trong **CC Switch**, tích hợp **Anti-Ban Guard** (nghỉ an toàn 15 phút giữa các tài khoản Claude, đóng băng 5 giờ khi chạm giới hạn `429`) và bảng điều khiển trên web `/cc-switcher` (Telegram chỉ còn gửi cảnh báo).
 
 ## Danh sách 6 Profile hỗ trợ
 
@@ -13,7 +13,7 @@ MCP Server và Auto-Switcher Daemon trên macOS dành cho 7 profile đã cấu h
 
 ### Antigravity nhiều profile
 
-`agy` không có biến chọn thư mục cấu hình, chỉ tách tài khoản qua `HOME`. Chỉ `agy` gõ trong zsh tương tác dùng khoá `agyAccount`; `switchProfile` trả `HOME` trong `env`; `antigravity-pm-mcp` (`/giao`) chưa đọc `agyAccount`. Mỗi profile AGY có HOME riêng (`~/.agy-antigravity_ultra`, `~/.agy-antigravity_pro`; trong đó chỉ `.gemini` là thật, còn lại là symlink về HOME thật). Hàm `agy()` trong `~/.zshrc` đọc khoá `agyAccount` trong `.claude/settings.local.json` của repo (khoá riêng, không đụng `account` của Claude) rồi đặt `HOME`. `agy-profile <tên>` ghi khoá đó và dựng thư mục; lần đầu phải đăng nhập tài khoản trong thư mục mới. `.gemini` của profile bắt đầu RỖNG: MCP server, skill, `GEMINI.md` và trusted folders trong `~/.gemini` thật không tự có, phải cài lại hoặc symlink từng mục (trừ file token tài khoản).
+`agy` không có biến chọn thư mục cấu hình, chỉ tách tài khoản qua `HOME`. Chỉ `agy` gõ trong zsh tương tác dùng khoá `agyAccount`; `switchProfile` trả `HOME` trong `env`; `antigravity-pm-mcp` (`/giao`) chưa đọc `agyAccount`. Mỗi profile AGY có HOME riêng (`~/.agy-antigravity_ultra`, `~/.agy-antigravity_pro`; trong đó chỉ `.gemini` là thật, còn lại là symlink về HOME thật). Hàm `agy()` trong `~/.zshrc` đọc khoá `agyAccount` trong `.claude/settings.local.json` của repo (khoá riêng, không đụng `account` của Claude) rồi đặt `HOME`. `agy-profile <tên>` ghi khoá đó và dựng thư mục; lần đầu phải đăng nhập tài khoản trong thư mục mới. `agy` lưu tài khoản trong Keychain (service `gemini`) và Keychain đi theo `HOME`, nên mỗi profile có `Library` thật với `Keychains/login.keychain-db` riêng (mật khẩu trống) và `Preferences` riêng; các mục khác của `Library` là symlink. Profile dựng bản cũ (Library symlink) được đổi tự động; cần đăng nhập lại. `.gemini` của profile bắt đầu RỖNG: MCP server, skill, `GEMINI.md` và trusted folders trong `~/.gemini` thật không tự có, phải cài lại hoặc symlink từng mục (trừ file token tài khoản).
 
 ## Các MCP Tools cung cấp
 

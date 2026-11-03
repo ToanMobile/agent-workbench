@@ -15,6 +15,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { run, redact, truncate, homeStateDir, readJsonIfExists, writeJsonAtomic, ensureDir, nowIso, trackChild, untrackChild, logStderr, killGroup } from './util.js';
 import { discover, forgetCache, AntigravityUnavailable, ENV_ADDRESS, ENV_TOKEN } from './discover.js';
 import { ENV_PROJECT_ID, resolveProject } from './projects.js';
+import { globalConfigPath } from './config.js';
 
 export const TIERS = ['flash_lite', 'flash', 'pro'];
 export const AGY_MODELS = [
@@ -355,9 +356,55 @@ function assertProjectDir(cwd) {
 // #734: bien messaging cua phien Claude dang chay PM (MCP stdio thua env cua phien) khong duoc xuong agy va moi lenh cua agent
 // (--dangerously-skip-permissions). Danh sach TUONG MINH, khong loc theo mau: bo nham bien agy can thi luot agy hong.
 const CLAUDE_SESSION_ENV = ['CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_CODE_MESSAGING_SOCKET'];
-function agyEnv(outFile) {
+/**
+ * Profile agy cho luot review/audit: agy chi tach tai khoan qua HOME (Keychain va ~/.gemini deu theo HOME), nen khai agyProfile
+ * (env ANTIGRAVITY_PM_AGY_PROFILE hoac ~/.antigravity-pm.json) thi child agy chay voi HOME=~/.agy-<ten> (dung bang agy-profile cua cc-switcher-mcp).
+ * Chi child agy doi HOME; PM giu HOME that (state o homeStateDir). Chua khai -> null. Khai ma sai/chua dung -> NEM LOI, khong am tham dung tai khoan mac dinh.
+ */
+function agyProfileHome() {
+  let name = process.env.ANTIGRAVITY_PM_AGY_PROFILE;
+  if (!name) {
+    const cfgFile = globalConfigPath();
+    if (fs.existsSync(cfgFile)) {
+      // readJsonIfExists nuot loi parse: file chung hong ma coi nhu chua khai agyProfile thi review chay nham tai khoan mac dinh.
+      try { name = JSON.parse(fs.readFileSync(cfgFile, 'utf8'))?.agyProfile; } catch (err) {
+        throw new AntigravityUnavailable(`${cfgFile} khong doc duoc (JSON hong): ${err?.message}`, 'Sua file cau hinh chung roi thu lai; PM khong tu chay bang tai khoan mac dinh khi khong biet agyProfile.');
+      }
+    }
+  }
+  if (!name) return null;
+  if (typeof name !== 'string' || !/^[A-Za-z0-9_-]+$/.test(name)) {
+    throw new AntigravityUnavailable(`agyProfile "${name}" khong hop le (chi chu, so, _ va -).`, 'Sua agyProfile trong ~/.antigravity-pm.json hoac ANTIGRAVITY_PM_AGY_PROFILE.');
+  }
+  const real = process.env.AGY_REAL_HOME || process.env.HOME || os.homedir();
+  const home = path.join(real, `.agy-${name}`);
+  if (!fs.existsSync(path.join(home, '.gemini'))) {
+    throw new AntigravityUnavailable(`Profile agy "${name}" chua dung (khong co ${home}).`, `Chay: agy-profile ${name}, roi chay agy mot lan de dang nhap tai khoan cua profile do.`);
+  }
+  if (process.platform === 'darwin') {
+    // agy luu tai khoan o Keychain theo HOME: profile cu (Library la symlink ve ~/Library that) hoac thieu keychain rieng se dung Keychain THAT cua may.
+    let lib = null;
+    try { lib = fs.lstatSync(path.join(home, 'Library')); } catch { /* chua co */ }
+    if (!lib || lib.isSymbolicLink() || !fs.existsSync(path.join(home, 'Library', 'Keychains', 'login.keychain-db'))) {
+      throw new AntigravityUnavailable(`Profile agy "${name}" chua co Keychain rieng (${home}/Library phai la thu muc that co Keychains/login.keychain-db).`, `Chay lai: agy-profile ${name} (nap shell/agy-profile.zsh ban moi) roi agy mot lan de dang nhap.`);
+    }
+  }
+  return { real, home };
+}
+
+export function agyEnv(outFile) {
   const env = { ...process.env, [RUN_ENV]: runOf(outFile) };
   for (const k of CLAUDE_SESSION_ENV) delete env[k];
+  const profile = agyProfileHome();
+  if (profile) {
+    env.AGY_REAL_HOME = profile.real;
+    env.HOME = profile.home;
+    // Keychain rieng cua profile co the da tu khoa (nghi lau): mo lai, khong duoc thi agy se doi dang nhap lai.
+    const kc = path.join(profile.home, 'Library', 'Keychains', 'login.keychain-db');
+    if (fs.existsSync(kc)) {
+      try { execFileSync('security', ['unlock-keychain', '-p', '', kc], { env, stdio: 'ignore', timeout: 3000 }); } catch (err) { logStderr(`agy profile keychain unlock skipped: ${err?.message}`); }
+    }
+  }
   return env;
 }
 
