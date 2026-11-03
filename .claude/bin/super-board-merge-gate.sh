@@ -292,8 +292,10 @@ needs_you_notify() {
   # tự gửi nút thì tự đăng request, nhưng quyết theo phán quyết approval_check ($APPROVAL .why), không grep comment PR: chỉ đăng khi
   # chưa có request hiện hành (không block, block mới nhất không khớp, request bị sửa). Request hiện hành ở đâu đó (đang chờ done) hay
   # bằng chứng không đọc được (đăng có thể đè một `done`) thì không đăng. Chỉ request, không bao giờ duyệt; lỗi chỉ log, nút vẫn gửi,
-  # exit giữ nguyên; --dry-run không ghi GitHub.
-  if [ -n "$APPROVAL_REQ_LINE" ]; then
+  # exit giữ nguyên; --dry-run không ghi GitHub. approved=true (người đã `done` / duyệt chéo, nhưng migration lỗi sau verify): im lặng,
+  # không đăng, không khuyên đăng tay (request mới sẽ đè lần duyệt đó).
+  if [ -n "$APPROVAL_REQ_LINE" ] \
+    && [ "$(printf '%s' "${APPROVAL:-}" | jq -r '.approved == true' 2>/dev/null || true)" != true ]; then
     case "$(printf '%s' "${APPROVAL:-}" | jq -r '.why // empty' 2>/dev/null || true)" in
       "no request from a trusted repository collaborator"|"the latest request does not cover the current code and human steps"|"approval request was edited; post a fresh request")
         if [ "$DRY" -eq 1 ]; then

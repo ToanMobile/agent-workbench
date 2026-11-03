@@ -25,6 +25,7 @@ GATE="$TMP/gatebin/super-board-merge-gate.sh"
 # approval giả: request in đúng một dòng, ghim head (đối số --head) như bản thật. Kiểm (không --request) theo luật validate() của bản
 # thật, thu gọn: block MỚI NHẤT (tên file tăng dần) trên PR + issue liên kết (pr<n>.comments, issue7.comments); không block → "no request
 # from …"; block mới nhất không chứa đúng dòng request → "the latest request does not cover …"; có → "waiting for … done …".
+# FAKE_APPROVAL_JSON=<json>: kiểm in đúng json đó (why lấy nguyên văn từ approval.py thật, mục 10 ghim);
 # FAKE_APPROVAL_FAIL=1: thoát 1 (gate lùi về {"approved":false}); FAKE_APPROVAL_UNVERIFIED=1: why "approval evidence could not be verified".
 cat > "$TMP/gatebin/super-board-approval.py" <<'PY'
 #!/usr/bin/env python3
@@ -34,6 +35,8 @@ head, pr = a[a.index("--head") + 1], a[a.index("--pr") + 1]
 line = 'approval-request: {"head":"%s","pr":%s,"repo":"o/r","scope":"%s"}' % (head, pr, "a" * 64)
 if "--request" in a:
     print(line); sys.exit(0)
+if os.environ.get("FAKE_APPROVAL_JSON"):   # sau nhánh --request: gate vẫn có dòng request nên vẫn vào case của needs_you_notify
+    print(os.environ["FAKE_APPROVAL_JSON"]); sys.exit(0)
 if os.environ.get("FAKE_APPROVAL_FAIL") == "1":
     sys.exit(1)
 if os.environ.get("FAKE_APPROVAL_UNVERIFIED") == "1":
@@ -208,5 +211,66 @@ printf '%s' "${REQ5/aaaaaaaa/bbbbbbbb}" > "$TMP/pr5.comments/002"
 gate 5 -- --config "$CFG_HUMAN_OFF" --expect-head "$H"
 [ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 3 ] && [ "$(nreq 5 "$REQ5")" = 2 ] && [ "$(napprove)" = 1 ] \
   && ok "(b) newer block with another scope: the current request is posted again, button sent, exit 7" || fail "(b) superseded request: $(why)"
+
+# ── 10. Chuỗi why mà case của needs_you_notify so khớp phải có nguyên văn trong approval.py THẬT (không phải bản giả ở trên): sửa câu
+#        chữ ở approval.py mà quên gate thì gate thôi đăng request mà không test nào đỏ. Rút literal từ mã gate, không chép tay.
+python3 - "$ROOT/.claude/bin/super-board-merge-gate.sh" "$ROOT/.claude/bin/super-board-approval.py" <<'PY' >"$TMP/pin.out" 2>&1 \
+  && ok "every why literal in the needs_you_notify case is verbatim in the real approval.py ($(tail -1 "$TMP/pin.out"))" \
+  || fail "why literals vs real approval.py: $(tr '\n' '|' < "$TMP/pin.out")"
+import re, sys
+gate = open(sys.argv[1], encoding="utf-8").read()
+real = open(sys.argv[2], encoding="utf-8").read()
+body = re.search(r"^needs_you_notify\(\) \{\n(.*?)^\}", gate, re.S | re.M)
+if not body:
+    sys.exit("needs_you_notify() not found in the gate")
+lits = []
+for line in body.group(1).splitlines():
+    m = re.match(r'\s*("[^"]*"(?:\|"[^"]*")*)\s*\)', line)
+    if m:
+        lits += re.findall(r'"([^"]*)"', m.group(1))
+if len(lits) < 2:
+    sys.exit(f"too few case literals extracted: {lits}")
+missing = [l for l in lits if f'"{l}"' not in real]
+if missing:
+    sys.exit("not in the real approval.py: " + "; ".join(missing))
+print(f"{len(lits)} literals")
+PY
+# Các why mục 11–13 đưa vào bản giả cũng phải là chuỗi thật.
+WHY_EDITED="approval request was edited; post a fresh request"
+WHY_CROSS="waiting for a cross-review marker or a trusted human done on the current request"
+WHY_DONE="trusted human confirmed the current request"
+for w in "$WHY_EDITED" "$WHY_CROSS" "$WHY_DONE"; do
+  grep -qF "\"$w\"" "$ROOT/.claude/bin/super-board-approval.py" && ok "fake why is a real approval.py string: $w" || fail "fake why not in approval.py: $w"
+done
+
+# ── 11. Request mới nhất bị sửa (why "approval request was edited…"): không còn request hiện hành → đăng request, nút gửi, exit 7.
+clear_comments 5
+gate 5 "FAKE_APPROVAL_JSON={\"approved\":false,\"why\":\"$WHY_EDITED\"}" -- --config "$CFG_HUMAN_OFF" --expect-head "$H"
+[ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 1 ] && [ "$(nreq 5 "$REQ5")" = 1 ] && [ "$(napprove)" = 1 ] \
+  && ok "edited request: the current request is posted, button sent, exit 7" || fail "edited request: $(why)"
+
+# ── 12. Đang chờ marker duyệt chéo hay `done` trên request hiện hành: không đăng, không khuyên đăng tay, nút gửi, exit 7.
+clear_comments 5
+gate 5 "FAKE_APPROVAL_JSON={\"approved\":false,\"why\":\"$WHY_CROSS\"}" -- --config "$CFG_HUMAN_OFF" --expect-head "$H"
+[ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 0 ] && [ "$(napprove)" = 1 ] && grep -qxF "$REQ5" "$TMP/out" && ! grep -q 'by hand' "$TMP/err" \
+  && ok "waiting for a cross-review marker: no PR comment, no hand-post advice, button sent, exit 7" || fail "cross-review wait: $(why)"
+
+# ── 13. Người đã `done` hợp lệ (approved=true) nhưng migration lỗi sau verify (exit 8): không đăng, và không khuyên đăng tay (đăng
+#        request mới sẽ đè `done` đó); nút vẫn gửi.
+git -C "$R" branch -q --no-track issue-8-x main
+WT8="$R/.claude/worktrees/review-8"; git -C "$R" worktree add -q "$WT8" issue-8-x
+mkdir -p "$WT8/db/migrate"; echo 'create table t (id int);' > "$WT8/db/migrate/001_add.sql"
+git -C "$WT8" add db; git -C "$WT8" commit -qm mig; git -C "$R" push -q origin issue-8-x
+H8=$(git -C "$R" rev-parse issue-8-x); echo "$H8" > "$TMP/pr8.head"
+git -C "$R" diff origin/main issue-8-x > "$TMP/pr8.diff"
+printf '{"files":[{"path":"db/migrate/001_add.sql"}],"labels":[],"body":"needs-you: run the live backfill","additions":1,"deletions":0,"changedFiles":1}' > "$TMP/pr8.meta"
+CFG_MIG="$TMP/cfg-mig.json"
+python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c["migrations"]={"allowed_envs":["test"],"target_env":"test","commands":{"test":"false"}}; json.dump(c,open(sys.argv[2],"w"))' "$CFG_OFF" "$CFG_MIG"
+clear_comments 8; : > "$TMP/gh.calls"; : > "$TMP/notify.log"
+( cd "$WT8" && env "FAKE_APPROVAL_JSON={\"approved\":true,\"why\":\"$WHY_DONE\"}" SB_MERGE_RECHECK_DELAY_S=0 SB_MERGE_AUTO_POLL_S=1 \
+    bash "$GATE" --pr 8 --config "$CFG_MIG" --expect-head "$H8" --lock-timeout 5 ) >"$TMP/out" 2>"$TMP/err"; RC=$?
+[ "$RC" -eq 8 ] && grep -q 'FAILED: migrate test' "$TMP/err" && [ "$(ncomments 8)" = 0 ] && [ "$(napprove)" = 1 ] \
+  && ! grep -q 'by hand' "$TMP/err" && ! grep -q 'no clear verdict' "$TMP/err" \
+  && ok "approved=true, migration failed: exit 8, no PR comment, no hand-post advice, button sent" || fail "approved + failed migration: $(why 8)"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi
