@@ -427,7 +427,7 @@ if [ "$PREFLIGHT" -ne 1 ]; then
   SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
 fi
 # SCRATCH rỗng (--preflight): không gọi worktree remove / rm với đường dẫn rỗng.
-cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${MERGE_LOG:+"$MERGE_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
+cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree unlock "$SCRATCH" 2>/dev/null || true; git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${MERGE_LOG:+"$MERGE_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
 # #559: thư mục đã đổi tên bằng git worktree move thì SCRATCH rỗng, trap không gỡ.
 trap cleanup EXIT
 
@@ -873,6 +873,10 @@ merge_scratch_onto() {
   if [ -z "${MERGED_SHA:-}" ]; then
     git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
       say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
+    # 03/11 (PR #940): một phiên khác chạy `git worktree remove <scratch>` trần giữa lúc verify (cây sạch nên git gỡ luôn). Khoá
+    # devkit-kept mang pid gate: remove/prune không -f -f bị git từ chối; gate chết (SIGKILL) thì worktree gc mở khoá pid chết.
+    git -C "$REPO_PATH" worktree lock --reason "devkit-kept session=merge-gate-pr${PR} pid=$$" "$SCRATCH" 2>/dev/null \
+      || say "warning: could not lock the scratch worktree ${SCRATCH}; another session could remove it while verify runs"
   else
     { git -C "$SCRATCH" reset -q --hard "$HEAD_SHA" && git -C "$SCRATCH" clean -fdq -e /.agents/devkit; } 2>/dev/null || {
       say "could not reset the scratch tree to ${HEAD_SHA:0:12} to merge the moved ${BASE}"; exit 1; }
@@ -1232,6 +1236,8 @@ keep_failed_scratch() {
   ts=$(date +%Y%m%d-%H%M%S)
   dest="$BASE_WT/.claude/worktrees/.merge-scratch-keep-pr${PR}-${ts}"
   if [ -e "$dest" ]; then sleep 1; ts=$(date +%Y%m%d-%H%M%S); dest="$BASE_WT/.claude/worktrees/.merge-scratch-keep-pr${PR}-${ts}"; fi
+  # khoá lúc verify (merge_scratch_onto) chặn cả move; bản giữ là bằng chứng, không còn ai chạy trong nó
+  git -C "$BASE_WT" worktree unlock "$SCRATCH" 2>/dev/null || true
   git -C "$BASE_WT" worktree move "$SCRATCH" "$dest" || return 1
   say "kept scratch at ${dest} because REG-DK-ALL-01 (or a REG-DK-ALL-*-01 shard) was not PASS"
   gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "merge-gate kept the scratch worktree at ${dest} because REG-DK-ALL-01 (or a REG-DK-ALL-*-01 shard) was not PASS. Evidence: ${dest}/.merge-evidence" \
