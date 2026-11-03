@@ -94,6 +94,10 @@ class CcSwitcherPanel(unittest.TestCase):
         h = {**TUNNEL, "X-Agent-Office-Key": KEY}
         code, _ = self.req("GET", "/cc-switcher.html", host="abc.trycloudflare.com", headers=h)
         self.assertEqual(code, 403)
+        # same file through other spellings (dot segment, case-insensitive FS, trailing slash)
+        for alias in ("/./cc-switcher.html", "/CC-Switcher.html", "/cc-switcher.html/"):
+            code, _ = self.req("GET", alias, host="abc.trycloudflare.com", headers=h)
+            self.assertEqual(code, 403, alias)
         code, _ = self.req("GET", "/cc-switcher.html")
         self.assertEqual(code, 200)
 
