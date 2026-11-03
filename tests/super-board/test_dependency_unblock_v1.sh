@@ -7,9 +7,9 @@
 #      của runner GỐC (b235c84b, trước PR) đặt trong bản sao scratch; log cờ tắt không có dòng nào chứa "dependency".
 #  T2  cờ bật + openBlockers [34,59] → mark --on 34,59; không claim/Building/Blocked/blocked-by, không spawn, preflight không chạy,
 #      PREFLIGHT_SKIP có thẻ, cache có nhãn.
-#  T3  openBlockers [] → không mark, preflight chạy, claim + Building + spawn.
+#  T3  openBlockers [] → không mark, preflight chạy, claim + Building + spawn; log không có dòng "no readable openBlockers".
 #  T4  deps exit 79 và ghi $SB_GITHUB_HALT_FILE → giao như cũ; file halt chung không có, stub thấy đường dẫn halt riêng (đã dọn).
-#  T5  deps in rác / thiếu khoá thẻ / thiếu openBlockers → giao như cũ.
+#  T5  deps in rác / thiếu khoá thẻ / thiếu openBlockers → giao như cũ, log CÓ dòng ⚠ "no readable openBlockers".
 #  T6  mark trả labels [] → giao như cũ.
 #  T7  mark exit 69/79 hoặc in rác → không claim, thẻ ở Ready, dispatch_lane trả 0. Exit 64 (đầu vào sai, thử lại vô ích) →
 #      ⚠ log, giao như cũ.
@@ -173,6 +173,9 @@ dispatch_lane build 7 >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && [ -s "$TMP/deps-calls" ] && [ ! -e "$TMP/wo-calls" ] && [ -s "$TMP/preflight-calls" ] && dispatched 7 \
   && ok "T3 openBlockers []: no mark, preflight ran, claimed, Building, spawned" \
   || fail "T3 wrong: rc=$rc deps=$([ -s "$TMP/deps-calls" ] && echo y) wo=$(cat "$TMP/wo-calls" 2>/dev/null) writes=$(tr '\n' '|' < "$TMP/writes")"
+# Grok review P2: openBlockers [] là kết quả hợp lệ, không phải output hỏng → không được ghi dòng ⚠ "no readable openBlockers".
+! grep -q "no readable openBlockers" "$TMP/log" && ok "  … openBlockers []: no 'no readable openBlockers' warning logged" \
+  || fail "  openBlockers [] logged a bad-payload warning: $(grep 'no readable openBlockers' "$TMP/log" | head -2 | tr '\n' '|')"
 
 # ── T4. deps exit 79 + ghi file halt → giao như cũ, file halt chung không bị đụng, thư mục halt riêng đã dọn
 reset; export STUB_DEPS_RC=79 STUB_DEPS_WRITE_HALT=1
@@ -189,7 +192,7 @@ grep -q "⚠ dependency gate #7" "$TMP/log" && ok "  … ⚠ line logged" || fai
 for out in 'not json' '{"8":{"number":8,"openBlockers":[3]}}' '{"7":{"number":7}}' '{"7":{"number":7,"openBlockers":"34"}}'; do
   reset; export STUB_DEPS_OUT="$out"
   dispatch_lane build 7 >/dev/null 2>&1; rc=$?
-  [ "$rc" = 0 ] && [ -s "$TMP/deps-calls" ] && [ ! -e "$TMP/wo-calls" ] && dispatched 7 && grep -q "⚠ dependency gate #7" "$TMP/log" \
+  [ "$rc" = 0 ] && [ -s "$TMP/deps-calls" ] && [ ! -e "$TMP/wo-calls" ] && dispatched 7 && grep -q "⚠ dependency gate #7: no readable openBlockers" "$TMP/log" \
     && ok "T5 deps output '$out': ⚠ logged, dispatched" \
     || fail "T5 deps output '$out': rc=$rc deps=$([ -s "$TMP/deps-calls" ] && echo y) writes=$(tr '\n' '|' < "$TMP/writes")"
 done

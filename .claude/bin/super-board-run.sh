@@ -1798,6 +1798,8 @@ dependency_gate() {
   rm -rf "$hdir"
   if [ "$rc" -ne 0 ]; then log "⚠ dependency gate #${issue}: super-board-deps.sh exit ${rc} — dispatching without it"; return 0; fi
   open=$(printf '%s' "$out" | jq -er --arg n "$issue" '.[$n].openBlockers | arrays | map(tostring) | join(",")' 2>/dev/null) || open="?"
+  # openBlockers [] (join → "") là kết quả hợp lệ: giao, im lặng. grep trên chuỗi rỗng không có dòng nào nên kiểm dạng phải đứng sau.
+  [ -n "$open" ] || return 0
   if ! printf '%s' "$open" | grep -Eq '^([0-9]+(,[0-9]+)*)?$'; then
     log "⚠ dependency gate #${issue}: no readable openBlockers for it in the deps output — dispatching without it"
     return 0
