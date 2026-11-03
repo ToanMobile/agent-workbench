@@ -4,6 +4,9 @@
 #       cho câu nhắm việc của agent.
 #   E2: bước của người trên GitHub settings (vd. bật auto-approve cho Dependabot) không bị chặn nhầm.
 #   E3: env SB_NEEDS_YOU_GUARD_V2 thắng flags.json (env=0 mà flags.json true thì vẫn là tắt).
+#   E4: bước bật auto-approve cho Dependabot là việc của người, kể cả khi câu nhắc tới tests/ (residual 03/11).
+# Câu "phải nhận" của E1/E2 đều chạm một luật V2 (sửa AC thẻ #N, auto-approve … tests/): bỏ miễn trừ đang thử thì câu bị
+# từ chối, nên test bắt được (wave 2, 03/11: các câu "Bật auto-approve …" không có tests/ đi qua dù không có miễn trừ nào).
 set -euo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR  # cờ đọc qua git: không để biến git của gate trỏ vào repo thật
 
@@ -60,23 +63,28 @@ for act in \
   "Viết lại thẻ #12 sau khi deploy lên store" \
   "Sửa AC thẻ #14 sau khi deploy." \
   "Sửa AC thẻ #14 sau khi deploy/rollback bản 2.3" \
-  "Bật auto-approve cho environment production/staging trên GitHub" \
-  "Bật auto-approve cho environment production/staging/canary" \
-  "Bật auto-approve cho deploy-v2.3 trên GitHub" \
-  "Bật auto-approve cho production-v1.2"; do
+  "Sửa AC thẻ #14 cho environment production/staging trên GitHub" \
+  "Sửa AC thẻ #14 cho environment production/staging/canary" \
+  "Sửa AC thẻ #14 cho deploy-v2.3" \
+  "Sửa AC thẻ #14 cho production-v1.2"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 0 ] && pass || fail "E1 cờ bật chặn nhầm bước deploy thật (exit $rc): $act"
 done
 
-# E2: bước trên GitHub settings là việc của người.
+# E2: bước trên GitHub settings là việc của người. Câu nhắc tests/ để chạm luật auto-approve: chỉ miễn settings/cài đặt cứu được.
 for act in \
-  "Chủ repo duyệt auto-approve cho Dependabot trên GitHub settings" \
-  "Bật auto-approve trong cài đặt repo" \
-  "Bật auto-approve cho Dependabot trong Settings của tổ chức GitHub" \
-  "Bật auto-approve trong repository settings" \
-  "Bật auto-approve: Settings → Actions → General" \
-  "Bật auto-approve trong cài đặt tổ chức" \
-  "Bật auto-approve trong phần Cài đặt của kho" \
+  "Chủ repo duyệt auto-approve cho PR chỉ sửa tests/ trên GitHub settings" \
+  "Bật auto-approve cho PR chỉ sửa tests/ trong cài đặt repo" \
+  "Bật auto-approve cho PR chỉ sửa tests/ trong Settings của tổ chức GitHub" \
+  "Bật auto-approve cho PR chỉ sửa tests/ trong repository settings" \
+  "Bật auto-approve cho PR chỉ sửa tests/: Settings → Actions → General" \
+  "Bật auto-approve cho PR chỉ sửa tests/ trong cài đặt tổ chức" \
+  "Bật auto-approve cho PR chỉ sửa tests/ trong phần Cài đặt của kho"; do
+  rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
+  [ "$rc" = 0 ] && pass || fail "E2 cờ bật chặn nhầm bước settings (exit $rc): $act"
+done
+# Luật auto-approve cần đường dẫn test: không có tests/ thì không chạm luật nào (như v1).
+for act in \
   "Bật auto-approve trên GitHub" \
   "Bật auto-approve trong cấu hình repo trên GitHub"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
@@ -84,6 +92,14 @@ for act in \
 done
 rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "gõ tay AUTO-APPROVE cho tests/super-board/test_x.sh trên PR #606")"
 [ "$rc" = 64 ] && pass || fail "E2 AUTO-APPROVE cho test vẫn phải bị từ chối (exit $rc, cần 64)"
+
+# E4: bật auto-approve cho Dependabot là bước của người trên GitHub, kể cả khi câu nhắc tests/.
+for act in \
+  "Bật auto-approve cho Dependabot với PR chỉ sửa tests/" \
+  "Bật auto-approve cho PR Dependabot đổi tests/package.json"; do
+  rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
+  [ "$rc" = 0 ] && pass || fail "E4 cờ bật chặn nhầm bước Dependabot (exit $rc): $act"
+done
 
 # E3: env thắng flags.json.
 probe="Sửa AC thẻ #200 cho khớp 5 PR đang mở"

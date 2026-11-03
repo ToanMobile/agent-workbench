@@ -808,8 +808,16 @@ Mẫu ghi nhận:
 
 ---
 
-### [INSTINCT-103] run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main
+### [INSTINCT-104] run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main
 - **Ngày phát hiện:** 2026-11-03
 - **Hiện tượng lỗi:** run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main
 - **Nguyên nhân:** (1) vòng thu kết quả của tests/run_impacted.sh bỏ qua file test không còn trên đĩa ([ -f $t ] || continue): scratch merge gate bị xoá giữa lượt thì mọi test bị bỏ, suite PASS ran=0 dù đã chạy rc=1. (2) .agents/devkit của worktree trỏ về kit ở main checkout: hook sinh lại ngữ cảnh dựng AGENTS.md từ essentials.md CŨ của main, ghi đè phần sửa essentials của worktree, gate sau đó kiểm cây sai
 - **Quy tắc phòng ngừa & Cách fix:** (1) Runner tổng hợp lấy rc thật của test đã khởi chạy (.rc/.log) dù file đã mất; thư mục kit mất ⇒ FAIL; chỉ bỏ qua tên chưa từng chạy (nhánh fix/run-impacted-false-green). (2) Worktree sửa universal-agent-devkit/rules/essentials.md: trước mỗi lần gate chạy git status; AGENTS.md lệch bản commit thì chép lại bằng git show HEAD:AGENTS.md rồi mới gate; không commit bản AGENTS.md do hook sinh lại
+
+---
+
+### [INSTINCT-103] Test miễn trừ (exemption) dùng câu không chạm luật nào nên không phân biệt được
+- **Ngày phát hiện:** 2026-11-03
+- **Hiện tượng lỗi:** Test miễn trừ (exemption) dùng câu không chạm luật nào nên không phân biệt được
+- **Nguyên nhân:** test_needs_you_guard_v2_exempt.sh E1/E2: câu 'phải nhận' (Bật auto-approve … không có tests/) không khớp luật V2 nào, nên bỏ miễn trừ vẫn exit 0; test xanh mà không chứng minh gì (đợt 2, 03/11)
+- **Quy tắc phòng ngừa & Cách fix:** Mỗi câu kiểm một miễn trừ phải là câu luật SẼ từ chối nếu không có miễn trừ đó: kiểm bằng mutant gỡ miễn trừ → test phải đỏ; thêm từ khoá miễn trừ mới thì cùng lúc thêm ca dạng tên file (_NOT_FILE)
