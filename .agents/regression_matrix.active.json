@@ -3250,6 +3250,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-dependency-unblock-v1",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-waiting-on.py",
+        "tests/super-board/test_dependency_unblock_v1.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-DEPENDENCY-UNBLOCK-V1-01",
+          "name": "P3 cờ dependency_unblock_v1: thẻ Ready còn ## Blocked by mở ở lại Ready (waiting-on), không claim/Building/Blocked/spawn; cờ tắt giữ nguyên writes/log; deps lỗi giao như cũ, file halt riêng",
+          "command": "bash tests/super-board/test_dependency_unblock_v1.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
