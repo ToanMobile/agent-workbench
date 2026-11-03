@@ -114,12 +114,15 @@ V2_RULES = (
     ),
 )
 # Miễn cho V2_RULES: việc người thật (xe, khoá ký, danh tính, PII) và danh sách phải hỏi người của AGENTS.md
-# (force-push/viết lại lịch sử, deploy/production, thanh toán/billing, đăng nhập, settings repo). deploy/production
-# trong đường dẫn hay tên file (production/qa/…, deploy.sh) không miễn (OCR review 03/11).
+# (force-push/viết lại lịch sử, deploy/production, thanh toán/billing, đăng nhập, settings của repo/GitHub). Chữ là
+# đường dẫn hay tên file (production/qa/x.md, deploy.sh, settings.json) không miễn; "production/staging" thì vẫn miễn
+# (OCR + review 03/11).
+_NOT_PATH = r"(?!\.\w|/[\w-]+[/.])"
 V2_HUMAN_RE = re.compile(
     r"keychain|khoá\s+ký|cấp\s+danh\s+tính|\bpii\b|trên\s+xe\b|chủ\s+xe|\bphát\s+hành\b|"
-    r"force[\s-]?push|viết\s+lại\s+lịch\s+sử|\bdeploy\b(?![./]\w)|\bproduction\b(?![./]\w)|thanh\s+toán|\bbilling\b|"
-    r"\blogin\b|đăng\s+nhập|\bsettings\b|cài\s+đặt|"
+    rf"force[\s-]?push|viết\s+lại\s+lịch\s+sử|\bdeploy\b{_NOT_PATH}|\bproduction\b{_NOT_PATH}|thanh\s+toán|\bbilling\b|"
+    r"\blogin\b|đăng\s+nhập|\b(?:github|repo)\s+settings\b|\bsettings\s+(?:của\s+)?(?:repo|github)\b|"
+    r"cài\s+đặt\s+(?:của\s+)?(?:repo|github|dự\s+án)\b|"
     r"\bsecret\b|mật\s+khẩu|\botp\b|\blive\b|app\s+store|hợp\s+đồng|khóa\s+ký",
     re.I,
 )

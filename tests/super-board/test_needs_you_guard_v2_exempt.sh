@@ -44,7 +44,11 @@ mark_rc() {   # mark_rc <action> -> exit code của mark --dry-run, chạy trong
 # E1: chữ thuộc danh sách hỏi người nằm trong đường dẫn hay tên file thì không được miễn.
 for act in \
   "Sửa AC thẻ #14 theo production/qa/playtest-2026-10.md" \
-  "Viết lại thẻ #12 cho script deploy.sh"; do
+  "Viết lại thẻ #12 cho script deploy.sh" \
+  "Viết lại thẻ #12 cho .claude/settings.json" \
+  "Sửa AC thẻ #14 sửa file settings.gradle" \
+  "Sửa AC thẻ #14 về bước cài đặt hook DevKit" \
+  "gõ tay AUTO-APPROVE cho tests/x.sh trong settings PR"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 64 ] && pass || fail "E1 cờ bật phải từ chối (exit $rc, cần 64): $act"
 done
@@ -53,7 +57,9 @@ done
 for act in \
   "Sửa AC thẻ #14 khi deploy production bản 2.3" \
   "Viết lại thẻ #12 sau khi deploy lên store" \
-  "Sửa AC thẻ #14 sau khi deploy."; do
+  "Sửa AC thẻ #14 sau khi deploy." \
+  "Sửa AC thẻ #14 sau khi deploy/rollback bản 2.3" \
+  "Bật auto-approve cho environment production/staging trên GitHub"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 0 ] && pass || fail "E1 cờ bật chặn nhầm bước deploy thật (exit $rc): $act"
 done
