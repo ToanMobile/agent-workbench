@@ -94,33 +94,23 @@ GENUINE_HUMAN_RE = re.compile(
     r"cho\s+xe\s+online|đăng\s+nhập\s+vietmap|spending\s+limit|giới\s+hạn\s+chi\s+tiêu|\b(?:postgres|database|db)\s+production\b|\bproduction\s+(?:db|database)\b",
     re.I,
 )
-# v2 (cờ needs_you_guard_v2, mặc định tắt): các lớp việc agent làm được còn lọt bản trên, đo trên 52 lời 🙋 thật
-# của 6 board (03/11): gõ tay duyệt test đã sửa (chỉ audit Antigravity được duyệt), quyết kỹ thuật/AC và dọn thẻ,
-# chạy --full/merge gate tay, dọn cây dirty, đo frame time trên máy Android. Không chặn "review/merge PR": merge gate
-# thoát 7/8 (human-gate) và merge-queue gắn needs-you bằng đúng câu "xem PR #N … rồi tự merge" (super-board-merge-queue.sh).
-# Mỗi mẫu bám một cụm đã đo, không bắt động từ trần ("quyết định", "gõ tay", "chọn hướng" đứng trước cả việc phải hỏi
-# người: xoay secret, xoá dữ liệu LIVE, cấp quyền, phát hành store, OTP/mật khẩu, pháp lý, chi tiền).
+# v2 (cờ needs_you_guard_v2, mặc định tắt): đo trên 52 lời 🙋 thật của 6 board (03/11). Mỗi mẫu nhắm đúng THỨ chỉ agent
+# sở hữu: duyệt test đã sửa (chỉ audit Antigravity duyệt), AC/nội dung một thẻ có số, đóng thẻ đã có PR, cây dirty,
+# --full + merge gate. Không có mẫu "quyết định / chọn hướng / chốt": việc đó thuộc ai tuỳ thứ được quyết (secret, LIVE,
+# store, pháp lý, chi tiền…), regex trên phần mở đầu không thấy được (3 lượt review 03/11). Không chặn "review/merge
+# PR": merge-queue gắn needs-you human-gate (exit 7/8) bằng đúng câu "xem PR #N … rồi tự merge".
 V2_RULES = (
     (
-        re.compile(r"\bauto-approve\b|\bdòng\s+duyệt\s+cho\s+\d+\s+test\b|\bduyệt\s+chéo\s+diff\s+test|\baudit\s+antigravity\b", re.I),
+        re.compile(r"\bauto-approve\b|\bdòng\s+duyệt\s+cho\s+\d+\s+test\b[^\n]*\bđã\s+sửa\b|\bduyệt\s+chéo\s+diff\s+test_\S+\.sh\b", re.I),
         "test đã sửa do audit Antigravity duyệt, không do người gõ tay",
     ),
     (
-        re.compile(
-            r"\bquyết\s+định\s+(?:cách\s+kiểm|ac\s*\d)|\bquyết\s+định\s*:\s*mở\s+(?:card|thẻ)\b|"
-            r"\bchọn\s+(?:đường|hướng)\s+(?:cho\s+pr\s+#\d+|sửa|rút|tách)|\bchọn\s+bỏ\s+\d+\s+ac\b|\bchốt\s+goal\b|\bsửa\s+ac\b|"
-            r"\bviết\s+lại\s+thẻ\b|\[decision\]|\bđóng\s+#\d+\s+vì\b",
-            re.I,
-        ),
-        "quyết định kỹ thuật/phạm vi AC và sửa, đóng thẻ thuộc thẩm quyền tự chủ của agent (Decide, don't ask)",
+        re.compile(r"\bsửa\s+ac\s+thẻ\s+#\d+|\bviết\s+lại\s+thẻ\s+#\d+|\bđóng\s+#\d+\s+vì\b[^\n]*\bpr\s+#\d+", re.I),
+        "sửa AC, viết lại hay đóng một thẻ là việc của agent",
     ),
     (
-        re.compile(r"\bchạy\s+--full\b|\bmerge\s+gate\s+thủ\s+công\b|\bdọn\s+cây\b|\bkhôi\s+phục\s+checklist\b", re.I),
+        re.compile(r"\bdọn\s+cây\s+dirty\b|\bchạy\s+--full\b[^\n]*\bmerge\s+gate\b", re.I),
         "chạy gate/merge gate và dọn cây làm việc là việc của agent",
-    ),
-    (
-        re.compile(r"\bframe\s*time\s+trên\s+máy\s+android\s+tầm\s+trung\b", re.I),
-        "đo hiệu năng trên máy Android nối adb là việc của QA",
     ),
 )
 # Miễn cho V2_RULES: việc người thật (xe, khoá ký, danh tính, PII) và danh sách phải hỏi người của AGENTS.md

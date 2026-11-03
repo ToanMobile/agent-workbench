@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Rào chắn needs-you v2 (cờ needs_you_guard_v2, mặc định tắt).
 # Dữ liệu: nguyên văn các lời `🙋 Cần bạn:` thật trên 6 board (cache gh 03/11/2026) mà bản v1 cho lọt.
-#   R = việc agent tự làm được (review/merge PR, gõ tay duyệt test, quyết kỹ thuật/AC, dọn thẻ, chạy --full, đo frame time)
-#   H = việc chỉ người làm được (xe thật, khoá/secret, Play Console, PII, cấp danh tính)
+#   R = việc nhắm đúng thứ agent sở hữu (AUTO-APPROVE/duyệt test đã sửa, AC hay nội dung thẻ #N, đóng thẻ đã có PR, cây dirty, --full + merge gate)
+#   H = mọi lời còn lại: việc của người (xe, khoá/secret, Play Console, PII, danh tính) và lời mở đầu bằng "quyết định / chọn hướng" (thuộc ai tuỳ việc được quyết)
 #   (WB#124 nối hai chữ drop và table bằng gạch dưới: merge_policy coi cụm có dấu cách là đổi schema; câu thuộc H nên kết quả không đổi.)
-#   M = câu trộn: phần "sửa AC" là việc agent nên cả câu bị từ chối; phần trên xe đứng riêng vẫn được nhận.
 # Cờ tắt: mọi câu được nhận như v1. Cờ bật: R, M exit 64; H exit 0. Cờ đọc từ env SB_NEEDS_YOU_GUARD_V2
 # hoặc <checkout chính>/.agents/local/flags.json.
 set -euo pipefail
@@ -48,8 +47,8 @@ mark_rc() {   # mark_rc <action> -> exit code của mark --dry-run, chạy trong
 
 FIXTURE="$TMP/fixture.tsv"
 cat > "$FIXTURE" <<'NY_FIXTURE_END'
-R	agent-workbench#747	chọn đường cho PR #742: (a) cấu hình merge_policy.machine_gate.verify_commands + review đủ 4 bên (Grok + OCR), hoặc (b) duyệt sửa bộ phân loại để fixture test của chính nó không kích hoạt machine gate
-R	agent-workbench#657	Đăng [decision] coi AC4 (--full 00:00) là kiểm sau merge cho PR #673, hoặc tách AC4 sang thẻ riêng
+H	agent-workbench#747	chọn đường cho PR #742: (a) cấu hình merge_policy.machine_gate.verify_commands + review đủ 4 bên (Grok + OCR), hoặc (b) duyệt sửa bộ phân loại để fixture test của chính nó không kích hoạt machine gate
+H	agent-workbench#657	Đăng [decision] coi AC4 (--full 00:00) là kiểm sau merge cho PR #673, hoặc tách AC4 sang thẻ riêng
 H	agent-workbench#632	chọn hướng A (bot GitHub) hoặc B (khoá ký Keychain) và cấp danh tính ngoài vùng agent ghi được
 R	agent-workbench#601	gõ tay AUTO-APPROVE cho tests/super-board/test_runner_preflight_swept.sh (sha256 b210511c…) trên PR #606
 R	agent-workbench#570	Gõ tay trên PR #585 dòng duyệt cho 3 test merge-gate đã sửa (đường dẫn + sha256 ở comment chặn)
@@ -59,24 +58,24 @@ H	agent-workbench#525	vá copy_file trong repo gói super-board (~/.local/share/
 R	agent-workbench#499	Cung cấp log merge gate dùng lại biên nhận cây ở GeelyEx2, Humans-vs.-UFOs, Goods (khi PR thật kế tiếp merge) hoặc chạy --full + merge gate thủ công
 H	agent-workbench#337	Chọn nguồn >=100 prompt thật (transcript nào) và đồng ý mask PII
 H	agent-workbench#321	review PR #342 và merge, hoặc comment done để duyệt
-R	agent-workbench#248	quyết định: mở card riêng sửa test_gate_stop_reuse_race.sh (đỏ ngẫu nhiên theo tải, cũng đỏ trên main) hoặc chấp nhận PR #276 khi gate xanh
-R	agent-workbench#240	Quyết định cách kiểm AC1/AC2 cho PR #279
+H	agent-workbench#248	quyết định: mở card riêng sửa test_gate_stop_reuse_race.sh (đỏ ngẫu nhiên theo tải, cũng đỏ trên main) hoặc chấp nhận PR #276 khi gate xanh
+H	agent-workbench#240	Quyết định cách kiểm AC1/AC2 cho PR #279
 H	agent-workbench#231	Chọn nguồn 100 prompt thật (transcript phiên nào) để đo parallel_split
 R	agent-workbench#201	Phiên chủ main dọn cây dirty và khôi phục checklist; sửa thẻ 201 chỉ còn phần có diff, bỏ 151 152 180
 R	agent-workbench#200	Sửa AC thẻ #200 (5 nhánh đều có PR mở #182 #164 #174 #160 #176) hoặc chỉ định PR nào bị bỏ
 R	agent-workbench#184	viết lại thẻ #184: chạy lại lane build trong worktree, lưu tên hook + lệnh + text chặn vào thẻ cùng AC mới
-R	agent-workbench#180	Đóng #180 vì cả 5 repo đã đồng bộ (context_sync --check thoát 0), không còn gì để build
+H	agent-workbench#180	Đóng #180 vì cả 5 repo đã đồng bộ (context_sync --check thoát 0), không còn gì để build
 H	agent-workbench#124	Review PR #174 (merge_policy: từ khoá drop_table trong test)
 H	agent-workbench#123	Review PR #164
 R	agent-workbench#81	Đóng #81 vì đã sửa ở PR #113, hoặc đưa kịch bản còn tái hiện
-R	agent-workbench#35	Chốt Goal + AC cho #35: tự merge vào trunk rồi xoá worktree sau Done, hay chỉ dọn worktree sau merge gate; xử lý ca dirty/conflict. Nếu PR #65 đã đủ thì đóng thẻ.
-R	agent-workbench#28	chọn hướng rút essentials hoặc chuyển luật riêng từng repo, tách card theo repo
+H	agent-workbench#35	Chốt Goal + AC cho #35: tự merge vào trunk rồi xoá worktree sau Done, hay chỉ dọn worktree sau merge gate; xử lý ca dirty/conflict. Nếu PR #65 đã đủ thì đóng thẻ.
+H	agent-workbench#28	chọn hướng rút essentials hoặc chuyển luật riêng từng repo, tách card theo repo
 H	geelyex2#134	chủ xe thử 2 lượt trên màn xe (A: video đang phát ở trang xem mở rộng rồi bấm Home; B: thu miniplayer rồi bấm Home) và chụp YouTube > Cài đặt > Chung > Hình trong hình, hoặc bật ADB Wi-Fi của xe để agent tự đo
 H	geelyex2#42	Thu hồi token bot Telegram cũ ở @BotFather (viết lại lịch sử git chỉ khi đồng ý force-push); dán supabase/schema.sql vào SQL Editor; chọn phương án auth/billing và quyết câu trần 'đóng ứng dụng' từ #110; lấy số đo vhal_binder_time
 H	geelyex2#39	Đăng nhập VietMap trên xe rồi đo dẫn đường ≥10 lượt (AC 1)
 H	geelyex2#38	Trên xe thật bản 1.3.0 (online qua adb): chia đôi Maps + YouTube ≥3 lượt để ghi timeline am stack list lúc lỗi; báo giờ lúc thấy app biến mất (an_ca_hai)
 H	geelyex2#35	Sau khi #111 dán số đếm: quyết có sửa isWakeGap và thiết kế ping phone→xe riêng; đo lặp ≥3 lượt trên xe cho relay 4G
-M	geelyex2#30	Chọn nguyên văn câu đáp điều hoà từ đề xuất ở #112; đo công tắc camera 540 trên xe rồi chốt câu gợi ý (hoặc bỏ); sửa AC bỏ 2 câu đã xong; duyệt phát hành gói giọng trước APK
+H	geelyex2#30	Chọn nguyên văn câu đáp điều hoà từ đề xuất ở #112; đo công tắc camera 540 trên xe rồi chốt câu gợi ý (hoặc bỏ); sửa AC bỏ 2 câu đã xong; duyệt phát hành gói giọng trước APK
 H	geelyex2#29	Trên xe thật: đo SelfCompile (SELinux, thời gian dex2oat), nói ≥3 lượt PTT xem rụng đầu câu, nói các ca VOICE-1014/1016, NHÀ RIÊNG; báo số lần nói đợt 21:04-21:08 10/10
 H	geelyex2#28	chủ xe chốt: (1) thêm clip giọng thật cho câu báo 'chưa có toạ độ' và nghe duyệt clip trên xe thật, hay (2) giữ giọng 'Đã mở' và sửa dòng AC 'Xe đọc đúng câu thông báo' thành 'popup đọc đúng câu' (đã đạt ở PR #77)
 H	geelyex2#27	Trên xe thật bản 1.3.1: đo ≥3 lượt Waze tự bấm OK, overlay hoãn khi xe chạy, hoàn tác HVAC (ECO, sấy kính, sấy gương); tắt cờ debug.geely.wavtest sau đo
@@ -93,11 +92,11 @@ H	goods-triple-shelf-match-3d#15	Đưa key/app-id AdMob hoặc MAX + file cấu 
 H	goods-triple-shelf-match-3d#14	Xác nhận keystore/key_store_goods.jks là upload key cho Play Console (hoặc tạo mới); chốt tên launcher + version, tạo app trên Play Console, đưa URL chính sách thật vào legal_links.json
 H	goods-triple-shelf-match-3d#13	Nghe game liên tục 15 phút, ghi chỗ chói tai/chồng tiếng/nhạc lặp vào issue; hoặc comment chấp nhận số đo thay cho nghe
 H	goods-triple-shelf-match-3d#12	Tìm 5 người chơi thật, cho chơi APK từ HEAD theo production/qa/playtest-2026-10.md, ghi chép; chốt HARD-5, FUN-5, hệ số ngân sách, độ khó màn mục tiêu, bàn tay màn 6
-R	humans-vs-ufos#20	Quay video 30 s và đo frame time trên máy Android tầm trung, đính vào PR #72
-R	idle-plaza-3d#10	main đã có (PR #16, profile game); 3 AC còn lại nói về WebGL/Three.js (npm test, provider web 844x390, luật 01-webgl-threejs) trong khi repo đang chạy Unity (unity-batch.sh): chọn bỏ 3 AC WebGL hay giữ hướng WebGL — đổi phạm vi là
+H	humans-vs-ufos#20	Quay video 30 s và đo frame time trên máy Android tầm trung, đính vào PR #72
+H	idle-plaza-3d#10	main đã có (PR #16, profile game); 3 AC còn lại nói về WebGL/Three.js (npm test, provider web 844x390, luật 01-webgl-threejs) trong khi repo đang chạy Unity (unity-batch.sh): chọn bỏ 3 AC WebGL hay giữ hướng WebGL — đổi phạm vi là
 H	officereader#154	Đổi Gemini API key (khóa cũ lộ 18/10), supabase secrets set GEMINI_API_KEY; sau đó db push, deploy ai-assist, thử BYOK trên máy thật, làm Play Console
 H	officereader#102	Tạo 3 product ID Play Billing trên Play Console (1 tháng, 1 năm, trọn đời) và ghi tên ID vào thẻ #102
-R	officereader#97	Quyết định AC2 "có thể làm phẳng" đã đạt với thiết kế ghi chữ vào nội dung trang chưa; đạt thì đóng #97 là trùng (834229ccf, dfe18b959), chưa thì viết AC mới
+H	officereader#97	Quyết định AC2 "có thể làm phẳng" đã đạt với thiết kế ghi chữ vào nội dung trang chưa; đạt thì đóng #97 là trùng (834229ccf, dfe18b959), chưa thì viết AC mới
 H	officereader#89	Deploy ai-assist trên Supabase; thử BYOK bằng khóa Gemini thật trên máy thật; Play Console: khai báo MANAGE_EXTERNAL_STORAGE và tạo 3 product ID
 H	officereader#76	Chạy supabase login, supabase link --project-ref <ref>, rồi supabase db pull vào supabase/migrations; soát không có secret
 NY_FIXTURE_END
@@ -169,13 +168,26 @@ for act in \
   "Quyết định có ký hợp đồng NDA với đối tác không" \
   "Quyết định có chi 200 USD/tháng cho Sentry không" \
   "Quyết định có chấp nhận điều khoản dịch vụ OpenAI không" \
-  "Đo frame time trên máy Android của tester ngoài"; do
+  "Đo frame time trên máy Android của tester ngoài" \
+  "Quyết định AC2: có xoay secret Supabase service_role đang dùng không" \
+  "Quyết định AC3: có xoá dữ liệu người dùng thật trên LIVE không" \
+  "Chọn hướng rút app khỏi App Store hay giữ" \
+  "Chọn đường cho PR #12: merge bản phá API công khai v1 hay giữ tương thích" \
+  "Chọn hướng tách lịch sử git: rewrite history xoá file khách" \
+  "Chốt Goal ngân sách quảng cáo tháng 12 (chi 500 USD)" \
+  "Chọn hướng sửa quyền camera và location trong App Store Connect" \
+  "Quyết định AC1: có gửi mã OTP thật tới số điện thoại khách không" \
+  "Chọn hướng sửa hợp đồng NDA với đối tác trước khi ký" \
+  "Dọn cây thư mục upload của khách trên server LIVE" \
+  "Sửa AC của hợp đồng NDA với đối tác" \
+  "Đăng [decision] chấp nhận điều khoản dịch vụ của OpenAI" \
+  "Quay video 30 s và đo frame time trên máy Android tầm trung của tester"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 0 ] && pass || fail "T3c cờ bật chặn nhầm việc phải hỏi người (exit $rc): $act"
 done
 
 # T4: cờ trong flags.json của checkout chính (không env) bật v2; thiếu file hoặc JSON hỏng là tắt.
-probe="Quyết định cách kiểm AC1/AC2 cho PR #279"
+probe="Sửa AC thẻ #200 cho khớp 5 PR đang mở"
 mkdir -p "$TMP/repo/.agents/local"
 rc="$(env -u SB_NEEDS_YOU_GUARD_V2 bash -c "$(declare -f mark_rc); TMP='$TMP'; NEEDS_YOU='$NEEDS_YOU'; mark_rc '$probe'")"
 [ "$rc" = 0 ] && pass || fail "T4 không có flags.json phải là tắt (exit $rc)"
