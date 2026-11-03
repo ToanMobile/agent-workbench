@@ -1,6 +1,6 @@
 # CC Switcher MCP (`cc-switcher-mcp`)
 
-MCP Server và Auto-Switcher Daemon trên macOS dành cho 6 profile đã cấu hình sẵn trong **CC Switch**, tích hợp **Anti-Ban Guard** (nghỉ an toàn 15 phút giữa các tài khoản Claude, đóng băng 5 giờ khi chạm giới hạn `429`) và điều khiển 2 chiều từ điện thoại qua **Telegram Bot**.
+MCP Server và Auto-Switcher Daemon trên macOS dành cho 6 profile đã cấu hình sẵn trong **CC Switch**, tích hợp **Anti-Ban Guard** (nghỉ an toàn 15 phút giữa các tài khoản Claude, đóng băng 5 giờ khi chạm giới hạn `429`) và bảng điều khiển trên web `/cc-switcher` (Telegram chỉ còn gửi cảnh báo).
 
 ## Danh sách 6 Profile hỗ trợ
 

@@ -3,7 +3,7 @@
 # 2026-10-18: GeelyEx2 #40 (PR #45) và OfficeReader #80 (PR #127) kẹt Blocked với comment 🙋 "size" của 16/10, dù PR #57 đã đặt
 # auto_max_lines = 0 từ 18/10. super-board-approval.py --deps chỉ nhận một comment `done` của người, không bao giờ chạy lại
 # chính sách, nên chủ repo phải gõ `done` tay. Sửa: `--deps --config <cfg>` chạy lại merge-policy trên PR của request; plan.human
-# và plan.needs_you rỗng thì needsYouDone = true. Chính sách vẫn đòi người (cỡ code thật, always_human, needs-you) thì giữ nguyên.
+# và plan.needs_you rỗng thì needsYouDone = true. Chính sách vẫn đòi người (cỡ code thật, needs-you; always_human đi machine_gate từ 54858270) thì giữ nguyên.
 # Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

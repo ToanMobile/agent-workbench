@@ -85,7 +85,7 @@ if (argv.includes('--help') || argv.includes('-h')) {
 
 Cach dung:
   (khong tham so)           Chay MCP server qua giao thuc stdio
-  --daemon                  Chay Daemon theo doi log 429 & dieu khien 2 chieu qua Telegram Bot
+  --daemon                  Chay Daemon theo doi log 429 & gui canh bao Telegram (dieu khien qua web /cc-switcher)
   --doctor / --status       In trang thai 6 profile, Cooldown va thong ke token/chi phi
   --switch <1..6|id>        Chuyen nhanh sang profile chi dinh
   --rotate                  Xoay vong sang profile an toan tiep theo
