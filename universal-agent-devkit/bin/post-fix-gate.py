@@ -719,13 +719,13 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
       3. blob hiện tại == blob của f ở head;
       4. mọi audit pass khác của repo trên chuỗi đó mà không là tổ tiên của head (mới hơn) có cùng blob — chỉ audit mới nhất được dùng,
          chép lùi về bản đã audit trước khi test được làm mạnh không qua (replay);
-      5. blob của f ở base hiện tại == blob ở merge-base(head, trunk): main không đổi chính file đó kể từ lúc audit (cả hai đều
-         không có file = nhánh đích chưa từng có nó: không đổi).
+      5. blob của f ở TIP nhánh đích == blob ở merge-base(head, trunk): main không đổi chính file đó kể từ lúc audit, kể cả khi PR
+         chưa gộp main (đợt 2 G2: base cũ của PR bỏ sót) (cả hai đều không có file = nhánh đích chưa từng có nó: không đổi).
     Lỗi git, thiếu merge-base, blob không resolve hay rỗng → không duyệt."""
     ch = _approval_chain(top, project_root)
     if not ch:
         return False, "không xác định được nhánh đích / merge-base (lỗi git)"
-    trunk_ref, base, _tip, _chain = ch
+    trunk_ref, _base, _tip, _chain = ch
     h10 = head[:10]
     on_trunk = _is_ancestor(top, head, trunk_ref)
     if on_trunk is None:
@@ -753,11 +753,11 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
                            "của nhánh được dùng")
     # ls-tree: rc 0 + rỗng = file không có ở commit đó (nhánh đích chưa từng có file, test thêm phía PR), rc khác 0 = lỗi git.
     rc_m, mb = _git_out(top, "merge-base", head, trunk_ref)
-    rc_b, at_base = _git_out(top, "ls-tree", base, "--", f"{prefix}{f}") if rc_m == 0 and mb else (1, "")
+    rc_b, at_tip = _git_out(top, "ls-tree", trunk_ref, "--", f"{prefix}{f}") if rc_m == 0 and mb else (1, "")
     rc_o, at_fork = _git_out(top, "ls-tree", mb, "--", f"{prefix}{f}") if rc_b == 0 else (1, "")
     if rc_o != 0:
-        return False, f"không kiểm được file ở base / merge-base của auditedHead {h10} (lỗi git)"
-    if at_base != at_fork:
+        return False, f"không kiểm được file ở nhánh đích / merge-base của auditedHead {h10} (lỗi git)"
+    if at_tip != at_fork:
         return False, f"nhánh đích đã đổi file này kể từ audit (auditedHead {h10}): cần audit lại"
     return True, ""
 
@@ -787,13 +787,13 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
                              capture_output=True, text=True, timeout=30)
         if res.returncode != 0:
             return {}
-        agent_id = _norm_agent(os.environ.get("DEVKIT_AGENT_ID") or "")
+        agent_id = _push_gate().session_agent()      # đợt 2 F2: danh tính phiên chung (rỗng = không biết: không từ chối thêm)
         audited = []                                  # (auditedHead, reviewer, task_id), mới nhất trước, chỉ commit push_gate công nhận
         for sha in res.stdout.split():
             ok, note = _push_gate().approved(root, f"{sha}^!")
             m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None
             head = _push_gate().audited_head(root, m.group(2)) if m else None
-            if head and not (agent_id and m.group(1) == _push_gate().normalize_reviewer(agent_id)):
+            if head and not (agent_id and m.group(1) == agent_id):
                 audited.append((head, m.group(1), m.group(2)))
         out = {}
         for f in paths if audited else []:
@@ -903,7 +903,9 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                 APPROVAL_REJECTS.append((f, cur, f"task {tid}: biên bản PM không xác định được reviewer (verdicts.audit.reviewer khớp "
                                                  "lượt audit gần nhất trong dispatches)"))
                 continue
-            if pm_rv == _norm_agent(e["author"]) or (agent_id and pm_rv == _push_gate().normalize_reviewer(agent_id)):
+            # Đợt 2 F3/G3: author chuẩn hoá như reviewer (grok-build = grok); F2: trùng danh tính phiên (session_agent; rỗng = bỏ qua).
+            session_id = _push_gate().session_agent()
+            if pm_rv == _push_gate().normalize_reviewer(e["author"]) or (session_id and pm_rv == session_id):
                 APPROVAL_REJECTS.append((f, cur, f"reviewer {pm_rv} của biên bản PM trùng author (tự duyệt)"))
                 continue
             if not covered:
@@ -8403,6 +8405,14 @@ def main():
     # the lock (BUSY: the wait ran out) there is no way to check it: UNTESTED the same.
     if not lock_held and not read_only:   # suites to run and no lock: they are BUSY, and so is every PASS that cannot be checked without it
         gone, why = reused_pass(), "BUSY"
+        if _BUSY_HOLDER.get("fast") == "same_session":
+            # Wave 2 fix G1: behind a live run of this run's OWN session even a content-key PASS is BUSY (exit 4, busy), never exit 0: that
+            # run is still writing results for this content, and the Stop hook records pass_fp on an exit 0.
+            seen_ids = {id(x) for x in gone}
+            for t in keyed_hits:
+                if t.get("status") == "PASS" and id(t) not in seen_ids:
+                    KEYED_IDS.discard(id(t))
+                    gone.append(t)
     else:
         gone, why = stale_reused(), "STALE"
     if gone and stale_to_untested(why, gone):

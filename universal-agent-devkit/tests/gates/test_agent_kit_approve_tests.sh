@@ -7,10 +7,13 @@
 #  C5  biên bản cũ (reviewer pm) + dispatch audit không ghi agent -> antigravity.   C6  biên bản cũ không dispatch -> lệnh từ chối.
 #  C7  alias grok-4.7 / Grok -> grok.   C8  trailer `Test-approved-by: grok|antigravity` phải khớp reviewer PM (push_gate.approved).
 #  C9  test sửa sau audit không được ghi.   C10  .claude/audit-gate trỏ ra ngoài checkout -> từ chối.
+#  Sửa sau review đợt 2: C11 (F2) author = danh tính phiên (CLAUDECODE=1 -> claude) khi không có DEVKIT_AGENT_ID;
+#  C12 (F2) phiên grok + reviewer grok -> tự duyệt; C13 (F6) ngoại lệ -> exit 3 (1 giữ nghĩa "không có test để ghi").
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 unset DEVKIT_AUTO_APPROVE_TESTS DEVKIT_TRANSCRIPTS_DIR TARGET_DIR DEVKIT_AGENT_ID CLAUDE_CODE_SESSION_ID DEVKIT_SESSION_ID CLAUDE_SESSION_ID
 unset WORKTREE_TRUNK_MODE DEVKIT_GATE_MERGE_CHECK CI
+unset CLAUDECODE GROK_SESSION_ID GROK_WORKSPACE_ROOT GROK_HOOK_EVENT   # danh tính phiên (push_gate.session_agent): từng ca tự đặt
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 KIT="$DEVKIT_DIR/bin/agent-kit"
@@ -145,5 +148,34 @@ mkdir -p "$TMP/outside" && ln -s "$TMP/outside" "$TMP/c10/.claude/audit-gate"
 DEVKIT_AGENT_ID=claude-lane kit "$TMP/c10" T0910-c10
 if [ "$RC" = 2 ] && has "ngoài checkout" && [ ! -f "$TMP/outside/approved_tests.json" ]; then ok "C10: thư mục duyệt trỏ ra ngoài checkout -> từ chối"
 else bad "C10: symlink ra ngoài: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
+
+# ── Đợt 2, sửa sau review (F2, F6) ────────────────────────────────────────────────────────────────────────────────────────
+# C11 (F2): không DEVKIT_AGENT_ID, phiên Claude Code (CLAUDECODE=1) -> author "claude", lệnh ghi
+mk "$TMP/c11"; pm_rec T0911-c11 "$TMP/c11" "$X" grok "[$DG]"
+CLAUDECODE=1 kit "$TMP/c11" T0911-c11; L="$(ledger "$TMP/c11" tests/t.sh)"
+if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:grok:claude:T0911-c11" ]; then ok "C11: phiên Claude Code không DEVKIT_AGENT_ID -> author claude, ghi mục"
+else bad "C11: CLAUDECODE=1: rc=$RC ledger='$L' $(printf '%s' "$OUT" | tail -2)"; fi
+# C12 (F2): phiên Grok (GROK_SESSION_ID), reviewer PM grok -> tự duyệt, từ chối
+mk "$TMP/c12"; pm_rec T0912-c12 "$TMP/c12" "$X" grok "[$DG]"
+GROK_SESSION_ID=g-1 CLAUDECODE=1 kit "$TMP/c12" T0912-c12
+if [ "$RC" = 2 ] && has "tự duyệt" && [ ! -f "$TMP/c12/.claude/audit-gate/approved_tests.json" ]; then ok "C12: phiên grok, reviewer grok -> từ chối (tự duyệt)"
+else bad "C12: phiên grok: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
+# C13 (F6): lỗi ngoài dự kiến (.claude/audit-gate là file thường: mkdir ném) -> exit 3 kèm thông báo, không phải exit 1 ("không có test")
+mk "$TMP/c13"; pm_rec T0913-c13 "$TMP/c13" "$X" grok "[$DG]"
+printf 'x\n' > "$TMP/c13/.claude/audit-gate"
+DEVKIT_AGENT_ID=claude-lane kit "$TMP/c13" T0913-c13
+if [ "$RC" = 3 ] && has "approve-tests: lỗi"; then ok "C13: ngoại lệ -> exit 3 kèm thông báo"
+else bad "C13: ngoại lệ: rc=$RC (muốn 3) $(printf '%s' "$OUT" | tail -2)"; fi
+
+# C14 (khớp normalizeAgent/laGrok của PM): "grok"/"antigravity" rồi hết chuỗi hoặc - _ . -> tên chuẩn; "grokker" giữ nguyên;
+#     session_agent: DEVKIT_AGENT_ID chỉ khoảng trắng -> bước sau; CLAUDECODE phải đúng "1"
+OUT="$(env -u DEVKIT_AGENT_ID -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID python3 -c 'import os, sys
+sys.path.insert(0, sys.argv[1]); import push_gate as p
+names = [p.normalize_reviewer(v) for v in ("grok_x", "grok.x", " GROK-4 ", "antigravity-pro", "Antigravity_2", "antigravity.x", "grokker")]
+os.environ["DEVKIT_AGENT_ID"] = "   "; os.environ["CLAUDECODE"] = "true"; a = p.session_agent()
+os.environ["CLAUDECODE"] = "1"; b = p.session_agent()
+print(" ".join(names + [a or "-", b or "-"]))' "$DEVKIT_DIR/bin" 2>&1)"
+if [ "$OUT" = "grok grok grok antigravity antigravity antigravity grokker - claude" ]; then ok "C14: alias grok_x / grok.x / antigravity-pro chuẩn hoá như PM; id chỉ khoảng trắng bỏ qua, CLAUDECODE phải là 1"
+else bad "C14: chuẩn hoá alias / danh tính: '$OUT' (muốn 'grok grok grok antigravity antigravity antigravity grokker - claude')"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

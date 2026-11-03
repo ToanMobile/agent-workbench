@@ -19,12 +19,15 @@ import os
 import re
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 # The env the verdict depends on: the reviewer identity check, the PM home and its test-fixture switch, the folders searched,
 # the refused self-approval switch, and the gate cache that decides which suites a run starts.
+# Wave 2 F2: push_gate.session_agent() (the self-approval check) also reads CLAUDECODE and the GROK_* session env.
 ENV_KEYS = ("DEVKIT_AGENT_ID", "ANTIGRAVITY_PM_STATE_HOME", "DEVKIT_PM_HOME_TEST", "HOME", "CLAUDE_CODE_SESSION_ID",
-            "DEVKIT_TRANSCRIPTS_DIR", "DEVKIT_AUTO_APPROVE_TESTS", "DEVKIT_GATE_CACHE", "DEVKIT_GATE_CACHE_MAX_S")
+            "DEVKIT_TRANSCRIPTS_DIR", "DEVKIT_AUTO_APPROVE_TESTS", "DEVKIT_GATE_CACHE", "DEVKIT_GATE_CACHE_MAX_S",
+            "CLAUDECODE", "GROK_SESSION_ID", "GROK_WORKSPACE_ROOT", "GROK_HOOK_EVENT")
 MAX_TASK_IDS = 64                 # more ids than that: no digest (the caller runs the gate)
 TASK_JSON_MAX = 8_000_000         # push_gate._task_audits skips a bigger task.json
 AUDITED_HEAD = re.compile(r"(?<![0-9A-Za-z])auditedHead:[ \t\n\r\f\v]*([0-9a-f]{40})(?![0-9A-Za-z])")   # push_gate.AUDITED_HEAD
@@ -178,6 +181,18 @@ def _answer_tokens(folders, session_files, cutoff, basenames):
     return sorted(found)
 
 
+def _all_audits(top):
+    """Wave 2 F4: sorted [task_id, auditedHead] of EVERY audit pass of this repo (push_gate.audited_heads, auditHistory included):
+    post-fix-gate audit_covers refuses an entry when a newer audit of ANY task on the PR chain has other content, so a task that
+    neither the ledger nor a trailer names still moves the verdict. push_gate is a module (guarded by __main__): imported, not copied."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import push_gate  # noqa: PLC0415 - sibling module in bin/
+        return sorted([str(t), str(h)] for t, h in push_gate.audited_heads(top))
+    except Exception as e:  # noqa: BLE001 - any error: no digest, the caller runs the gate (fail closed)
+        raise DigestError("audited_heads: %r" % (e,)) from e
+
+
 def _stat_sig(paths):
     sig = []
     for p in paths:
@@ -275,6 +290,7 @@ def digest(repo, transcript, status_z, commit_base=None, code_paths=()):
         "hashes": [_file_token(root / ".claude" / "audit-gate" / "approved_hashes.json"),
                    _file_token(main_root / ".claude" / "audit-gate" / "approved_hashes.json")],
         "pm": _pm_tokens(top, task_ids),
+        "audits": _all_audits(top),
         "answers": _answer_tokens(folders, session_files, cutoff, basenames),
         "trunk": [trunk_ref, trunk_sha],
         "commit_base": commit_base or "",

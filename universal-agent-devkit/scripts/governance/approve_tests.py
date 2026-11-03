@@ -6,11 +6,12 @@ Thay 5 bước tay (đọc auditedHead, băm từng test, ghi JSON). Không thay
 - reviewer và auditedHead chỉ lấy từ biên bản PM ngoài repo (verdicts.audit), không bao giờ từ dòng lệnh; reviewer qua
   push_gate.audit_reviewer(legacy=False): grok chỉ khi lượt audit gần nhất PM tự chạy là grok, biên bản cũ (reviewer "pm") chỉ là
   antigravity khi dispatches có lượt audit antigravity, không thì từ chối.
-- author = DEVKIT_AGENT_ID của phiên (rỗng → từ chối); reviewer trùng author → từ chối.
+- author = push_gate.session_agent() (DEVKIT_AGENT_ID, không thì grok / claude theo env của phiên; rỗng → từ chối); reviewer trùng
+  author → từ chối (đợt 2 F2).
 - test sửa = file test có ở merge-base(trunk, HEAD) và khác ở cây làm việc (đã commit + bẩn); chỉ ghi file audit_covers nhận.
 - ghi/thay mục {path, sha256, reviewer, author, task_id, reason} trong .claude/audit-gate/approved_tests.json của checkout hiện tại
   (get_project_dir của gate); thư mục đó trỏ ra ngoài checkout (symlink) → từ chối. Ghi nguyên tử.
-Exit: 0 đã ghi ≥1 mục · 1 không có test nào để ghi · 2 từ chối / lỗi.
+Exit: 0 đã ghi ≥1 mục · 1 không có test nào để ghi · 2 từ chối · 3 lỗi ngoài dự kiến (ngoại lệ, đợt 2 F6: không lẫn với 1).
 """
 import hashlib
 import importlib.util
@@ -38,15 +39,16 @@ def refuse(msg):
 
 def main(argv):
     if len(argv) != 1 or argv[0].startswith("-"):
-        print("usage: agent-kit approve-tests <task-id>   (reviewer, auditedHead: từ biên bản antigravity-pm; author: DEVKIT_AGENT_ID)",
+        print("usage: agent-kit approve-tests <task-id>   (reviewer, auditedHead: từ biên bản antigravity-pm; author: danh tính phiên)",
               file=sys.stderr)
         return 2
     task_id = argv[0].strip()
-    author = (os.environ.get("DEVKIT_AGENT_ID") or "").strip()
-    if not author:
-        return refuse("DEVKIT_AGENT_ID rỗng: không biết phiên nào là author")
     gate = _gate()
     pg = gate._push_gate()
+    author = pg.session_agent()
+    if not author:
+        return refuse("không xác định được danh tính phiên (DEVKIT_AGENT_ID rỗng, không có env phiên Grok / Claude Code): "
+                      "không biết phiên nào là author")
     project = Path(os.path.realpath(gate.get_project_dir()))
     top, prefix = str(gate.get_repo_root()), gate.get_project_prefix()
     head = pg.audited_head(top, task_id)
@@ -56,7 +58,7 @@ def main(argv):
     if not reviewer:
         return refuse(f"task {task_id}: biên bản PM không xác định được reviewer (verdicts.audit.reviewer khớp lượt audit gần nhất "
                       "trong dispatches)")
-    if reviewer == pg.normalize_reviewer(author):
+    if reviewer == author:
         return refuse(f"reviewer {reviewer} trùng author {author} (tự duyệt)")
     chain = gate._approval_chain(top, project)
     if not chain:
@@ -121,5 +123,14 @@ def main(argv):
     return 0
 
 
+def run(argv):
+    """main với lỗi ngoài dự kiến thành exit 3 kèm thông báo (đợt 2 F6): traceback trần ra exit 1 = "không có test để ghi"."""
+    try:
+        return main(argv)
+    except Exception as e:  # noqa: BLE001 - mọi lỗi: báo rõ, exit 3, không ghi gì thêm
+        print(f"approve-tests: lỗi ({type(e).__name__}: {e}); không ghi gì thêm", file=sys.stderr)
+        return 3
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(run(sys.argv[1:]))

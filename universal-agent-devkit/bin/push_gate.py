@@ -496,20 +496,45 @@ def audited_heads(top):
         return []
     out = []
     for task in _repo_tasks(top):
-        audit = (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
-        sha = _audit_head_of(top, audit)
-        if sha:
-            out.append((task["id"], sha))
+        verdicts = task.get("verdicts") if isinstance(task.get("verdicts"), dict) else {}
+        audits = [verdicts.get("audit")]
+        # Đợt 2 F1: verdicts.auditHistory [{auditedHead, reviewer, at}] — PM nối thêm mỗi audit pass, không xoá. Một verdict fail ghi
+        # đè verdicts.audit sau đó không gỡ head pass cũ khỏi tập (audit cũ hơn của task khác không thành "mới nhất"). Thêm head chỉ
+        # làm luật chặt hơn. Biên bản cũ không có history: như trước.
+        history = verdicts.get("auditHistory")
+        for h in history if isinstance(history, list) else []:
+            if isinstance(h, dict):
+                audits.append({"verdict": "pass", "auditedHead": h.get("auditedHead")})
+        seen = set()
+        for audit in audits:
+            sha = _audit_head_of(top, audit)
+            if sha and sha not in seen:
+                seen.add(sha)
+                out.append((task["id"], sha))
     return out
+
+
+def session_agent():
+    """Danh tính agent của phiên đang chạy (đợt 2 F2), chuẩn hoá như normalize_reviewer: DEVKIT_AGENT_ID khi có; không thì "grok" khi
+    có GROK_SESSION_ID / GROK_WORKSPACE_ROOT / GROK_HOOK_EVENT; không thì "claude" khi CLAUDECODE=1 hoặc CLAUDE_CODE_SESSION_ID; không
+    thì "" (không biết). `agent-kit approve-tests` dùng làm author (rỗng → từ chối); post-fix-gate coi reviewer PM trùng nó là tự duyệt."""
+    explicit = normalize_reviewer(os.environ.get("DEVKIT_AGENT_ID") or "")
+    if explicit:
+        return explicit
+    if any(os.environ.get(k) for k in ("GROK_SESSION_ID", "GROK_WORKSPACE_ROOT", "GROK_HOOK_EVENT")):
+        return "grok"
+    if os.environ.get("CLAUDECODE") == "1" or os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        return "claude"
+    return ""
 
 
 def normalize_reviewer(value):
     """Tên reviewer chuẩn hoá: grok, grok-build, grok-4.x → "grok"; antigravity* → "antigravity"; còn lại chữ thường đã strip."""
     v = value.strip().casefold() if isinstance(value, str) else ""
-    if v == "grok" or v.startswith("grok-"):
-        return "grok"
-    if v == "antigravity" or v.startswith("antigravity-"):
-        return "antigravity"
+    # Đợt 2: khớp normalizeAgent / laGrok của PM — tên rồi hết chuỗi hoặc một trong `-` `_` `.` (grok_x, grok.x, antigravity-pro).
+    for name in ("grok", "antigravity"):
+        if v == name or (v.startswith(name) and v[len(name)] in "-_."):
+            return name
     return v
 
 
