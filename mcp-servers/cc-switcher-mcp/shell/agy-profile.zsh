@@ -2,7 +2,7 @@
 # agy chỉ tách tài khoản qua HOME. Mỗi repo chọn tài khoản qua .claude/settings.local.json: {"agyAccount": "<tên>"}
 # -> HOME=$HOME/.agy-<tên> (chỉ .gemini là thật, còn lại symlink về HOME thật). Khoá "account" của Claude không bị đụng.
 _agy_repo_account() {
-  local root common f val
+  local root common f val rc
   root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
   common="${$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null):h}"
   for f in "$root/.claude/settings.local.json" "$common/.claude/settings.local.json"; do
@@ -11,7 +11,9 @@ _agy_repo_account() {
       grep -q agyAccount "$f" 2>/dev/null && { print -u2 "❌ [agy] cần jq để đọc agyAccount trong $f"; return 1; }
       continue
     fi
-    val=$(jq -er '.agyAccount // empty' "$f" 2>/dev/null) && [[ -n $val ]] && { print -r -- "$val"; return 0; }
+    val=$(jq -er '.agyAccount // empty' "$f" 2>/dev/null); rc=$?
+    [[ $rc == 5 ]] && { print -u2 "❌ [agy] $f không phải JSON hợp lệ"; return 1; }
+    [[ -n $val ]] && { print -r -- "$val"; return 0; }
   done
   return 0
 }
@@ -27,7 +29,7 @@ _agy_build_home() {
     if [[ -e $h/$n || -L $h/$n ]]; then
       [[ -L $h/$n ]] || print -u2 "⚠️  [agy] $h/$n là file thật, không còn đồng bộ với $e"
     else
-      ln -s "$e" "$h/$n"
+      ln -sn "$e" "$h/$n"
     fi
   done
   mkdir -p "$h/.gemini"
@@ -35,7 +37,7 @@ _agy_build_home() {
 
 agy() {
   local account real_home="${AGY_REAL_HOME:-$HOME}"
-  account=$(_agy_repo_account)
+  account=$(_agy_repo_account) || return 1   # lỗi đọc cấu hình: dừng, không chạy nhầm tài khoản
   if [[ -z $account ]]; then command agy "$@"; return; fi
   if [[ ! $account =~ ^[A-Za-z0-9_-]+$ ]]; then print -u2 "❌ [agy] agyAccount \"$account\" không hợp lệ."; return 1; fi
   _agy_build_home "$account" || return 1
@@ -61,5 +63,5 @@ agy-profile() {
   else
     printf '{\n  "agyAccount": "%s"\n}\n' "$1" > "$f" || return 1
   fi
-  print "✅ $root -> agy profile: $1 (HOME=$HOME/.agy-$1)"
+  print "✅ $root -> agy profile: $1 (HOME=${AGY_REAL_HOME:-$HOME}/.agy-$1)"
 }
