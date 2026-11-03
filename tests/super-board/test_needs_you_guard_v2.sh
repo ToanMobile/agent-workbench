@@ -157,7 +157,19 @@ for act in \
   "Quyết định có force-push để xoá token lộ khỏi lịch sử không" \
   "Quyết định có deploy ai-assist lên production không" \
   "Quyết định có bật thanh toán trả phí cho OpenAI không" \
-  "Gõ tay mã thiết bị cho gh auth login trên máy build"; do
+  "Gõ tay mã thiết bị cho gh auth login trên máy build" \
+  "Quyết định có xoá dữ liệu người dùng thật trên LIVE không" \
+  "Quyết định có xoay secret GEMINI đang dùng không" \
+  "Quyết định cấp quyền camera và location cho app không" \
+  "Quyết định có merge PR #12 phá API công khai không" \
+  "Chọn hướng: release bản 2.0 lên App Store hay đợi" \
+  "Quyết định có rewrite history để xoá token lộ không" \
+  "Gõ tay mã OTP 2FA trên điện thoại chủ repo" \
+  "Gõ tay mật khẩu sudo trên máy build" \
+  "Quyết định có ký hợp đồng NDA với đối tác không" \
+  "Quyết định có chi 200 USD/tháng cho Sentry không" \
+  "Quyết định có chấp nhận điều khoản dịch vụ OpenAI không" \
+  "Đo frame time trên máy Android của tester ngoài"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 0 ] && pass || fail "T3c cờ bật chặn nhầm việc phải hỏi người (exit $rc): $act"
 done

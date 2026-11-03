@@ -98,14 +98,17 @@ GENUINE_HUMAN_RE = re.compile(
 # của 6 board (03/11): gõ tay duyệt test đã sửa (chỉ audit Antigravity được duyệt), quyết kỹ thuật/AC và dọn thẻ,
 # chạy --full/merge gate tay, dọn cây dirty, đo frame time trên máy Android. Không chặn "review/merge PR": merge gate
 # thoát 7/8 (human-gate) và merge-queue gắn needs-you bằng đúng câu "xem PR #N … rồi tự merge" (super-board-merge-queue.sh).
+# Mỗi mẫu bám một cụm đã đo, không bắt động từ trần ("quyết định", "gõ tay", "chọn hướng" đứng trước cả việc phải hỏi
+# người: xoay secret, xoá dữ liệu LIVE, cấp quyền, phát hành store, OTP/mật khẩu, pháp lý, chi tiền).
 V2_RULES = (
     (
-        re.compile(r"\bauto-approve\b|\bgõ\s+tay\b|\bduyệt\s+chéo\b|\baudit\s+antigravity\b", re.I),
+        re.compile(r"\bauto-approve\b|\bdòng\s+duyệt\s+cho\s+\d+\s+test\b|\bduyệt\s+chéo\s+diff\s+test|\baudit\s+antigravity\b", re.I),
         "test đã sửa do audit Antigravity duyệt, không do người gõ tay",
     ),
     (
         re.compile(
-            r"\bquyết\s+định\b|\bchọn\s+(?:đường|hướng)\b|\bchọn\s+bỏ\b|\bchốt\s+goal\b|\bsửa\s+ac\b|"
+            r"\bquyết\s+định\s+(?:cách\s+kiểm|ac\s*\d)|\bquyết\s+định\s*:\s*mở\s+(?:card|thẻ)\b|"
+            r"\bchọn\s+(?:đường|hướng)\s+(?:cho\s+pr\s+#\d+|sửa|rút|tách)|\bchọn\s+bỏ\s+\d+\s+ac\b|\bchốt\s+goal\b|\bsửa\s+ac\b|"
             r"\bviết\s+lại\s+thẻ\b|\[decision\]|\bđóng\s+#\d+\s+vì\b",
             re.I,
         ),
@@ -116,7 +119,7 @@ V2_RULES = (
         "chạy gate/merge gate và dọn cây làm việc là việc của agent",
     ),
     (
-        re.compile(r"\bframe\s*time\b|\btrên\s+máy\s+android\b", re.I),
+        re.compile(r"\bframe\s*time\s+trên\s+máy\s+android\s+tầm\s+trung\b", re.I),
         "đo hiệu năng trên máy Android nối adb là việc của QA",
     ),
 )
