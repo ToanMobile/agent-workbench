@@ -3722,7 +3722,9 @@ if not problems and not repeat_failures and not redcheck and not check7:
     auto_link()
     notes = [n for n in (lesson_reminder(), bug_link_reminder(), red_proof_actions()) if n]
     if notes:
-        logline(f"[{ts}] reminder (once per session): {len(notes)}")
+        # The reason in the SAME line (nightly / devkit_metrics count one line per hold): each reminder's fixed first line, not its bug titles.
+        _why = " | ".join(n.splitlines()[0][:100] for n in notes)
+        logline(f"[{ts}] reminder (once per session): {len(notes)} — {_why}")
         sys.stderr.write("\n".join(notes))
         sys.exit(2)
     sys.exit(0)

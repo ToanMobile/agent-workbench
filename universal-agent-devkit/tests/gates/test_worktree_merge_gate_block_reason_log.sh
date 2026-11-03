@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Regression test (gate wave 2, item 8, 03/11): hooks/worktree_merge_gate.sh held the Stop (exit 2, text on stderr) and let it go
+# (exit 0) without one line in a log file — a wrong hold in one of the 5 app repos left nothing to diagnose afterwards.
+# Now each hold and each of the three releases after a pending set was found writes ONE line to
+# .claude/audit-gate/worktree_merge_gate.log (same folder as its state):
+#   hold                       → `BLOCK hold N/3 …` with the pending worktree paths
+#   stop_hook_active           → `release: stop_hook_active …`
+#   cap (4th Stop, same set)   → `release: cap …`
+#   state not saved            → `release: state not saved …`
+# Behaviour stays: the same exit code, the same stderr / stdout text, and the log text never goes to them.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
+set -u
+export WORKTREE_AUTO_MERGE=0   # the HOLD logic; the automatic merge has its own tests
+DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+HOOK="$DEVKIT_DIR/hooks/worktree_merge_gate.sh"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+FAILS=0
+ok()   { echo "✔ $1"; }
+fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+command -v python3 >/dev/null 2>&1 || { echo "skip: python3 missing"; exit 0; }
+G() { git -C "$1" -c user.email=t@t -c user.name=t "${@:2}"; }
+
+P="$TMP/proj"; mkdir -p "$P" && G "$P" init -q -b main . && echo a > "$P/a.txt" && G "$P" add a.txt && G "$P" commit -qm init
+LOG="$P/.claude/audit-gate/worktree_merge_gate.log"
+sleep 1.2
+TR="$TMP/tr.jsonl"
+python3 -c 'import json,datetime;print(json.dumps({"type":"user","timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"),"message":{"content":"go"}}))' > "$TR"
+sleep 1.2
+python3 -c 'import json,sys;print(json.dumps({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":sys.argv[1]}}]}}))' \
+  "git worktree add -b feat $TMP/wt-new" >> "$TR"
+G "$P" worktree add -q -b feat "$TMP/wt-new" && echo n > "$TMP/wt-new/n.txt" && G "$TMP/wt-new" add n.txt && G "$TMP/wt-new" commit -qm new
+stop() {   # stop <session> [stop_hook_active true|false]
+  printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s","stop_hook_active":%s}' "$1" "$TR" "${2:-false}" \
+    | CLAUDE_PROJECT_DIR="$P" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+nlines() { [ -f "$LOG" ] && wc -l < "$LOG" | tr -d ' ' || echo 0; }
+clean_streams() { ! grep -q "BLOCK hold\|release: " "$TMP/out" "$TMP/err"; }
+
+# ── 1. hold: exit 2, stderr text as before, one BLOCK line naming the worktree ──
+stop s1; rc=$?
+[ "$rc" = 2 ] && grep -q "WORKTREE-MERGE GATE" "$TMP/err" && grep -q "Lần giữ 1/3" "$TMP/err" && [ ! -s "$TMP/out" ] && clean_streams \
+  && ok "hold unchanged: exit 2, 'Lần giữ 1/3' on stderr, stdout empty, no log text in the streams" \
+  || fail "hold changed: rc=$rc out=$(cat "$TMP/out") err=$(head -2 "$TMP/err")"
+last="$(tail -1 "$LOG" 2>/dev/null)"
+printf '%s' "$last" | grep -Eq '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}\] BLOCK hold 1/3 ' && printf '%s' "$last" | grep -q "wt-new" \
+  && ok "the hold is logged: '[ts] BLOCK hold 1/3 …' with the pending worktree" || fail "no BLOCK line in the log: '${last}'"
+
+# ── 2. stop_hook_active: exit 0 with the systemMessage, one release line ─────
+n0="$(nlines)"
+stop s1 true; rc=$?
+last="$(tail -1 "$LOG" 2>/dev/null)"
+[ "$rc" = 0 ] && grep -q "systemMessage" "$TMP/out" && grep -q "stop_hook_active" "$TMP/out" && [ ! -s "$TMP/err" ] && clean_streams \
+  && ok "stop_hook_active unchanged: exit 0, systemMessage on stdout, stderr empty" || fail "stop_hook_active changed: rc=$rc out=$(cat "$TMP/out")"
+[ "$(nlines)" = $((n0 + 1)) ] && printf '%s' "$last" | grep -q "release: stop_hook_active" \
+  && ok "the stop_hook_active release is logged in one line" || fail "stop_hook_active release not logged: '${last}'"
+
+# ── 3. cap: the 4th Stop on the same set passes, one release line ───────────
+stop s2; stop s2; stop s2; n0="$(nlines)"; stop s2; rc=$?
+last="$(tail -1 "$LOG" 2>/dev/null)"
+[ "$rc" = 0 ] && grep -q "systemMessage" "$TMP/out" && grep -q "CHƯA về trunk" "$TMP/out" && [ ! -s "$TMP/err" ] && clean_streams \
+  && ok "cap unchanged: the 4th Stop exits 0 with the systemMessage" || fail "cap changed: rc=$rc out=$(cat "$TMP/out")"
+[ "$(nlines)" = $((n0 + 1)) ] && printf '%s' "$last" | grep -q "release: cap" \
+  && ok "the cap release is logged in one line" || fail "cap release not logged: '${last}'"
+[ "$(grep -c "BLOCK hold" "$LOG" 2>/dev/null)" = 4 ] && grep -q "BLOCK hold 3/3" "$LOG" \
+  && ok "every hold before the cap is logged (s1 1/3, s2 1/3..3/3)" || fail "hold lines: $(grep "BLOCK hold" "$LOG" 2>/dev/null)"
+
+# ── 4. state not saved: exit 0 silently as before, one release line ──────────
+rm -f "$P/.claude/audit-gate/worktree_merge_gate.state" && mkdir "$P/.claude/audit-gate/worktree_merge_gate.state"   # os.replace onto a folder fails
+n0="$(nlines)"
+stop s3; rc=$?
+last="$(tail -1 "$LOG" 2>/dev/null)"
+[ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && [ ! -s "$TMP/err" ] \
+  && ok "state not saved unchanged: exit 0, nothing on stdout / stderr" || fail "state-not-saved changed: rc=$rc out=$(cat "$TMP/out") err=$(cat "$TMP/err")"
+[ "$(nlines)" = $((n0 + 1)) ] && printf '%s' "$last" | grep -q "release: state not saved" \
+  && ok "the state-not-saved release is logged in one line" || fail "state-not-saved release not logged: '${last}'"
+
+[ "$FAILS" = 0 ] && { echo "✅ test_worktree_merge_gate_block_reason_log: all checks passed"; exit 0; }
+echo "❌ test_worktree_merge_gate_block_reason_log: $FAILS check(s) failed"; exit 1
