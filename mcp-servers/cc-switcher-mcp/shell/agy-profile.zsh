@@ -21,17 +21,31 @@ _agy_repo_account() {
 _agy_build_home() {
   # Idempotent, chạy mỗi lần agy(): thêm link còn thiếu; .gemini tạo SAU CÙNG nên build dở dang sẽ được làm lại.
   setopt localoptions nullglob globdots
-  local h="${AGY_REAL_HOME:-$HOME}/.agy-$1" rh="${AGY_REAL_HOME:-$HOME}" e n
+  local h="${AGY_REAL_HOME:-$HOME}/.agy-$1" rh="${AGY_REAL_HOME:-$HOME}" e n kc
   mkdir -p "$h" || return 1
   for e in "$rh"/*; do
     n=${e:t}
-    [[ $n == .gemini || $n == .agy-* ]] && continue
+    [[ $n == .gemini || $n == .agy-* || $n == Library ]] && continue
     if [[ -e $h/$n || -L $h/$n ]]; then
       [[ -L $h/$n ]] || print -u2 "⚠️  [agy] $h/$n là file thật, không còn đồng bộ với $e"
     else
       ln -sn "$e" "$h/$n"
     fi
   done
+  # agy lưu tài khoản ở Keychain (service "gemini") và Keychain đi theo HOME: Library phải là thư mục thật,
+  # Keychains và Preferences riêng (login.keychain-db trống mật khẩu), mục còn lại symlink về Library thật.
+  [[ -L $h/Library ]] && rm -f "$h/Library"
+  mkdir -p "$h/Library/Keychains" "$h/Library/Preferences" || return 1
+  for e in "$rh"/Library/*; do
+    n=${e:t}
+    [[ $n == Keychains || $n == Preferences ]] && continue
+    [[ -e $h/Library/$n || -L $h/Library/$n ]] || ln -sn "$e" "$h/Library/$n"
+  done
+  kc="$h/Library/Keychains/login.keychain-db"
+  if [[ ! -e $kc ]]; then
+    HOME="$h" security create-keychain -p "" "$kc" || return 1
+  fi
+  HOME="$h" security unlock-keychain -p "" "$kc" 2>/dev/null   # best effort: mới tạo thì đã mở sẵn
   mkdir -p "$h/.gemini"
 }
 

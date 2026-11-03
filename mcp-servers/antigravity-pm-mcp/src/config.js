@@ -29,6 +29,9 @@ export const DEFAULT_CONFIG = {
   // hook prompt cua DevKit (scripts/context/enrich_context.py) doc khoa nay tu file cau hinh chung va file project (project de len). Khai o day
   // de loader khong bao "khoa la".
   giaoDefault: false,
+  // Tai khoan Antigravity cho luot review/audit (agy chi tach tai khoan qua HOME): ten profile cua cc-switcher-mcp (antigravity_ultra | antigravity_pro),
+  // child agy chay voi HOME=~/.agy-<ten>. null = tai khoan mac dinh cua may. Doi bang switcher_set_pm_account.
+  agyProfile: null,
   // Thu muc file hop dong cua task (brief/plan/result.json/proof/logs), tinh tu goc project — agent doc/ghi o day.
   // task.json (ket luan, lan chay test, vong, anh) KHONG nam o day: xem pmStateRoot (HOME), agent khong sua duoc.
   stateDir: '.antigravity-pm',

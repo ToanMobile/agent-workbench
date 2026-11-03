@@ -1064,3 +1064,49 @@ export function getStatusReport(opts = {}) {
   };
 }
 
+function pmConfigPath(configPath) {
+  return configPath || process.env.ANTIGRAVITY_PM_GLOBAL_CONFIG || path.join(os.homedir(), '.antigravity-pm.json');
+}
+
+function readPmConfig(file) {
+  if (!fs.existsSync(file)) return {};
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    throw new AppError('PM_CONFIG_UNREADABLE', `${file} không đọc được (JSON hỏng), giữ nguyên: ${err?.message}`);
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new AppError('PM_CONFIG_UNREADABLE', `${file} không phải đối tượng JSON, giữ nguyên.`);
+  }
+  return data;
+}
+
+/** Tài khoản Antigravity mà antigravity-pm-mcp (review/audit) đang dùng: khoá agyProfile trong ~/.antigravity-pm.json, null = tài khoản mặc định của máy. */
+export function getPmAgyProfile({ configPath } = {}) {
+  const v = readPmConfig(pmConfigPath(configPath)).agyProfile;
+  return typeof v === 'string' && v ? v : null;
+}
+
+/**
+ * Đổi tài khoản Antigravity cho antigravity-pm-mcp (profile=null bỏ khoá, về tài khoản mặc định). Chỉ nhận profile Antigravity (vendor google);
+ * id cũ được đổi sang id mới; giữ nguyên các khoá khác; file hỏng thì ném lỗi và không ghi đè. Không đụng tài khoản mặc định (Claude).
+ */
+export function setPmAgyProfile({ configPath, profile } = {}) {
+  const file = pmConfigPath(configPath);
+  const data = readPmConfig(file);
+  const previous = typeof data.agyProfile === 'string' && data.agyProfile ? data.agyProfile : null;
+  let next = null;
+  if (profile !== null && profile !== undefined && profile !== '') {
+    const id = canonicalProfileId(String(profile).trim());
+    const found = DEFAULT_PROFILES.find((p) => p.id === id && p.vendor === 'google');
+    if (!found) {
+      throw new AppError('INVALID_PROFILE', `Chọn một tài khoản Antigravity: ${DEFAULT_PROFILES.filter((p) => p.vendor === 'google').map((p) => p.id).join(', ')}.`);
+    }
+    next = found.id;
+  }
+  if (next) data.agyProfile = next; else delete data.agyProfile;
+  writeJsonAtomic(file, data, 0o600);
+  return { profile: next, previous, configPath: file };
+}
+
