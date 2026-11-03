@@ -7,7 +7,8 @@ cạnh A→B khi A tham chiếu B —
   gốc repo; không giải được thì mọi file trùng tên);
   shell `source X` / `. X`;
   nhắc tên nguyên từ (basename) của file code `.sh .py .bash .mjs .js` hoặc script không đuôi có shebang (luật nhắc tên của
-  run_impacted, nhưng bắc cầu); test còn khớp stem như run_impacted (lệnh con của dispatcher gọi tên script theo stem);
+  run_impacted, nhưng bắc cầu); test còn khớp stem như run_impacted (lệnh con của dispatcher gọi tên script theo stem), chỉ
+  trong thành phần cấp 1 của test (tests/ gốc: toàn repo; _stem_in_scope);
   dòng `<glob> <test…>` của `<kit>/tests/impact_map.txt` (glob tương đối thư mục kit) → cạnh test→file.
 Chỉ file code (và test) là NGUỒN cạnh: tài liệu, ma trận, checklist nhắc tên hàng chục script — tính chúng thì fan-in ≥ 5 phủ nửa kit và
 bao đóng nuốt mọi thứ. Tài liệu / dữ liệu (không phải code) mà test nhắc basename như chuỗi con (`grep -F` của run_impacted, "$P/DESIGN.md"):
@@ -282,6 +283,15 @@ def _word_runs(token):
                 yield "".join(parts[i:j + 1])
 
 
+def _stem_in_scope(test, target):
+    """Cạnh stem (test chứa stem nguyên từ của file code, không có basename) chỉ trong thành phần cấp 1 của test, như run_impacted (cd vào
+    kit, chỉ grep test kit cho file kit); test ở tests/ gốc repo giữ toàn repo. Đo 03/11: chữ "profiles" / "daemon" / "panel" trong test
+    DevKit kéo 107 test kit cho mcp-servers/cc-switcher-mcp/src/profiles.js; thành phần khác không gọi được file theo stem trần, basename
+    (luật `named`) vẫn nối chéo (tests/gates/test_scoped_gate_stem_scope.sh)."""
+    top = test.split("/", 1)[0] + "/"
+    return top == "tests/" or target.startswith(top)
+
+
 def build_graph(project, _files=None, _code=None, _reads=None):
     """{file: set(file)}: A→B khi A tham chiếu B. Mọi file trong danh sách đều là khoá. `_code` (dict) nhận thêm riêng cạnh CODE thật
     (Python import, shell `source` / `.`), không có cạnh nhắc tên / stem / impact_map: dùng cho luật dep-of-core. `_reads` (dict) nhận
@@ -352,7 +362,7 @@ def build_graph(project, _files=None, _code=None, _reads=None):
             out.update(named.get(t, ()))
             if test_src:                                    # stem nguyên từ, như run_impacted (chỉ test)
                 for piece in t.split("."):
-                    out.update(by_stem.get(piece, ()))
+                    out.update(q for q in by_stem.get(piece, ()) if _stem_in_scope(src, q))
                 for n in lens:
                     if n > len(t):
                         break
