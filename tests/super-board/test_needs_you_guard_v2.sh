@@ -229,10 +229,23 @@ for act in \
   "Dọn cây dirty sau khi bạn force-push xoá token" \
   "Sửa AC thẻ #12: bạn chọn gói thanh toán Apple" \
   "Viết lại thẻ #5 sau khi bạn deploy bản production" \
-  "Đóng #7 vì PR #9 chờ bạn đăng nhập Play Console"; do
+  "Đóng #7 vì PR #9 chờ bạn đăng nhập Play Console" \
+  "Đóng #7 vì PR #9 chờ bạn xoay secret GEMINI" \
+  "Viết lại thẻ #5: xoá dữ liệu người dùng thật trên LIVE" \
+  "Dọn cây dirty sau khi bạn gõ OTP 2FA" \
+  "Sửa AC thẻ #12: bạn gõ mật khẩu sudo" \
+  "Sửa AC thẻ #12 của hợp đồng NDA" \
+  "Dọn cây dirty trước khi bạn lên App Store" \
+  "Dọn cây dirty của khóa ký"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 0 ] && pass || fail "T6 miễn trừ V2_HUMAN_RE không có hiệu lực (exit $rc): $act"
 done
+
+# T7: lời từ chối của v2 bảo agent gắn lại needs-you với riêng bước của người (không làm rơi bước đó); lời của v1 giữ nguyên.
+out="$(cd "$TMP/repo" && SB_NEEDS_YOU_GUARD_V2=1 python3 "$NEEDS_YOU" mark --repo ToanMobile/agent-workbench --issue 1 --action "Sửa AC thẻ #200 cho khớp 5 PR đang mở" --dry-run 2>&1 || true)"
+grep -q "gắn lại needs-you chỉ với bước đó" <<<"$out" && pass || fail "T7 lời từ chối v2 thiếu hướng dẫn gắn lại bước của người: $out"
+out="$(cd "$TMP/repo" && SB_NEEDS_YOU_GUARD_V2=1 python3 "$NEEDS_YOU" mark --repo ToanMobile/agent-workbench --issue 1 --action "Chạy lại gate --full trong worktree" --dry-run 2>&1 || true)"
+grep -q "gắn lại needs-you chỉ với bước đó" <<<"$out" && fail "T7 lời từ chối v1 bị đổi: $out" || pass
 
 echo "Summary: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

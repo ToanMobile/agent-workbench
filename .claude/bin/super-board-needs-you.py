@@ -117,7 +117,8 @@ V2_RULES = (
 # (force-push/viết lại lịch sử, deploy/production, thanh toán/billing, đăng nhập).
 V2_HUMAN_RE = re.compile(
     r"keychain|khoá\s+ký|cấp\s+danh\s+tính|\bpii\b|trên\s+xe\b|chủ\s+xe|\bphát\s+hành\b|"
-    r"force[\s-]?push|viết\s+lại\s+lịch\s+sử|\bdeploy\b|\bproduction\b|thanh\s+toán|\bbilling\b|\blogin\b|đăng\s+nhập",
+    r"force[\s-]?push|viết\s+lại\s+lịch\s+sử|\bdeploy\b|\bproduction\b|thanh\s+toán|\bbilling\b|\blogin\b|đăng\s+nhập|"
+    r"\bsecret\b|mật\s+khẩu|\botp\b|\blive\b|app\s+store|hợp\s+đồng|khóa\s+ký",
     re.I,
 )
 FLAG = "needs_you_guard_v2"
@@ -211,21 +212,20 @@ def one_line(text, what):
     # `;` `·` `,` `.` and the words "và"/"rồi"/"and"/"then", so "đăng nhập firebase và chạy lại gate" still trips on the gate clause.
     # Split only when a human keyword is present (else the whole text is one clause: the rules' lookaheads and the
     # `.claude/worktrees/` / `x.py` patterns need it intact). A `.` separates only before a space or the end.
-    passes = [(AGENT_DOABLE_RULES, GENUINE_HUMAN_RE.search)]
+    v1_hint = "hãy tự thực thi, tự chốt (Decide, don't ask / AUTO-APPROVE) hoặc trả thẻ về Ready/QA thay vì gắn needs-you"
+    passes = [(AGENT_DOABLE_RULES, GENUINE_HUMAN_RE.search, v1_hint)]
     if guard_v2():
         # V2_HUMAN_RE chỉ miễn cho V2_RULES: v1 giữ nguyên, cờ bật không bao giờ nhận lại câu v1 đã từ chối.
-        passes.append((V2_RULES, lambda s: GENUINE_HUMAN_RE.search(s) or V2_HUMAN_RE.search(s)))
-    for rules, human in passes:
+        passes.append((V2_RULES, lambda s: GENUINE_HUMAN_RE.search(s) or V2_HUMAN_RE.search(s),
+                       "agent tự làm phần đó; nếu câu còn bước chỉ người làm được thì gắn lại needs-you chỉ với bước đó"))
+    for rules, human, hint in passes:
         clauses = re.split(r"[;·,]|\.(?=\s|$)|\b(?:và|rồi|and|then)\b", text, flags=re.I) if human(text) else [text]
         for clause in clauses:
             if human(clause):
                 continue
             for pat, why in rules:
                 if pat.search(clause):
-                    raise ValueError(
-                        f"{what} mô tả việc agent phải tự xử lý ({why}); "
-                        "hãy tự thực thi, tự chốt (Decide, don't ask / AUTO-APPROVE) hoặc trả thẻ về Ready/QA thay vì gắn needs-you"
-                    )
+                    raise ValueError(f"{what} mô tả việc agent phải tự xử lý ({why}); {hint}")
     return text
 
 
