@@ -7,7 +7,7 @@ Thay 5 bước tay (đọc auditedHead, băm từng test, ghi JSON). Không thay
   push_gate.audit_reviewer(legacy=False): grok chỉ khi lượt audit gần nhất PM tự chạy là grok, biên bản cũ (reviewer "pm") chỉ là
   antigravity khi dispatches có lượt audit antigravity, không thì từ chối.
 - author = push_gate.session_agent() (DEVKIT_AGENT_ID, không thì grok / claude theo env của phiên; rỗng → từ chối); reviewer trùng
-  author → từ chối (đợt 2 F2).
+  author hoặc thuộc tập danh tính phiên push_gate.session_agents() → từ chối (đợt 2 F2, vòng kiểm lại H4).
 - test sửa = file test có ở merge-base(trunk, HEAD) và khác ở cây làm việc (đã commit + bẩn); chỉ ghi file audit_covers nhận.
 - ghi/thay mục {path, sha256, reviewer, author, task_id, reason} trong .claude/audit-gate/approved_tests.json của checkout hiện tại
   (get_project_dir của gate); thư mục đó trỏ ra ngoài checkout (symlink) → từ chối. Ghi nguyên tử.
@@ -58,8 +58,9 @@ def main(argv):
     if not reviewer:
         return refuse(f"task {task_id}: biên bản PM không xác định được reviewer (verdicts.audit.reviewer khớp lượt audit gần nhất "
                       "trong dispatches)")
-    if reviewer == author:
-        return refuse(f"reviewer {reviewer} trùng author {author} (tự duyệt)")
+    agents = pg.session_agents()   # vòng kiểm lại H4: reviewer thuộc TẬP danh tính phiên (DEVKIT_AGENT_ID=codex trong phiên Grok vẫn là grok)
+    if reviewer == author or reviewer in agents:
+        return refuse(f"reviewer {reviewer} trùng author {author} / danh tính phiên {', '.join(sorted(agents))} (tự duyệt)")
     chain = gate._approval_chain(top, project)
     if not chain:
         return refuse("không xác định được nhánh đích / merge-base (lỗi git)")

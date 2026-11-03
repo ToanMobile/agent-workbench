@@ -10,6 +10,7 @@
 #  Sửa sau review đợt 2: R5 (G2) main đổi test mà PR chưa gộp main; R6 (F1) audit mới hơn bị ghi đè thành fail vẫn tính qua
 #  verdicts.auditHistory; R7 (F3/G3) author alias grok-build / phiên grok = reviewer PM grok -> tự duyệt; R8 (F2) trailer grok
 #  trong phiên grok (GROK_SESSION_ID) không duyệt. Đều có đối chứng.
+#  Vòng kiểm lại: R9 (H4) DEVKIT_AGENT_ID=codex + GROK_SESSION_ID: tập danh tính phiên có grok -> mục duyệt và trailer grok không duyệt.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 unset DEVKIT_AUTO_APPROVE_TESTS DEVKIT_TRANSCRIPTS_DIR TARGET_DIR DEVKIT_AGENT_ID CLAUDE_CODE_SESSION_ID DEVKIT_SESSION_ID CLAUDE_SESSION_ID
@@ -219,5 +220,20 @@ else bad "R8: trailer grok trong phiên grok: rc=$RC, $(tailout)"; fi
 run_gate "$TMP/r8"
 if [ "$RC" = 0 ] && has "duyệt chéo bởi grok (thay Antigravity) (task T0881-r8)"; then ok "R8c: trailer grok, phiên không phải grok -> nhận"
 else bad "R8c: đối chứng trailer grok: rc=$RC, $(tailout)"; fi
+
+# R9 (H4, vòng kiểm lại). DEVKIT_AGENT_ID=codex nhưng phiên có GROK_SESSION_ID (tập danh tính {codex, grok}), reviewer PM grok:
+#     mục duyệt (author claude) -> tự duyệt, từ chối; R9b trailer grok cùng env -> không duyệt. Đối chứng: R7c / R8c (không env grok).
+mk "$TMP/r9"; X="$(pr_commit "$V1" "PR sửa test")"; pm_task_grok T0891-r9 "$TMP/r9" "$X"
+approve_as "$TMP/r9" T0891-r9 grok claude; run_gate_env "$TMP/r9" DEVKIT_AGENT_ID=codex GROK_SESSION_ID=g-1
+if refused "tự duyệt"; then ok "R9: DEVKIT_AGENT_ID=codex + GROK_SESSION_ID, reviewer PM grok -> từ chối (tự duyệt)"
+else bad "R9: codex + phiên grok, mục author claude: rc=$RC, $(tailout)"; fi
+rm -f "$TMP/r9/.claude/audit-gate/approved_tests.json"
+git -C "$TMP/r9" commit -q --allow-empty -m "audit" -m "Test-approved-by: grok T0891-r9"
+run_gate_env "$TMP/r9" DEVKIT_AGENT_ID=codex GROK_SESSION_ID=g-1
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi"; then ok "R9b: trailer grok, DEVKIT_AGENT_ID=codex + GROK_SESSION_ID -> không duyệt (exit 2)"
+else bad "R9b: trailer grok, codex + phiên grok: rc=$RC, $(tailout)"; fi
+run_gate_env "$TMP/r9" DEVKIT_AGENT_ID=codex
+if [ "$RC" = 0 ] && has "duyệt chéo bởi grok (thay Antigravity) (task T0891-r9)"; then ok "R9c: trailer grok, DEVKIT_AGENT_ID=codex không env grok -> nhận"
+else bad "R9c: đối chứng codex không grok: rc=$RC, $(tailout)"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

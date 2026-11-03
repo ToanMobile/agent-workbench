@@ -15,6 +15,8 @@
 #      empties the record before it lets go
 #   J  the gate's own record names its session and who=gate
 #   K  (wave 2 fix G1) every suite re-used by content key (suite cache), same-session live holder: BUSY exit 4, never exit 0
+#   L  (recheck H2) every suite re-used, the first look sees ANOTHER session's live holder, then this session's run holds the lock before
+#      the short wait ends: the give-up look classifies it again: BUSY exit 4 (fast same_session), never the read-only exit 0
 # bash 3.2 compatible; every gate run is under tests/lib/tlimit.py; a private SB_HEAVY_SLOT_DIR (never the real machine pool).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
@@ -62,23 +64,29 @@ stop_gate() { # stop_gate <session> <env words…>: what hooks/regression_gate.s
   local sid="$1"; shift
   gate TEST_RUN_LOCK_BUSY_FAST=1 GATE_TOTAL_BUDGET_S=900 "$@" -- --json --session "$sid" --task "session-t"
 }
-# hold_lock <sid> [pid_start override]: a live holder that writes the gate-shaped record {pid, pid_start, sid, who}
+# hold_lock <sid> [pid_start override] [flip sid]: a live holder that writes the gate-shaped record {pid, pid_start, sid, who};
+# with a flip sid it rewrites the record to that sid (same pid, flock kept) once $TMP/flip exists
 hold_lock() {
-  rm -f "$TMP/held" "$TMP/release"
-  python3 -I - "$R" "$TMP/held" "$TMP/release" "$KIT/bin" "$1" "${2:-}" <<'PY' &
+  rm -f "$TMP/held" "$TMP/release" "$TMP/flip" "$TMP/flipped"
+  python3 -I - "$R" "$TMP/held" "$TMP/release" "$KIT/bin" "$1" "${2:-}" "${3:-}" "$TMP/flip" "$TMP/flipped" <<'PY' &
 import fcntl, json, os, sys, time
 sys.path.insert(0, sys.argv[4]); import session_lock
 d = sys.argv[1] + "/.claude/audit-gate"
 os.makedirs(d, exist_ok=True)
+def record(f, sid):
+    f.truncate(0)
+    f.write(json.dumps({"pid": os.getpid(), "pid_start": sys.argv[6] or session_lock.pid_start(os.getpid()), "sid": sid, "who": "gate"}) + "\n")
+    f.flush()
 with open(d + "/test_run.lock", "a") as f:
     fcntl.flock(f, fcntl.LOCK_EX)
-    f.truncate(0)
-    f.write(json.dumps({"pid": os.getpid(), "pid_start": sys.argv[6] or session_lock.pid_start(os.getpid()), "sid": sys.argv[5], "who": "gate"}) + "\n")
-    f.flush()
+    record(f, sys.argv[5])
     open(sys.argv[2], "w").close()
     for _ in range(1200):
         if os.path.exists(sys.argv[3]):
             break
+        if sys.argv[7] and os.path.exists(sys.argv[8]) and not os.path.exists(sys.argv[9]):
+            record(f, sys.argv[7])
+            open(sys.argv[9], "w").close()
         time.sleep(0.1)
 PY
   HOLDER=$!
@@ -268,6 +276,29 @@ elif [ "$RC" = 4 ] && grep -q '"busy": true' "$TMP/out" && [ "$busy" = true ]; t
   ok "K: every suite re-used by content key, same-session live holder: BUSY exit 4, busy true"
 else
   bad "K: rc=$RC (want 4, never exit 0 behind its own session's run), runs.jsonl busy=$busy; out: $(grep -E 'VERDICT|UNTESTED' "$TMP/out" | head -2)"
+fi
+
+# ── L (recheck H2): first look = another session's live holder, then this session's run holds the lock: BUSY at give-up ─────────
+# Before the fix the give-up look recorded the new holder without `fast`: read_only stayed on and the Stop run said exit 0 (pass_fp).
+make_repo
+gate -- --full --no-checklist; seed=$RC
+hold_lock S-2 "" S-1
+rm -f "$TMP/out"
+( i=0; while [ "$i" -lt 300 ] && ! grep -q "Another test run is using" "$TMP/out" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  touch "$TMP/flip" ) &
+WATCH=$!
+stop_gate S-1 DEVKIT_REUSE_LOCK_WAIT_S=4
+wait "$WATCH" 2>/dev/null
+flipped=no; [ -f "$TMP/flipped" ] && flipped=yes
+release
+row="$(lastrow)"; set -- $row; lw="$1"; busy="$2"; bh="${row#* * * }"
+if [ "$seed" != 0 ] || [ "$flipped" != yes ]; then
+  bad "L: setup went wrong: seed --full rc=$seed, holder record flipped to S-1: $flipped"
+elif [ "$RC" = 4 ] && grep -q '"busy": true' "$TMP/out" && [ "$busy" = true ] && [ "$(holder_field "$bh" fast)" = '"same_session"' ] \
+     && [ "$(holder_field "$bh" sid_match)" = true ]; then
+  ok "L: holder turned this session's during the short wait: BUSY exit 4 after ${lw} s, busy_holder $bh"
+else
+  bad "L: rc=$RC (want 4, never the read-only 0 behind its own session's run), runs.jsonl busy=$busy, busy_holder $bh (want fast same_session)"
 fi
 
 echo

@@ -8,6 +8,7 @@
 #   cap (4th Stop, same set)   → `release: cap …`
 #   state not saved            → `release: state not saved …`
 # Behaviour stays: the same exit code, the same stderr / stdout text, and the log text never goes to them.
+# Case 6 (recheck H1): a state file that is a FIFO or deep JSON reads as no state (the ordinary hold), never the fail-open exit 0.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 export WORKTREE_AUTO_MERGE=0   # the HOLD logic; the automatic merge has its own tests
@@ -90,6 +91,24 @@ rm -f "$LOG"; ln -s "$TMP/elsewhere.log" "$LOG"; rm -rf "$P/.claude/audit-gate/w
 stop s5; rc=$?
 [ "$rc" = 2 ] && [ ! -e "$TMP/elsewhere.log" ] && ok "symlinked log: the hold keeps exit 2, nothing written through the link" \
   || fail "symlinked log: rc=$rc, target written: $([ -e "$TMP/elsewhere.log" ] && echo yes || echo no)"
+
+# ── 6. H1 (recheck 03/11): the STATE file is a FIFO / deep JSON (the same agent-writable folder) ───────────────────────────────
+# A plain open() of a FIFO waited for a writer until the 13 s alarm (fail-open exit 0); json.load of '[' * 2000000 raised RecursionError (Python 3.15: a stack-size limit),
+# a traceback the shell turned into exit 0. Both dropped the hold. Now an unreadable state is no state: the ordinary hold 1/3.
+rm -f "$LOG"; rm -rf "$P/.claude/audit-gate/worktree_merge_gate.state"; mkfifo "$P/.claude/audit-gate/worktree_merge_gate.state"
+t0="$(python3 -c 'import time; print(time.time())')"
+printf '{"session_id":"s6","hook_event_name":"Stop","transcript_path":"%s","stop_hook_active":false}' "$TR" \
+  | CLAUDE_PROJECT_DIR="$P" perl -e 'alarm shift; exec @ARGV' 25 bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rc=$?
+el="$(python3 -c 'import sys,time; print(round(time.time() - float(sys.argv[1]), 1))' "$t0")"
+[ "$rc" = 2 ] && grep -q "Lần giữ 1/3" "$TMP/err" && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) < 5 else 1)' "$el" \
+  && ok "FIFO state: read as no state, the hold 1/3 keeps exit 2 in ${el}s (< 5 s)" \
+  || fail "FIFO state: rc=$rc after ${el}s (want 2 with 'Lần giữ 1/3' in < 5 s); err: $(head -1 "$TMP/err")"
+rm -rf "$P/.claude/audit-gate/worktree_merge_gate.state"
+python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 2000000)' "$P/.claude/audit-gate/worktree_merge_gate.state"
+stop s7; rc=$?
+[ "$rc" = 2 ] && grep -q "Lần giữ 1/3" "$TMP/err" && ! grep -q "Traceback" "$TMP/err" \
+  && ok "deep-JSON state: read as no state (no RecursionError traceback), the hold 1/3 keeps exit 2" \
+  || fail "deep-JSON state: rc=$rc (want 2 with 'Lần giữ 1/3'); err: $(grep -m1 -E 'Error|Lần giữ' "$TMP/err")"
 
 [ "$FAILS" = 0 ] && { echo "✅ test_worktree_merge_gate_block_reason_log: all checks passed"; exit 0; }
 echo "❌ test_worktree_merge_gate_block_reason_log: $FAILS check(s) failed"; exit 1

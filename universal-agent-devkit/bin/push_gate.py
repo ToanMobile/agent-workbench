@@ -470,8 +470,9 @@ def audited_head(top, task_id):
     return None
 
 
-def _audit_head_of(top, audit):
-    """sha40 auditedHead của MỘT verdicts.audit pass (trường cấu trúc trước, rồi notes) khi sha đó là commit của repo `top`; None khác."""
+def _audit_head_of(top, audit, cache=None):
+    """sha40 auditedHead của MỘT verdicts.audit pass (trường cấu trúc trước, rồi notes) khi sha đó là commit của repo `top`; None khác.
+    cache (dict sha → bool, tuỳ chọn): kết quả rev-parse đã có trong cùng một lượt gọi (audited_heads, H6: history lặp lại head)."""
     if not isinstance(audit, dict) or audit.get("verdict") != "pass":
         return None
     # Audit T0066 vòng 2: trường cấu trúc verdicts.audit.auditedHead (pm_verdict ghi) trước, rồi `auditedHead: <sha>` trong notes.
@@ -479,11 +480,18 @@ def _audit_head_of(top, audit):
     m = AUDITED_HEAD.search(audit["notes"]) if isinstance(audit.get("notes"), str) else None
     cands += [m.group(1)] if m else []
     for sha in cands:
+        if cache is not None and sha in cache:
+            if cache[sha]:
+                return sha
+            continue
         try:
             rc, out = git(top, "rev-parse", "--verify", "-q", sha + "^{commit}")
         except (OSError, subprocess.SubprocessError):
-            continue
-        if rc == 0 and out.strip() == sha:
+            continue   # lỗi git không ghi vào cache: lần sau thử lại như trước
+        ok = rc == 0 and out.strip() == sha
+        if cache is not None:
+            cache[sha] = ok
+        if ok:
             return sha
     return None
 
@@ -494,7 +502,7 @@ def audited_heads(top):
     Cùng điều kiện pm home với audited_head (pm home lạ không phải fixture test → [])."""
     if pm_home_overridden() and not pm_home_test_fixture():
         return []
-    out = []
+    out, checked = [], {}   # H6: một rev-parse cho mỗi sha trong cả lượt (history thường lặp lại head của verdicts.audit)
     for task in _repo_tasks(top):
         verdicts = task.get("verdicts") if isinstance(task.get("verdicts"), dict) else {}
         audits = [verdicts.get("audit")]
@@ -507,7 +515,7 @@ def audited_heads(top):
                 audits.append({"verdict": "pass", "auditedHead": h.get("auditedHead")})
         seen = set()
         for audit in audits:
-            sha = _audit_head_of(top, audit)
+            sha = _audit_head_of(top, audit, checked)
             if sha and sha not in seen:
                 seen.add(sha)
                 out.append((task["id"], sha))
@@ -528,14 +536,37 @@ def session_agent():
     return ""
 
 
+def session_agents():
+    """TẬP danh tính của phiên đang chạy (vòng kiểm lại H4; JS: callerAgents của PM): {normalize(DEVKIT_AGENT_ID)} ∪ {"grok" khi có
+    GROK_SESSION_ID / GROK_WORKSPACE_ROOT / GROK_HOOK_EVENT} ∪ {"claude" khi CLAUDECODE=1 hoặc CLAUDE_CODE_SESSION_ID}, bỏ rỗng.
+    Reviewer thuộc tập = tự duyệt (mục duyệt, trailer, approve-tests): DEVKIT_AGENT_ID=codex trong phiên Grok vẫn là grok. session_agent()
+    (một giá trị) vẫn là author ghi vào mục duyệt."""
+    out = {normalize_reviewer(os.environ.get("DEVKIT_AGENT_ID") or "")}
+    if any(os.environ.get(k) for k in ("GROK_SESSION_ID", "GROK_WORKSPACE_ROOT", "GROK_HOOK_EVENT")):
+        out.add("grok")
+    if os.environ.get("CLAUDECODE") == "1" or os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        out.add("claude")
+    out.discard("")
+    return out
+
+
+# Vòng kiểm lại H3: tập ký tự strip CHUNG với normalizeAgent của PM (mcp-servers/antigravity-pm-mcp/src/tools.js AGENT_WS) = hợp của
+# str.strip() Python (có \x1c-\x1f, \x85) và trim() JS (có ﻿), viết tường minh như #629.
+_AGENT_WS = "\t\n\v\f\r \x1c-\x1f\x85\xa0  -     　﻿"
+_AGENT_TRIM = re.compile(f"^[{_AGENT_WS}]+|[{_AGENT_WS}]+$")
+_GROK_NAME = re.compile(r"grok(?![a-z0-9])")
+_ANTIGRAVITY_NAME = re.compile(r"antigravity(?:$|[-_.])")
+
+
 def normalize_reviewer(value):
-    """Tên reviewer chuẩn hoá: grok, grok-build, grok-4.x → "grok"; antigravity* → "antigravity"; còn lại chữ thường đã strip."""
-    v = value.strip().casefold() if isinstance(value, str) else ""
-    # Đợt 2: tên rồi hết chuỗi hoặc một trong `-` `_` `.` (grok_x, grok.x, antigravity-pro). Gần normalizeAgent / laGrok của PM, lệch có
-    # chủ ý: laGrok nhận rộng hơn ("grok build", "grok:"), normalizeAgent chỉ nhận "antigravity-*" (tools.js ghi cùng điều này).
-    for name in ("grok", "antigravity"):
-        if v == name or (v.startswith(name) and v[len(name)] in "-_."):
-            return name
+    """Tên reviewer chuẩn hoá: grok, grok-build, grok-4.x, "grok build" → "grok"; antigravity, antigravity-/_/.* → "antigravity"; còn lại
+    chữ thường đã strip. Vòng kiểm lại H3: khớp normalizeAgent / laGrok của PM (tools.js): cùng tập strip (_AGENT_WS), grok = `^grok(?![a-z0-9])`,
+    antigravity = tên rồi hết chuỗi hoặc - _ . . Tên khác chỉ so trong cùng một bên (casefold ở đây, toLowerCase ở PM)."""
+    v = _AGENT_TRIM.sub("", value).casefold() if isinstance(value, str) else ""
+    if _GROK_NAME.match(v):
+        return "grok"
+    if _ANTIGRAVITY_NAME.match(v):
+        return "antigravity"
     return v
 
 

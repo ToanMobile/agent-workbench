@@ -772,7 +772,7 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
     `Test-approved-by: antigravity|grok <task-id>` mà push_gate.approved công nhận (biên bản audit pass của antigravity-pm, ngoài repo,
     reviewer khớp audit_reviewer), và audit_covers nhận nội dung hiện tại của file theo auditedHead của task đó (audit T0066: không phải
     blob ở commit mang trailer). Trailer đi theo commit nên tới được scratch worktree của merge gate, nơi .claude/audit-gate/ không được
-    chép. Reviewer trùng DEVKIT_AGENT_ID → không duyệt. Mọi lỗi git → không duyệt (fail closed)."""
+    chép. Reviewer thuộc tập danh tính phiên (push_gate.session_agents) → không duyệt. Mọi lỗi git → không duyệt (fail closed)."""
     if not paths:
         return {}
     try:
@@ -787,13 +787,13 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
                              capture_output=True, text=True, timeout=30)
         if res.returncode != 0:
             return {}
-        agent_id = _push_gate().session_agent()      # đợt 2 F2: danh tính phiên chung (rỗng = không biết: không từ chối thêm)
+        agents = _push_gate().session_agents()       # vòng kiểm lại H4: TẬP danh tính phiên (rỗng = không biết: không từ chối thêm)
         audited = []                                  # (auditedHead, reviewer, task_id), mới nhất trước, chỉ commit push_gate công nhận
         for sha in res.stdout.split():
             ok, note = _push_gate().approved(root, f"{sha}^!")
             m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None
             head = _push_gate().audited_head(root, m.group(2)) if m else None
-            if head and not (agent_id and m.group(1) == agent_id):
+            if head and m.group(1) not in agents:
                 audited.append((head, m.group(1), m.group(2)))
         out = {}
         for f in paths if audited else []:
@@ -903,9 +903,8 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                 APPROVAL_REJECTS.append((f, cur, f"task {tid}: biên bản PM không xác định được reviewer (verdicts.audit.reviewer khớp "
                                                  "lượt audit gần nhất trong dispatches)"))
                 continue
-            # Đợt 2 F3/G3: author chuẩn hoá như reviewer (grok-build = grok); F2: trùng danh tính phiên (session_agent; rỗng = bỏ qua).
-            session_id = _push_gate().session_agent()
-            if pm_rv == _push_gate().normalize_reviewer(e["author"]) or (session_id and pm_rv == session_id):
+            # Đợt 2 F3/G3: author chuẩn hoá như reviewer (grok-build = grok); H4: reviewer thuộc TẬP danh tính phiên (session_agents) = tự duyệt.
+            if pm_rv == _push_gate().normalize_reviewer(e["author"]) or pm_rv in _push_gate().session_agents():
                 APPROVAL_REJECTS.append((f, cur, f"reviewer {pm_rv} của biên bản PM trùng author (tự duyệt)"))
                 continue
             if not covered:
@@ -5274,12 +5273,16 @@ def acquire_test_run_lock(project_dir, cap=None, sid=None):
                 if seen["alive"]:
                     deadline = min(deadline, t0 + _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0))
             if time.monotonic() >= deadline:
-                if fast:   # the holder at give-up time; the first look stands when the record is unchanged (no second ps)
+                if fast:   # the holder at give-up time; the first look stands when the record is unchanged and names another session (no second ps)
                     try:
                         now = _test_run_lock_holder_raw(state / TEST_RUN_LOCK).strip()[:200]
                     except OSError:
                         now = None
-                    _note_busy_holder(seen if seen is not None and seen["raw"] == now else _test_run_lock_holder(state / TEST_RUN_LOCK, sid))
+                    # Recheck H2: this session's own run may have taken the lock since the first look (or that look could not read its
+                    # start time): classified again here, a live holder of this session is BUSY (fast same_session), never read-only exit 0.
+                    holder = (seen if seen is not None and seen["raw"] == now and not seen["sid_match"]
+                              else _test_run_lock_holder(state / TEST_RUN_LOCK, sid))
+                    _note_busy_holder(holder, "same_session" if holder["same_session"] else "")
                 fh.close()
                 return None, False
             if not said:

@@ -9,6 +9,7 @@
 #  C9  test sửa sau audit không được ghi.   C10  .claude/audit-gate trỏ ra ngoài checkout -> từ chối.
 #  Sửa sau review đợt 2: C11 (F2) author = danh tính phiên (CLAUDECODE=1 -> claude) khi không có DEVKIT_AGENT_ID;
 #  C12 (F2) phiên grok + reviewer grok -> tự duyệt; C13 (F6) ngoại lệ -> exit 3 (1 giữ nghĩa "không có test để ghi").
+#  Vòng kiểm lại: C15 (H3) alias khớp laGrok/normalizeAgent của PM; C16-C17 (H4) tập danh tính phiên session_agents().
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 unset DEVKIT_AUTO_APPROVE_TESTS DEVKIT_TRANSCRIPTS_DIR TARGET_DIR DEVKIT_AGENT_ID CLAUDE_CODE_SESSION_ID DEVKIT_SESSION_ID CLAUDE_SESSION_ID
@@ -177,5 +178,32 @@ os.environ["CLAUDECODE"] = "1"; b = p.session_agent()
 print(" ".join(names + [a or "-", b or "-"]))' "$DEVKIT_DIR/bin" 2>&1)"
 if [ "$OUT" = "grok grok grok antigravity antigravity antigravity grokker - claude" ]; then ok "C14: alias grok_x / grok.x / antigravity-pro chuẩn hoá như PM; id chỉ khoảng trắng bỏ qua, CLAUDECODE phải là 1"
 else bad "C14: chuẩn hoá alias / danh tính: '$OUT' (muốn 'grok grok grok antigravity antigravity antigravity grokker - claude')"; fi
+
+# ── Vòng kiểm lại (H3, H4) ──────────────────────────────────────────────────────────────────────────────────────────────────
+# C15 (H3): normalize_reviewer dùng đúng luật laGrok của PM (`^grok(?![a-z0-9])` sau strip+casefold; "grok build", "grok:" là grok,
+#     "grok4"/"grokker" không) và cùng tập ký tự strip với PM (JS trim bỏ ﻿, Python strip bỏ \x1f: hai bên bỏ cả hai)
+OUT="$(python3 -c 'import sys
+sys.path.insert(0, sys.argv[1]); import push_gate as p
+vals = ("grok build", "grok:", "Grok4", "grokker", "﻿grok", "\x1fgrok-4", " antigravity_2﻿", "antigravity.x", "antigravityx")
+print("|".join(p.normalize_reviewer(v) for v in vals))' "$DEVKIT_DIR/bin" 2>&1)"
+if [ "$OUT" = "grok|grok|grok4|grokker|grok|grok|antigravity|antigravity|antigravityx" ]; then ok "C15: alias grok/antigravity khớp normalizeAgent/laGrok của PM"
+else bad "C15: normalize_reviewer: '$OUT' (muốn 'grok|grok|grok4|grokker|grok|grok|antigravity|antigravity|antigravityx')"; fi
+# C16 (H4): session_agents() = {DEVKIT_AGENT_ID chuẩn hoá} ∪ {grok khi GROK_*} ∪ {claude khi CLAUDECODE=1/CLAUDE_CODE_SESSION_ID};
+#     session_agent() giữ nguyên (codex)
+OUT="$(env -u CLAUDE_CODE_SESSION_ID DEVKIT_AGENT_ID=Codex GROK_SESSION_ID=g-1 CLAUDECODE=1 python3 -c 'import sys
+sys.path.insert(0, sys.argv[1]); import push_gate as p
+print(p.session_agent(), ",".join(sorted(p.session_agents())))' "$DEVKIT_DIR/bin" 2>&1)"
+if [ "$OUT" = "codex claude,codex,grok" ]; then ok "C16: session_agents = {codex, grok, claude}, session_agent vẫn codex"
+else bad "C16: danh tính phiên: '$OUT' (muốn 'codex claude,codex,grok')"; fi
+# C17 (H4): DEVKIT_AGENT_ID=claude-lane nhưng phiên có GROK_SESSION_ID, reviewer PM grok -> tự duyệt, từ chối (cũ: ghi author claude-lane)
+mk "$TMP/c17"; pm_rec T0917-c17 "$TMP/c17" "$X" grok "[$DG]"
+DEVKIT_AGENT_ID=claude-lane GROK_SESSION_ID=g-1 kit "$TMP/c17" T0917-c17
+if [ "$RC" = 2 ] && has "tự duyệt" && [ ! -f "$TMP/c17/.claude/audit-gate/approved_tests.json" ]; then ok "C17: DEVKIT_AGENT_ID khác nhưng phiên có GROK_* -> reviewer grok bị từ chối (tự duyệt)"
+else bad "C17: claude-lane + GROK_SESSION_ID: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
+# C17c đối chứng: cùng biên bản, không GROK_* -> ghi
+mk "$TMP/c17c"; pm_rec T0918-c17c "$TMP/c17c" "$X" grok "[$DG]"
+DEVKIT_AGENT_ID=claude-lane kit "$TMP/c17c" T0918-c17c; L="$(ledger "$TMP/c17c" tests/t.sh)"
+if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:grok:claude-lane:T0918-c17c" ]; then ok "C17c: không GROK_* -> ghi mục author claude-lane"
+else bad "C17c: đối chứng: rc=$RC ledger='$L' $(printf '%s' "$OUT" | tail -2)"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

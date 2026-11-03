@@ -31,8 +31,8 @@ function repo() {
   return { dir, cfg, task, head };
 }
 
-/** grok gia: ghi argv + env ra file, in `out` ra stdout, thoat voi `code`. */
-function fakeGrok({ out = 'Khong thay loi.\nVERDICT: PASS\n', code = 0 } = {}) {
+/** grok gia: ghi argv + env ra file, chay `sh` (lenh shell them, vd sua file trong luc audit), in `out` ra stdout, thoat voi `code`. */
+function fakeGrok({ out = 'Khong thay loi.\nVERDICT: PASS\n', code = 0, sh = '' } = {}) {
   const d = tmpDir('agpm-fake-grok-');
   const bin = path.join(d, 'grok');
   fs.writeFileSync(path.join(d, 'out.txt'), out);
@@ -41,6 +41,7 @@ function fakeGrok({ out = 'Khong thay loi.\nVERDICT: PASS\n', code = 0 } = {}) {
     `D=${JSON.stringify(d)}`,
     'printf "%s\\n" "$@" > "$D/argv.txt"',
     'env > "$D/env.txt"',
+    ...(sh ? [sh] : []),
     'cat "$D/out.txt"',
     `exit ${code}`,
     '',
@@ -240,7 +241,7 @@ test('F2 callerAgent: DEVKIT_AGENT_ID chuan hoa > env phien Grok > env phien Cla
     [{ DEVKIT_AGENT_ID: 'Grok-Build ', CLAUDECODE: '1' }, 'grok'],
     [{ DEVKIT_AGENT_ID: 'grok-4.7' }, 'grok'],
     [{ DEVKIT_AGENT_ID: 'Antigravity' }, 'antigravity'],
-    [{ DEVKIT_AGENT_ID: 'codex', GROK_SESSION_ID: 's' }, 'codex'],
+    [{ DEVKIT_AGENT_ID: 'codex', GROK_SESSION_ID: 's' }, 'codex'],   // author (mot gia tri); tap danh tinh callerAgents (H4) = {codex, grok}
     [{ DEVKIT_AGENT_ID: '  ', GROK_SESSION_ID: 's' }, 'grok'],
     [{ GROK_WORKSPACE_ROOT: '/w', CLAUDECODE: '1' }, 'grok'],
     [{ GROK_HOOK_EVENT: 'PreToolUse', CLAUDE_CODE_SESSION_ID: 'x' }, 'grok'],
@@ -352,6 +353,83 @@ test('F5 thu muc trang thai PM bi repo track va da doi (vd audit-agent.json lan 
     await withGrok(fakeGrok(), () => assert.rejects(
       call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }), /a\.txt/));
     assert.equal(disk(cfg, task).dispatches.length, 1);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// ---- Vong kiem lai (H3, H4, H5) ----------------------------------------------------------------------------------------------
+
+test('H3 normalizeAgent khop push_gate.normalize_reviewer: antigravity + - _ . ; cung tap ky tu strip (\\ufeff, \\x1f)', () => {
+  const f = tools.callerAgent;
+  const cases = [
+    ['Antigravity_2', 'antigravity'], ['antigravity.x', 'antigravity'], ['antigravity-pro', 'antigravity'], ['antigravityx', 'antigravityx'],
+    ['﻿grok', 'grok'], ['\x1fgrok-4', 'grok'], [' antigravity_2﻿', 'antigravity'], ['\x1fcodex\x85', 'codex'],
+    ['grok build', 'grok'], ['grok:', 'grok'], ['Grok4', 'grok4'], ['grokker', 'grokker'],
+  ];
+  for (const [id, want] of cases) assert.equal(f({ DEVKIT_AGENT_ID: id }), want, JSON.stringify(id));
+});
+
+test('H4 callerAgents: tap danh tinh phien = {DEVKIT_AGENT_ID chuan hoa} + {grok khi GROK_*} + {claude khi CLAUDECODE=1/CLAUDE_CODE_SESSION_ID}', () => {
+  const f = tools.callerAgents;
+  assert.equal(typeof f, 'function', 'tools.js phai export callerAgents(env)');
+  const cases = [
+    [{ DEVKIT_AGENT_ID: 'codex', GROK_SESSION_ID: 's' }, ['codex', 'grok']],
+    [{ DEVKIT_AGENT_ID: 'Codex', GROK_HOOK_EVENT: 'Stop', CLAUDECODE: '1' }, ['claude', 'codex', 'grok']],
+    [{ DEVKIT_AGENT_ID: 'grok-4.7', CLAUDE_CODE_SESSION_ID: 'x' }, ['claude', 'grok']],
+    [{ DEVKIT_AGENT_ID: '  ', CLAUDECODE: '0' }, []],
+    [{}, []],
+  ];
+  for (const [env, want] of cases) assert.deepEqual([...f(env)].sort(), want, JSON.stringify(env));
+});
+
+test('H4 DEVKIT_AGENT_ID=codex nhung phien co GROK_*: pm_dispatch grok tu choi (tu duyet); pm_verdict reviewer grok = trung builder', async () => {
+  const env = { DEVKIT_AGENT_ID: 'codex', GROK_SESSION_ID: 'g-1' };
+  {
+    const { dir, cfg, task } = repo();
+    const fake = fakeGrok();
+    try {
+      await withEnv(env, () => withGrok(fake, () => assert.rejects(
+        call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', force: true }), /tu duyet/)));
+      assert.equal((disk(cfg, task).dispatches || []).length, 0);
+      assert.equal(grokRan(fake), false);
+    } finally {
+      cleanup(dir);
+    }
+  }
+  const { dir, cfg, task, head } = repo();
+  try {
+    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const out = await withEnv(env, () => call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head }));
+    assert.match(out, /trung builder/);
+    const t = disk(cfg, task);
+    assert.equal(t.verdicts.audit.auditedHead, undefined);
+    assert.equal((t.verdicts.auditHistory || []).length, 0);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('H5 cay lam viec doi TRONG luc grok audit (file da theo doi sua, HEAD giu nguyen): bao cao fail kem ly do; chi them untracked thi van pass', async () => {
+  {
+    const { dir, cfg, task, head } = repo();
+    try {
+      await withGrok(fakeGrok({ sh: 'echo doi >> a.txt' }), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+      assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim(), head, 'HEAD khong doi: chi git status bat duoc');
+      const rep = JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8'));
+      assert.equal(rep.verdict, 'fail');
+      assert.match(rep.notes, /cay lam viec doi trong luc audit/);
+      assert.match(rep.notes, /a\.txt/);
+      assert.equal(disk(cfg, task).dispatches.at(-1).verdict, 'fail');
+    } finally {
+      cleanup(dir);
+    }
+  }
+  const { dir, cfg, task } = repo();
+  try {
+    await withGrok(fakeGrok({ sh: 'echo moi > moi-untracked.txt' }), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    assert.equal(JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8')).verdict, 'pass');
+    assert.equal(disk(cfg, task).dispatches.at(-1).verdict, 'pass');
   } finally {
     cleanup(dir);
   }

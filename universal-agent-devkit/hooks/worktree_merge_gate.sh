@@ -241,12 +241,31 @@ def logline(text):
     except OSError:
         return   # no log folder / not writable: the diagnostic line is lost, the Stop's exit and text stay as they are
 
-try:
-    with open(state_path, encoding="utf-8") as sf:
-        state = json.load(sf)
-    state = state if isinstance(state, dict) else {}
-except (OSError, ValueError):
-    state = {}
+def read_state():
+    """The saved state, {} when it cannot be read. Same folder as the log (agent-writable): opened without waiting and never through a
+    link, a regular file only (a FIFO waited until the 13 s alarm, whose fail-open exit 0 dropped the hold), and deep JSON's RecursionError
+    caught (its traceback became exit 0 in the shell). Unreadable = no state: the ordinary hold, never a release (recheck 03/11 H1)."""
+    try:
+        fd = os.open(state_path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        return {}
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return {}
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        loaded = json.loads(b"".join(chunks).decode("utf-8"))
+        return loaded if isinstance(loaded, dict) else {}
+    except (OSError, ValueError, RecursionError):
+        return {}
+    finally:
+        os.close(fd)
+
+state = read_state()
 sessions = state.get("sessions") if isinstance(state.get("sessions"), dict) else {}
 owners = {p: o for p, o in state["owners"].items() if isinstance(p, str) and isinstance(o, str)} if isinstance(state.get("owners"), dict) else {}
 listed = git("worktree", "list", "--porcelain")
