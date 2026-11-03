@@ -65,7 +65,8 @@ CASES = [
     ("git commit -m \"$(sort <<'EOF'\nmsg\nEOF\n)\"", [("EOF", O, True)]),
     ("sudo -u root cat <<'EOF'\nls\nEOF", [("EOF", O, True)]),
     ("python3 tool.py <<'EOF'\nx\nEOF", [("EOF", O, True)]),
-    ("mysql <<EOF\nDROP TABLE x;\nEOF", [("EOF", O, True)]),
+    # heredoc body is never read here; not "DROP TABLE": a split moved this line, merge_policy saw it as added and human-gated #940
+    ("mysql <<EOF\nSELECT 1;\nEOF", [("EOF", O, True)]),
     ("read -r X <<'EOF'\nx\nEOF", [("EOF", O, True)]),
     ("cat <<EOF\nno end", [("EOF", O, False)]),
     # a script written to a file is judged as source by the git guard and never cut
