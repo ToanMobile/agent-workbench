@@ -220,6 +220,21 @@
   .acct-pop { position: fixed; right: 12px; top: calc(var(--acct-b, 70px) + 8px); z-index: 8; width: min(360px, calc(100vw - 24px)); max-height: calc(100vh - var(--acct-b, 70px) - var(--bot-h, 64px) - 30px); overflow: auto; padding: 12px; }
   .acct-pop[hidden] { display: none; }
   .acct-pop h2 { margin: 0 4px 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .acct-pop .ap-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .acct-pop .ap-head h2 { margin: 0 4px; }
+  .acct-pop .ap-full { display: inline-flex; align-items: center; min-height: 44px; padding: 0 10px; border-radius: 10px; font-size: 13px; font-weight: 700; color: var(--ink); text-decoration: none; border: 1px solid var(--line); }
+  .acct-pop .ap-full[hidden] { display: none; }
+  .acct-pop .ap-full:hover, .acct-pop .ap-full:focus-visible { border-color: var(--muted); }
+  .acct-pop .ap-quick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .acct-pop .ap-quick[hidden] { display: none; }
+  .acct-pop .ap-quick h2 { grid-column: 1 / -1; margin-bottom: 0; }
+  .acct-pop .ap-qb { min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acct-pop .ap-qb:hover:not(:disabled) { border-color: var(--muted); }
+  .acct-pop .ap-qb:active:not(:disabled) { transform: scale(.97); }
+  .acct-pop .ap-qb[aria-pressed="true"] { border-color: var(--c-ready); background: color-mix(in srgb, var(--c-ready) 10%, transparent); }
+  .acct-pop .ap-qb[aria-busy="true"] { opacity: .6; }
+  .acct-pop .ap-qb small { margin-left: 5px; color: var(--muted); font-weight: 500; }
+  .acct-pop .ap-qb:disabled { cursor: default; }
   .acct-pop .ap-row { display: grid; grid-template-columns: 9px 1fr auto; gap: 2px 9px; align-items: center; width: 100%; min-height: 44px; padding: 7px 8px; border: 0; border-radius: 10px; background: transparent; cursor: pointer; text-align: left; }
   .acct-pop .ap-row + .ap-row { border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; }
   .acct-pop .ap-row:hover, .acct-pop .ap-row:focus-visible { background: color-mix(in srgb, var(--ink) 6%, transparent); }
@@ -509,7 +524,11 @@
   <div class="legend panel" id="legend" aria-label="Tổng số việc theo cột"></div>
   <button type="button" class="acct panel empty" id="acctChip" aria-haspopup="dialog" aria-expanded="false" aria-controls="acctPop"><span class="ac-dot" aria-hidden="true"></span><span class="ac-txt"><span class="ac-name">Chưa có phiên</span><span class="ac-tok"></span></span><span class="ac-car" aria-hidden="true">▾</span></button>
 </header>
-<section class="acct-pop panel" id="acctPop" role="dialog" aria-label="Tài khoản Claude và token còn của từng agent" hidden></section>
+<section class="acct-pop panel" id="acctPop" role="dialog" aria-label="Tài khoản Claude và token còn của từng agent" hidden>
+  <div class="ap-head"><h2>Tài khoản</h2><a class="ap-full" id="apFull" href="/cc-switcher" title="Mở bảng điều khiển CC Switcher toàn màn hình">Toàn màn hình ⛶</a></div>
+  <div class="ap-quick" id="apQuick" hidden></div>
+  <div id="apRows"></div>
+</section>
 
 <nav class="rail panel" id="rail" aria-label="Các repo" hidden>
   <h2>Repo</h2>
@@ -2934,7 +2953,7 @@ function renderAcct(S) {
   if (!$('#acctPop').hidden) renderAcctPop(S);
 }
 function renderAcctPop(S) {
-  const box = $('#acctPop'); const rows = acctRows(S);
+  const box = $('#apRows'); const rows = acctRows(S);
   const sig = JSON.stringify(rows.map((w) => [w.id, w.status, w.session && w.session.account, w.session && w.session.configDir, w.session && w.session.tokensLeft]));
   if (sig === acctSig && box.childElementCount) return;
   acctSig = sig;
@@ -2955,10 +2974,53 @@ function renderAcctPop(S) {
   });
   if (had >= 0) { const r = box.querySelectorAll('.ap-row')[had]; if (r) r.focus(); }
 }
+// Chuyển nhanh tài khoản (CC Switcher): đọc 6 tài khoản khi mở popover, bấm một ô = thao tác switch. Chỉ trên Mac (qua tunnel server trả 403).
+let ccState = null, ccBusyId = null;
+async function loadQuick() {
+  if (!onMac) return;
+  try {
+    const res = await fetch('api/cc-switcher/state', { headers: apiHeaders() });
+    const j = await res.json();
+    ccState = res.ok && j && j.ok ? j : null;
+  } catch (e) { ccState = null; console.warn('CC Switcher: không đọc được tài khoản', e); }
+  renderQuick();
+}
+function renderQuick() {
+  const q = $('#apQuick'); q.textContent = '';
+  q.hidden = !ccState;
+  if (!ccState) return;
+  q.append(h('h2', null, 'Chuyển nhanh tài khoản'));
+  ccState.profiles.forEach((p) => {
+    const b = h('button', 'ap-qb', p.shortLabel || p.name); b.type = 'button';
+    b.setAttribute('aria-pressed', String(p.id === ccState.activeProfileId));
+    if (p.isFrozen) b.append(h('small', null, '429'));
+    if (ccBusyId) { b.disabled = true; if (ccBusyId === p.id) b.setAttribute('aria-busy', 'true'); }
+    b.onclick = () => quickSwitch(p, false);
+    q.append(b);
+  });
+}
+async function quickSwitch(p, force) {
+  if (ccBusyId || p.id === ccState.activeProfileId) return;
+  ccBusyId = p.id; renderQuick();
+  let ask = false;
+  try {
+    const res = await fetch('api/cc-switcher/action', { method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json', 'X-Agent-Office': '1' }),
+      body: JSON.stringify(force ? { action: 'switch', target: p.id, force: true } : { action: 'switch', target: p.id }) });
+    let j = null; try { j = await res.json(); } catch (e) { j = null; }
+    if (j && j.state) ccState = j.state;
+    if (j && j.ok) toast('Đã chuyển sang ' + (p.shortLabel || p.name));
+    else if (j && j.needsForce && !force) ask = true;
+    else toast((j && (j.error || j.message)) || ('Chưa chuyển được (' + res.status + ')'), 'error');
+  } catch (e) { toast('Chưa chuyển được: ' + (e.message || e), 'error'); }
+  ccBusyId = null; renderQuick();
+  if (ask && confirm('Chưa chuyển được sang ' + (p.shortLabel || p.name) + ': tài khoản đang bị khoá 429 hoặc đang trong thời gian nghỉ chống ban.\n\nÉp chuyển ngay sẽ bỏ qua bảo vệ này. Ép chuyển?')) quickSwitch(p, true);
+}
 function openAcct() {
   closeMenu(false);
   const box = $('#acctPop'); acctSig = null; box.hidden = false; renderAcctPop(STATE || { workers: [], repos: [] });
   $('#acctChip').setAttribute('aria-expanded', 'true');
+  $('#apFull').hidden = !onMac; // trang /cc-switcher chỉ mở trên Mac
+  loadQuick();
   const f = box.querySelector('.ap-row'); (f || box).focus();
 }
 function closeAcct(refocus) {
