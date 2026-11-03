@@ -9,8 +9,10 @@
 # - M5: nhánh không mang số thẻ (split/…) đóng #45 → comment trên #45.
 # - M6: lệnh merge lỗi (mất phản hồi) mà GitHub báo MERGED → vẫn comment, kèm sha squash GitHub báo.
 # - M7: queue tắt, train gọi gate (SB_MERGE_CALLER=train, đường merge-train worker #228) → vẫn comment.
-# - M8: PR đóng issue repo khác → comment đúng URL issue đó, không lên số trùng trong repo này.
-# Fake closingIssuesReferences trả URL issue: pr<N>.closes ghi số (repo này) hoặc URL đầy đủ.
+# - M8: PR đóng issue repo khác → không comment lên đó (link PR #N sẽ trỏ sai repo), không lên số trùng ở repo này; issue cùng repo
+#   viết khác hoa thường (O/r) vẫn được comment.
+# - M9: PR đợt ac-open (thẻ #49 + 2 thành viên sb:batch-of) mà GitHub vẫn liệt kê cả ba → không ✅ merged nào (AC_BATCH xuống dòng).
+# Fake closingIssuesReferences trả JSON {url của PR, closingIssuesReferences[].url}: pr<N>.closes ghi số (repo này) hoặc URL đầy đủ.
 # SB_GATE=<file> chạy bản cũ để thấy ĐỎ. Offline, bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -56,7 +58,8 @@ case " $* " in
   *" api graphql "*) echo '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"I"}}}}' ;;
   *" pr view "*"headRefName,headRefOid"*) echo "$(cat "$FAKE_DIR/pr$n.ref" 2>/dev/null || echo "issue-$n-x") $(cat "$FAKE_DIR/pr$n.head")" ;;
   *" pr view "*"closingIssuesReferences"*) [ -e "$FAKE_DIR/pr$n.closes" ] || exit 1
-    while read -r c; do case "$c" in http*) echo "$c" ;; ?*) echo "https://github.com/o/r/issues/$c" ;; esac; done < "$FAKE_DIR/pr$n.closes" ;;
+    jq -Rn --arg n "$n" '{url: ("https://github.com/o/r/pull/" + $n), closingIssuesReferences: [inputs | select(length > 0)
+      | {url: (if startswith("http") then . else "https://github.com/o/r/issues/" + . end)}]}' < "$FAKE_DIR/pr$n.closes" ;;
   *" pr view "*"state,mergeCommit,headRefOid"*) if [ -e "$FAKE_DIR/pr$n.lost" ] && [ -e "$FAKE_DIR/pr$n.merged" ]; then
       printf '{"state":"MERGED","mergeCommit":{"oid":"6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b%s"},"headRefOid":"%s"}\n' "$n" "$(cat "$FAKE_DIR/pr$n.head")"
     else printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$(cat "$FAKE_DIR/pr$n.head")"; fi ;;
@@ -79,7 +82,7 @@ chmod +x "$TMP/bin/gh"
 . "$ROOT/tests/super-board/lib/fake_ci_checks.sh"; sb_ci_checks_fixture "$TMP/bin"
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" SB_CARD_CACHE_DIR="$TMP/cache" SB_NOTIFY_SKIP=1
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_MERGE_RECHECK_DELAY_S=0 SB_MERGE_LOAD_MAX=100000
-printf '{"projectId":"P","fieldId":"F","options":{"Ready":"o-r","Done":"o-d"},"items":{"41":"I41","42":"I42","43":"I43","44":"I44","45":"I45","46":"I46","47":"I47","48":"I48"}}' > "$TMP/cache/board-o-1.json"
+printf '{"projectId":"P","fieldId":"F","options":{"Ready":"o-r","Done":"o-d"},"items":{"41":"I41","42":"I42","43":"I43","44":"I44","45":"I45","46":"I46","47":"I47","48":"I48","49":"I49","61":"I61","62":"I62"}}' > "$TMP/cache/board-o-1.json"
 CFG="$TMP/cfg.json"
 echo '{"base_branch":"main","repo":{"path":".","remote":""},"project":{"owner":"o","number":1},"verify_commands":["touch '"$TMP"'/verified"]}' > "$CFG"
 gate() {  # $1 = PR; stdout → gate$1.out, stderr → gate$1.err; echo rc
@@ -156,17 +159,41 @@ rc=$(SB_MERGE_CALLER=train gate 47)
 [ "$rc" = 0 ] && [ "$(merged_comment 47)" = 1 ] && ok "M7: queue tắt, SB_MERGE_CALLER=train → comment ✅ merged" \
   || fail "M7: rc=$rc calls=$(tr '\n' '|' < "$TMP/calls" | tail -c 400)"
 
-# M8 — PR nhánh split/… đóng issue repo khác (nhánh issue-N thì ac-check đã chặn, exit 11): comment đúng URL đó,
-# không lên #12 của repo này.
+# M8 — PR nhánh split/… đóng issue repo khác (nhánh issue-N thì ac-check đã chặn, exit 11): chỉ thẻ cùng repo với PR nhận comment.
 printf 'Closes #48\nCloses other/x#12\n' > "$TMP/b48.md"
 card 48 "$TMP/b48.md" "$TMP/issue1.md" '[]'
 git -C "$R" push -q origin "issue-48-x:refs/heads/split/c48"
 echo split/c48 > "$TMP/pr48.ref"
-printf '48\nhttps://github.com/other/x/issues/12\n' > "$TMP/pr48.closes"
+printf 'https://github.com/O/r/issues/48\nhttps://github.com/other/x/issues/12\n' > "$TMP/pr48.closes"
 rc=$(gate 48)
-[ "$rc" = 0 ] && grep -q 'issue comment https://github.com/other/x/issues/12 ' "$TMP/calls" \
-  && ! grep -qE 'issue comment (12|https://github.com/o/r/issues/12) ' "$TMP/calls" && [ "$(merged_comment 48)" = 1 ] \
-  && ok "M8: issue repo khác → comment đúng URL, không lên #12 của repo này" \
+[ "$rc" = 0 ] && grep -q 'issue comment https://github.com/O/r/issues/48 .*✅ merged' "$TMP/calls" \
+  && ! grep -qE 'issue comment ([^ ]*/)?12 ' "$TMP/calls" \
+  && ok "M8: issue repo khác → không comment (cả #12 ở repo này); cùng repo khác hoa thường → comment" \
   || fail "M8: rc=$rc err=$(tail -2 "$TMP/gate48.err") calls=$(tr '\n' '|' < "$TMP/calls" | tail -c 500)"
+
+# M9 — PR đợt còn AC chưa tick: thẻ nhánh và mọi thành viên đợt (≥ 2, AC_BATCH một số mỗi dòng) đều không nhận ✅ merged.
+for m in 61 62; do
+  jq -n --argjson n "$m" '{number:$n,title:"t",body:"<!-- sb:batch-of #49 -->\n## Acceptance Criteria\n- [ ] Thành viên đạt\n",labels:[]}' > "$TMP/issue$m.json"
+done
+cat > "$TMP/b49.md" <<'EOF'
+> ⏳ Closes #49
+Closes #61
+Closes #62
+<!-- sb:ac -->
+- [ ] Test: lane gọi gate trực tiếp có comment merged\
+  ↳ đo sau merge
+- [x] Thành viên đạt\
+  ↳ ca 61
+- [x] Thành viên đạt\
+  ↳ ca 62
+<!-- /sb:ac -->
+EOF
+card 49 "$TMP/b49.md" "$TMP/issue1.md" '[]'
+printf '49\n61\n62\n' > "$TMP/pr49.closes"
+rc=$(gate 49)
+[ "$rc" = 0 ] && grep -q '^ac-open: #49$' "$TMP/gate49.out" \
+  && [ "$(merged_comment 49)" = 0 ] && [ "$(merged_comment 61)" = 0 ] && [ "$(merged_comment 62)" = 0 ] \
+  && ok "M9: PR đợt ac-open, GitHub vẫn liệt kê #49 #61 #62 → không ✅ merged nào" \
+  || fail "M9: rc=$rc out=$(tail -2 "$TMP/gate49.out") err=$(tail -3 "$TMP/gate49.err") merged=$(grep -o 'issues/[0-9]* --body \[reviewer\]' "$TMP/calls" | tr '\n' ' ')"
 
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAIL"; exit 1; }
