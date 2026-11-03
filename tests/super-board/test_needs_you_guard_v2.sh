@@ -169,7 +169,7 @@ for act in \
   "Quyết định có chi 200 USD/tháng cho Sentry không" \
   "Quyết định có chấp nhận điều khoản dịch vụ OpenAI không" \
   "Đo frame time trên máy Android của tester ngoài" \
-  "Quyết định AC2: có xoay secret Supabase service_role đang dùng không" \
+  "Quyết định AC2: có xoay secret quản trị Supabase đang dùng không" \
   "Quyết định AC3: có xoá dữ liệu người dùng thật trên LIVE không" \
   "Chọn hướng rút app khỏi App Store hay giữ" \
   "Chọn đường cho PR #12: merge bản phá API công khai v1 hay giữ tương thích" \
