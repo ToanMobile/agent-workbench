@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (823 dòng, 91.3 KB) · 99 mục
+> **Tệp gốc:** `.agents/instincts.md` (832 dòng, 93.1 KB) · 100 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -99,6 +99,6 @@
 - [INSTINCT-100] Biên nhận cây của train và cây của merge gate gộp theo hai chiều ngược nhau; tiến trình nền của job… — `sed -n '787,794p' .agents/instincts.md`
 - [INSTINCT-101] Dem dong reflog so voi log -g: dong null-oid bi bo qua — `sed -n '795,802p' .agents/instincts.md`
 - [INSTINCT-102] Phân loại rủi ro theo diff chỉ xét đường dẫn mới của rename — `sed -n '803,810p' .agents/instincts.md`
-- [INSTINCT-104] run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main — `sed -n '811,815p' .agents/instincts.md`
-- [INSTINCT-103] Test miễn trừ (exemption) dùng câu không chạm luật nào nên không phân biệt được — `sed -n '819,823p' .agents/instincts.md`
-
+- [INSTINCT-103] Test miễn trừ (exemption) dùng câu không chạm luật nào nên không phân biệt được — `sed -n '811,818p' .agents/instincts.md`
+- [INSTINCT-104] Cho qua đích redirect có $BIẾN không biết bằng 'tiền tố đã biết' là lớp lỗ không đóng được: 4 vòng… — `sed -n '819,824p' .agents/instincts.md`
+- [INSTINCT-105] run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main — `sed -n '828,832p' .agents/instincts.md`
