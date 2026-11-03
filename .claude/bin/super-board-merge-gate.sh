@@ -1918,6 +1918,32 @@ ac_after_merge() {
   bash "$HERE/super-board-card.sh" --config "$CONFIG" move "$AC_CARD" Ready >&2 || say "warning: could not move #${AC_CARD} to Ready"
   say "card #${AC_CARD} keeps label ac-open: $(printf '%s\n' "$AC_UNTICKED" | grep -c .) AC line(s) not proven — do not close it or move it to Done"
 }
+# P2 (optimizer đợt 2, 03/11): sau merge, comment "✅ merged" lên mọi thẻ PR đóng (closingIssuesReferences của GitHub). Trước chỉ
+# reviewer (LLM) viết dòng này: 130/177 thẻ WB vào Done từ 28/10 không có nó (PR nhánh split/… merge qua gate --standalone,
+# WB#325/#392). Chỉ thẻ cùng repo với PR (tiền tố URL của chính PR, không phân biệt hoa thường; không dựng lại từ REPO): ở repo khác,
+# "PR #N" trỏ sai và số có thể trùng. Queue bật thì queue/train không comment ở đây (queue comment khi route train-result); queue tắt
+# thì merge-train worker (#228) chỉ có gate comment. Thẻ ac-open (và thành viên đợt) bỏ qua dù GitHub còn liệt kê (liên kết tay ở
+# Development). Không comment khi merge chỉ được xác nhận ở lượt gate sau ("already merged").
+# $1: sha squash (rỗng = không đọc được). Lỗi chỉ cảnh báo: đã merge rồi.
+card_merged_comment() {
+  local u n cards skip=""
+  if [ "$MERGE_QUEUE_ON" -eq 1 ]; then case "${SB_MERGE_CALLER-}" in train|queue) return 0 ;; esac; fi
+  cards=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json url,closingIssuesReferences 2>/dev/null | jq -r '
+      (.url | ascii_downcase | sub("/pull/[0-9]+/?$"; "/issues/")) as $base
+      | .closingIssuesReferences[]?.url | select(ascii_downcase | startswith($base))' 2>/dev/null) \
+    || { say "warning: could not read the cards PR #${PR} closes; no ✅ merged comment"; return 0; }
+  # AC_BATCH là một số mỗi dòng (jq): echo không nháy gộp thành một dòng cách nhau bằng dấu cách.
+  # shellcheck disable=SC2086
+  [ -z "$AC_UNTICKED" ] || skip=" $(echo $AC_CARD $AC_BATCH) "
+  for u in $cards; do
+    n=${u##*/}
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    case "$skip" in *" $n "*) continue ;; esac
+    gh issue comment "$u" --body "[reviewer] [report] ✅ merged ${1:-head ${HEAD_SHA:0:12}} · PR #${PR}
+Did: merged through the merge gate
+✅ Done: PR #${PR} merged${1:+ as $1}" >/dev/null 2>&1 || say "warning: could not comment ✅ merged on ${u}"
+  done
+}
 # Biên nhận merge (27/10): proof_gate.sh (merge_receipt_evidence) nhận lượt đã gộp qua gate này kể cả khi gate chạy nền, output vào file
 # (không có dòng "merged <H>" trong transcript). Ghi <git common dir>/postfix-gate/merge_receipts/<PR>-<HEAD_SHA>.json: pr, head (HEAD_SHA,
 # commit truyền cho --match-head-commit), base (BASE_SHA gộp vào scratch), verified_tree (cây của MERGED_SHA, cây mà vòng verify chạy trên),
@@ -1952,8 +1978,10 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
   say "merged ${HEAD_SHA}"
-  write_merge_receipt || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
+  MSHA=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json mergeCommit -q '.mergeCommit.oid // ""' 2>/dev/null) || MSHA=""
+  write_merge_receipt "$MSHA" || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
   ac_after_merge
+  card_merged_comment "$MSHA"
   board_notify send --card "PR #${PR}" --repo "$REPO" --title "$(pr_title)" --text "✅ đã merge ${HEAD_SHA}"
   # Dọn sau merge: fast-forward nhánh base local và xoá worktree + nhánh local của CHÍNH thẻ vừa merge
   # (không bao giờ của thẻ khác), để không phải dọn tay. worktree_merge_gate.state là sổ nợ worktree toàn repo
@@ -2154,9 +2182,10 @@ while :; do
     say "merge response was lost; GitHub confirms the merge commit"
     # Nhánh này không tới bước fetch sau merge: lấy squash về kho object chung để proof_gate đọc được nó (lỗi mạng: chỉ bỏ qua).
     git -C "$REPO_PATH" fetch origin "$BASE" --quiet 2>/dev/null || true
-    write_merge_receipt "$(echo "$STATE" | jq -r '.mergeCommit.oid // ""' 2>/dev/null || true)" \
-      || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
+    MSHA=$(echo "$STATE" | jq -r '.mergeCommit.oid // ""' 2>/dev/null || true)
+    write_merge_receipt "$MSHA" || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
     ac_after_merge
+    card_merged_comment "$MSHA"
     exit 0
   fi
   NOW_SHA=$(echo "$STATE" | jq -r .headRefOid)

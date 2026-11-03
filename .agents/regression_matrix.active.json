@@ -3372,6 +3372,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-merge-gate-card-merged-comment",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_card_merged_comment.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-CARD-MERGED-01",
+          "name": "P2 đợt 2 (03/11): gate gọi trực tiếp comment '[reviewer] [report] ✅ merged <sha> · PR #N' lên mọi thẻ PR đóng (closingIssuesReferences), cả nhánh split/… và khi phản hồi merge mất; queue/train, AC chưa đủ (ac-open), PR không Closes: không comment",
+          "command": "bash tests/super-board/test_merge_gate_card_merged_comment.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
