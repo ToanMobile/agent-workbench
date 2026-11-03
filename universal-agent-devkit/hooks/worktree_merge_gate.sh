@@ -227,10 +227,17 @@ state_path = os.path.join(repo, ".claude", "audit-gate", "worktree_merge_gate.st
 log_path = os.path.join(repo, ".claude", "audit-gate", "worktree_merge_gate.log")
 
 def logline(text):
-    """One line per hold / release (#wave2-8): append only, never creates the folder, never changes the exit."""
+    """One line per hold / release (#wave2-8): append only, never creates the folder, never changes the exit. The folder is one an
+    agent can write: opened without waiting and never through a link, a regular file only (a FIFO waited for a reader until the
+    13 s alarm, whose fail-open exit 0 dropped the hold; review 03/11 G5, as post-fix-gate _state_fd)."""
     try:
-        with open(log_path, "a", encoding="utf-8") as lf:
-            lf.write(f"[{datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] {text}\n")
+        fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_CLOEXEC", 0), 0o666)
+        try:
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                os.write(fd, f"[{datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] {text}\n".encode("utf-8"))
+        finally:
+            os.close(fd)
     except OSError:
         return   # no log folder / not writable: the diagnostic line is lost, the Stop's exit and text stay as they are
 

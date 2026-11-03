@@ -74,5 +74,22 @@ last="$(tail -1 "$LOG" 2>/dev/null)"
 [ "$(nlines)" = $((n0 + 1)) ] && printf '%s' "$last" | grep -q "release: state not saved" \
   && ok "the state-not-saved release is logged in one line" || fail "state-not-saved release not logged: '${last}'"
 
+# ── 5. G5 (review 03/11): the log path is a FIFO (an agent can write .claude/audit-gate/) ─────────────────────────────────────
+# a plain open() waited for a reader until the 13 s alarm, whose fail-open exits 0: the hold was lost. Now the log opens without
+# waiting, only as a regular file; anything else drops the line and the hold keeps its exit 2.
+rm -rf "$P/.claude/audit-gate/worktree_merge_gate.state" "$LOG" && mkfifo "$LOG"
+t0="$(python3 -c 'import time; print(time.time())')"
+printf '{"session_id":"s4","hook_event_name":"Stop","transcript_path":"%s","stop_hook_active":false}' "$TR" \
+  | CLAUDE_PROJECT_DIR="$P" perl -e 'alarm shift; exec @ARGV' 25 bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rc=$?
+el="$(python3 -c 'import sys,time; print(round(time.time() - float(sys.argv[1]), 1))' "$t0")"
+[ "$rc" = 2 ] && grep -q "WORKTREE-MERGE GATE" "$TMP/err" && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) < 5 else 1)' "$el" \
+  && ok "FIFO log: the hold keeps exit 2 and ends in ${el}s (< 5 s), the log line is dropped" \
+  || fail "FIFO log: rc=$rc after ${el}s (want 2 in < 5 s)"
+[ -p "$LOG" ] && ok "  … the FIFO is left as it is (not replaced by a file)" || fail "  … the FIFO was replaced"
+rm -f "$LOG"; ln -s "$TMP/elsewhere.log" "$LOG"; rm -rf "$P/.claude/audit-gate/worktree_merge_gate.state"
+stop s5; rc=$?
+[ "$rc" = 2 ] && [ ! -e "$TMP/elsewhere.log" ] && ok "symlinked log: the hold keeps exit 2, nothing written through the link" \
+  || fail "symlinked log: rc=$rc, target written: $([ -e "$TMP/elsewhere.log" ] && echo yes || echo no)"
+
 [ "$FAILS" = 0 ] && { echo "✅ test_worktree_merge_gate_block_reason_log: all checks passed"; exit 0; }
 echo "❌ test_worktree_merge_gate_block_reason_log: $FAILS check(s) failed"; exit 1
