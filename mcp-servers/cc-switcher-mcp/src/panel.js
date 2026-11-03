@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { AppError, resolveStateDir, logStructured } from './errors.js';
 import {
   DEFAULT_PROFILES,
+  canonicalProfileId,
   loadSwitcherState,
   getStatusReport,
   switchProfile,
@@ -20,7 +21,7 @@ import {
 } from './profiles.js';
 
 export const DEFAULT_PANEL_URL = 'http://ai-factory.localhost:4317/cc-switcher';
-export const BACKUP_ORDER = ['grok', 'antigravity', 'antigravity_pro'];
+export const BACKUP_ORDER = ['grok', 'antigravity_ultra', 'antigravity_pro'];
 export const PANEL_ACTIONS = [
   'refresh', 'switch', 'rotate', 'limit', 'unfreeze', 'balance', 'cooldown', 'repo_assign', 'repo_add', 'repo_remove',
 ];
@@ -292,7 +293,7 @@ export async function runPanelAction(action, params = {}, opts = {}) {
   }
 
   if (action === 'switch') {
-    const target = String(params.target ?? '').trim();
+    const target = canonicalProfileId(String(params.target ?? '').trim());
     if (!DEFAULT_PROFILES.some((p) => p.id === target)) throw badInput('Chọn một tài khoản hợp lệ.');
     const force = params.force === true;
     try {

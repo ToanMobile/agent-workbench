@@ -126,11 +126,19 @@
 #      locally (merge=union, merge=devkit-matrix) would let the scratch merge pass and GitHub refuse `gh pr merge` after a full
 #      verify. Nothing verified, nothing merged, lock released. Merge origin/<base> into the PR branch, push, run the gate again
 #      with the new --expect-head (for a board card: a rebase pass)
+#      — EXCEPT (narrow exception to #570): a real run (no --dry-run / --preflight / train receipt) where every file changed on
+#      BOTH sides since the merge base has a named merge driver in origin/<base>'s .gitattributes (merge=devkit-matrix,
+#      merge=union…) and the PR carries no edited-test approval: the gate merges the base into the scratch tree, pushes that
+#      merge commit to the PR branch as a plain fast-forward (never --force; the branch must still be at the pinned head), pins
+#      the new head and verifies/merges it. Every refusal to sync (as opposed to a lock lost, exit 4) is this same exit 14;
+#      a PR that edits .gitattributes is never synced (its own attributes could swap the named driver)
 #   1  could not read the PR head, resolve origin/<base>, or create the scratch
 #      worktree. Not a conflict and not a rebase pass (the lane treats only 2, 5 and 14
 #      as a rebase pass).
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
-#      the card goes back to Review (not Blocked, not a rebase pass); also when the head moves while the gate reads or waits for CI
+#      the card goes back to Review (not Blocked, not a rebase pass); also when the head moves while the gate reads or waits for CI.
+#      Not when the head is a merge commit this gate itself pushed on top of the reviewed head (receipt
+#      <git common dir>/super-board/approved-merge-heads/<head>, see exit 14): that head is accepted as the pinned one
 #   7  (also: the QA report / AC checker could not decide — metadata unreadable or checker crashed: `human-gate: qa-report — …`)
 #   7  merge policy says a human merges this one (money / auth / destructive
 #      schema, a diff over a positive auto_max_lines — default 0, so an unset
@@ -371,7 +379,9 @@ fi
 
 # ---- the freshness check ---------------------------------------------------
 # Scratch proves the merge. When that merge is clean and the PR branch is behind
-# the base, verify runs on the merged scratch tree; the gate never writes to the PR branch (#570).
+# the base, verify runs on the merged scratch tree; the gate never writes to the PR branch (#570) —
+# except the one exception of exit 14: GitHub says CONFLICTING only because of files that have a named
+# merge driver, and the gate fast-forwards the PR branch to its own clean merge of the base (block "đồng bộ nhánh PR").
 # Scratch đặt trong .claude/worktrees của main checkout để cùng phân vùng đĩa (st_dev) cho cp -Rc Unity Library.
 REPO_ABS=$(cd "$REPO_PATH" && pwd -P)
 MAIN_WT=$(git -C "$REPO_ABS" worktree list --porcelain | sed -n '1s/^worktree //p')
@@ -389,6 +399,23 @@ trap cleanup EXIT
 # ---- the head guard --------------------------------------------------------
 # Review evidence belongs to one commit. If the branch moved after the Reviewer
 # passed it, the tests it reran and the diff it read describe something else.
+# Biên nhận approved-merge-heads/<Y> = X: chỉ gate ghi, ngay trước khi tự đẩy Y = merge(X, base) lên nhánh PR (khối "đồng bộ nhánh PR").
+AH_DIR=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || AH_DIR=
+[ -z "$AH_DIR" ] || AH_DIR="$AH_DIR/super-board/approved-merge-heads"
+# gate_synced_from <Y>: in X khi Y là merge commit gate tự đẩy lên head đã review X — có biên nhận Y→X, Y đúng 2 cha và X là cha 1 hay
+# tổ tiên của cha 1 (lượt đồng bộ thứ hai chồng lên Y vẫn ghi X). Head khác (người đẩy thêm commit) không có biên nhận: thoát 6 như cũ.
+gate_synced_from() {
+  local x p
+  [ -n "$AH_DIR" ] && [ -r "$AH_DIR/$1" ] || return 1
+  x=$(head -1 "$AH_DIR/$1" 2>/dev/null) || return 1
+  [[ "$x" =~ ^[0-9a-f]{40}$ ]] || return 1
+  git -C "$REPO_PATH" cat-file -e "$1^{commit}" 2>/dev/null || git -C "$REPO_PATH" fetch origin "$HEAD_REF" --quiet 2>/dev/null || return 1
+  p=$(git -C "$REPO_PATH" rev-list --parents -n 1 "$1" 2>/dev/null) || return 1
+  set -- $p
+  [ "$#" -eq 3 ] || return 1
+  git -C "$REPO_PATH" merge-base --is-ancestor "$x" "$2" 2>/dev/null || return 1
+  printf '%s\n' "$x"
+}
 pr_head() { python3 "$GITHUB_READ" --kind head -- pr view "$PR" ${REPO:+--repo "$REPO"} --json headRefName,headRefOid \
               -q '.headRefName + " " + .headRefOid'; }
 HEAD=$(pr_head) || exit $?
@@ -404,9 +431,14 @@ fi
 if [ -n "$EXPECT_HEAD" ]; then
   case "$HEAD_SHA" in
     "$EXPECT_HEAD"*) : ;;
-    *) say "head moved: reviewed ${EXPECT_HEAD}, PR head is now ${HEAD_SHA}"
-       say "the review evidence is void — send the card back to Review"
-       exit 6 ;;
+    *) SYNC_FROM=$(gate_synced_from "$HEAD_SHA") || SYNC_FROM=""
+       case "${SYNC_FROM:-none}" in
+         "$EXPECT_HEAD"*)
+           say "PR head ${HEAD_SHA} is this gate's own merge of ${BASE} on top of the reviewed ${EXPECT_HEAD} (receipt approved-merge-heads/${HEAD_SHA:0:12}, its only new commit): pinning it" ;;
+         *) say "head moved: reviewed ${EXPECT_HEAD}, PR head is now ${HEAD_SHA}"
+            say "the review evidence is void — send the card back to Review"
+            exit 6 ;;
+       esac ;;
   esac
 else
   say "WARNING: no --expect-head; pinning the head read now (${HEAD_SHA}), not the reviewed one"
@@ -448,11 +480,10 @@ PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$M
 # The label is display-only. A request posted before `done` pins the exact head
 # and policy/commands. Re-read trusted approval evidence; never mint it here.
 APPROVED=false
-APPROVED_HEAD=   # #262: head người đã duyệt, đọc từ biên nhận cũ (nếu có) trước khi kiểm duyệt
-# #570: gate không còn đẩy merge commit lên nhánh PR nên không còn ghi biên nhận approved-merge-heads; head PR giữ nguyên X và
-# chính X là head người duyệt. Biên nhận Y→X do bản gate cũ để lại vẫn được đọc ở đây cho tới khi nhánh đó đóng.
-AH_DIR=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || AH_DIR=
-[ -z "$AH_DIR" ] || AH_DIR="$AH_DIR/super-board/approved-merge-heads"
+APPROVED_HEAD=   # #262: head người đã duyệt, đọc từ biên nhận (nếu có) trước khi kiểm duyệt
+# #570: gate không đẩy merge commit lên nhánh PR; head PR giữ nguyên X và chính X là head người duyệt. Ngoại lệ duy nhất (exit 14,
+# khối "đồng bộ nhánh PR"): gate tự đẩy Y = merge(X, base) và ghi biên nhận Y→X (AH_DIR ở head guard) trước khi đẩy. Biên nhận Y→X
+# (của khối đó, hay của bản gate cũ trước #570) được đọc ở đây: duyệt cho X phủ Y, vì commit mới duy nhất của Y là merge base của gate.
 [ -z "$AH_DIR" ] || [ ! -r "$AH_DIR/$HEAD_SHA" ] || APPROVED_HEAD=$(head -1 "$AH_DIR/$HEAD_SHA")
 approval_check() {
   # audit T0066 vòng 3: head PR phải có trong repo của board thì auditedHead của marker duyệt chéo mới kiểm được; fetch lỗi vẫn đi tiếp
@@ -460,6 +491,12 @@ approval_check() {
   git -C "$REPO_PATH" fetch origin "$HEAD_REF" --quiet 2>/dev/null || :
   APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
     --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || APPROVAL='{"approved":false}'
+  # Head Y do gate tự đẩy (biên nhận Y→X): approval_request sau lần đẩy ghi --head Y, nên người có thể đã duyệt chính Y. Duyệt đúng head
+  # hiện tại luôn hợp lệ: không có duyệt cho X thì đọc lại duyệt cho Y.
+  if [ -n "$APPROVED_HEAD" ] && [ "$(echo "$APPROVAL" | jq -r '.approved // false')" != true ]; then
+    APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
+      --head "$HEAD_SHA" --plan "$PLAN") || APPROVAL='{"approved":false}'
+  fi
   python3 "$GITHUB_READ" --check || exit $?
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')
 }
@@ -625,25 +662,87 @@ wait_for_load() {
 # 3 lần. Đọc lỗi hay UNKNOWN mãi ⇒ đi tiếp như trước:
 # `gh pr merge --match-head-commit` vẫn là chốt cuối, kiểm này chỉ bỏ verify vô ích.
 # Gate không tự gộp base hay push lên nhánh PR (#570); --expect-head / approved-head giữ nguyên. SB_MERGEABLE_POLL_S: móc test.
+# Ngoại lệ hẹp của #570 (02/11, PR #916 đụng #911: gần như PR nào cũng nối đuôi ma trận, hai PR merge sát nhau là PR sau CONFLICTING
+# trên GitHub, mỗi lần một vòng gộp-push-chạy-lại bằng tay; test_durations.txt không còn track từ #920, ma trận là lý do chính): CONFLICTING ở lượt thật (không --dry-run, --preflight,
+# biên nhận train hay SB_MERGE_CALLER=train — các lối đó thoát 14 như cũ) mà mọi file hai phía cùng đổi từ merge-base đều có driver gộp đặt
+# tên trong .gitattributes của origin/<base> (sync_candidate), và PR không có test sửa đã duyệt ⇒ AUTOSYNC=1, đi tiếp; khối "đồng bộ nhánh
+# PR" sau merge scratch kiểm lại rồi đẩy merge commit đó lên nhánh PR. Mọi trường hợp khác: thoát 14 ngay tại đây, đúng câu báo cũ.
 mergeable_now() { gh pr view "$PR" ${REPO:+--repo "$REPO"} --json mergeable -q .mergeable 2>/dev/null | head -1 | tr -d '[:space:]' || true; }
 MG_POLL=${SB_MERGEABLE_POLL_S:-10}; [[ "$MG_POLL" =~ ^[0-9]{1,3}$ ]] || MG_POLL=10
-# PR3: gọi trước verify (ngoài khoá) và lần nữa trong khoá ngắn khi BASE_NOW khác MG_BASE (main dời có thể làm PR CONFLICTING).
-# Gọi như câu lệnh thường (không trong $(…) / if / ||): exit 14 phải thoát gate.
-mergeable_or_14() {
-  local mg try=0
-  mg=$(mergeable_now)
-  while [ "$mg" = UNKNOWN ] && [ "$try" -lt 3 ]; do
-    sleep "$MG_POLL"; try=$((try + 1)); mg=$(mergeable_now)
+# mergeable_read: MERGEABLE = what GitHub says now (UNKNOWN = still computing: up to 3 re-reads).
+MERGEABLE=""
+mergeable_read() {
+  local try=0
+  MERGEABLE=$(mergeable_now)
+  while [ "$MERGEABLE" = UNKNOWN ] && [ "$try" -lt 3 ]; do
+    sleep "$MG_POLL"; try=$((try + 1)); MERGEABLE=$(mergeable_now)
   done
-  [ "$mg" = CONFLICTING ] || return 0
+}
+conflicting_exit() {
   say "GitHub reports PR #${PR} CONFLICTING with ${BASE} (a merge driver such as merge=union / merge=devkit-matrix resolves it only locally; GitHub would refuse the merge after verify): nothing verified, nothing merged"
   say "fix: in the PR worktree run \`git merge --no-edit origin/${BASE}\`, push it plainly (\`git push origin ${HEAD_REF}\`), then run the gate again with --expect-head <the new head>"
   exit 14
 }
+# PR3: gọi lần nữa trong khoá ngắn khi BASE_NOW khác MG_BASE (main dời có thể làm PR CONFLICTING). Lần đầu (trước verify, ngoài khoá)
+# đọc bằng mergeable_read để khối đồng bộ bên dưới còn quyết định được. Gọi như câu lệnh thường (không trong $(…) / if / ||): exit 14
+# phải thoát gate.
+mergeable_or_14() {
+  mergeable_read
+  [ "$MERGEABLE" = CONFLICTING ] || return 0
+  conflicting_exit
+}
+# driver_only_overlap <head> <base>: 0 khi có đúng một merge-base, tập file đổi ở CẢ HAI phía từ đó không rỗng và mọi file trong tập có
+# driver gộp đặt tên (`git check-attr merge` đọc .gitattributes của <base>: .gitattributes của chính PR không nới được tập). Giá trị
+# unspecified / unset / set / text / binary là merge dựng sẵn của git: GitHub xung đột y như vậy. SYNC_FILES: tập file; SYNC_WHY: lý do không.
+SYNC_FILES=""; SYNC_WHY=""
+driver_only_overlap() {
+  local mbs shared f drv pr_files
+  mbs=$(git -C "$REPO_PATH" merge-base --all "$1" "$2" 2>/dev/null) || { SYNC_WHY="no merge base of ${1:0:12} and ${2:0:12}"; return 1; }
+  [ "$(printf '%s\n' "$mbs" | grep -c .)" -eq 1 ] || { SYNC_WHY="more than one merge base"; return 1; }
+  shared=$(LC_ALL=C comm -12 \
+    <(git -C "$REPO_PATH" -c core.quotepath=off diff --name-only --no-renames "$mbs" "$1" 2>/dev/null | LC_ALL=C sort) \
+    <(git -C "$REPO_PATH" -c core.quotepath=off diff --name-only --no-renames "$mbs" "$2" 2>/dev/null | LC_ALL=C sort)) || shared=""
+  [ -n "$shared" ] || { SYNC_WHY="no file changed on both sides could be listed"; return 1; }
+  # Scratch `git merge` reads .gitattributes from the PR side, check-attr below from <base>: a PR that edits .gitattributes could
+  # swap the named driver after the check. Refuse such a PR. Capture the list and grep a here-string: `git diff | grep -q` under
+  # pipefail lets grep exit early, git gets SIGPIPE (141) and `!` would turn that into a pass on a big file list (fail-open).
+  pr_files=$(git -C "$REPO_PATH" -c core.quotepath=off diff --name-only --no-renames "$mbs" "$1" 2>/dev/null) \
+    || { SYNC_WHY="could not list the files the PR changed"; return 1; }
+  if grep -q '\.gitattributes$' <<<"$pr_files"; then SYNC_WHY="the PR changes a .gitattributes file"; return 1; fi
+  while IFS= read -r f; do
+    drv=$(git -C "$REPO_PATH" check-attr --source="$2" merge -- "$f" 2>/dev/null) || { SYNC_WHY="git check-attr --source failed for ${f}"; return 1; }
+    drv=${drv##*: merge: }
+    case "$drv" in
+      ""|unspecified|unset|set|text|binary) SYNC_WHY="${f} (changed on both sides) has no named merge driver (merge: ${drv:-?})"; return 1 ;;
+    esac
+  done <<<"$shared"
+  SYNC_FILES=$(printf '%s\n' "$shared" | tr '\n' ' ' | sed 's/ $//')
+}
+# sync_candidate: chỉ lượt thật; PR có test sửa đã duyệt thì không (#643: duyệt gắn head X, base phải là tổ tiên của X — thoát 14 như cũ).
+sync_candidate() {
+  local et_rc=0 base_pre
+  [ "$DRY" -eq 0 ] && [ "$PREFLIGHT" -eq 0 ] && [ "$REQUIRE_RECEIPT" -eq 0 ] && [ -z "$TRAIN_RECEIPT" ] \
+    && [ "${SB_MERGE_CALLER-}" != train ] || return 1
+  bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$HEAD_SHA" >/dev/null 2>&1 || et_rc=$?
+  [ "$et_rc" -eq 1 ] || { SYNC_WHY="the PR carries edited-test approval for ${HEAD_SHA:0:12} (or it could not be read)"; return 1; }
+  git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || { SYNC_WHY="git fetch origin ${HEAD_REF} ${BASE} failed"; return 1; }
+  base_pre=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { SYNC_WHY="cannot resolve origin/${BASE}"; return 1; }
+  driver_only_overlap "$HEAD_SHA" "$base_pre"
+}
 # MG_BASE: origin/<base> local lúc GitHub trả lời mergeable (không fetch; cũ hơn GitHub thì trong khoá chỉ đọc thừa một lần). Trong khoá
 # chỉ đọc lại khi BASE_NOW khác nó: base không dời thì câu trả lời của GitHub vẫn là cho đúng base đó.
 MG_BASE=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}" 2>/dev/null || true)
-mergeable_or_14
+mergeable_read
+AUTOSYNC=0
+if [ "$MERGEABLE" = CONFLICTING ]; then
+  if sync_candidate; then
+    AUTOSYNC=1
+    say "GitHub reports PR #${PR} CONFLICTING with ${BASE}, but every file changed on both sides has a named merge driver (${SYNC_FILES}): the gate merges ${BASE} in the scratch tree and fast-forwards ${HEAD_REF} to that merge commit before verify"
+  else
+    [ -z "$SYNC_WHY" ] || say "not syncing ${HEAD_REF} itself: ${SYNC_WHY}"
+    conflicting_exit
+  fi
+fi
 # #288: biên nhận của merge train đã chứng minh đúng cây này thì verify bị bỏ, nên không chờ tải: mỗi PR của đợt từng chờ tới
 # merge_load_wait_s để rồi không chạy gì. Cây dự kiến = merge-tree(base, head), đúng cây train ghi (và cây merge scratch bên dưới).
 SKIP_LOAD_WAIT=0
@@ -738,6 +837,8 @@ merge_scratch_onto() {
       say "could not reset the scratch tree to ${HEAD_SHA:0:12} to merge the moved ${BASE}"; exit 1; }
   fi
   if ! git -C "$SCRATCH" merge "$onto" --no-edit --quiet >"$MERGE_LOG" 2>&1; then
+    # GitHub đã báo CONFLICTING (AUTOSYNC, chưa đẩy đồng bộ): gộp local cũng hỏng thì là đường thoát 14 như trước, không phải 5.
+    if [ "${AUTOSYNC:-0}" -eq 1 ]; then say "the scratch merge of ${BASE} ${onto:0:12} failed too: $(grep -a '^CONFLICT' "$MERGE_LOG" | head -3 | clip 300)"; conflicting_exit; fi
     CONFLICTS=$(git -C "$SCRATCH" diff --name-only --diff-filter=U | tr '\n' ' ')
     if [ -n "$CONFLICTS" ]; then
       say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
@@ -828,13 +929,69 @@ prove_tree() {
   BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
   # #570: gate không ghi lên nhánh PR. Nhánh chậm hơn base thì chỉ verify trên cây scratch đã gộp (ở local); HEAD_SHA giữ nguyên head PR
   # nên approved-head, --match-head-commit và merge queue vẫn khớp đúng head người duyệt. GitHub squash tự gộp base lúc merge.
-  if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
+  # (Ngoại lệ: AUTOSYNC=1 — khối "đồng bộ nhánh PR" ngay dưới sắp đẩy đúng merge này lên nhánh PR, nên câu "nothing pushed" sai.)
+  if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ] && [ "${AUTOSYNC:-0}" -eq 0 ]; then
     say "$([ "$DRY" -eq 1 ] && echo 'dry run: ')${HEAD_REF} is ${BEHIND_NOW} commit(s) behind ${BASE}; verifying the local merge ${MERGED_SHA:0:12} (nothing pushed)"
   fi
 }
 MERGED_SHA=""
 merge_scratch_onto "$BASE_SHA"
 prove_tree
+# ---- đồng bộ nhánh PR (ngoại lệ hẹp của #570, chỉ khi AUTOSYNC=1 ở khối CONFLICTING) ---------------------------------------------------
+# Chạy ngoài khoá merge (PR3: verify cũng ngoài khoá; đẩy lên nhánh PR không đụng main), trên base đã chốt (BASE_SHA có thể mới hơn lúc
+# kiểm ở khối CONFLICTING). Đẩy merge commit của scratch Y (cha 1 = head đã review X, cha 2 = BASE_SHA, không gì khác) lên nhánh PR:
+# push thường, không bao giờ --force / --force-with-lease, và chỉ khi GitHub lẫn origin vẫn trỏ nhánh về X (nhánh đã dời: thoát 14,
+# không ghi đè). Biên nhận approved-merge-heads/Y = X ghi TRƯỚC khi đẩy: head guard của lượt gate sau (--expect-head X) và approval.py
+# (--approved-head X) nhận Y chỉ vì commit mới duy nhất của nó là merge base này. Sau đó HEAD_SHA = Y: --match-head-commit, đọc lại CI /
+# trạng thái PR (head moved), biên nhận merge, và scratch dựng lại sau khi base dời (merge_scratch_onto reset về HEAD_SHA) đều theo Y;
+# REVIEWED_HEAD giữ X. Cây của Y = cây scratch vừa chứng minh nên biên nhận cây (prove_tree) vẫn đúng. GitHub vẫn CONFLICTING sau số
+# lần đọc có giới hạn: thoát 14 (Y đã nằm trên nhánh, câu báo nói --expect-head mới là Y). AUTOSYNC về 0 sau khi đẩy: merge scratch hỏng
+# về sau (base dời lần nữa) là exit 5 thường.
+if [ "$AUTOSYNC" -eq 1 ]; then
+  driver_only_overlap "$HEAD_SHA" "$BASE_SHA" || { say "not syncing ${HEAD_REF} itself after pinning ${BASE} at ${BASE_SHA:0:12}: ${SYNC_WHY}"; conflicting_exit; }
+  [ "$(git -C "$SCRATCH" rev-list --parents -n 1 "$MERGED_SHA" 2>/dev/null)" = "$MERGED_SHA $HEAD_SHA $BASE_SHA" ] \
+    || { say "not syncing ${HEAD_REF} itself: the scratch commit ${MERGED_SHA:0:12} is not exactly merge(${HEAD_SHA:0:12}, ${BASE_SHA:0:12})"; conflicting_exit; }
+  # Gate đang giữ khoá (chế độ bi quan SB_MERGE_OPTIMISTIC=0): khoá đã bị gate khác chiếm thì không ghi gì lên nhánh PR.
+  # (Viết thẳng như own_lock_or_stop: hàm đó định nghĩa phía dưới.)
+  [ "$LOCK_HELD" -eq 0 ] || [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$$" ] || { say "the merge lock is no longer this gate's; stopping without pushing or merging"; exit 4; }
+  SYNC_NOW=$(pr_head) || exit $?
+  [ "$SYNC_NOW" = "$HEAD" ] || { say "not syncing ${HEAD_REF} itself: GitHub head is now ${SYNC_NOW#* }, not the pinned ${HEAD_SHA}"; conflicting_exit; }
+  SYNC_REMOTE=$(git -C "$SCRATCH" ls-remote origin "refs/heads/${HEAD_REF}" 2>/dev/null | awk 'NR == 1 { print $1 }') || SYNC_REMOTE=""
+  [ "$SYNC_REMOTE" = "$HEAD_SHA" ] || { say "not syncing ${HEAD_REF} itself: origin ${HEAD_REF} is ${SYNC_REMOTE:-unreadable}, not the pinned ${HEAD_SHA}; nothing pushed"; conflicting_exit; }
+  SYNC_OLD=$HEAD_SHA
+  SYNC_REVIEWED=${APPROVED_HEAD:-$SYNC_OLD}
+  { [ -n "$AH_DIR" ] && mkdir -p "$AH_DIR" && printf '%s\n' "$SYNC_REVIEWED" > "$AH_DIR/$MERGED_SHA"; } 2>/dev/null \
+    || { say "not syncing ${HEAD_REF} itself: could not write the receipt approved-merge-heads/${MERGED_SHA:0:12}"; conflicting_exit; }
+  if ! git -C "$SCRATCH" push --quiet origin "${MERGED_SHA}:refs/heads/${HEAD_REF}" >"$MERGE_LOG" 2>&1; then
+    say "not syncing ${HEAD_REF} itself: the plain push of ${MERGED_SHA:0:12} was refused: $(sed -n '1,6p' "$MERGE_LOG" | sb_redact_text | clip 300 || echo '(git message hidden: the DevKit secret redactor could not be loaded)')"
+    rm -f -- "$AH_DIR/$MERGED_SHA" 2>/dev/null || true   # the hash never reached the remote: drop its receipt
+    conflicting_exit
+  fi
+  APPROVED_HEAD=$SYNC_REVIEWED
+  HEAD_SHA=$MERGED_SHA; HEAD="${HEAD_REF} ${HEAD_SHA}"
+  AUTOSYNC=0
+  say "pushed ${HEAD_REF}: ${SYNC_OLD} -> ${HEAD_SHA} (plain fast-forward, no --force); the only new commit merges ${BASE} ${BASE_SHA} into the reviewed head (parents ${SYNC_OLD:0:12} + ${BASE_SHA:0:12}); files changed on both sides, each resolved by its named merge driver: ${SYNC_FILES}"
+  # GitHub can lag on headRefOid after the push: wait (bounded) until it shows the new head FIRST (its mergeable answer before that is
+  # still about the old head), else the in-lock head check below would exit 6 ("head moved") for a head that is only not yet visible.
+  MG_TRY=0
+  while [ "$(pr_head 2>/dev/null || true)" != "$HEAD" ] && [ "$MG_TRY" -lt 6 ]; do
+    sleep "$MG_POLL"; MG_TRY=$((MG_TRY + 1))
+  done
+  [ "$(pr_head 2>/dev/null || true)" = "$HEAD" ] || { say "GitHub still shows another head than the pushed ${HEAD_SHA} after ${MG_TRY} re-read(s); the next gate run takes --expect-head ${HEAD_SHA}"; conflicting_exit; }
+  MG_TRY=0; MERGEABLE=$(mergeable_now)
+  while [ "$MERGEABLE" = CONFLICTING ] && [ "$MG_TRY" -lt 6 ]; do
+    sleep "$MG_POLL"; MG_TRY=$((MG_TRY + 1)); MERGEABLE=$(mergeable_now)
+  done
+  if [ "$MERGEABLE" = CONFLICTING ]; then
+    say "GitHub still reports CONFLICTING after the sync push (${MG_TRY} re-read(s)); ${HEAD_REF} is now ${HEAD_SHA}: the next gate run takes --expect-head ${HEAD_SHA}"
+    conflicting_exit
+  fi
+  # ponytail: CI is read right after the push and a tree receipt can skip verify, so Y may be merged before GitHub registers its check
+  # suite; required checks of branch protection still hold. Upgrade: after a sync, wait (bounded) for Y's check list to be non-empty.
+  # GitHub answered for exactly this base: the in-lock mergeable read is only needed if the base moves again.
+  MG_BASE=$BASE_SHA
+  say "GitHub mergeable after the sync push: ${MERGEABLE:-unreadable}; verifying ${HEAD_SHA:0:12}"
+fi
 
 # Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH
 # 19/10: REPO_PATH "." thường là worktree Reviewer, nơi .agents/devkit (bị ignore) không có: chỉ tìm ở đó thì không cài gì và mọi
