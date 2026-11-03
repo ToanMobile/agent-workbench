@@ -137,6 +137,18 @@ age -300 "$P/a.py" "$P/b.py"; age -400 "$TMP/r3/ocr-review.json"
 : > "$TR"; ev edit t1 "$P/a.py"; ev edit t2 "$P/b.py"; ocr_run t3 "$TMP/r3/ocr-review.json"; ev agent t4 principal-code-reviewer
 stop c5; rc=$?
 [ "$rc" = 2 ] && ok "(c) a workspace map whose base is not the current HEAD: not counted (rc 2)" || fail "(c) workspace map on another base counted (rc $rc)"
+# a file OCR's own excludes leave out (x.min.js: default_path) can never be in a map: content_excluded drops it from the files asked
+reset_ws; echo "var x = 1" > "$P/x.min.js"; rep "$TMP/r9/ocr-review.json" "$P" "$PH" ws a.py
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["content_excluded"]=["x.min.js"]; json.dump(d,open(sys.argv[1],"w"))' "$TMP/r9/ocr-review.json"
+age -300 "$P/a.py" "$TMP/r9/ocr-review.json"; age 0 "$P/x.min.js"
+: > "$TR"; ev edit t1 "$P/a.py"; ocr_run t2 "$TMP/r9/ocr-review.json"; ev edit t3 "$P/x.min.js"; ev agent t4 principal-code-reviewer
+stop e1; rc=$?
+[ "$rc" = 0 ] && ok "a file OCR excludes by itself (content_excluded): not asked of any map (rc 0)" || fail "OCR-excluded file held the gate (rc $rc)"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["content_excluded"]="x.min.js"; json.dump(d,open(sys.argv[1],"w"))' "$TMP/r9/ocr-review.json"
+age -300 "$TMP/r9/ocr-review.json"
+stop e2; rc=$?
+[ "$rc" = 2 ] && ok "  … content_excluded that is not a list: ignored, x.min.js is delta (rc 2)" || fail "malformed content_excluded honoured (rc $rc)"
+
 # control: an old report (no map) keeps the mtime rule: fresh after every edit passes, older than an edit blocks
 reset_ws; rep "$TMP/r4/ocr-review.json" "$P" - ws
 age -300 "$P/a.py" "$P/b.py"; age 0 "$TMP/r4/ocr-review.json"

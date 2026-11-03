@@ -33,6 +33,9 @@ case "$1 $2" in
     reu=""; for p in ${OCR_REUSED:-}; do reu="$reu${reu:+,}{\"path\":\"$p\"}"; done
     printf '{"status":"complete","summary":{"files_reviewed":1},"comments":[],"manifest":{"coverage":{"selected":[],"completed":[%s],"reused":[%s],"failed":[]}}}\n' "$cov" "$reu" > "$out"
     exit 0 ;;
+  "delegate preview")
+    ex=""; for p in ${OCR_EXCL:-}; do ex="$ex${ex:+,}{\"path\":\"$p\",\"exclude_reason\":\"default_path\"}"; done
+    printf '{"schema_version":"1","reviewable_files":[],"excluded_files":[%s]}\n' "$ex"; exit 0 ;;
 esac
 echo "fake ocr: unexpected $*" >&2; exit 9
 SH
@@ -81,6 +84,11 @@ PATH="$TMP/bin:$PATH" OCR_COV="a.py b.py" python3 "$HELPER" --from "$BASE0" --ou
 PATH="$TMP/bin:$PATH" OCR_NOMANIFEST=1 python3 "$HELPER" --out "$TMP/o5" > "$TMP/out" 2> "$TMP/err"; rc=$?
 [ "$rc" = 0 ] && [ "$(field "$TMP/o5/ocr-review.json" content_sha256)" = "<absent>" ] && ok "no coverage in the report: no content map (rc 0)" \
   || fail "map written without coverage: $(cat "$TMP/o5/ocr-review.json")"
+
+# 5b. what OCR's own excludes leave out (from `ocr delegate preview`): content_excluded, minus anything the report did review
+PATH="$TMP/bin:$PATH" OCR_COV="a.py" OCR_EXCL="dist/x.js a.py" python3 "$HELPER" --out "$TMP/o7" > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" = 0 ] && [ "$(field "$TMP/o7/ocr-review.json" content_excluded)" = "['dist/x.js']" ] \
+  && ok "content_excluded = OCR's excluded files (dist/x.js), not one the report reviewed" || fail "content_excluded: $(cat "$TMP/o7/ocr-review.json")"
 
 # 6. end to end: the helper's report, then b.py edited and put back to the same bytes, an agent review after it: the gate passes
 cat > "$TMP/tr.py" <<'PY'

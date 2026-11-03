@@ -739,7 +739,8 @@ def _at_or_before(a, b):
 ws_need = sorted(session_unreviewed & dirty)   # the session's uncommitted code: what a workspace map must hold
 range_need = sorted(since)                     # every file committed since the verified head, as the old range rule
 ws_mapped, range_mapped = set(), set()
-map_ws_idx = -1   # newest workspace map report on the current HEAD (a session that edited only committed files: index rule)
+ws_excl, range_excl = set(), set()   # what OCR's own excludes leave out of a run (content_excluded): no map can hold them
+map_ws_idx = map_range_idx = -1   # newest valid map report per scope (nothing left to hold by sha: index rule, as the old one)
 _head_now = _rev("HEAD") if ocr_reports else ""
 for _at, _rp, _argv in list(ocr_reports):
     try:
@@ -754,12 +755,16 @@ for _at, _rp, _argv in list(ocr_reports):
     if not _reviewed(_rep) or not isinstance(_m, dict) or not isinstance(_base, str) or not _base:
         logline(f"[{ts}] OCR run at #{_at} named {_rp}: content map malformed or nothing reviewed — not counted")
         continue
+    _excl = _rep.get("content_excluded")
+    _excl = {x for x in _excl if isinstance(x, str)} if isinstance(_excl, list) else set()
     if any(w in ("--from", "--commit", "-c") for w in _argv[:-1]):
         if not _covers_since(_argv) or not _at_or_before(_base, since_base):
             logline(f"[{ts}] OCR run at #{_at}: content map over a range that does not cover the commits since {since_base[:12]} — not counted")
             continue
         _hit = {f for f in range_need if _m.get(f) is not None and _m.get(f) == _sha_head(f)}
         range_mapped |= _hit
+        range_excl |= _excl
+        map_range_idx = max(map_range_idx, _at)
     else:
         if _base != _head_now:
             logline(f"[{ts}] OCR run at #{_at}: workspace content map on base {_base[:12]}, HEAD is {_head_now[:12]} — not counted")
@@ -767,13 +772,17 @@ for _at, _rp, _argv in list(ocr_reports):
         map_ws_idx = max(map_ws_idx, _at)
         _hit = {f for f in ws_need if _m.get(f) is not None and _m.get(f) == _sha_file(f)}
         ws_mapped |= _hit
+        ws_excl |= _excl
     if _hit:   # a review at its own index
         last_review_idx = max(last_review_idx, _at)
         review_marks.append(_at)
     logline(f"[{ts}] OCR run at #{_at}: content map matches {sorted(_hit)}")
-ws_map_ok = set(ws_need) <= ws_mapped if ws_need else map_ws_idx > last_edit_idx
-range_map_ok = bool(range_need) and set(range_need) <= range_mapped
-ocr_delta = [f for f in ws_need if f not in ws_mapped] + [f + " (đã commit)" for f in range_need if f not in range_mapped]
+# a file OCR excludes by itself is asked of no map: like the old rule, a run of that scope after the last edit (index rule when nothing
+# else is left) stands for it
+_ws_left, _range_left = set(ws_need) - ws_excl, set(range_need) - range_excl
+ws_map_ok = _ws_left <= ws_mapped if _ws_left else map_ws_idx > last_edit_idx
+range_map_ok = range_mapped >= _range_left if _range_left else (bool(range_need) and map_range_idx > last_edit_idx)
+ocr_delta = sorted(_ws_left - ws_mapped) + [f + " (đã commit)" for f in sorted(_range_left - range_mapped)]
 
 if ocr_reports:
     for _at, _rp, _argv in ocr_reports:
