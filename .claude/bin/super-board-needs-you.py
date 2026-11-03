@@ -114,10 +114,12 @@ V2_RULES = (
     ),
 )
 # Miễn cho V2_RULES: việc người thật (xe, khoá ký, danh tính, PII) và danh sách phải hỏi người của AGENTS.md
-# (force-push/viết lại lịch sử, deploy/production, thanh toán/billing, đăng nhập).
+# (force-push/viết lại lịch sử, deploy/production, thanh toán/billing, đăng nhập, settings repo). deploy/production
+# trong đường dẫn hay tên file (production/qa/…, deploy.sh) không miễn (OCR review 03/11).
 V2_HUMAN_RE = re.compile(
     r"keychain|khoá\s+ký|cấp\s+danh\s+tính|\bpii\b|trên\s+xe\b|chủ\s+xe|\bphát\s+hành\b|"
-    r"force[\s-]?push|viết\s+lại\s+lịch\s+sử|\bdeploy\b|\bproduction\b|thanh\s+toán|\bbilling\b|\blogin\b|đăng\s+nhập|"
+    r"force[\s-]?push|viết\s+lại\s+lịch\s+sử|\bdeploy\b(?![./]\w)|\bproduction\b(?![./]\w)|thanh\s+toán|\bbilling\b|"
+    r"\blogin\b|đăng\s+nhập|\bsettings\b|cài\s+đặt|"
     r"\bsecret\b|mật\s+khẩu|\botp\b|\blive\b|app\s+store|hợp\s+đồng|khóa\s+ký",
     re.I,
 )
