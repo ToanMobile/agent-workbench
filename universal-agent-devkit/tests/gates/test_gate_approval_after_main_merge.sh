@@ -89,6 +89,15 @@ run_gate "$TMP/a3"
 if accepted T0803-a3; then ok "A3: scratch merge gate (PR + main), trailer -> nhận (exit 0)"
 else bad "A3: scratch merge gate, trailer: rc=$RC, $(tailout)"; fi
 
+# A4. làm trực tiếp trên main đang đứng ở một merge --no-ff, sửa test chưa commit, audit cây làm việc (`git stash create`) -> nhận
+#     (HEAD đã thuộc trunk: đầu PR là HEAD, không phải parent thứ hai)
+mk "$TMP/a4"; echo 'fun other()=4' > src/Other.kt && git commit -qam "feat code"
+git checkout -q main && git merge -q --no-ff --no-edit feat
+printf "$V1" > tests/t.sh; echo 'fun ok()=4' > src/Core.kt; pm_task T0804-a4 "$TMP/a4" "$(git stash create)"
+approve "$TMP/a4" T0804-a4; run_gate "$TMP/a4"
+if accepted T0804-a4; then ok "A4: trên main ở merge --no-ff, audit cây làm việc -> nhận (exit 0)"
+else bad "A4: main ở merge, audit cây làm việc: rc=$RC, $(tailout)"; fi
+
 # R1. replay: audit T0811 tại X1 (V1), test làm mạnh V2 ở X2 (audit T0812), chép về V1 rồi khai T0811 -> từ chối (có audit mới hơn)
 mk "$TMP/r1"; X1="$(pr_commit "$V1" "V1")"; pm_task T0811-r1 "$TMP/r1" "$X1"
 X2="$(pr_commit "$V2" "V2 làm mạnh")"; pm_task T0812-r1 "$TMP/r1" "$X2"

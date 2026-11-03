@@ -682,8 +682,10 @@ def _approval_chain(top, project_root):
         if rc_b == 0 and base and rc_p == 0 and ids:
             tip = ids[0]
             if len(ids) >= 3:
-                first_on_trunk = _is_ancestor(top, ids[1], trunk_ref)
-                tip = ids[2] if first_on_trunk else tip if first_on_trunk is False else ""
+                # Chỉ scratch (merge chưa vào trunk): HEAD là chính một merge của main thì đầu PR vẫn là HEAD.
+                head_on_trunk = _is_ancestor(top, ids[0], trunk_ref)
+                first_on_trunk = _is_ancestor(top, ids[1], trunk_ref) if head_on_trunk is False else False
+                tip = "" if head_on_trunk is None or first_on_trunk is None else ids[2] if first_on_trunk else tip
             rc_c, chain = _git_out(top, "rev-list", "--first-parent", tip, "--not", trunk_ref) if tip else (1, "")
             if rc_c == 0:
                 res = (trunk_ref, base, tip, chain.split())
@@ -717,7 +719,8 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
       3. blob hiện tại == blob của f ở head;
       4. mọi audit pass khác của repo trên chuỗi đó mà không là tổ tiên của head (mới hơn) có cùng blob — chỉ audit mới nhất được dùng,
          chép lùi về bản đã audit trước khi test được làm mạnh không qua (replay);
-      5. blob của f ở base hiện tại == blob ở merge-base(head, trunk): main không đổi chính file đó kể từ lúc audit.
+      5. blob của f ở base hiện tại == blob ở merge-base(head, trunk): main không đổi chính file đó kể từ lúc audit (cả hai đều
+         không có file = nhánh đích chưa từng có nó: không đổi).
     Lỗi git, thiếu merge-base, blob không resolve hay rỗng → không duyệt."""
     ch = _approval_chain(top, project_root)
     if not ch:
@@ -748,10 +751,13 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
         if rc2 != 0 or b2 != cur:
             return False, (f"có audit mới hơn trên nhánh ({tid2}, auditedHead {h2[:10]}) với nội dung khác: chỉ audit mới nhất "
                            "của nhánh được dùng")
+    # ls-tree: rc 0 + rỗng = file không có ở commit đó (nhánh đích chưa từng có file, test thêm phía PR), rc khác 0 = lỗi git.
     rc_m, mb = _git_out(top, "merge-base", head, trunk_ref)
-    rc_b, at_base = _git_out(top, "rev-parse", "--verify", "-q", f"{base}:{prefix}{f}") if rc_m == 0 and mb else (1, "")
-    rc_o, at_fork = _git_out(top, "rev-parse", "--verify", "-q", f"{mb}:{prefix}{f}") if rc_b == 0 else (1, "")
-    if rc_o != 0 or not at_base or at_base != at_fork:
+    rc_b, at_base = _git_out(top, "ls-tree", base, "--", f"{prefix}{f}") if rc_m == 0 and mb else (1, "")
+    rc_o, at_fork = _git_out(top, "ls-tree", mb, "--", f"{prefix}{f}") if rc_b == 0 else (1, "")
+    if rc_o != 0:
+        return False, f"không kiểm được file ở base / merge-base của auditedHead {h10} (lỗi git)"
+    if at_base != at_fork:
         return False, f"nhánh đích đã đổi file này kể từ audit (auditedHead {h10}): cần audit lại"
     return True, ""
 
