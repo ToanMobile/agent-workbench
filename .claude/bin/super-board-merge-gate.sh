@@ -290,11 +290,46 @@ pr_title() {
   if [ -n "$SUBJECT" ]; then printf '%s' "$SUBJECT"; return 0; fi
   gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
 }
+APPROVAL_REQ_LINE=   # dòng approval-request: lần approval_request gần nhất in ra (rỗng = chưa có request)
 needs_you_notify() {
   # Queue bật: train / queue gọi thì không gửi (queue gửi đúng một lần ở nhánh exit 7/8); #453: theo BÊN GỌI, không theo cờ, nên
   # /super-review --standalone --dry-run ngoài board vẫn gửi nút. Queue tắt: gửi như gate cũ. Train gọi --preflight cho mọi PR và PR rớt
   # preflight rời đợt trước lượt --dry-run, nên preflight im lặng khi queue tắt = PR exit 7/8 mất nút duyệt (R2).
   if [ "$MERGE_QUEUE_ON" -eq 1 ]; then case "${SB_MERGE_CALLER-}" in train|queue) return 0 ;; esac; fi
+  # PR #924: bot và approval.py chỉ nhận `done` trên NGUỒN của block tin cậy MỚI NHẤT (PR + issue liên kết) ghim đúng head/scope; gate
+  # tự gửi nút thì tự đăng request, nhưng quyết theo phán quyết approval_check ($APPROVAL .why), không grep comment PR: chỉ đăng khi
+  # chưa có request hiện hành (không block, block mới nhất không khớp, request bị sửa). Request hiện hành ở đâu đó (đang chờ done) hay
+  # bằng chứng không đọc được (đăng có thể đè một `done`) thì không đăng. Chỉ request, không bao giờ duyệt; lỗi chỉ log, nút vẫn gửi,
+  # exit giữ nguyên; --dry-run không ghi GitHub. approved=true (người đã `done` / duyệt chéo, nhưng migration lỗi sau verify): im lặng,
+  # không đăng, không khuyên đăng tay (request mới sẽ đè lần duyệt đó).
+  # Grok review: SB_NOTIFY_SKIP=1 (board_notify không gửi nút) thì không đăng gì, như trước PR #924. APPROVAL rỗng (approval_check chưa
+  # chạy: migration lỗi khi policy không human / needs_you) thì đọc phán quyết ngay bằng đúng lệnh của approval_check, nhưng không fatal.
+  if [ "${SB_NOTIFY_SKIP:-0}" = "1" ]; then return 0; fi
+  if [ -n "$APPROVAL_REQ_LINE" ] && [ -z "${APPROVAL:-}" ]; then
+    git -C "$REPO_PATH" fetch origin "$HEAD_REF" --quiet 2>/dev/null || :
+    APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
+      --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || APPROVAL=
+    # Như approval_check (#932): có biên nhận Y→X mà chưa duyệt thì đọc lại cho chính head Y (request ghi --head Y).
+    if [ -n "$APPROVED_HEAD" ] && [ "$(printf '%s' "$APPROVAL" | jq -r '.approved // false' 2>/dev/null || true)" != true ]; then
+      APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
+        --head "$HEAD_SHA" --plan "$PLAN") || APPROVAL=
+    fi
+  fi
+  if [ -n "$APPROVAL_REQ_LINE" ] \
+    && [ "$(printf '%s' "${APPROVAL:-}" | jq -r '.approved == true' 2>/dev/null || true)" != true ]; then
+    case "$(printf '%s' "${APPROVAL:-}" | jq -r '.why // empty' 2>/dev/null || true)" in
+      "no request from a trusted repository collaborator"|"the latest request does not cover the current code and human steps"|"approval request was edited; post a fresh request")
+        if [ "$DRY" -eq 1 ]; then
+          say "dry run: would post the approval-request on PR #${PR} for head ${HEAD_SHA:0:7}"
+        else
+          gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "[merge-gate] [blocker] 🛑 needs a person · head ${HEAD_SHA:0:7}
+${APPROVAL_REQ_LINE}" >/dev/null 2>&1 \
+            || say "warning: could not post the approval-request comment on PR #${PR} (head ${HEAD_SHA:0:7}); the Approve button still goes out but the bot will refuse it until a writer posts the approval-request line above"
+        fi ;;
+      "waiting for a trusted human to comment done on the current request"|"waiting for a cross-review marker or a trusted human done on the current request") : ;;
+      *) say "approval-request not posted on PR #${PR}: the approval check gave no clear verdict ($(printf '%s' "${APPROVAL:-}" | jq -r '.why // "none"' 2>/dev/null || echo none)); approval state unclear, so no request is posted — check the PR and its linked issue before posting anything" ;;
+    esac
+  fi
   board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
@@ -480,6 +515,7 @@ PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$M
 # The label is display-only. A request posted before `done` pins the exact head
 # and policy/commands. Re-read trusted approval evidence; never mint it here.
 APPROVED=false
+APPROVAL=        # phán quyết approval.py; không nhận giá trị từ môi trường của bên gọi (hàm gửi nút đọc nó)
 APPROVED_HEAD=   # #262: head người đã duyệt, đọc từ biên nhận (nếu có) trước khi kiểm duyệt
 # #570: gate không đẩy merge commit lên nhánh PR; head PR giữ nguyên X và chính X là head người duyệt. Ngoại lệ duy nhất (exit 14,
 # khối "đồng bộ nhánh PR"): gate tự đẩy Y = merge(X, base) và ghi biên nhận Y→X (AH_DIR ở head guard) trước khi đẩy. Biên nhận Y→X
@@ -501,8 +537,13 @@ approval_check() {
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')
 }
 approval_request() {
-  python3 "$HERE/super-board-approval.py" --request --repo "$REPO" --pr "$PR" \
-    --head "$HEAD_SHA" --plan "$PLAN"
+  # In nguyên như cũ, nhớ dòng approval-request: để needs_you_notify đăng lên PR khi chính gate gửi nút (PR #924).
+  local out rc=0
+  out=$(python3 "$HERE/super-board-approval.py" --request --repo "$REPO" --pr "$PR" \
+    --head "$HEAD_SHA" --plan "$PLAN") || rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out"
+  APPROVAL_REQ_LINE=$(printf '%s\n' "$out" | grep '^approval-request: ' | tail -1) || APPROVAL_REQ_LINE=
+  return "$rc"
 }
 HUMAN=$(echo "$PLAN" | jq -r '.human[] | "human-gate: \(.category) — \(.why)"')
 if [ -n "$HUMAN" ] || [ "$(echo "$PLAN" | jq '.needs_you | length')" -gt 0 ]; then
