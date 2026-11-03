@@ -1918,20 +1918,25 @@ ac_after_merge() {
   bash "$HERE/super-board-card.sh" --config "$CONFIG" move "$AC_CARD" Ready >&2 || say "warning: could not move #${AC_CARD} to Ready"
   say "card #${AC_CARD} keeps label ac-open: $(printf '%s\n' "$AC_UNTICKED" | grep -c .) AC line(s) not proven — do not close it or move it to Done"
 }
-# P2 (optimizer đợt 2, 03/11): sau merge, comment "✅ merged" lên mọi thẻ PR đóng (closingIssuesReferences của GitHub; thẻ ac-open đã
-# đổi Closes → Refs nên không nằm trong đó). Trước chỉ reviewer (LLM) viết dòng này: 130/177 thẻ WB vào Done từ 28/10 không có nó
-# (PR nhánh split/… merge qua gate --standalone, WB#325/#392). Queue/train không comment ở đây: queue comment khi route train-result
-# (6 board đều bật merge_queue, train chỉ chạy cho queue). $1: sha squash (rỗng = không đọc được). Lỗi chỉ cảnh báo: đã merge rồi.
+# P2 (optimizer đợt 2, 03/11): sau merge, comment "✅ merged" lên mọi thẻ PR đóng (closingIssuesReferences của GitHub, theo URL nên
+# issue repo khác không bị comment nhầm sang số trùng ở repo này). Trước chỉ reviewer (LLM) viết dòng này: 130/177 thẻ WB vào Done từ
+# 28/10 không có nó (PR nhánh split/… merge qua gate --standalone, WB#325/#392). Queue bật thì queue/train không comment ở đây (queue
+# comment khi route train-result); queue tắt thì merge-train worker (#228) chỉ có gate comment. Thẻ ac-open (và thành viên đợt) bỏ qua
+# dù GitHub còn liệt kê (liên kết tay ở Development). Không comment khi merge chỉ được xác nhận ở lượt gate sau ("already merged").
+# $1: sha squash (rỗng = không đọc được). Lỗi chỉ cảnh báo: đã merge rồi.
 card_merged_comment() {
-  local n cards
-  case "${SB_MERGE_CALLER-}" in train|queue) return 0 ;; esac
-  cards=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json closingIssuesReferences -q '.closingIssuesReferences[].number' 2>/dev/null) \
+  local u n cards skip=""
+  if [ "$MERGE_QUEUE_ON" -eq 1 ]; then case "${SB_MERGE_CALLER-}" in train|queue) return 0 ;; esac; fi
+  cards=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json closingIssuesReferences -q '.closingIssuesReferences[].url' 2>/dev/null) \
     || { say "warning: could not read the cards PR #${PR} closes; no ✅ merged comment"; return 0; }
-  for n in $cards; do
-    case "$n" in ''|*[!0-9]*) continue ;; esac
-    gh issue comment "$n" ${REPO:+--repo "$REPO"} --body "[reviewer] [report] ✅ merged ${1:-head ${HEAD_SHA:0:12}} · PR #${PR}
+  [ -z "$AC_UNTICKED" ] || skip=" ${AC_CARD} ${AC_BATCH} "
+  for u in $cards; do
+    case "$u" in https://*/issues/[0-9]*) ;; *) continue ;; esac
+    n=${u##*/}
+    case "$skip" in *" $n "*) { [ -z "$REPO" ] || [ "$u" = "https://github.com/${REPO}/issues/${n}" ]; } && continue ;; esac
+    gh issue comment "$u" --body "[reviewer] [report] ✅ merged ${1:-head ${HEAD_SHA:0:12}} · PR #${PR}
 Did: merged through the merge gate
-✅ Done: PR #${PR} merged${1:+ as $1}" >/dev/null 2>&1 || say "warning: could not comment ✅ merged on #${n}"
+✅ Done: PR #${PR} merged${1:+ as $1}" >/dev/null 2>&1 || say "warning: could not comment ✅ merged on ${u}"
   done
 }
 # Biên nhận merge (27/10): proof_gate.sh (merge_receipt_evidence) nhận lượt đã gộp qua gate này kể cả khi gate chạy nền, output vào file

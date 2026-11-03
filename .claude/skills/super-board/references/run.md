@@ -689,7 +689,7 @@ Local tests: npx playwright test e2e/streaming
 
 A pass uses the same table with screenshots of the **working** UI per AC.
 
-Reviewer merge (issue):
+Reviewer merge (issue; posted by the merge gate itself on direct calls, by the merge queue otherwise — never by hand):
 
 ```
 [reviewer] [report] ✅ merged · `ef67890` on staging

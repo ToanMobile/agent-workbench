@@ -8,15 +8,13 @@
 # - M4: PR tay không Closes thẻ (Refs) → không đụng issue.
 # - M5: nhánh không mang số thẻ (split/…) đóng #45 → comment trên #45.
 # - M6: lệnh merge lỗi (mất phản hồi) mà GitHub báo MERGED → vẫn comment, kèm sha squash GitHub báo.
+# - M7: queue tắt, train gọi gate (SB_MERGE_CALLER=train, đường merge-train worker #228) → vẫn comment.
+# - M8: PR đóng issue repo khác → comment đúng URL issue đó, không lên số trùng trong repo này.
+# Fake closingIssuesReferences trả URL issue: pr<N>.closes ghi số (repo này) hoặc URL đầy đủ.
 # SB_GATE=<file> chạy bản cũ để thấy ĐỎ. Offline, bash 3.2.
 set -u
 export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-GATE="${SB_GATE:-$ROOT/.claude/bin/super-board-merge-gate.sh}"
-. "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
-FAILS=0
-ok() { echo "✔ $1"; }
-fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 GATE="${SB_GATE:-$ROOT/.claude/bin/super-board-merge-gate.sh}"
 . "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
 FAILS=0
@@ -57,7 +55,8 @@ n=$(printf '%s\n' "$@" | grep -E '^[0-9]+$' | head -1)
 case " $* " in
   *" api graphql "*) echo '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"I"}}}}' ;;
   *" pr view "*"headRefName,headRefOid"*) echo "$(cat "$FAKE_DIR/pr$n.ref" 2>/dev/null || echo "issue-$n-x") $(cat "$FAKE_DIR/pr$n.head")" ;;
-  *" pr view "*"closingIssuesReferences"*) cat "$FAKE_DIR/pr$n.closes" 2>/dev/null ;;
+  *" pr view "*"closingIssuesReferences"*) [ -e "$FAKE_DIR/pr$n.closes" ] || exit 1
+    while read -r c; do case "$c" in http*) echo "$c" ;; ?*) echo "https://github.com/o/r/issues/$c" ;; esac; done < "$FAKE_DIR/pr$n.closes" ;;
   *" pr view "*"state,mergeCommit,headRefOid"*) if [ -e "$FAKE_DIR/pr$n.lost" ] && [ -e "$FAKE_DIR/pr$n.merged" ]; then
       printf '{"state":"MERGED","mergeCommit":{"oid":"6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b%s"},"headRefOid":"%s"}\n' "$n" "$(cat "$FAKE_DIR/pr$n.head")"
     else printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$(cat "$FAKE_DIR/pr$n.head")"; fi ;;
@@ -80,7 +79,7 @@ chmod +x "$TMP/bin/gh"
 . "$ROOT/tests/super-board/lib/fake_ci_checks.sh"; sb_ci_checks_fixture "$TMP/bin"
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" SB_CARD_CACHE_DIR="$TMP/cache" SB_NOTIFY_SKIP=1
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_MERGE_RECHECK_DELAY_S=0 SB_MERGE_LOAD_MAX=100000
-printf '{"projectId":"P","fieldId":"F","options":{"Ready":"o-r","Done":"o-d"},"items":{"41":"I41","42":"I42","43":"I43","44":"I44","45":"I45","46":"I46"}}' > "$TMP/cache/board-o-1.json"
+printf '{"projectId":"P","fieldId":"F","options":{"Ready":"o-r","Done":"o-d"},"items":{"41":"I41","42":"I42","43":"I43","44":"I44","45":"I45","46":"I46","47":"I47","48":"I48"}}' > "$TMP/cache/board-o-1.json"
 CFG="$TMP/cfg.json"
 echo '{"base_branch":"main","repo":{"path":".","remote":""},"project":{"owner":"o","number":1},"verify_commands":["touch '"$TMP"'/verified"]}' > "$CFG"
 gate() {  # $1 = PR; stdout → gate$1.out, stderr → gate$1.err; echo rc
@@ -91,7 +90,7 @@ gate() {  # $1 = PR; stdout → gate$1.out, stderr → gate$1.err; echo rc
 
 
 printf '## Acceptance Criteria\n- [ ] Test: lane gọi gate trực tiếp có comment merged\n' > "$TMP/issue1.md"
-merged_comment() { grep -c "issue comment $1 .*\[reviewer\] \[report\] ✅ merged" "$TMP/calls"; }
+merged_comment() { grep -c "issue comment https://github.com/o/r/issues/$1 .*\[reviewer\] \[report\] ✅ merged" "$TMP/calls"; }
 
 # M1 — gọi trực tiếp, Closes #41, đủ AC.
 printf 'Closes #41\n<!-- sb:ac -->\n- [x] Test: lane gọi gate trực tiếp có comment merged\n<!-- /sb:ac -->\n' > "$TMP/b41.md"
@@ -101,20 +100,24 @@ rc=$(gate 41)
 [ "$rc" = 0 ] && [ "$(merged_comment 41)" = 1 ] && grep -q '✅ merged 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a541 · PR #41' "$TMP/calls" \
   && ok "M1: gọi trực tiếp, đủ AC → một comment ✅ merged <sha squash> · PR #41 trên thẻ" \
   || fail "M1: rc=$rc calls=$(tr '\n' '|' < "$TMP/calls" | tail -c 600)"
-awk '/pr merge 41/{m=NR} /issue comment 41/{c=NR} END{exit !(m && c && m < c)}' "$TMP/calls" \
+awk '/pr merge 41/{m=NR} /issue comment https:\/\/github.com\/o\/r\/issues\/41/{c=NR} END{exit !(m && c && m < c)}' "$TMP/calls" \
   && ok "M1: comment sau lệnh merge" || fail "M1: order"
 
-# M2 — queue/train gọi gate: queue tự comment khi route train-result, gate không comment trùng.
+# M2 — queue bật, queue/train gọi gate: queue tự comment khi route train-result, gate không comment trùng.
 printf 'Closes #42\n<!-- sb:ac -->\n- [x] Test: lane gọi gate trực tiếp có comment merged\n<!-- /sb:ac -->\n' > "$TMP/b42.md"
 card 42 "$TMP/b42.md" "$TMP/issue1.md" '[]'
 echo 42 > "$TMP/pr42.closes"
+CFG_SAVE="$CFG"; CFG="$TMP/cfg-queue.json"
+jq '. + {merge_queue: {enabled: true}}' "$CFG_SAVE" > "$CFG"
 rc=$(SB_MERGE_CALLER=queue gate 42)
+CFG="$CFG_SAVE"
 [ "$rc" = 0 ] && grep -q 'pr merge 42' "$TMP/calls" && [ "$(merged_comment 42)" = 0 ] \
   && ok "M2: SB_MERGE_CALLER=queue → merge, không comment ✅ merged" || fail "M2: rc=$rc $(tr '\n' '|' < "$TMP/calls" | tail -c 400)"
 
-# M3 — còn AC chưa tick: ac-open lo phần thẻ, không ✅ merged.
+# M3 — còn AC chưa tick: ac-open lo phần thẻ, không ✅ merged, kể cả khi GitHub vẫn liệt kê #43 trong closingIssuesReferences.
 printf '> ⏳ Closes #43\n<!-- sb:ac -->\n- [ ] Test: lane gọi gate trực tiếp có comment merged\\\n  ↳ đo sau merge\n<!-- /sb:ac -->\n' > "$TMP/b43.md"
 card 43 "$TMP/b43.md" "$TMP/issue1.md" '[]'
+echo 43 > "$TMP/pr43.closes"
 rc=$(gate 43)
 [ "$rc" = 0 ] && grep -q '^ac-open: #43$' "$TMP/gate43.out" && [ "$(merged_comment 43)" = 0 ] \
   && ok "M3: AC chưa đủ → ac-open, không ✅ merged" || fail "M3: rc=$rc $(tr '\n' '|' < "$TMP/calls" | tail -c 400)"
@@ -122,6 +125,7 @@ rc=$(gate 43)
 # M4 — PR tay không đóng thẻ: như cũ, không đụng issue.
 printf 'PR tay, Refs #44\n' > "$TMP/b44.md"
 card 44 "$TMP/b44.md" "$TMP/issue1.md" '[]'
+: > "$TMP/pr44.closes"
 rc=$(gate 44)
 [ "$rc" = 0 ] && ! grep -q 'issue ' "$TMP/calls" && ok "M4: PR không Closes thẻ → không comment" || fail "M4: rc=$rc $(tr '\n' '|' < "$TMP/calls")"
 
@@ -143,5 +147,26 @@ rc=$(gate 46)
   && grep -q '✅ merged 6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b46 · PR #46' "$TMP/calls" \
   && ok "M6: mất phản hồi merge, GitHub báo MERGED → comment ✅ merged <sha GitHub báo>" \
   || fail "M6: rc=$rc err=$(tail -3 "$TMP/gate46.err") calls=$(tr '\n' '|' < "$TMP/calls" | tail -c 400)"
+
+# M7 — queue tắt, merge-train worker gọi gate (SB_MERGE_CALLER=train): không queue nào comment, gate phải comment.
+printf 'Closes #47\n<!-- sb:ac -->\n- [x] Test: lane gọi gate trực tiếp có comment merged\n<!-- /sb:ac -->\n' > "$TMP/b47.md"
+card 47 "$TMP/b47.md" "$TMP/issue1.md" '[]'
+echo 47 > "$TMP/pr47.closes"
+rc=$(SB_MERGE_CALLER=train gate 47)
+[ "$rc" = 0 ] && [ "$(merged_comment 47)" = 1 ] && ok "M7: queue tắt, SB_MERGE_CALLER=train → comment ✅ merged" \
+  || fail "M7: rc=$rc calls=$(tr '\n' '|' < "$TMP/calls" | tail -c 400)"
+
+# M8 — PR nhánh split/… đóng issue repo khác (nhánh issue-N thì ac-check đã chặn, exit 11): comment đúng URL đó,
+# không lên #12 của repo này.
+printf 'Closes #48\nCloses other/x#12\n' > "$TMP/b48.md"
+card 48 "$TMP/b48.md" "$TMP/issue1.md" '[]'
+git -C "$R" push -q origin "issue-48-x:refs/heads/split/c48"
+echo split/c48 > "$TMP/pr48.ref"
+printf '48\nhttps://github.com/other/x/issues/12\n' > "$TMP/pr48.closes"
+rc=$(gate 48)
+[ "$rc" = 0 ] && grep -q 'issue comment https://github.com/other/x/issues/12 ' "$TMP/calls" \
+  && ! grep -qE 'issue comment (12|https://github.com/o/r/issues/12) ' "$TMP/calls" && [ "$(merged_comment 48)" = 1 ] \
+  && ok "M8: issue repo khác → comment đúng URL, không lên #12 của repo này" \
+  || fail "M8: rc=$rc err=$(tail -2 "$TMP/gate48.err") calls=$(tr '\n' '|' < "$TMP/calls" | tail -c 500)"
 
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAIL"; exit 1; }
