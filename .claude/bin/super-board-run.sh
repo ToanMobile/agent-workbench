@@ -310,6 +310,15 @@ WAITING_ON_JQ='def waiting_on: [((.labels // []) + (.content.labels // []))[] | 
 def file_wait: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("⏳ chờ thẻ khác") != null;'
 # #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
 waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
+# P3: cờ dependency_unblock_v1 (mặc định tắt). Env SB_DEPENDENCY_UNBLOCK_V1=0|1 thắng; không thì `dependency_unblock_v1` trong
+# <checkout chính>/.agents/local/flags.json (git common dir, như guard_v2 của super-board-needs-you.py). Thiếu/hỏng = tắt.
+dependency_unblock_v1_on() {
+  case "${SB_DEPENDENCY_UNBLOCK_V1:-}" in 1) return 0 ;; 0) return 1 ;; esac
+  local common
+  common=$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  [ -n "$common" ] || return 1
+  jq -e '.dependency_unblock_v1 == true' "$(dirname "$common")/.agents/local/flags.json" >/dev/null 2>&1
+}
 
 # #95: a card whose QA needs a real device (label needs-device, any case) — in QA, or in Ready labelled `qa` (the Tester takes it
 # from there) — while none is online ($nodev): a QA lane could only park it in Blocked. Not Review; not a Ready card the Builder
@@ -1771,6 +1780,61 @@ blocked-by:  ${blocked:--}" >/dev/null 2>&1 || true
   return 1
 }
 
+dependency_gate() {
+  # P3 (cờ dependency_unblock_v1): đường claude-p không đi qua super-board-deps.sh như wave-plan, nên thẻ Ready có `## Blocked by`
+  # còn issue MỞ từng tới builder rồi bị builder đẩy vào Blocked (Humans-vs.-UFOs #61, 25/10). Trả 0 = giao, 1 = giữ ở Ready.
+  # Chỉ giữ trên openBlockers, không theo runnable: super-board-deps.sh trả parseable=false, runnable=false, openBlockers=[] cho thẻ
+  # thiếu hoặc để trống mục `## Blocked by` (nhánh `$sec == null` / `blank` của nó). Deps lỗi / output lạ → giao như cũ.
+  # Giữ = nhãn waiting-on qua helper mark (như nhánh sequence của preflight_gate); không bao giờ Blocked, không viết blocked-by:.
+  # ponytail: deps đọc mọi issue mở của repo mỗi lần giao (một GraphQL phân trang); cache theo tick nếu chi phí đo được thành vấn đề.
+  local issue="$1" deps repo hdir out rc=0 open wout wlabels wcache orc=0
+  dependency_unblock_v1_on || return 0
+  deps="${SB_DEPS:-$(dirname "$SB_GITHUB_READ")/super-board-deps.sh}"
+  repo=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+  if [ -z "$repo" ] || [ ! -f "$deps" ]; then log "⚠ dependency gate #${issue}: no repo.remote in config or no ${deps} — dispatching without it"; return 0; fi
+  # File halt RIÊNG (chưa tồn tại): deps.sh bật SB_GITHUB_READ_STRICT=1, đọc hỏng sẽ ghi github-halt.json chung và dừng cả board.
+  hdir=$(mktemp -d "${TMPDIR:-/tmp}/sb-deps-halt.XXXXXX") || { log "⚠ dependency gate #${issue}: mktemp failed — dispatching without it"; return 0; }
+  out=$(SB_GITHUB_HALT_FILE="$hdir/github-halt.json" bash "$deps" --repo "$repo" --config "$CONFIG_PATH" --issues "$issue" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -rf "$hdir"
+  if [ "$rc" -ne 0 ]; then log "⚠ dependency gate #${issue}: super-board-deps.sh exit ${rc} — dispatching without it"; return 0; fi
+  open=$(printf '%s' "$out" | jq -er --arg n "$issue" '.[$n].openBlockers | arrays | map(tostring) | join(",")' 2>/dev/null) || open="?"
+  # openBlockers [] (join → "") là kết quả hợp lệ: giao, im lặng. grep trên chuỗi rỗng không có dòng nào nên kiểm dạng phải đứng sau.
+  [ -n "$open" ] || return 0
+  if ! printf '%s' "$open" | grep -Eq '^([0-9]+(,[0-9]+)*)?$'; then
+    log "⚠ dependency gate #${issue}: no readable openBlockers for it in the deps output — dispatching without it"
+    return 0
+  fi
+  # `## Blocked by` ghi chính thẻ (`- #7` trên #7): deps đếm nó là mở, mark từ chối (64) → thẻ kẹt Ready mãi. Bỏ mục đó.
+  case ",${open}," in *",${issue},"*)
+    open=$(printf '%s' "$open" | jq -Rr --arg n "$issue" 'split(",") | map(select(. != $n)) | join(",")' 2>/dev/null) || open=""
+    log "⚠ dependency gate #${issue}: its ## Blocked by lists #${issue} itself — that entry ignored"
+  esac
+  [ -n "$open" ] || return 0
+  wout=$(python3 "$(waiting_on_helper)" mark --config "$CONFIG_PATH" --issue "$issue" --on "$open" --why="## Blocked by: #${open//,/, #} still open" 2>>"$RUN_MANIFEST") || orc=$?
+  # 64 = đầu vào sai: thử lại mỗi tick không bao giờ thành, giao như cũ. 69/79 (tạm thời) và output lạ (65) vẫn giữ.
+  if [ "$orc" -eq 64 ]; then
+    log "⚠ dependency gate #${issue}: waiting-on mark refused the input (exit 64) — dispatching without it"
+    return 0
+  fi
+  [ "$orc" -ne 0 ] || wlabels=$(printf '%s' "$wout" | jq -ce '.labels | arrays' 2>/dev/null) || orc=65
+  if [ "$orc" -ne 0 ]; then
+    log "⚠ dependency gate #${issue}: ## Blocked by #${open//,/, #} still open but waiting-on mark failed (exit ${orc}) — not dispatched, stays in Ready, retrying next tick"
+    return 1
+  fi
+  if [ "$wlabels" = "[]" ]; then
+    log "dependency gate #${issue}: every ## Blocked by issue (#${open//,/, #}) is closed now — proceeding"
+    return 0
+  fi
+  if wcache=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -c --argjson n "$issue" --argjson add "$wlabels" '
+    .items |= map(if .content.number == $n then .labels = (((.labels // []) + $add) | unique) else . end)'); then
+    PROJECT_ITEMS_JSON="$wcache"
+  else
+    log "⚠ dependency gate #${issue}: could not add the waiting-on labels to the cached board — next board read has them"
+  fi
+  log "dependency gate #${issue}: ## Blocked by #${open//,/, #} still open — held in Ready (waiting-on), not dispatched"
+  return 1
+}
+
 dispatch_lane() {
   # $1 = lane (build|qa|review); $2 = issue number
   local lane="$1" issue="$2" prompt pid
@@ -1816,8 +1880,9 @@ dispatch_lane() {
   # Sau các kiểm tra đĩa/account (không tốn một lượt preflight mỗi tick khi chưa giao được), trước khi nhận thẻ.
   # #619: preflight không giao (mark/fold hỏng, đang chờ, đã sang Blocked…) → trong dispatch_ready_tick, thẻ bị bỏ qua tới hết tick
   # để lane build thử thẻ Ready kế; gọi lẻ (ngoài dispatch_ready_tick) giữ hành vi cũ.
+  # P3: dependency_gate trước preflight. Cờ tắt: hàm trả 0 ngay sau dependency_unblock_v1_on (test_dependency_unblock_v1.sh T1 đo).
   if [ "$lane" = "build" ]; then
-    preflight_gate "$issue" || { [ "${SB_READY_TICK:-0}" != 1 ] || PREFLIGHT_SKIP="${PREFLIGHT_SKIP:-} ${issue}"; return 0; }
+    { dependency_gate "$issue" && preflight_gate "$issue"; } || { [ "${SB_READY_TICK:-0}" != 1 ] || PREFLIGHT_SKIP="${PREFLIGHT_SKIP:-} ${issue}"; return 0; }
   fi
   if ! try_claim_assignee "$issue"; then
     return 0
