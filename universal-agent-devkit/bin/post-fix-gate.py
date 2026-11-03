@@ -5091,6 +5091,54 @@ def _note_busy_holder(holder, fast=""):
             _BUSY_HOLDER["fast"] = fast
 
 
+# Wave 2 lane C2 (03/11): the B5 rule for the machine-wide gate queue. In 61 of the 62 Stop waits of >= 20 s measured on 03/11 a gate of
+# another project held a gate slot for the whole wait (the 45 s DEVKIT_GATE_SLOT_WAIT_S the Stop hook sets), never this project's lock. A
+# Stop run (TEST_RUN_LOCK_BUSY_FAST=1) that finds EVERY slot of the pool held by a LIVE gate waits only DEVKIT_REUSE_LOCK_WAIT_S (3 s), then
+# BUSY as before (exit 4, busy_reason gate_queue): those holders are whole gate runs, minutes long. A free slot, a slot held with no
+# <slot>.held marker, a marker naming a dead pid, or one older than the process that has that pid now (a recycled pid): the whole wait.
+# ponytail: the start time is read with `ps -o lstart` (macOS); a "proc:" start (Linux) is unknown here, so Linux keeps the whole wait.
+def _gate_pool_all_live(paths):
+    """(True, pids) when every lock in `paths` (pool 'gate') is held and its <lock>.held marker names a live process that started no later
+    than the marker was written (+2 s: lstart has whole seconds), other than this one; else (False, []). Probes with LOCK_SH|LOCK_NB and
+    lets go at once; reads only. Any doubt (a missing file, an unreadable marker, an unknown start time) is False: the whole wait."""
+    import calendar  # noqa: PLC0415
+    import fcntl  # noqa: PLC0415
+    pids = []
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import session_lock  # noqa: PLC0415 - sibling module in bin/
+        for path in paths:
+            try:
+                fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            except OSError:
+                return False, []   # never made: a free slot
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                return False, []   # free now
+            except OSError:
+                pass   # held
+            finally:
+                os.close(fd)
+            mfd = _state_fd(path + ".held", "r")
+            try:
+                pid = int(os.read(mfd, 64).decode("ascii").strip())
+                mtime = os.fstat(mfd).st_mtime
+            finally:
+                os.close(mfd)
+            if pid <= 1 or pid == os.getpid():
+                return False, []
+            start = session_lock.pid_start(pid)
+            if not isinstance(start, str) or start.startswith("proc:"):
+                return False, []
+            if calendar.timegm(time.strptime(" ".join(start.split()), "%a %b %d %H:%M:%S %Y")) > mtime + 2.0:
+                return False, []   # the process with that pid started after the marker: not the holder that wrote it
+            pids.append(pid)
+    except (OSError, ValueError, ImportError, AttributeError, OverflowError):
+        return False, []
+    return bool(pids), pids
+
+
 def acquire_test_run_lock(project_dir, cap=None, sid=None):
     """(file handle, held) — the per-project test-run flock under .claude/audit-gate/. Waits at
     most TEST_RUN_LOCK_WAIT_S (default 900 from the CLI; hooks/regression_gate.sh passes 45 so
@@ -7563,11 +7611,19 @@ def main():
                 # ponytail: test_run.lock của dự án vẫn bị giữ trong lúc chờ slot, nên một Stop hook cùng checkout báo BUSY với
                 # busy_reason=project_lock dù máy thực ra đang nghẽn hàng đợi gate; và dưới SB_HEAVY_SLOT_HELD=1 acquire_pool trả
                 # prev_held mà vẫn đặt DEVKIT_GATE_SLOT_HELD. Ghi nhãn holder vào khoá khi người dùng thấy báo sai lý do.
+                gate_paths = gate_slot_hs.pool_paths("gate", gate_slots_n)
+                live_pool, live_pids = False, []
+                if os.environ.get("TEST_RUN_LOCK_BUSY_FAST") == "1" and os.environ.get("SB_HEAVY_SLOT_HELD") != "1":
+                    live_pool, live_pids = _gate_pool_all_live(gate_paths)   # C2: every slot a live gate's: the B5 short wait
+                    if live_pool:
+                        gate_wait_s = min(gate_wait_s, _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0))
                 gate_slot = gate_slot_hs.acquire_pool(
-                    "gate", gate_slot_hs.pool_paths("gate", gate_slots_n),
+                    "gate", gate_paths,
                     wait_s=gate_wait_s, label=os.path.basename(str(project_dir))[:64])
                 if gate_slot.timed_out:
-                    _note_busy_holder({"who": "gate_queue", "raw": "pool gate, %d slot(s), waited %.0f s" % (gate_slots_n, gate_wait_s)})
+                    _note_busy_holder({"who": "gate_queue", "raw": "pool gate, %d slot(s), waited %.0f s%s" % (
+                        gate_slots_n, gate_wait_s, ", live holders %s" % live_pids[:8] if live_pool else "")},
+                        "live_pool" if live_pool else "")
                     if lock_fh is not None:
                         _write_test_run_lock_holder(lock_fh, clear=True)
                         lock_fh.close()
