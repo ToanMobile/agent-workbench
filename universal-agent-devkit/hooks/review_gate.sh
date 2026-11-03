@@ -783,7 +783,7 @@ for _at, _rp, _argv in list(ocr_reports):
         ws_mapped |= _hit
         _excl &= set(ws_need)
         ws_excl |= _excl
-    if _hit or _excl:   # a review at its own index (an excluded session file covered by the old rule: as that rule counts it)
+    if _hit:   # a review at its own index (an excluded file is no review mark: it never stands in for the agent review)
         last_review_idx = max(last_review_idx, _at)
         review_marks.append(_at)
     logline(f"[{ts}] OCR run at #{_at}: content map matches {sorted(_hit)}")

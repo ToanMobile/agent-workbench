@@ -157,6 +157,12 @@ age -300 "$P/a.py" "$TMP/r9/ocr-review.json"; age 0 "$P/x.min.js"
 stop g4a; rc=$?
 [ "$rc" = 2 ] && grep -q "x.min.js" "$TMP/err" && ok "G4: an excluded file edited after the run (report older): old rule, blocked and named as delta (rc 2)" \
   || fail "G4: content_excluded exempted a file edited after the run (rc $rc)"
+# G4: only the excluded file edited, OCR run after the edit with a fresh report, no agent review: the exclusion is no review mark
+age -300 "$P/x.min.js"; age 0 "$TMP/r9/ocr-review.json"
+: > "$TR"; ev edit t1 "$P/x.min.js"; ocr_run t2 "$TMP/r9/ocr-review.json"
+stop g4e; rc=$?
+[ "$rc" = 2 ] && ok "G4: an excluded file covered by the old rule does not stand in for the agent review (rc 2)" \
+  || fail "G4: OCR exclusion alone passed without an agent review (rc $rc)"
 # G4: a report edited by hand puts the dirty b.py into content_excluded; the map holds a.py; b.py edited after the run
 reset_ws; rm -f "$P/x.min.js"; rep "$TMP/r10/ocr-review.json" "$P" "$PH" ws a.py
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["content_excluded"]=["b.py"]; json.dump(d,open(sys.argv[1],"w"))' "$TMP/r10/ocr-review.json"
