@@ -29,20 +29,20 @@ def section(lane, issue, sid, account, cfg_dir, inbox=True):
 
 class AccountHelpers(unittest.TestCase):
     def test_config_dir_names(self):
-        self.assertEqual(server.account_of_config_dir("/Users/alex/.claude-finos"), ("finos", ".claude-finos"))
-        self.assertEqual(server.account_of_config_dir("/Users/alex/.claude-finos_team/"), ("finos_team", ".claude-finos_team"))
+        self.assertEqual(server.account_of_config_dir("/Users/alex/.claude-finos"), ("finos_toan", ".claude-finos"))
+        self.assertEqual(server.account_of_config_dir("/Users/alex/.claude-finos_team/"), ("finos_linh", ".claude-finos_team"))
         self.assertEqual(server.account_of_config_dir("/Users/alex/.claude"), (None, ".claude"))
         self.assertEqual(server.account_of_config_dir("/tmp/random"), (None, None))
         self.assertEqual(server.account_of_config_dir(None), (None, None))
 
     def test_unsafe_account_names_are_dropped(self):
-        self.assertEqual(server.safe_account("max"), "max")
+        self.assertEqual(server.safe_account("max"), "finos_toan_max")
         for bad in ("a=b", "x/y", "", None, "a" * 80, SECRET + "=", "two words"):
             self.assertIsNone(server.safe_account(bad), bad)
 
     def test_orchestrator_from_transcript_dir(self):
         s = {"id": "x", "file": "/Users/alex/.claude-max/projects/-Volumes-Data-Toan-agent-workbench/x.jsonl"}
-        self.assertEqual(server.session_account(s), {"account": "max", "configDir": ".claude-max"})
+        self.assertEqual(server.session_account(s), {"account": "finos_toan_max", "configDir": ".claude-max"})
         s = {"id": "x", "file": "/Users/alex/.claude/projects/-Volumes-Data-Toan-agent-workbench/x.jsonl"}
         self.assertEqual(server.session_account(s), {"account": None, "configDir": ".claude"})
         self.assertEqual(server.session_account({"id": "x", "file": ""}), {"account": None, "configDir": None})
@@ -50,7 +50,7 @@ class AccountHelpers(unittest.TestCase):
     def test_worker_log_wins_over_transcript_dir(self):
         s = {"id": SID_A, "file": "/Users/alex/.claude/projects/p/x.jsonl"}
         got = server.session_account(s, {SID_A: {"account": "finos", "configDir": ".claude-finos"}})
-        self.assertEqual(got, {"account": "finos", "configDir": ".claude-finos"})
+        self.assertEqual(got, {"account": "finos_toan", "configDir": ".claude-finos"})
 
 
 class WorkerLogAccounts(unittest.TestCase):
@@ -71,8 +71,8 @@ class WorkerLogAccounts(unittest.TestCase):
 
     def test_each_dispatch_maps_its_session(self):
         got = self.scanner.session_accounts({"Demo": self.repo})
-        self.assertEqual(got[SID_A], {"account": "finos", "configDir": ".claude-finos"})
-        self.assertEqual(got[SID_B], {"account": "finos_team", "configDir": ".claude-finos_team"})
+        self.assertEqual(got[SID_A], {"account": "finos_toan", "configDir": ".claude-finos"})
+        self.assertEqual(got[SID_B], {"account": "finos_linh", "configDir": ".claude-finos_team"})
 
     def test_reads_appended_lines_incrementally(self):
         self.scanner.session_accounts({"Demo": self.repo})
@@ -80,11 +80,11 @@ class WorkerLogAccounts(unittest.TestCase):
         with open(self.log, "a") as f:
             f.write(section("review", 678, SID_C, "max", "/Users/alex/.claude-max")[:-1])  # dòng cuối chưa ghi trọn
         got = self.scanner.session_accounts({"Demo": self.repo})
-        self.assertEqual(got[SID_C], {"account": "max", "configDir": ".claude-max"})
+        self.assertEqual(got[SID_C], {"account": "finos_toan_max", "configDir": ".claude-max"})
         self.assertGreater(self.scanner.acct_cache[self.log]["pos"], pos)
         with open(self.log, "a") as f:
             f.write("\n")
-        self.assertEqual(self.scanner.session_accounts({"Demo": self.repo})[SID_C]["account"], "max")
+        self.assertEqual(self.scanner.session_accounts({"Demo": self.repo})[SID_C]["account"], "finos_toan_max")
 
     def test_odd_account_value_not_exposed(self):
         with open(self.log, "a") as f:
@@ -110,9 +110,9 @@ class WorkerLogAccounts(unittest.TestCase):
         lane = by_sid[SID_A]
         self.assertEqual(lane["kind"], "lane")
         self.assertEqual((lane["session"]["account"], lane["session"]["configDir"], lane["session"]["tokensLeft"]),
-                         ("finos", ".claude-finos", 1234567))
+                         ("finos_toan", ".claude-finos", 1234567))
         o = by_sid[orch["id"]]["session"]
-        self.assertEqual((o["account"], o["configDir"], o["tokensLeft"]), ("max", ".claude-max", 999))
+        self.assertEqual((o["account"], o["configDir"], o["tokensLeft"]), ("finos_toan_max", ".claude-max", 999))
         body = json.dumps(st, ensure_ascii=False)
         for leak in (SECRET, OAUTH, "/Users/alex/.claude-finos", "config_dir=", "account_pool"):
             self.assertNotIn(leak, body)
@@ -125,7 +125,7 @@ class DemoHasAccounts(unittest.TestCase):
         app.rebuild()
         st = json.loads(app.state_bytes)
         accs = {w["session"]["account"] for w in st["workers"] if w.get("session")}
-        self.assertTrue({"max", "finos", "finos_team"} <= accs, accs)
+        self.assertTrue({"finos_toan_max", "finos_toan", "finos_linh"} <= accs, accs)
         for w in st["workers"]:
             if w.get("session"):
                 self.assertNotIn("/", w["session"]["configDir"] or "")

@@ -168,7 +168,7 @@
       <a class="back" href="/">← Xưởng agent</a>
       <div class="title">
         <h1>CC Switcher</h1>
-        <p>Bảng điều khiển 6 tài khoản AI · chống ban · quota 5 giờ</p>
+        <p>Bảng điều khiển tài khoản AI · chống ban · quota 5 giờ</p>
       </div>
     </div>
     <div class="right">
@@ -194,7 +194,7 @@
 
     <section aria-labelledby="h-claude">
       <h2 id="h-claude">Tài khoản Claude <small>quota 5 giờ · cách ly theo repo · khóa nhảy chéo</small></h2>
-      <div class="grid g3" id="claude"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+      <div class="grid g4" id="claude"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
     </section>
 
     <section aria-labelledby="h-backup">
@@ -229,7 +229,7 @@
 
     <section aria-labelledby="h-repo" id="repoSection">
       <h2 id="h-repo">Repo ↔ Tài khoản <small>repo nào dùng tài khoản Claude nào · .claude/settings.local.json → "account" · worktree dùng chung tài khoản của repo gốc</small></h2>
-      <div class="grid g3" id="repoByAcc"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+      <div class="grid g4" id="repoByAcc"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
       <div class="card tablewrap" id="repos" style="margin-top:12px"><div class="skel" style="min-height:120px"></div></div>
       <div class="card" style="margin-top:12px">
         <div class="actions">
@@ -326,7 +326,7 @@
   function toast(msg, isErr) {
     var t = $('#toast');
     t.textContent = msg; t.className = 'toast panel show' + (isErr ? ' err' : '');
-    clearTimeout(toast._t); toast._t = setTimeout(function () { t.className = 'toast panel'; }, 4200);
+    clearTimeout(toast._t); toast._t = setTimeout(function () { t.className = 'toast panel'; }, isErr ? 10000 : 4200);
   }
   function confirmDlg(title, body, okText, danger) {
     return new Promise(function (resolve) {
@@ -336,7 +336,7 @@
       ok.className = 'btn ' + (danger ? 'danger solid' : 'primary');
       d.returnValue = '';
       d.addEventListener('close', function h() { d.removeEventListener('close', h); resolve(d.returnValue === 'ok'); });
-      d.showModal(); ok.focus();
+      d.showModal(); (danger ? d.querySelector('button[value="cancel"]') : ok).focus(); // hộp thoại nguy hiểm: Enter = Hủy
     });
   }
   function setSync(kind, text) {
@@ -457,7 +457,8 @@
     else w.hidden = true;
   }
   var repoDirty = {};   // repo path -> tài khoản đang chọn nhưng chưa lưu (giữ qua lần tự làm mới)
-  function claudeIds() { return state.claudeAccounts || ['finos', 'finos_team', 'max']; }
+  function frozenTag(id) { var p = state.profiles.find(function (x) { return x.id === id; }); return p && p.isFrozen ? ' (đóng băng 429)' : ''; }
+  function claudeIds() { return state.claudeAccounts || ['finos_toan', 'finos_linh', 'finos_toan_max', 'finos_lua']; }
   function pShort(id) { var p = state.profiles.find(function (x) { return x.id === id; }); return p ? (p.shortLabel || splitName(p.name).title) : id; }
   function effBadge(r) {
     var e = r.effective || {};
@@ -501,7 +502,7 @@
     state.repoAssignments.forEach(function (x) {
       var sel = el('select', { 'aria-label': 'Tài khoản cho ' + x.name, 'data-repo-select': x.path, disabled: busy || !x.pathExists ? 'disabled' : null });
       if (!x.pinnedInFile) sel.appendChild(el('option', { value: '', text: '— chưa ghim —' }));
-      claudeIds().forEach(function (id) { sel.appendChild(el('option', { value: id, text: pShort(id) })); });
+      claudeIds().forEach(function (id) { sel.appendChild(el('option', { value: id, text: pShort(id) + frozenTag(id) })); });
       if (x.pinnedInFile && claudeIds().indexOf(x.account) < 0) sel.appendChild(el('option', { value: x.account, text: x.account + ' (lạ)' }));
       var cur = x.pinnedInFile ? x.account : '';
       sel.value = repoDirty[x.path] !== undefined ? repoDirty[x.path] : cur;
@@ -528,7 +529,7 @@
       el('th', { scope: 'col', text: 'Repo · nhóm · đường dẫn' }), el('th', { scope: 'col', text: 'Tài khoản gán' }),
       el('th', { scope: 'col', text: 'Đang dùng thực tế' }), el('th', { scope: 'col', text: 'Lần dùng cuối' }), el('th', { scope: 'col', text: '' })])]), tb]));
     var ra = $('#raAcc'), keep = ra.value; ra.innerHTML = '';
-    claudeIds().forEach(function (id) { ra.appendChild(el('option', { value: id, text: pShort(id) })); });
+    claudeIds().forEach(function (id) { ra.appendChild(el('option', { value: id, text: pShort(id) + frozenTag(id) })); });
     if (keep) ra.value = keep;
   }
   function repoByPath(p) { return state.repoAssignments.find(function (x) { return x.path === p; }); }
@@ -620,7 +621,7 @@
     var sw = e.target.closest('[data-switch]');
     if (sw && !sw.disabled) {
       var id = sw.dataset.switch;
-      confirmDlg('Chuyển sang ' + profileName(id) + '?', 'CC Switch sẽ dùng tài khoản này cho phiên Claude Code / Antigravity / Grok mới.', 'Chuyển').then(function (ok) {
+      confirmDlg('Chuyển sang ' + profileName(id) + '?', 'CC Switch sẽ dùng tài khoản này cho phiên Claude Code / Antigravity / Grok mới. Phiên đang mở giữ nguyên tài khoản cũ.', 'Chuyển').then(function (ok) {
         if (!ok) return;
         act({ action: 'switch', target: id }, sw).then(function (res) {
           if (!res) return;
@@ -637,12 +638,12 @@
     if (!a || a.disabled) return;
     var kind = a.dataset.act;
     var cfg = {
-      rotate: ['Đổi sang tài khoản kế tiếp?', 'Xoay vòng theo thứ tự 1 → 6, bỏ qua tài khoản đang đóng băng.', 'Đổi', false],
-      limit: ['Báo tài khoản hiện tại chạm 429?', 'Đóng băng "' + (state ? profileName(state.activeProfileId) : '') + '" ' + (state ? Math.round(state.antiBan.rateLimitFreezeSec / 3600 * 10) / 10 : 5) + ' giờ và chuyển ngay sang tài khoản an toàn kế tiếp.', 'Đóng băng & đổi', true],
+      rotate: ['Đổi sang tài khoản kế tiếp?', 'Xoay vòng theo thứ tự 1 → 7, bỏ qua tài khoản đang đóng băng. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đổi', false],
+      limit: ['Báo tài khoản hiện tại chạm 429?', 'Đóng băng "' + (state ? profileName(state.activeProfileId) : '') + '" ' + (state ? Math.round(state.antiBan.rateLimitFreezeSec / 3600 * 10) / 10 : 5) + ' giờ và chuyển ngay sang tài khoản an toàn kế tiếp. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đóng băng & đổi', true],
       unfreeze: ['Mở khóa toàn bộ?', 'Xóa mọi đóng băng 429 và đặt lại thời gian nghỉ chống ban về 0. Chỉ làm khi chắc quota đã hồi.', 'Mở khóa', true],
       balance: a.dataset.mode === 'swap'
-        ? ['Đảo nhóm repo?', 'Repo đang gán FinOS chuyển sang FinOS Team và ngược lại (ghi .claude/settings.local.json của từng repo, giữ nguyên các khóa khác).', 'Đảo nhóm', false]
-        : ['Chia đều repo 3/3?', 'Gán lại 3 repo cho FinOS và 3 repo cho FinOS Team theo mặc định (ghi .claude/settings.local.json của từng repo).', 'Chia đều', false]
+        ? ['Đảo nhóm repo?', 'Repo đang gán FinOS chuyển sang FinOS Team và ngược lại; repo gán tài khoản khác (Claude Max, FinOS Lua…) giữ nguyên (ghi .claude/settings.local.json của từng repo, giữ nguyên các khóa khác).', 'Đảo nhóm', false]
+        : ['Chia đều repo 3/3?', 'Gán lại 3 repo cho FinOS và 3 repo cho FinOS Team theo mặc định, kể cả repo đang gán Claude Max hoặc FinOS Lua (ghi .claude/settings.local.json của từng repo).', 'Chia đều', false]
     }[kind];
     confirmDlg(cfg[0], cfg[1], cfg[2], cfg[3]).then(function (ok) {
       if (ok) act(kind === 'balance' ? { action: 'balance', mode: a.dataset.mode } : { action: kind }, a);
