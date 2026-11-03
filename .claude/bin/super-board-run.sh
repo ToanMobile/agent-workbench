@@ -2729,7 +2729,8 @@ cleanup_stale_worktrees() {
 reclaim_stranded_building() {
   # Run start (mọi thẻ Building không có lock sống) hoặc giữa lượt chạy ($1 = danh sách issue vừa mất worker build,
   # $2 = câu Did: cho comment). Trả thẻ Building không còn worker sống và không có assignee nào khác ngoài bot về Ready;
-  # nhánh issue được giữ nguyên để Builder kế tiếp làm tiếp thay vì làm lại từ đầu.
+  # nhánh issue được giữ nguyên để Builder kế tiếp làm tiếp thay vì làm lại từ đầu. Thẻ nhãn `session` (hooks/session_card.sh: task từ
+  # chat, phiên đang làm) nằm Building không có lock là bình thường: không trả về Ready, runner sẽ build trùng việc của phiên.
   local only="${1:-}" did="${2:-found no live worker; the last run stopped mid-build}"
   local issue item_id branch wt wt_branch
   while IFS=$'\t' read -r issue item_id; do
@@ -2780,6 +2781,7 @@ Next: builder (next tick${branch:+, continues on the branch})" >/dev/null 2>&1 |
 $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" --arg only " $only " '
     .items[]
     | select(.status == "Building" and .content.type == "Issue")
+    | select([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("session") | not)
     | (" " + (.content.number | tostring) + " ") as $n
     | select($only == "  " or ($only | contains($n)))
     | select(((.content.assignees // []) - [$bot]) | length == 0)
