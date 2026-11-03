@@ -176,8 +176,9 @@ RX_SID='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
 [[ ${INPUT} =~ ${RX_SID} ]] && SID="${BASH_REMATCH[1]}" || exit 0
 RX_EV='"hook_event_name"[[:space:]]*:[[:space:]]*"([A-Za-z]+)"'
 [[ ${INPUT} =~ ${RX_EV} ]] && EVENT="${BASH_REMATCH[1]}" || EVENT=""
-RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*)"'
+RX_CWD='"cwd"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'   # a JSON-escaped cwd too (é sent escaped, \", \\): tests/gates/test_hook_payload_cwd_escaped.sh
 [[ ${INPUT} =~ ${RX_CWD} ]] && CWD="${BASH_REMATCH[1]}" || CWD="${CLAUDE_PROJECT_DIR:-.}"
+case "${CWD}" in *\\*) CWD="$(python3 -I -c 'import json,sys; sys.stdout.buffer.write(json.loads("\"%s\"" % sys.argv[1]).encode())' "${CWD}" 2>/dev/null)" || CWD="." ;; esac
 [ -d "${CWD}" ] || exit 0
 
 TOP="$(git -C "${CWD}" rev-parse --show-toplevel 2>/dev/null)" || exit 0

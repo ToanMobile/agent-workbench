@@ -1322,21 +1322,80 @@ gate_red_suite_ids() {
     END { if (!(rej && static == 1 && n > 0 && !odd)) exit 1; for (i = 1; i <= n; i++) print ids[i] }'
 }
 
-# Chạy lệnh suite trên cây base trong scratch (giới hạn 900 s như gate), trong nhóm tiến trình riêng bị kill cả nhóm khi quá giờ,
-# env không có GIT_* / POSTFIX_GATE_FORCE_FULL: 1 = đỏ thật, 0 = xanh, 2 = không chạy được (126/127), 124 = quá giờ.
+# Chạy lệnh suite trên cây base trong scratch, trong nhóm tiến trình riêng bị kill cả nhóm khi quá giờ, env không có GIT_* /
+# POSTFIX_GATE_FORCE_FULL: 1 = đỏ thật, 0 = xanh, 2 = không chạy được (126/127, hay exception), 124 = quá giờ, 75 = hết giờ chờ slot
+# pool gate (máy bận, không phải lỗi PR: red_only_on_base đặt BASE_SUITE_BUSY=1 và merge gate thoát 4 như T0056).
+# $2 = id suite (#914 mục 1): xin slot pool gate như post-fix-gate (lane_lock P5 đã nhả slot lane lúc này, nên không xin thì chạy dư một
+# việc nặng), trần = 900 s (SB_BASE_SUITE_TIMEOUT_S) × SUITE_TIMEOUT_FACTOR của id đọc từ post-fix-gate.py. Không tìm thấy kit hay
+# heavy_slot thì chạy không qua pool như cũ. Đoạn python không có dấu nháy đơn: test_merge_gate_verify_log_outside.sh trích nó.
 run_suite_on_base() {
-  ( cd "$SCRATCH" && python3 -I -c '
-import os, signal, subprocess, sys
+  ( cd "$SCRATCH" && SB_BASE_SUITE_ID="${2:-}" SB_MG_HERE="$HERE" python3 -I -c '
+import ast, importlib.util, os, re, signal, subprocess, sys
 env = {k: v for k, v in os.environ.items()
        if not k.startswith("GIT_") and k not in ("POSTFIX_GATE_FORCE_FULL", "CLAUDE_PROJECT_DIR", "TARGET_DIR")}
-p = subprocess.Popen(sys.argv[1], shell=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+here, sid = os.environ.get("SB_MG_HERE", ""), os.environ.get("SB_BASE_SUITE_ID", "")
 try:
-    rc = p.wait(timeout=900)
-except subprocess.TimeoutExpired:
-    os.killpg(p.pid, signal.SIGKILL)
-    p.wait()
-    sys.exit(124)
-sys.exit(2 if rc in (126, 127) else (1 if rc else 0))' "$1" )
+    limit = float(os.environ.get("SB_BASE_SUITE_TIMEOUT_S") or 900)
+except ValueError:
+    limit = 900.0
+hs, slots = None, 0
+try:
+    if here:
+        sp = importlib.util.spec_from_file_location("sbhs", here + "/super-board-heavy-slot.py")
+        w = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(w)
+        tgt = w._find_devkit_heavy_slot()
+        if tgt is not None:
+            sys.path.insert(0, str(tgt.parent))
+            import heavy_slot as hs
+            m = re.search(r"^SUITE_TIMEOUT_FACTOR = (\{.*?\})$", open(str(tgt.parent / "post-fix-gate.py"), encoding="utf-8").read(), re.M)
+            limit *= (ast.literal_eval(m.group(1)).get(sid) or 1) if m else 1
+            raw = os.environ.get("DEVKIT_GATE_SLOTS", "").strip()
+            if raw.isdigit():
+                slots = int(raw)
+            else:
+                import capacity
+                slots = int(capacity.gate_max())
+except Exception as exc:
+    print("[merge-gate] base suite: khong xin duoc slot pool gate (%r); chay khong qua pool" % (exc,), file=sys.stderr)
+    hs, slots = None, 0
+if not 0 < limit < float("inf"):
+    limit = 900.0
+h, p = None, None
+try:
+    if hs is not None and slots > 0 and os.environ.get("DEVKIT_GATE_SLOT_HELD") != "1":
+        try:
+            wait = float(os.environ.get("DEVKIT_GATE_SLOT_WAIT_S") or 1800)
+        except ValueError:
+            wait = 1800.0
+        h = hs.acquire_pool("gate", hs.pool_paths("gate", slots), wait_s=wait, prio="merge", label="red-on-base " + sid)
+        if h.timed_out:
+            sys.exit(75)
+        env["DEVKIT_GATE_SLOT_HELD"] = "1"
+    p = subprocess.Popen(sys.argv[1], shell=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        rc = p.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.wait()
+        sys.exit(124)
+    sys.exit(2 if rc in (126, 127) else (1 if rc else 0))
+except SystemExit:
+    raise
+except BaseException as exc:   # exit 1 nghia la do tren base: loi bat ky khong duoc ra 1, ra 2 (khong chay duoc) va kill nhom suite
+    print("[merge-gate] base suite: loi %r; coi la khong chay duoc" % (exc,), file=sys.stderr)
+    if p is not None and p.poll() is None:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+    sys.exit(2)
+finally:
+    if h is not None:
+        try:
+            hs.release_pool(h)
+        except Exception:
+            pass' "$1" )
 }
 
 # Mở thẻ bug riêng cho suite đỏ sẵn trên base (không trùng: bỏ qua nếu đã có thẻ mở nhắc id đó). Lỗi mở thẻ → return 1.
@@ -1403,6 +1462,7 @@ red_only_on_base() {
   local base_matrix="$SCRATCH/.red-on-base-matrix.json" merged_matrix="$SCRATCH/.agents/regression_matrix.active.json"
   local jqq='[.. | objects | select(.id? == $id and (.command? | type) == "string")] | first // empty'
   local ids_list=() names=() cmds=()
+  BASE_SUITE_BUSY=0   # #914: run_suite_on_base hết giờ chờ slot pool gate (75) ⇒ 1; chỗ gọi thoát 4, không đẩy thẻ về Build
   [ "$rc" -eq 1 ] || return 1
   case "$vcmd" in *[\;\&\|\<\>]*|*$'\n'*) return 1 ;; esac
   # R2: không ghép lệnh là chưa đủ: `./scripts/verify.sh`, `make verify` có thể chạy post-fix-gate rồi bước khác cũng exit 1. Phải là chính
@@ -1425,10 +1485,11 @@ red_only_on_base() {
   rm -f "$base_matrix"
   git -C "$SCRATCH" reset -q --hard "$BASE_SHA" 2>/dev/null || return 1
   for p in "${!ids_list[@]}"; do
-    sr=0; run_suite_on_base "${cmds[$p]}" || sr=$?
+    sr=0; run_suite_on_base "${cmds[$p]}" "${ids_list[$p]}" || sr=$?
     if [ "$sr" -ne 1 ]; then
       all_red=0
       if [ "$sr" -eq 0 ]; then say "${ids_list[$p]} is green on origin/${BASE}: the PR broke it"
+      elif [ "$sr" -eq 75 ]; then BASE_SUITE_BUSY=1; say "${ids_list[$p]}: the gate pool stayed busy, the base check did not run (not the PR's fault)"
       else say "${ids_list[$p]} did not run to a red result on origin/${BASE} (exit ${sr})"; fi
       break
     fi
@@ -1479,6 +1540,9 @@ for cmd in "${VERIFY[@]}"; do
     say "verify red only on suites that are red on origin/${BASE} too (#251): not rejecting the PR"
     VRC=0
     TREE_RECEIPT=""   # verify tolerated red suites: no receipt, the next gate checks them against the base again
+  elif [ "${BASE_SUITE_BUSY:-0}" -eq 1 ]; then
+    say "base check could not get a gate slot in time (pool busy): keeping PR #${PR} in Review"
+    exit 4
   fi
   if [ "$VRC" -eq 4 ]; then
     # T0056: post-fix-gate thoát 4 kèm JSON .busy == true (hàng đợi gate toàn máy hoặc khoá dự án bận) là tình trạng tạm thời,

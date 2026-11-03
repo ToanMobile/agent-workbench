@@ -326,32 +326,59 @@ def merge_gate_call(argv: list) -> bool:
     return i < len(argv) and os.path.basename(argv[i]) == _MERGE_GATE
 
 
-def _descendants(root: int):
-    """P5: tập PID gồm root và mọi hậu duệ (một lần `ps -A -o pid=,ppid=`); None khi ps lỗi (chỗ gọi giữ slot)."""
+class _Tree(set):
+    """Tập PID hậu duệ + `started` {pid: epoch lúc tiến trình bắt đầu} (chỉ những PID ps báo được lstart)."""
+    started: dict
+
+
+def _lstart(parts: list):
+    """lstart của ps (`Mon Nov  3 11:08:00 2026`, 5 token, locale C) → epoch; None khi không đọc được."""
     try:
-        r = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10)
+        return time.mktime(time.strptime(" ".join(parts), "%a %b %d %H:%M:%S %Y"))
+    except (ValueError, OverflowError):
+        return None
+
+
+def _descendants(root: int):
+    """P5: tập PID gồm root và mọi hậu duệ còn sống (một lần `ps -A -o pid=,ppid=,stat=,lstart=`); None khi ps lỗi (chỗ gọi giữ slot).
+    Hậu duệ zombie (stat Z) bị bỏ (#914 mục 4): tiến trình đã chết, flock của nó đã nhả. `started` ghi lstart để _gate_held loại marker
+    .held cũ hơn tiến trình mang PID đó (PID tái dụng)."""
+    try:
+        r = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,stat=,lstart="], capture_output=True, text=True, timeout=10,
+                           env={**os.environ, "LC_ALL": "C"})
     except (OSError, subprocess.SubprocessError):
         return None
     if r.returncode != 0:
         return None
-    kids = {}
+    kids, zombie, started = {}, set(), {}
     for line in r.stdout.splitlines():
         parts = line.split()
-        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-            kids.setdefault(int(parts[1]), []).append(int(parts[0]))
-    out, todo = {root}, [root]
+        if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
+            pid = int(parts[0])
+            kids.setdefault(int(parts[1]), []).append(pid)
+            if parts[2].startswith("Z"):
+                zombie.add(pid)
+            st = _lstart(parts[3:8])
+            if st is not None:
+                started[pid] = st
+    out = _Tree({root})
+    out.started = started
+    todo = [root]
     while todo:
         for kid in kids.get(todo.pop(), ()):
             if kid not in out:
-                out.add(kid)
                 todo.append(kid)
+                if kid not in zombie:
+                    out.add(kid)
     return out
 
 
 def _gate_held(pids: set, spawned: float):
     """P5: (pid, nhãn) khi <slot_dir>/gate-<k>.lock.held (slot pool gate đang giữ) ghi một PID trong pids và mtime ≥ spawned; None khi
-    không. Chỉ đọc (_read_small: symlink / FIFO không treo); marker lỗi ⇒ bỏ marker đó."""
+    không. Chỉ đọc (_read_small: symlink / FIFO không treo); marker lỗi ⇒ bỏ marker đó. Marker cũ hơn lúc tiến trình mang PID đó bắt
+    đầu (lstart > mtime + 2 s) là của tiến trình đã chết trùng số ⇒ bỏ (#914 mục 4)."""
     d = heavy_slot.slot_dir()
+    started = getattr(pids, "started", {})
     try:
         names = [n for n in os.listdir(d) if _HELD.fullmatch(n)]
     except OSError:
@@ -360,7 +387,8 @@ def _gate_held(pids: set, spawned: float):
         path = os.path.join(d, n)
         try:
             pid = int(_read_small(path, 64).decode("ascii").strip())
-            if pid in pids and os.stat(path, follow_symlinks=False).st_mtime >= spawned:
+            mtime = os.stat(path, follow_symlinks=False).st_mtime
+            if pid in pids and mtime >= spawned and started.get(pid, 0.0) <= mtime + 2.0:
                 return pid, "giữ " + n[:-5]
         except (OSError, ValueError, UnicodeDecodeError):
             continue

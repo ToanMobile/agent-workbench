@@ -3314,6 +3314,36 @@
       ]
     },
     {
+      "component": "super-board-merge-gate-base-suite-pool",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_base_suite_pool.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-BASE-SUITE-POOL-914-01",
+          "name": "#914 mục 1: run_suite_on_base (kiểm đỏ sẵn trên base) xin slot pool gate, trần 900 s nhân SUITE_TIMEOUT_FACTOR của suite, hết giờ chờ slot ra 75 (không phải 1 hay 2), exception không ra exit 1",
+          "command": "bash tests/super-board/test_merge_gate_base_suite_pool.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-needs-you-guard-v2-exempt",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        "tests/super-board/test_needs_you_guard_v2_exempt.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-GUARD-V2-02",
+          "name": "OCR review 03/11 sau #924: deploy/production trong đường dẫn hay tên file không miễn câu nhắm việc agent; bước trên GitHub settings/cài đặt không bị chặn nhầm; env SB_NEEDS_YOU_GUARD_V2 thắng flags.json",
+          "command": "bash tests/super-board/test_needs_you_guard_v2_exempt.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-merge-gate-approve-request",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
