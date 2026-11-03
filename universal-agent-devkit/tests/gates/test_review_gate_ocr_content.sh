@@ -140,14 +140,54 @@ stop c5; rc=$?
 # a file OCR's own excludes leave out (x.min.js: default_path) can never be in a map: content_excluded drops it from the files asked
 reset_ws; echo "var x = 1" > "$P/x.min.js"; rep "$TMP/r9/ocr-review.json" "$P" "$PH" ws a.py
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["content_excluded"]=["x.min.js"]; json.dump(d,open(sys.argv[1],"w"))' "$TMP/r9/ocr-review.json"
-age -300 "$P/a.py" "$TMP/r9/ocr-review.json"; age 0 "$P/x.min.js"
-: > "$TR"; ev edit t1 "$P/a.py"; ocr_run t2 "$TMP/r9/ocr-review.json"; ev edit t3 "$P/x.min.js"; ev agent t4 principal-code-reviewer
+# (G4, review 03/11) content_excluded sits in a report the agent can write, so it alone never exempts a file: the run came after the
+# last edit of x.min.js and its report is newer than every edited file (the old rule), so the excluded file is covered
+age -300 "$P/a.py" "$P/x.min.js"; age 0 "$TMP/r9/ocr-review.json"
+: > "$TR"; ev edit t1 "$P/a.py"; ev edit t2 "$P/x.min.js"; ocr_run t3 "$TMP/r9/ocr-review.json"; ev agent t4 principal-code-reviewer
 stop e1; rc=$?
-[ "$rc" = 0 ] && ok "a file OCR excludes by itself (content_excluded): not asked of any map (rc 0)" || fail "OCR-excluded file held the gate (rc $rc)"
+[ "$rc" = 0 ] && ok "a file OCR excludes by itself (content_excluded), run after its last edit: not asked of any map (rc 0)" || fail "OCR-excluded file held the gate (rc $rc)"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["content_excluded"]="x.min.js"; json.dump(d,open(sys.argv[1],"w"))' "$TMP/r9/ocr-review.json"
 age -300 "$TMP/r9/ocr-review.json"
 stop e2; rc=$?
 [ "$rc" = 2 ] && ok "  … content_excluded that is not a list: ignored, x.min.js is delta (rc 2)" || fail "malformed content_excluded honoured (rc $rc)"
+# G4: x.min.js edited AFTER the run that excludes it (report older than the file): the exclusion does not stand for the new bytes
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["content_excluded"]=["x.min.js"]; json.dump(d,open(sys.argv[1],"w"))' "$TMP/r9/ocr-review.json"
+age -300 "$P/a.py" "$TMP/r9/ocr-review.json"; age 0 "$P/x.min.js"
+: > "$TR"; ev edit t1 "$P/a.py"; ocr_run t2 "$TMP/r9/ocr-review.json"; ev edit t3 "$P/x.min.js"; ev agent t4 principal-code-reviewer
+stop g4a; rc=$?
+[ "$rc" = 2 ] && grep -q "x.min.js" "$TMP/err" && ok "G4: an excluded file edited after the run (report older): old rule, blocked and named as delta (rc 2)" \
+  || fail "G4: content_excluded exempted a file edited after the run (rc $rc)"
+# G4: only the excluded file edited, OCR run after the edit with a fresh report, no agent review: the exclusion is no review mark
+age -300 "$P/x.min.js"; age 0 "$TMP/r9/ocr-review.json"
+: > "$TR"; ev edit t1 "$P/x.min.js"; ocr_run t2 "$TMP/r9/ocr-review.json"
+stop g4e; rc=$?
+[ "$rc" = 2 ] && ok "G4: an excluded file covered by the old rule does not stand in for the agent review (rc 2)" \
+  || fail "G4: OCR exclusion alone passed without an agent review (rc $rc)"
+# G4: a report edited by hand puts the dirty b.py into content_excluded; the map holds a.py; b.py edited after the run
+reset_ws; rm -f "$P/x.min.js"; rep "$TMP/r10/ocr-review.json" "$P" "$PH" ws a.py
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["content_excluded"]=["b.py"]; json.dump(d,open(sys.argv[1],"w"))' "$TMP/r10/ocr-review.json"
+age -300 "$P/a.py" "$TMP/r10/ocr-review.json"; age 0 "$P/b.py"
+: > "$TR"; ev edit t1 "$P/a.py"; ev edit t2 "$P/b.py"; ocr_run t3 "$TMP/r10/ocr-review.json"; ev edit t4 "$P/b.py"; ev agent t5 principal-code-reviewer
+stop g4b; rc=$?
+[ "$rc" = 2 ] && grep -q "b.py" "$TMP/err" && ok "G4: b.py added to content_excluded by hand, edited after the run: not exempted (rc 2)" \
+  || fail "G4: a hand-added content_excluded entry exempted a dirty session file (rc $rc)"
+# … the same report with a fresh mtime but its run before b.py's last edit: the index half of the old rule still blocks
+age 0 "$TMP/r10/ocr-review.json"; age -300 "$P/b.py"
+stop g4c; rc=$?
+[ "$rc" = 2 ] && ok "G4: … report mtime fresh, run before the last edit: still blocked (rc 2)" || fail "G4: excluded file credited by mtime alone (rc $rc)"
+# … a run after the last edit, report older than b.py: the mtime half still blocks
+age -300 "$TMP/r10/ocr-review.json"; age 0 "$P/b.py"
+: > "$TR"; ev edit t1 "$P/a.py"; ev edit t2 "$P/b.py"; ocr_run t3 "$TMP/r10/ocr-review.json"; ev agent t4 principal-code-reviewer
+stop g4d; rc=$?
+[ "$rc" = 2 ] && ok "G4: … run after the last edit, report older than b.py: still blocked (rc 2)" || fail "G4: excluded file credited by index alone (rc $rc)"
+# G6 (review 03/11): a report nested too deep for json (RecursionError), newer than every edit: not counted and the hook does not
+# crash (the wrapper turns a crash into exit 0: the Stop went through unreviewed)
+reset_ws; mkdir -p "$TMP/r11"; python3 -c 'import sys; open(sys.argv[1],"w").write("["*200000 + "]"*200000)' "$TMP/r11/ocr-review.json"
+age -300 "$P/a.py" "$P/b.py"; age 0 "$TMP/r11/ocr-review.json"
+: > "$TR"; ev edit t1 "$P/a.py"; ev edit t2 "$P/b.py"; ev agent t3 principal-code-reviewer; ocr_run t4 "$TMP/r11/ocr-review.json"
+stop g6; rc=$?
+[ "$rc" = 2 ] && ! grep -q "RecursionError\|Traceback" "$TMP/err" && ok "G6: a deeply nested report: not counted, no crash, blocked (rc 2)" \
+  || fail "G6: deeply nested report crashed or passed (rc $rc) $(grep -m1 'RecursionError' "$TMP/err")"
 
 # control: an old report (no map) keeps the mtime rule: fresh after every edit passes, older than an edit blocks
 reset_ws; rep "$TMP/r4/ocr-review.json" "$P" - ws

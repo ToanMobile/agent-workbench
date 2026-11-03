@@ -292,7 +292,7 @@ def _full_report(fdir):
         with open(os.path.join(fdir, "ocr-review.json"), encoding="utf-8") as fh:
             rep_ = json.load(fh)
         return rep_["comments"] if _reviewed(rep_) else None
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):   # RecursionError: JSON nested too deep is no report (review 03/11 G6)
         return None
 
 
@@ -303,7 +303,7 @@ def _valid_ocr_report(rp, newest):
             return False
         with open(rp, encoding="utf-8") as fh:
             return _reviewed(json.load(fh))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return False
 
 
@@ -746,7 +746,7 @@ for _at, _rp, _argv in list(ocr_reports):
     try:
         with open(_rp, encoding="utf-8") as fh:
             _rep = json.load(fh)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         continue   # the mtime rule below says it is no report
     if not isinstance(_rep, dict) or "content_sha256" not in _rep:
         continue
@@ -757,12 +757,21 @@ for _at, _rp, _argv in list(ocr_reports):
         continue
     _excl = _rep.get("content_excluded")
     _excl = {x for x in _excl if isinstance(x, str)} if isinstance(_excl, list) else set()
+    # G4 (review 03/11): content_excluded is in a report the agent can write, so a listed file is never exempt by itself — it is
+    # covered only under the old rule: this run came after the last edit and its report is newer than every edited file
+    try:
+        _old_rule = _at > last_edit_idx and os.path.getmtime(_rp) >= _newest
+    except OSError:
+        _old_rule = False
+    if not _old_rule:
+        _excl = set()
     if any(w in ("--from", "--commit", "-c") for w in _argv[:-1]):
         if not _covers_since(_argv) or not _at_or_before(_base, since_base):
             logline(f"[{ts}] OCR run at #{_at}: content map over a range that does not cover the commits since {since_base[:12]} — not counted")
             continue
         _hit = {f for f in range_need if _m.get(f) is not None and _m.get(f) == _sha_head(f)}
         range_mapped |= _hit
+        _excl &= set(range_need)
         range_excl |= _excl
         map_range_idx = max(map_range_idx, _at)
     else:
@@ -772,16 +781,17 @@ for _at, _rp, _argv in list(ocr_reports):
         map_ws_idx = max(map_ws_idx, _at)
         _hit = {f for f in ws_need if _m.get(f) is not None and _m.get(f) == _sha_file(f)}
         ws_mapped |= _hit
+        _excl &= set(ws_need)
         ws_excl |= _excl
-    if _hit:   # a review at its own index
+    if _hit:   # a review at its own index (an excluded file is no review mark: it never stands in for the agent review)
         last_review_idx = max(last_review_idx, _at)
         review_marks.append(_at)
     logline(f"[{ts}] OCR run at #{_at}: content map matches {sorted(_hit)}")
-# a file OCR excludes by itself is asked of no map: like the old rule, a run of that scope after the last edit (index rule when nothing
-# else is left) stands for it
+# a file OCR excludes by itself is asked of no map: a run of that scope that meets the old rule for it (above) stands for it; a session
+# that edited nothing of that scope keeps the index rule
 _ws_left, _range_left = set(ws_need) - ws_excl, set(range_need) - range_excl
-ws_map_ok = _ws_left <= ws_mapped if _ws_left else map_ws_idx > last_edit_idx
-range_map_ok = range_mapped >= _range_left if _range_left else (bool(range_need) and map_range_idx > last_edit_idx)
+ws_map_ok = _ws_left <= ws_mapped if ws_need else map_ws_idx > last_edit_idx
+range_map_ok = bool(range_need) and range_mapped >= _range_left
 ocr_delta = sorted(_ws_left - ws_mapped) + [f + " (đã commit)" for f in sorted(_range_left - range_mapped)]
 
 if ocr_reports:
