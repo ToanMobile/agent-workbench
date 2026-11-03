@@ -18,16 +18,34 @@
 # Nothing textual conflicted. Nothing was wrong with either branch. The two facts
 # were simply established at different times, and only one of them was rechecked.
 #
-# WHY THE CHECK IS INSIDE THE LOCK, NOT BEFORE IT
+# WHY THE MERGE NEEDS A PROOF OF THE TREE AS THE LOCK SEES IT (PR3, 02/11: verify outside the lock)
 #
 # A check that runs before the mutex proves the branch was good against a base
 # that another lane may replace while this one waits its turn — which is exactly
-# the stale-approval shape above, reintroduced one level down. Inside the lock,
-# nothing can move the base between the proof and the merge.
+# the stale-approval shape above, reintroduced one level down. So the rule is:
+# never merge unless merge(BASE_NOW, head) — BASE_NOW read INSIDE the lock — has a
+# green verify (this run's, a verified-tree receipt #226, or the train's receipt).
 #
-# The cost is one verification run serialised per merge. The alternative, paid
-# once, is a red base branch and every lane after it bouncing on someone else's
-# failure.
+# Holding the lock through the whole verify (20–35 min) serialised every merge of
+# the repo behind one card. Now verify runs OUTSIDE the lock; a short lock before
+# the merge re-reads the PR, fetches origin/<base> (BASE_NOW) and GitHub's
+# mergeable. BASE_NOW is the verified base → CI, migrations, merge. It moved →
+# release the lock, rebuild the scratch as merge(BASE_NOW, head) and run the SAME
+# verify command again (the suite cache keyed by inputs, #895, reuses every suite
+# the move did not touch; a move that changes the selection itself runs the new
+# suites — never a hand-computed "inputs ∩ diff"). At most
+# SB_MERGE_OPTIMISTIC_RETRIES (default 2) re-verifies outside the lock; the next
+# one runs inside it (progress guaranteed), and a base that moves even then (a push
+# outside the gate) exits 4 without merging. A PR with an edited test takes the
+# lock before verify, as before: its review is pinned to a base that must stay an
+# ancestor of the head, so a moved base is exit 2 anyway. SB_MERGE_OPTIMISTIC=0
+# restores the old order for every PR (lock before any GitHub read, held through
+# verify): the rollback switch, and the mode for repos whose re-verify is not cheap.
+#
+# Invariant of verify outside the lock: `--diff origin/<base>` may see the shared ref
+# move under it (another gate fetched). Harmless: post-fix-gate diffs against
+# merge-base(<ref>, HEAD), and a base that only moves forward keeps that merge-base
+# at the verified base, so the diff and the selected suites do not change.
 #
 # WHY A DIRECTORY LOCK RATHER THAN THE ORCHESTRATOR'S PROMISE CHAIN
 #
@@ -84,7 +102,8 @@
 # Exit codes, all meaningful to the caller:
 #   0  merged (--preflight: every cheap check passed, stdout `preflight: ok`)
 #   12 --require-receipt only: the merge of the CURRENT base and the head has no train / verified-tree receipt (the base moved after the
-#      train verified); nothing merged, lock released; the train verifies again outside the lock and calls the gate again
+#      train verified); nothing merged, lock not taken (or released when the base moved inside the short lock); the train verifies
+#      again outside the lock and calls the gate again
 #   13 merge queue is on and the caller is neither the train nor the queue (no --standalone, or --standalone from a board worker
 #      with SB_BOARD_WORKER=1): label the PR merge-queue instead; nothing ran, no lock touched
 #   11 verification failed after merging the base cleanly into the scratch tree —
@@ -95,21 +114,31 @@
 #      — also when a CI check of the PR head is red (`gh pr checks`: a bucket other than pass / skipping / pending, an empty or
 #      unknown one included): stdout and stderr list each `ci-check: <name> — <state>`; nothing migrated, nothing merged
 #   3  PR is closed without a merge; no merge attempted
-#   4  could not take the lock within the timeout
+#   4  could not take the lock within the timeout (also after a green verify: its tree receipt is kept, the next run is cheap)
+#      — or the base moved while the gate held the lock for its last verify (a push outside the gate); nothing merged
 #      — or the merge call failed while GitHub still shows the PR OPEN at the verified head (nothing merged; next wave retries)
 #      — or the CI checks of the PR could not be read, or are still pending after SB_MERGE_AUTO_WAIT_S (nothing merged)
 #   5  the base could not be merged in (real conflict) — needs a rebase pass; with no conflicted file (a git hook refused
 #      the local merge commit) the gate prints the git/hook message instead of the file list
-#   14 GitHub reports the PR CONFLICTING with the base (read before the load wait and verify, inside the lock; --preflight
+#   14 GitHub reports the PR CONFLICTING with the base (read before the load wait and verify, and again inside the short merge lock
+#      when origin/<base> moved since GitHub answered: a moved base can make the PR conflict on GitHub; --preflight
 #      reads it too, so the train drops the PR before verifying its batch): a merge driver that exists only
 #      locally (merge=union, merge=devkit-matrix) would let the scratch merge pass and GitHub refuse `gh pr merge` after a full
 #      verify. Nothing verified, nothing merged, lock released. Merge origin/<base> into the PR branch, push, run the gate again
 #      with the new --expect-head (for a board card: a rebase pass)
+#      — EXCEPT (narrow exception to #570): a real run (no --dry-run / --preflight / train receipt) where every file changed on
+#      BOTH sides since the merge base has a named merge driver in origin/<base>'s .gitattributes (merge=devkit-matrix,
+#      merge=union…) and the PR carries no edited-test approval: the gate merges the base into the scratch tree, pushes that
+#      merge commit to the PR branch as a plain fast-forward (never --force; the branch must still be at the pinned head), pins
+#      the new head and verifies/merges it. Every refusal to sync (as opposed to a lock lost, exit 4) is this same exit 14;
+#      a PR that edits .gitattributes is never synced (its own attributes could swap the named driver)
 #   1  could not read the PR head, resolve origin/<base>, or create the scratch
 #      worktree. Not a conflict and not a rebase pass (the lane treats only 2, 5 and 14
 #      as a rebase pass).
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
-#      the card goes back to Review (not Blocked, not a rebase pass); also when the head moves while the gate reads or waits for CI
+#      the card goes back to Review (not Blocked, not a rebase pass); also when the head moves while the gate reads or waits for CI.
+#      Not when the head is a merge commit this gate itself pushed on top of the reviewed head (receipt
+#      <git common dir>/super-board/approved-merge-heads/<head>, see exit 14): that head is accepted as the pinned one
 #   7  (also: the QA report / AC checker could not decide — metadata unreadable or checker crashed: `human-gate: qa-report — …`)
 #   7  merge policy says a human merges this one (money / auth / destructive
 #      schema, a diff over a positive auto_max_lines — default 0, so an unset
@@ -135,8 +164,10 @@
 # CI CHECKS (A4, F5 of #742): after verification, before any migration and the merge, the gate reads
 # `gh pr checks <PR> --json name,state,bucket` and never merges with a red check (exit 11), even when the base branch has no
 # required checks. "no checks reported" = no CI: merges as before. Unreadable checks → exit 4 (fail-closed). A real run waits
-# while checks are pending (poll SB_MERGE_AUTO_POLL_S, default 20; at most SB_MERGE_AUTO_WAIT_S, default 2700 → exit 4), keeping
-# the lock; each poll re-reads the PR first: MERGED → 0, not OPEN → 3, head moved → 6. `--dry-run` reads CI once and never waits.
+# while checks are pending (poll SB_MERGE_AUTO_POLL_S, default 20; at most SB_MERGE_AUTO_WAIT_S, default 2700 → exit 4) OUTSIDE
+# the merge lock (CI is pinned to the head, a moved base does not change it; a PR with an edited test waits holding it, as before),
+# then reads CI once more inside the short lock; each poll re-reads the PR first: MERGED → 0, not OPEN → 3, head moved → 6.
+# `--dry-run` reads CI and never waits.
 #
 # MERGE POLICY AND MIGRATIONS (config, all optional — defaults shown in
 # references/config-schema.json)
@@ -328,19 +359,36 @@ acquire() {
 # Chỉ xoá khoá còn mang pid của gate này: gate khác đã chiếm nó (coi là bỏ quên) thì đó là khoá đang sống của gate kia.
 # Chạy trong trap EXIT dưới set -e: rm hỏng không được đè mã thoát của gate.
 release() { if [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$$" ]; then rm -rf "$LOCK_DIR" 2>/dev/null || true; fi; }
+# PR3: khoá chỉ giữ ở khối ngắn trước merge (và suốt verify khi PR có test bị sửa / vòng verify cuối). LOCK_HELD nói gate đang giữ
+# khoá: heartbeat, mốc "at" và own_lock_or_stop chỉ chạy khi giữ. Mọi chỗ khác chỉ gọi take_lock / drop_lock.
+LOCK_HELD=0
+take_lock() {
+  [ "$LOCK_HELD" -eq 1 ] && return 0
+  acquire || return 1
+  LOCK_HELD=1
+  say "lock taken; checking ${BASE} as it is now before merging"
+}
+drop_lock() { release; LOCK_HELD=0; }
 
 # --preflight không lấy khoá merge: chỉ đọc PR và kiểm rẻ (train gọi nó cho từng PR trước khi dựng cây).
+# Gate thường cũng không lấy khoá ở đây nữa (PR3): verify chạy ngoài khoá, khoá ngắn ngay trước merge.
+# SB_MERGE_OPTIMISTIC=0: chế độ bi quan, đúng thứ tự trước PR3 — lấy khoá ở đây, trước mọi lần đọc GitHub, giữ suốt verify, không verify
+# lại ngoài khoá. ponytail: chỉ biến môi trường (rút lui nhanh; repo app Gradle khi port, nơi verify lại không rẻ — thiết kế §4b); thêm
+# khoá config board khi một board cần nó lâu dài.
+PESSIMISTIC=0
 if [ "$PREFLIGHT" -eq 1 ]; then
   say "preflight: cheap checks only (no merge lock, no scratch tree, no verify, no merge)"
-else
-  acquire || { say "could not take the merge lock within ${LOCK_TIMEOUT}s"; exit 4; }
+elif [ "${SB_MERGE_OPTIMISTIC:-1}" = 0 ]; then
+  PESSIMISTIC=1
+  take_lock || { say "could not take the merge lock within ${LOCK_TIMEOUT}s"; exit 4; }
   trap release EXIT
-  say "lock taken; verifying against ${BASE} as it is now"
 fi
 
 # ---- the freshness check ---------------------------------------------------
 # Scratch proves the merge. When that merge is clean and the PR branch is behind
-# the base, verify runs on the merged scratch tree; the gate never writes to the PR branch (#570).
+# the base, verify runs on the merged scratch tree; the gate never writes to the PR branch (#570) —
+# except the one exception of exit 14: GitHub says CONFLICTING only because of files that have a named
+# merge driver, and the gate fast-forwards the PR branch to its own clean merge of the base (block "đồng bộ nhánh PR").
 # Scratch đặt trong .claude/worktrees của main checkout để cùng phân vùng đĩa (st_dev) cho cp -Rc Unity Library.
 REPO_ABS=$(cd "$REPO_PATH" && pwd -P)
 MAIN_WT=$(git -C "$REPO_ABS" worktree list --porcelain | sed -n '1s/^worktree //p')
@@ -358,6 +406,23 @@ trap cleanup EXIT
 # ---- the head guard --------------------------------------------------------
 # Review evidence belongs to one commit. If the branch moved after the Reviewer
 # passed it, the tests it reran and the diff it read describe something else.
+# Biên nhận approved-merge-heads/<Y> = X: chỉ gate ghi, ngay trước khi tự đẩy Y = merge(X, base) lên nhánh PR (khối "đồng bộ nhánh PR").
+AH_DIR=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || AH_DIR=
+[ -z "$AH_DIR" ] || AH_DIR="$AH_DIR/super-board/approved-merge-heads"
+# gate_synced_from <Y>: in X khi Y là merge commit gate tự đẩy lên head đã review X — có biên nhận Y→X, Y đúng 2 cha và X là cha 1 hay
+# tổ tiên của cha 1 (lượt đồng bộ thứ hai chồng lên Y vẫn ghi X). Head khác (người đẩy thêm commit) không có biên nhận: thoát 6 như cũ.
+gate_synced_from() {
+  local x p
+  [ -n "$AH_DIR" ] && [ -r "$AH_DIR/$1" ] || return 1
+  x=$(head -1 "$AH_DIR/$1" 2>/dev/null) || return 1
+  [[ "$x" =~ ^[0-9a-f]{40}$ ]] || return 1
+  git -C "$REPO_PATH" cat-file -e "$1^{commit}" 2>/dev/null || git -C "$REPO_PATH" fetch origin "$HEAD_REF" --quiet 2>/dev/null || return 1
+  p=$(git -C "$REPO_PATH" rev-list --parents -n 1 "$1" 2>/dev/null) || return 1
+  set -- $p
+  [ "$#" -eq 3 ] || return 1
+  git -C "$REPO_PATH" merge-base --is-ancestor "$x" "$2" 2>/dev/null || return 1
+  printf '%s\n' "$x"
+}
 pr_head() { python3 "$GITHUB_READ" --kind head -- pr view "$PR" ${REPO:+--repo "$REPO"} --json headRefName,headRefOid \
               -q '.headRefName + " " + .headRefOid'; }
 HEAD=$(pr_head) || exit $?
@@ -373,9 +438,14 @@ fi
 if [ -n "$EXPECT_HEAD" ]; then
   case "$HEAD_SHA" in
     "$EXPECT_HEAD"*) : ;;
-    *) say "head moved: reviewed ${EXPECT_HEAD}, PR head is now ${HEAD_SHA}"
-       say "the review evidence is void — send the card back to Review"
-       exit 6 ;;
+    *) SYNC_FROM=$(gate_synced_from "$HEAD_SHA") || SYNC_FROM=""
+       case "${SYNC_FROM:-none}" in
+         "$EXPECT_HEAD"*)
+           say "PR head ${HEAD_SHA} is this gate's own merge of ${BASE} on top of the reviewed ${EXPECT_HEAD} (receipt approved-merge-heads/${HEAD_SHA:0:12}, its only new commit): pinning it" ;;
+         *) say "head moved: reviewed ${EXPECT_HEAD}, PR head is now ${HEAD_SHA}"
+            say "the review evidence is void — send the card back to Review"
+            exit 6 ;;
+       esac ;;
   esac
 else
   say "WARNING: no --expect-head; pinning the head read now (${HEAD_SHA}), not the reviewed one"
@@ -417,11 +487,10 @@ PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$M
 # The label is display-only. A request posted before `done` pins the exact head
 # and policy/commands. Re-read trusted approval evidence; never mint it here.
 APPROVED=false
-APPROVED_HEAD=   # #262: head người đã duyệt, đọc từ biên nhận cũ (nếu có) trước khi kiểm duyệt
-# #570: gate không còn đẩy merge commit lên nhánh PR nên không còn ghi biên nhận approved-merge-heads; head PR giữ nguyên X và
-# chính X là head người duyệt. Biên nhận Y→X do bản gate cũ để lại vẫn được đọc ở đây cho tới khi nhánh đó đóng.
-AH_DIR=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || AH_DIR=
-[ -z "$AH_DIR" ] || AH_DIR="$AH_DIR/super-board/approved-merge-heads"
+APPROVED_HEAD=   # #262: head người đã duyệt, đọc từ biên nhận (nếu có) trước khi kiểm duyệt
+# #570: gate không đẩy merge commit lên nhánh PR; head PR giữ nguyên X và chính X là head người duyệt. Ngoại lệ duy nhất (exit 14,
+# khối "đồng bộ nhánh PR"): gate tự đẩy Y = merge(X, base) và ghi biên nhận Y→X (AH_DIR ở head guard) trước khi đẩy. Biên nhận Y→X
+# (của khối đó, hay của bản gate cũ trước #570) được đọc ở đây: duyệt cho X phủ Y, vì commit mới duy nhất của Y là merge base của gate.
 [ -z "$AH_DIR" ] || [ ! -r "$AH_DIR/$HEAD_SHA" ] || APPROVED_HEAD=$(head -1 "$AH_DIR/$HEAD_SHA")
 approval_check() {
   # audit T0066 vòng 3: head PR phải có trong repo của board thì auditedHead của marker duyệt chéo mới kiểm được; fetch lỗi vẫn đi tiếp
@@ -429,6 +498,12 @@ approval_check() {
   git -C "$REPO_PATH" fetch origin "$HEAD_REF" --quiet 2>/dev/null || :
   APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
     --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || APPROVAL='{"approved":false}'
+  # Head Y do gate tự đẩy (biên nhận Y→X): approval_request sau lần đẩy ghi --head Y, nên người có thể đã duyệt chính Y. Duyệt đúng head
+  # hiện tại luôn hợp lệ: không có duyệt cho X thì đọc lại duyệt cho Y.
+  if [ -n "$APPROVED_HEAD" ] && [ "$(echo "$APPROVAL" | jq -r '.approved // false')" != true ]; then
+    APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
+      --head "$HEAD_SHA" --plan "$PLAN") || APPROVAL='{"approved":false}'
+  fi
   python3 "$GITHUB_READ" --check || exit $?
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')
 }
@@ -524,11 +599,10 @@ fi
 # đa SB_MERGE_LOAD_WAIT_S, không đặt thì
 # `merge_load_wait_s` của config board (thiếu = 0 = không chờ: board tự bật; test dựng config tạm không có khoá nên không chờ, và
 # không phải đặt biến trong thư viện test dùng chung — sửa file đó kéo cả 291 test DevKit vào REG-DK-ALL-01, 19/10).
-# Hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ trong khoá, sau các lối ra nhanh (đã merge, đóng, head đổi,
-# cần người) và TRƯỚC khi fetch/chốt base: verify chạy trên base mới nhất, không phải base của 15 phút trước. Head đổi lúc chờ thì
-# scratch dựng từ head cũ và `gh pr merge --match-head-commit` từ chối. Mốc "at" của khoá được làm mới mỗi lượt poll.
-# ponytail: gate khác xếp hàng ở acquire có thể hết LOCK_TIMEOUT (1800 s) và thoát 4 (giữ ở Review, wave sau thử lại) khi chờ lâu;
-# chấp nhận được vì verify dưới tải cao cũng đỏ, đổi sang hàng đợi có thứ tự khi nhiều PR cùng repo hay kẹt ở exit 4.
+# Hết giờ vẫn verify như cũ, không bỏ bước nào. Chờ NGOÀI khoá merge (PR3: verify cũng ngoài khoá), sau các lối ra nhanh (đã merge,
+# đóng, head đổi, cần người) và TRƯỚC khi fetch/chốt base: verify chạy trên base mới nhất, không phải base của 15 phút trước. Head đổi
+# lúc chờ thì scratch dựng từ head cũ và `gh pr merge --match-head-commit` từ chối. Chỉ khi gate đang giữ khoá (LOCK_HELD=1) mốc "at"
+# mới được làm mới mỗi lượt poll: ngoài khoá, thư mục khoá (nếu có) là của gate khác.
 # SB_MERGE_LOAD_FILE: móc test, đọc tải từ file thay cho os.getloadavg().
 load_now() {
   if [ -n "${SB_MERGE_LOAD_FILE:-}" ]; then tr -d '[:space:]' < "$SB_MERGE_LOAD_FILE" 2>/dev/null || true
@@ -549,7 +623,7 @@ wait_for_load() {
   # Tối đa 6 chữ số (không tràn số); 10# đọc 08 là tám (không có nó bash đọc bát phân và set -e dừng gate).
   [[ "$cap" =~ ^[0-9]{1,6}$ ]] || { say "SB_MERGE_LOAD_WAIT_S='${cap}' is not a number of seconds; not waiting for the load"; return 0; }
   cap=$((10#$cap)); [ "$cap" -gt 0 ] || return 0
-  # Khoá được làm mới lúc chờ nên không bao giờ "bỏ quên": giữ việc chờ dưới nửa LOCK_TIMEOUT để gate xếp hàng còn lượt.
+  # Trần nửa LOCK_TIMEOUT có từ lúc chờ trong khoá (gate xếp hàng còn lượt); nay chờ ngoài khoá nên trần chỉ giới hạn độ trễ, vô hại.
   if [ "$cap" -gt $(( LOCK_TIMEOUT / 2 )) ]; then
     say "SB_MERGE_LOAD_WAIT_S=${cap} is over half the lock timeout; waiting at most $(( LOCK_TIMEOUT / 2 ))s"
     cap=$(( LOCK_TIMEOUT / 2 )); [ "$cap" -gt 0 ] || return 0
@@ -567,10 +641,13 @@ wait_for_load() {
     else max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 8 )); fi
   fi
   while :; do
-    # Khoá được giữ cả lúc chờ: làm mới mốc "at" để gate khác không coi nó là khoá bỏ quên. Ghi hỏng không phải lý do bỏ verify.
+    # Gate giữ khoá lúc chờ: làm mới mốc "at" để gate khác không coi nó là khoá bỏ quên. Ghi hỏng không phải lý do bỏ verify.
     # Ghi qua file tạm rồi mv: gate khác đọc `at` giữa lúc `>` cắt file thì nhận chuỗi rỗng và $(( )) lỗi cú pháp.
-    { date +%s > "$LOCK_DIR/at.$$" && mv -f "$LOCK_DIR/at.$$" "$LOCK_DIR/at"; } 2>/dev/null \
-      || say "could not refresh the merge lock stamp ${LOCK_DIR}/at"
+    # Không giữ khoá: không ghi (mốc của gate khác, hoặc thư mục không tồn tại).
+    if [ "$LOCK_HELD" -eq 1 ]; then
+      { date +%s > "$LOCK_DIR/at.$$" && mv -f "$LOCK_DIR/at.$$" "$LOCK_DIR/at"; } 2>/dev/null \
+        || say "could not refresh the merge lock stamp ${LOCK_DIR}/at"
+    fi
     load=$(load_now)
     [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; LOAD_WAIT_ON=0; return 0; }
     load=$((10#$load)); LOAD_WAIT_ON=1
@@ -587,20 +664,91 @@ wait_for_load() {
 # ---- GitHub còn coi PR là xung đột không (#881 #883 #885, 02/11) ----------------------------------------------------------------------
 # .gitattributes gộp test_durations.txt (merge=union) và ma trận (merge=devkit-matrix) bằng driver chỉ có ở local: scratch bên dưới gộp
 # sạch, verify xanh 30–35 phút, rồi GitHub từ chối `gh pr merge` ("Pull Request has merge conflicts", exit 4). Đọc `mergeable` trước
-# chờ tải, scratch và verify (gate thường: trong khoá; --preflight: train loại PR trước verify_set của đợt): CONFLICTING ⇒ thoát 14
-# (trap EXIT thả khoá). UNKNOWN (GitHub còn đang tính) ⇒ đọc lại tối đa 3 lần. Đọc lỗi hay UNKNOWN mãi ⇒ đi tiếp như trước:
+# chờ tải, scratch và verify (gate thường: ngoài khoá, rồi lần nữa trong khoá ngắn nếu base đã dời; --preflight: train loại PR trước
+# verify_set của đợt): CONFLICTING ⇒ thoát 14 (trap EXIT thả khoá nếu đang giữ). UNKNOWN (GitHub còn đang tính) ⇒ đọc lại tối đa
+# 3 lần. Đọc lỗi hay UNKNOWN mãi ⇒ đi tiếp như trước:
 # `gh pr merge --match-head-commit` vẫn là chốt cuối, kiểm này chỉ bỏ verify vô ích.
 # Gate không tự gộp base hay push lên nhánh PR (#570); --expect-head / approved-head giữ nguyên. SB_MERGEABLE_POLL_S: móc test.
+# Ngoại lệ hẹp của #570 (02/11, PR #916 đụng #911: gần như PR nào cũng nối đuôi ma trận, hai PR merge sát nhau là PR sau CONFLICTING
+# trên GitHub, mỗi lần một vòng gộp-push-chạy-lại bằng tay; test_durations.txt không còn track từ #920, ma trận là lý do chính): CONFLICTING ở lượt thật (không --dry-run, --preflight,
+# biên nhận train hay SB_MERGE_CALLER=train — các lối đó thoát 14 như cũ) mà mọi file hai phía cùng đổi từ merge-base đều có driver gộp đặt
+# tên trong .gitattributes của origin/<base> (sync_candidate), và PR không có test sửa đã duyệt ⇒ AUTOSYNC=1, đi tiếp; khối "đồng bộ nhánh
+# PR" sau merge scratch kiểm lại rồi đẩy merge commit đó lên nhánh PR. Mọi trường hợp khác: thoát 14 ngay tại đây, đúng câu báo cũ.
 mergeable_now() { gh pr view "$PR" ${REPO:+--repo "$REPO"} --json mergeable -q .mergeable 2>/dev/null | head -1 | tr -d '[:space:]' || true; }
 MG_POLL=${SB_MERGEABLE_POLL_S:-10}; [[ "$MG_POLL" =~ ^[0-9]{1,3}$ ]] || MG_POLL=10
-MERGEABLE=$(mergeable_now); MG_TRY=0
-while [ "$MERGEABLE" = UNKNOWN ] && [ "$MG_TRY" -lt 3 ]; do
-  sleep "$MG_POLL"; MG_TRY=$((MG_TRY + 1)); MERGEABLE=$(mergeable_now)
-done
-if [ "$MERGEABLE" = CONFLICTING ]; then
+# mergeable_read: MERGEABLE = what GitHub says now (UNKNOWN = still computing: up to 3 re-reads).
+MERGEABLE=""
+mergeable_read() {
+  local try=0
+  MERGEABLE=$(mergeable_now)
+  while [ "$MERGEABLE" = UNKNOWN ] && [ "$try" -lt 3 ]; do
+    sleep "$MG_POLL"; try=$((try + 1)); MERGEABLE=$(mergeable_now)
+  done
+}
+conflicting_exit() {
   say "GitHub reports PR #${PR} CONFLICTING with ${BASE} (a merge driver such as merge=union / merge=devkit-matrix resolves it only locally; GitHub would refuse the merge after verify): nothing verified, nothing merged"
   say "fix: in the PR worktree run \`git merge --no-edit origin/${BASE}\`, push it plainly (\`git push origin ${HEAD_REF}\`), then run the gate again with --expect-head <the new head>"
   exit 14
+}
+# PR3: gọi lần nữa trong khoá ngắn khi BASE_NOW khác MG_BASE (main dời có thể làm PR CONFLICTING). Lần đầu (trước verify, ngoài khoá)
+# đọc bằng mergeable_read để khối đồng bộ bên dưới còn quyết định được. Gọi như câu lệnh thường (không trong $(…) / if / ||): exit 14
+# phải thoát gate.
+mergeable_or_14() {
+  mergeable_read
+  [ "$MERGEABLE" = CONFLICTING ] || return 0
+  conflicting_exit
+}
+# driver_only_overlap <head> <base>: 0 khi có đúng một merge-base, tập file đổi ở CẢ HAI phía từ đó không rỗng và mọi file trong tập có
+# driver gộp đặt tên (`git check-attr merge` đọc .gitattributes của <base>: .gitattributes của chính PR không nới được tập). Giá trị
+# unspecified / unset / set / text / binary là merge dựng sẵn của git: GitHub xung đột y như vậy. SYNC_FILES: tập file; SYNC_WHY: lý do không.
+SYNC_FILES=""; SYNC_WHY=""
+driver_only_overlap() {
+  local mbs shared f drv pr_files
+  mbs=$(git -C "$REPO_PATH" merge-base --all "$1" "$2" 2>/dev/null) || { SYNC_WHY="no merge base of ${1:0:12} and ${2:0:12}"; return 1; }
+  [ "$(printf '%s\n' "$mbs" | grep -c .)" -eq 1 ] || { SYNC_WHY="more than one merge base"; return 1; }
+  shared=$(LC_ALL=C comm -12 \
+    <(git -C "$REPO_PATH" -c core.quotepath=off diff --name-only --no-renames "$mbs" "$1" 2>/dev/null | LC_ALL=C sort) \
+    <(git -C "$REPO_PATH" -c core.quotepath=off diff --name-only --no-renames "$mbs" "$2" 2>/dev/null | LC_ALL=C sort)) || shared=""
+  [ -n "$shared" ] || { SYNC_WHY="no file changed on both sides could be listed"; return 1; }
+  # Scratch `git merge` reads .gitattributes from the PR side, check-attr below from <base>: a PR that edits .gitattributes could
+  # swap the named driver after the check. Refuse such a PR. Capture the list and grep a here-string: `git diff | grep -q` under
+  # pipefail lets grep exit early, git gets SIGPIPE (141) and `!` would turn that into a pass on a big file list (fail-open).
+  pr_files=$(git -C "$REPO_PATH" -c core.quotepath=off diff --name-only --no-renames "$mbs" "$1" 2>/dev/null) \
+    || { SYNC_WHY="could not list the files the PR changed"; return 1; }
+  if grep -q '\.gitattributes$' <<<"$pr_files"; then SYNC_WHY="the PR changes a .gitattributes file"; return 1; fi
+  while IFS= read -r f; do
+    drv=$(git -C "$REPO_PATH" check-attr --source="$2" merge -- "$f" 2>/dev/null) || { SYNC_WHY="git check-attr --source failed for ${f}"; return 1; }
+    drv=${drv##*: merge: }
+    case "$drv" in
+      ""|unspecified|unset|set|text|binary) SYNC_WHY="${f} (changed on both sides) has no named merge driver (merge: ${drv:-?})"; return 1 ;;
+    esac
+  done <<<"$shared"
+  SYNC_FILES=$(printf '%s\n' "$shared" | tr '\n' ' ' | sed 's/ $//')
+}
+# sync_candidate: chỉ lượt thật; PR có test sửa đã duyệt thì không (#643: duyệt gắn head X, base phải là tổ tiên của X — thoát 14 như cũ).
+sync_candidate() {
+  local et_rc=0 base_pre
+  [ "$DRY" -eq 0 ] && [ "$PREFLIGHT" -eq 0 ] && [ "$REQUIRE_RECEIPT" -eq 0 ] && [ -z "$TRAIN_RECEIPT" ] \
+    && [ "${SB_MERGE_CALLER-}" != train ] || return 1
+  bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$HEAD_SHA" >/dev/null 2>&1 || et_rc=$?
+  [ "$et_rc" -eq 1 ] || { SYNC_WHY="the PR carries edited-test approval for ${HEAD_SHA:0:12} (or it could not be read)"; return 1; }
+  git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || { SYNC_WHY="git fetch origin ${HEAD_REF} ${BASE} failed"; return 1; }
+  base_pre=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { SYNC_WHY="cannot resolve origin/${BASE}"; return 1; }
+  driver_only_overlap "$HEAD_SHA" "$base_pre"
+}
+# MG_BASE: origin/<base> local lúc GitHub trả lời mergeable (không fetch; cũ hơn GitHub thì trong khoá chỉ đọc thừa một lần). Trong khoá
+# chỉ đọc lại khi BASE_NOW khác nó: base không dời thì câu trả lời của GitHub vẫn là cho đúng base đó.
+MG_BASE=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}" 2>/dev/null || true)
+mergeable_read
+AUTOSYNC=0
+if [ "$MERGEABLE" = CONFLICTING ]; then
+  if sync_candidate; then
+    AUTOSYNC=1
+    say "GitHub reports PR #${PR} CONFLICTING with ${BASE}, but every file changed on both sides has a named merge driver (${SYNC_FILES}): the gate merges ${BASE} in the scratch tree and fast-forwards ${HEAD_REF} to that merge commit before verify"
+  else
+    [ -z "$SYNC_WHY" ] || say "not syncing ${HEAD_REF} itself: ${SYNC_WHY}"
+    conflicting_exit
+  fi
 fi
 # #288: biên nhận của merge train đã chứng minh đúng cây này thì verify bị bỏ, nên không chờ tải: mỗi PR của đợt từng chờ tới
 # merge_load_wait_s để rồi không chạy gì. Cây dự kiến = merge-tree(base, head), đúng cây train ghi (và cây merge scratch bên dưới).
@@ -679,70 +827,177 @@ if [ "$PREFLIGHT" -eq 1 ]; then
   exit 0
 fi
 
-git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
-  say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
-
 # #775: stderr của git merge ghi ra file riêng, không `$(…)`: hook để tiến trình nền giữ ống stderr thì `$(…)` chờ tới khi tiến trình
 # đó thoát và gate treo. MERGE_LOG là file riêng: tiến trình nền của hook giữ fd của nó, nên chữ nó ghi về sau nằm ở đó, ngoài log verify.
 MERGE_LOG=$(mktemp)
-if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet >"$MERGE_LOG" 2>&1; then
-  CONFLICTS=$(git -C "$SCRATCH" diff --name-only --diff-filter=U | tr '\n' ' ')
-  if [ -n "$CONFLICTS" ]; then
-    say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
-    # Dòng CONFLICT (…) của git nói loại xung đột (content, add/add, modify/delete…), tối đa 8 dòng.
-    grep -a '^CONFLICT' "$MERGE_LOG" | head -8 | while IFS= read -r line; do say "  ${line}"; done || true
-    say "this is a rebase pass for the Builder lane, not a Blocked card"
+# merge_scratch_onto <base sha>: SCRATCH = merge(<base>, HEAD_SHA), MERGED_SHA = commit đó. Lần 1 tạo worktree; các lần sau (PR3: base
+# dời trong lúc verify) dùng lại CÙNG scratch: reset về head + clean (DevKit đã cài, config cục bộ, duyệt test sửa và .merge-evidence là
+# file ignore/exclude nên còn; .agents/devkit không bao giờ xoá dù repo không ignore nó) rồi gộp base mới. Conflict ⇒ exit 5 như cũ.
+# Gọi như câu lệnh thường (không trong $(…) / if / ||): exit phải thoát gate.
+merge_scratch_onto() {
+  local onto="$1"
+  if [ -z "${MERGED_SHA:-}" ]; then
+    git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
+      say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
   else
-    # GeelyEx2 #179: hook commit-msg của repo từ chối commit gộp ⇒ không có file xung đột; in lời git/hook, qua bộ che secret
-    # (sb_redact_text: lời hook là chữ tuỳ ý, log gate vào log runner / train). Bỏ dòng "Not committing merge…" git tự thêm; lấy
-    # phần ĐẦU: lý do của hook thường ở dòng đầu (tail cắt mất khi hook in nhiều dòng). `sed -n` đọc hết ống: không SIGPIPE.
-    MERGE_WHY=$(sed '/^Not committing merge/d' "$MERGE_LOG" | sed -n '1,8p' | sb_redact_text | clip 600) \
-      || MERGE_WHY="(git/hook message hidden: the DevKit secret redactor could not be loaded)"
-    say "git merge of ${BASE} into the scratch tree failed without a conflict (a git hook or git itself refused the local merge commit): ${MERGE_WHY}"
-    say "not a content conflict in the PR: the reason is the git/hook message above"
+    { git -C "$SCRATCH" reset -q --hard "$HEAD_SHA" && git -C "$SCRATCH" clean -fdq -e /.agents/devkit; } 2>/dev/null || {
+      say "could not reset the scratch tree to ${HEAD_SHA:0:12} to merge the moved ${BASE}"; exit 1; }
   fi
-  exit 5
-fi
-
-# Nhánh chậm hơn base nhưng merge scratch sạch: verify trên cây đã gộp. Timeout phía dưới vẫn thử lại một lần.
-MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
-TRAIN_PROVED=0; TREE_PROVED=0
-if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
-  TRAIN_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
-  [ -z "$TRAIN_TREE" ] || [ "$TRAIN_TREE" != "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" ] || TRAIN_PROVED=1
-fi
-# #226 gap 7: biên nhận theo cây gộp. Verify xanh ghi <git common dir>/super-board/verified-trees/<sha256(tree + lệnh verify)>; lượt gate sau
-# (vd. lượt trước thoát exit 4 sau verify) trên đúng cây gộp và đúng bộ lệnh bỏ verify. Base đổi, head đổi hay lệnh đổi: khoá khác, verify đủ.
-TREE_RECEIPT=$(sb_verified_tree_receipt "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
-TREE_KEY=${TREE_RECEIPT##*/}
-if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
-# #676: --require-receipt (train): cây gộp với base HIỆN TẠI chưa được chứng minh (base dời sau verify của train) ⇒ không verify trong
-# khoá merge; thoát 12 (trap EXIT thả khoá) TRƯỚC khối #643 và bước cài DevKit, để train verify lại ngoài khoá rồi gọi lại.
-if [ "$REQUIRE_RECEIPT" -eq 1 ] && [ "$TRAIN_PROVED" -eq 0 ]; then
-  say "base moved since the train verified ${HEAD_SHA:0:12}: tree $(git -C "$SCRATCH" rev-parse --short 'HEAD^{tree}') has no receipt; not verifying inside the merge lock (exit 12)"
-  exit 12
-fi
-# #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA. Exit 2 chỉ khi train chưa
-# chứng minh cây này, comment edited-tests còn đúng head, và base không còn là tổ tiên của head đó.
+  if ! git -C "$SCRATCH" merge "$onto" --no-edit --quiet >"$MERGE_LOG" 2>&1; then
+    # GitHub đã báo CONFLICTING (AUTOSYNC, chưa đẩy đồng bộ): gộp local cũng hỏng thì là đường thoát 14 như trước, không phải 5.
+    if [ "${AUTOSYNC:-0}" -eq 1 ]; then say "the scratch merge of ${BASE} ${onto:0:12} failed too: $(grep -a '^CONFLICT' "$MERGE_LOG" | head -3 | clip 300)"; conflicting_exit; fi
+    CONFLICTS=$(git -C "$SCRATCH" diff --name-only --diff-filter=U | tr '\n' ' ')
+    if [ -n "$CONFLICTS" ]; then
+      say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
+      # Dòng CONFLICT (…) của git nói loại xung đột (content, add/add, modify/delete…), tối đa 8 dòng.
+      grep -a '^CONFLICT' "$MERGE_LOG" | head -8 | while IFS= read -r line; do say "  ${line}"; done || true
+      say "this is a rebase pass for the Builder lane, not a Blocked card"
+    else
+      # GeelyEx2 #179: hook commit-msg của repo từ chối commit gộp ⇒ không có file xung đột; in lời git/hook, qua bộ che secret
+      # (sb_redact_text: lời hook là chữ tuỳ ý, log gate vào log runner / train). Bỏ dòng "Not committing merge…" git tự thêm; lấy
+      # phần ĐẦU: lý do của hook thường ở dòng đầu (tail cắt mất khi hook in nhiều dòng). `sed -n` đọc hết ống: không SIGPIPE.
+      MERGE_WHY=$(sed '/^Not committing merge/d' "$MERGE_LOG" | sed -n '1,8p' | sb_redact_text | clip 600) \
+        || MERGE_WHY="(git/hook message hidden: the DevKit secret redactor could not be loaded)"
+      say "git merge of ${BASE} into the scratch tree failed without a conflict (a git hook or git itself refused the local merge commit): ${MERGE_WHY}"
+      say "not a content conflict in the PR: the reason is the git/hook message above"
+    fi
+    exit 5
+  fi
+  MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
+}
+# fetch_base_now: BASE_NOW = origin/<base> vừa fetch (PR3: đọc trong khoá ngắn). Lỗi ⇒ exit 1 như lúc chốt base đầu tiên.
+fetch_base_now() {
+  git -C "$REPO_PATH" fetch origin "$BASE" --quiet || { say "cannot fetch origin/${BASE}"; exit 1; }
+  BASE_NOW=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { say "cannot resolve origin/${BASE} after fetch"; exit 1; }
+}
+# Số lần verify lại NGOÀI khoá khi base dời (PR3); hết lượt thì lần sau verify trong khoá. PR có test bị sửa: 0 (đường bi quan).
+OPT_LEFT=${SB_MERGE_OPTIMISTIC_RETRIES:-2}
+[[ "$OPT_LEFT" =~ ^[0-9]{1,2}$ ]] || OPT_LEFT=2
+OPT_LEFT=$((10#$OPT_LEFT))
+[ "$PESSIMISTIC" -eq 0 ] || OPT_LEFT=0
+EDITED=""   # rỗng = chưa hỏi; 1 = PR có test bị sửa (#643)
+# #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA.
 REVIEWED_HEAD=$HEAD_SHA
-if [ "$TRAIN_PROVED" -eq 0 ]; then
-  edited=0
-  if bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" >/dev/null 2>&1; then
-    edited=1
-  else
-    et_rc=$?
-    [ "$et_rc" -eq 1 ] || exit "$et_rc"
+# prove_tree: mọi thứ phụ thuộc base, tính lại cho cây scratch HIỆN TẠI (BASE_SHA của vòng này): biên nhận train / cây (#226), exit 12
+# (--require-receipt), ancestry của duyệt test sửa (exit 2), số commit chậm hơn base. PR có test bị sửa lấy khoá ngay sau kiểm ancestry,
+# TRƯỚC verify (như trước PR3): base dời sau đó là exit 2 chắc chắn nên verify ngoài khoá vô ích. Gọi như câu lệnh thường.
+prove_tree() {
+  local tree et_rc
+  tree=$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')
+  # Nhánh chậm hơn base nhưng merge scratch sạch: verify trên cây đã gộp. Timeout phía dưới vẫn thử lại một lần.
+  TRAIN_PROVED=0; TREE_PROVED=0
+  if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
+    TRAIN_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
+    [ -z "$TRAIN_TREE" ] || [ "$TRAIN_TREE" != "$tree" ] || TRAIN_PROVED=1
   fi
-  if [ "$edited" -eq 1 ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
-    say "edited-test review is stale before fast-forward (origin/${BASE} is not an ancestor of ${REVIEWED_HEAD})"
-    exit 2
+  # #226 gap 7: biên nhận theo cây gộp. Verify xanh ghi <git common dir>/super-board/verified-trees/<sha256(tree + lệnh verify)>; lượt gate
+  # sau (vd. lượt trước thoát exit 4 sau verify) trên đúng cây gộp và đúng bộ lệnh bỏ verify. Base đổi, head đổi hay lệnh đổi: khoá khác.
+  TREE_RECEIPT=$(sb_verified_tree_receipt "$tree" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
+  TREE_KEY=${TREE_RECEIPT##*/}
+  if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
+  # #676: --require-receipt (train): cây gộp với base HIỆN TẠI chưa được chứng minh (base dời sau verify của train) ⇒ không verify ở
+  # gate; thoát 12 (lần đầu: chưa lấy khoá; trong khoá ngắn: trap EXIT thả khoá) TRƯỚC khối #643 và bước cài DevKit, để train verify
+  # lại ngoài khoá rồi gọi lại.
+  if [ "$REQUIRE_RECEIPT" -eq 1 ] && [ "$TRAIN_PROVED" -eq 0 ]; then
+    say "base moved since the train verified ${HEAD_SHA:0:12}: tree $(git -C "$SCRATCH" rev-parse --short 'HEAD^{tree}') has no receipt; not verifying inside the merge lock (exit 12)"
+    exit 12
   fi
-fi
-BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
-# #570: gate không ghi lên nhánh PR. Nhánh chậm hơn base thì chỉ verify trên cây scratch đã gộp (ở local); HEAD_SHA giữ nguyên head PR
-# nên approved-head, --match-head-commit và merge queue vẫn khớp đúng head người duyệt. GitHub squash tự gộp base lúc merge.
-if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
-  say "$([ "$DRY" -eq 1 ] && echo 'dry run: ')${HEAD_REF} is ${BEHIND_NOW} commit(s) behind ${BASE}; verifying the local merge ${MERGED_SHA:0:12} (nothing pushed)"
+  # #643: exit 2 chỉ khi train chưa chứng minh cây này, comment edited-tests còn đúng head, và base không còn là tổ tiên của head đó.
+  if [ "$TRAIN_PROVED" -eq 0 ]; then
+    if [ -z "$EDITED" ]; then
+      if bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" >/dev/null 2>&1; then
+        EDITED=1
+      else
+        et_rc=$?
+        [ "$et_rc" -eq 1 ] || exit "$et_rc"
+        EDITED=0
+      fi
+    fi
+    if [ "$EDITED" -eq 1 ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
+      say "edited-test review is stale before fast-forward (origin/${BASE} is not an ancestor of ${REVIEWED_HEAD})"
+      exit 2
+    fi
+    if [ "$EDITED" -eq 1 ]; then
+      OPT_LEFT=0; PESSIMISTIC=1
+      if [ "$LOCK_HELD" -eq 0 ]; then
+        take_lock || { say "could not take the merge lock within ${LOCK_TIMEOUT}s"; exit 4; }
+        say "edited tests: verifying inside the merge lock (a moved base would void their review)"
+        fetch_base_now
+        if [ "$BASE_NOW" != "$BASE_SHA" ]; then
+          say "base moved ${BASE_SHA:0:12} -> ${BASE_NOW:0:12} before the lock was taken; merging it into the scratch tree again"
+          BASE_SHA=$BASE_NOW
+          merge_scratch_onto "$BASE_SHA"
+          prove_tree
+          return 0
+        fi
+      fi
+    fi
+  fi
+  BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
+  # #570: gate không ghi lên nhánh PR. Nhánh chậm hơn base thì chỉ verify trên cây scratch đã gộp (ở local); HEAD_SHA giữ nguyên head PR
+  # nên approved-head, --match-head-commit và merge queue vẫn khớp đúng head người duyệt. GitHub squash tự gộp base lúc merge.
+  # (Ngoại lệ: AUTOSYNC=1 — khối "đồng bộ nhánh PR" ngay dưới sắp đẩy đúng merge này lên nhánh PR, nên câu "nothing pushed" sai.)
+  if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ] && [ "${AUTOSYNC:-0}" -eq 0 ]; then
+    say "$([ "$DRY" -eq 1 ] && echo 'dry run: ')${HEAD_REF} is ${BEHIND_NOW} commit(s) behind ${BASE}; verifying the local merge ${MERGED_SHA:0:12} (nothing pushed)"
+  fi
+}
+MERGED_SHA=""
+merge_scratch_onto "$BASE_SHA"
+prove_tree
+# ---- đồng bộ nhánh PR (ngoại lệ hẹp của #570, chỉ khi AUTOSYNC=1 ở khối CONFLICTING) ---------------------------------------------------
+# Chạy ngoài khoá merge (PR3: verify cũng ngoài khoá; đẩy lên nhánh PR không đụng main), trên base đã chốt (BASE_SHA có thể mới hơn lúc
+# kiểm ở khối CONFLICTING). Đẩy merge commit của scratch Y (cha 1 = head đã review X, cha 2 = BASE_SHA, không gì khác) lên nhánh PR:
+# push thường, không bao giờ --force / --force-with-lease, và chỉ khi GitHub lẫn origin vẫn trỏ nhánh về X (nhánh đã dời: thoát 14,
+# không ghi đè). Biên nhận approved-merge-heads/Y = X ghi TRƯỚC khi đẩy: head guard của lượt gate sau (--expect-head X) và approval.py
+# (--approved-head X) nhận Y chỉ vì commit mới duy nhất của nó là merge base này. Sau đó HEAD_SHA = Y: --match-head-commit, đọc lại CI /
+# trạng thái PR (head moved), biên nhận merge, và scratch dựng lại sau khi base dời (merge_scratch_onto reset về HEAD_SHA) đều theo Y;
+# REVIEWED_HEAD giữ X. Cây của Y = cây scratch vừa chứng minh nên biên nhận cây (prove_tree) vẫn đúng. GitHub vẫn CONFLICTING sau số
+# lần đọc có giới hạn: thoát 14 (Y đã nằm trên nhánh, câu báo nói --expect-head mới là Y). AUTOSYNC về 0 sau khi đẩy: merge scratch hỏng
+# về sau (base dời lần nữa) là exit 5 thường.
+if [ "$AUTOSYNC" -eq 1 ]; then
+  driver_only_overlap "$HEAD_SHA" "$BASE_SHA" || { say "not syncing ${HEAD_REF} itself after pinning ${BASE} at ${BASE_SHA:0:12}: ${SYNC_WHY}"; conflicting_exit; }
+  [ "$(git -C "$SCRATCH" rev-list --parents -n 1 "$MERGED_SHA" 2>/dev/null)" = "$MERGED_SHA $HEAD_SHA $BASE_SHA" ] \
+    || { say "not syncing ${HEAD_REF} itself: the scratch commit ${MERGED_SHA:0:12} is not exactly merge(${HEAD_SHA:0:12}, ${BASE_SHA:0:12})"; conflicting_exit; }
+  # Gate đang giữ khoá (chế độ bi quan SB_MERGE_OPTIMISTIC=0): khoá đã bị gate khác chiếm thì không ghi gì lên nhánh PR.
+  # (Viết thẳng như own_lock_or_stop: hàm đó định nghĩa phía dưới.)
+  [ "$LOCK_HELD" -eq 0 ] || [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$$" ] || { say "the merge lock is no longer this gate's; stopping without pushing or merging"; exit 4; }
+  SYNC_NOW=$(pr_head) || exit $?
+  [ "$SYNC_NOW" = "$HEAD" ] || { say "not syncing ${HEAD_REF} itself: GitHub head is now ${SYNC_NOW#* }, not the pinned ${HEAD_SHA}"; conflicting_exit; }
+  SYNC_REMOTE=$(git -C "$SCRATCH" ls-remote origin "refs/heads/${HEAD_REF}" 2>/dev/null | awk 'NR == 1 { print $1 }') || SYNC_REMOTE=""
+  [ "$SYNC_REMOTE" = "$HEAD_SHA" ] || { say "not syncing ${HEAD_REF} itself: origin ${HEAD_REF} is ${SYNC_REMOTE:-unreadable}, not the pinned ${HEAD_SHA}; nothing pushed"; conflicting_exit; }
+  SYNC_OLD=$HEAD_SHA
+  SYNC_REVIEWED=${APPROVED_HEAD:-$SYNC_OLD}
+  { [ -n "$AH_DIR" ] && mkdir -p "$AH_DIR" && printf '%s\n' "$SYNC_REVIEWED" > "$AH_DIR/$MERGED_SHA"; } 2>/dev/null \
+    || { say "not syncing ${HEAD_REF} itself: could not write the receipt approved-merge-heads/${MERGED_SHA:0:12}"; conflicting_exit; }
+  if ! git -C "$SCRATCH" push --quiet origin "${MERGED_SHA}:refs/heads/${HEAD_REF}" >"$MERGE_LOG" 2>&1; then
+    say "not syncing ${HEAD_REF} itself: the plain push of ${MERGED_SHA:0:12} was refused: $(sed -n '1,6p' "$MERGE_LOG" | sb_redact_text | clip 300 || echo '(git message hidden: the DevKit secret redactor could not be loaded)')"
+    rm -f -- "$AH_DIR/$MERGED_SHA" 2>/dev/null || true   # the hash never reached the remote: drop its receipt
+    conflicting_exit
+  fi
+  APPROVED_HEAD=$SYNC_REVIEWED
+  HEAD_SHA=$MERGED_SHA; HEAD="${HEAD_REF} ${HEAD_SHA}"
+  AUTOSYNC=0
+  say "pushed ${HEAD_REF}: ${SYNC_OLD} -> ${HEAD_SHA} (plain fast-forward, no --force); the only new commit merges ${BASE} ${BASE_SHA} into the reviewed head (parents ${SYNC_OLD:0:12} + ${BASE_SHA:0:12}); files changed on both sides, each resolved by its named merge driver: ${SYNC_FILES}"
+  # GitHub can lag on headRefOid after the push: wait (bounded) until it shows the new head FIRST (its mergeable answer before that is
+  # still about the old head), else the in-lock head check below would exit 6 ("head moved") for a head that is only not yet visible.
+  MG_TRY=0
+  while [ "$(pr_head 2>/dev/null || true)" != "$HEAD" ] && [ "$MG_TRY" -lt 6 ]; do
+    sleep "$MG_POLL"; MG_TRY=$((MG_TRY + 1))
+  done
+  [ "$(pr_head 2>/dev/null || true)" = "$HEAD" ] || { say "GitHub still shows another head than the pushed ${HEAD_SHA} after ${MG_TRY} re-read(s); the next gate run takes --expect-head ${HEAD_SHA}"; conflicting_exit; }
+  MG_TRY=0; MERGEABLE=$(mergeable_now)
+  while [ "$MERGEABLE" = CONFLICTING ] && [ "$MG_TRY" -lt 6 ]; do
+    sleep "$MG_POLL"; MG_TRY=$((MG_TRY + 1)); MERGEABLE=$(mergeable_now)
+  done
+  if [ "$MERGEABLE" = CONFLICTING ]; then
+    say "GitHub still reports CONFLICTING after the sync push (${MG_TRY} re-read(s)); ${HEAD_REF} is now ${HEAD_SHA}: the next gate run takes --expect-head ${HEAD_SHA}"
+    conflicting_exit
+  fi
+  # ponytail: CI is read right after the push and a tree receipt can skip verify, so Y may be merged before GitHub registers its check
+  # suite; required checks of branch protection still hold. Upgrade: after a sync, wait (bounded) for Y's check list to be non-empty.
+  # GitHub answered for exactly this base: the in-lock mergeable read is only needed if the base moves again.
+  MG_BASE=$BASE_SHA
+  say "GitHub mergeable after the sync push: ${MERGEABLE:-unreadable}; verifying ${HEAD_SHA:0:12}"
 fi
 
 # Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH
@@ -852,10 +1107,14 @@ stop_heartbeat() {
   HB_PID=""
 }
 
+# PR3: verify thường chạy NGOÀI khoá (không kiểm chủ khoá, không heartbeat); chỉ vòng giữ khoá (PR có test bị sửa, vòng verify cuối
+# khi base dời mãi) kiểm chủ khoá và làm mới mốc như trước.
 run_verify_cmd() {
   local c="$1" rc=0
-  own_lock_or_stop
-  start_heartbeat
+  if [ "$LOCK_HELD" -eq 1 ]; then
+    own_lock_or_stop
+    start_heartbeat
+  fi
   run_verify_cmd_inner "$c" || rc=$?
   stop_heartbeat
   return "$rc"
@@ -878,6 +1137,8 @@ keep_name_ok() {
 }
 prune_old_keeps() {
   # Giữ chỗ cho bản mới: còn tối đa 1 bản cũ (cộng bản sắp giữ = 2).
+  # ponytail: trước PR3 khoá merge làm bước này tuần tự; nay verify (và lối exit 11 này) chạy ngoài khoá nên hai gate có thể prune
+  # bản giữ của nhau — chỉ mất bằng chứng cũ, chấp nhận; khoá riêng cho thư mục keep khi bằng chứng bị mất thật.
   local d base oldest n
   local list=()
   for d in "$BASE_WT/.claude/worktrees"/.merge-scratch-keep-pr*; do
@@ -1027,24 +1288,85 @@ gate_red_suite_ids() {
     END { if (!(rej && static == 1 && n > 0 && !odd)) exit 1; for (i = 1; i <= n; i++) print ids[i] }'
 }
 
-# Chạy lệnh suite trên cây base trong scratch (giới hạn 900 s như gate), trong nhóm tiến trình riêng bị kill cả nhóm khi quá giờ,
-# env không có GIT_* / POSTFIX_GATE_FORCE_FULL: 1 = đỏ thật, 0 = xanh, 2 = không chạy được (126/127), 124 = quá giờ.
+# Chạy lệnh suite trên cây base trong scratch, trong nhóm tiến trình riêng bị kill cả nhóm khi quá giờ, env không có GIT_* /
+# POSTFIX_GATE_FORCE_FULL: 1 = đỏ thật, 0 = xanh, 2 = không chạy được (126/127, hay exception), 124 = quá giờ, 75 = hết giờ chờ slot
+# pool gate (máy bận, không phải lỗi PR: red_only_on_base đặt BASE_SUITE_BUSY=1 và merge gate thoát 4 như T0056).
+# $2 = id suite (#914 mục 1): xin slot pool gate như post-fix-gate (lane_lock P5 đã nhả slot lane lúc này, nên không xin thì chạy dư một
+# việc nặng), trần = 900 s (SB_BASE_SUITE_TIMEOUT_S) × SUITE_TIMEOUT_FACTOR của id đọc từ post-fix-gate.py. Không tìm thấy kit hay
+# heavy_slot thì chạy không qua pool như cũ. Đoạn python không có dấu nháy đơn: test_merge_gate_verify_log_outside.sh trích nó.
 run_suite_on_base() {
-  ( cd "$SCRATCH" && python3 -I -c '
-import os, signal, subprocess, sys
+  ( cd "$SCRATCH" && SB_BASE_SUITE_ID="${2:-}" SB_MG_HERE="$HERE" python3 -I -c '
+import ast, importlib.util, os, re, signal, subprocess, sys
 env = {k: v for k, v in os.environ.items()
        if not k.startswith("GIT_") and k not in ("POSTFIX_GATE_FORCE_FULL", "CLAUDE_PROJECT_DIR", "TARGET_DIR")}
-p = subprocess.Popen(sys.argv[1], shell=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+here, sid = os.environ.get("SB_MG_HERE", ""), os.environ.get("SB_BASE_SUITE_ID", "")
 try:
-    rc = p.wait(timeout=900)
-except subprocess.TimeoutExpired:
-    os.killpg(p.pid, signal.SIGKILL)
-    p.wait()
-    sys.exit(124)
-sys.exit(2 if rc in (126, 127) else (1 if rc else 0))' "$1" )
+    limit = float(os.environ.get("SB_BASE_SUITE_TIMEOUT_S") or 900)
+except ValueError:
+    limit = 900.0
+hs, slots = None, 0
+try:
+    if here:
+        sp = importlib.util.spec_from_file_location("sbhs", here + "/super-board-heavy-slot.py")
+        w = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(w)
+        tgt = w._find_devkit_heavy_slot()
+        if tgt is not None:
+            sys.path.insert(0, str(tgt.parent))
+            import heavy_slot as hs
+            m = re.search(r"^SUITE_TIMEOUT_FACTOR = (\{.*?\})$", open(str(tgt.parent / "post-fix-gate.py"), encoding="utf-8").read(), re.M)
+            limit *= (ast.literal_eval(m.group(1)).get(sid) or 1) if m else 1
+            raw = os.environ.get("DEVKIT_GATE_SLOTS", "").strip()
+            if raw.isdigit():
+                slots = int(raw)
+            else:
+                import capacity
+                slots = int(capacity.gate_max())
+except Exception as exc:
+    print("[merge-gate] base suite: khong xin duoc slot pool gate (%r); chay khong qua pool" % (exc,), file=sys.stderr)
+    hs, slots = None, 0
+if not 0 < limit < float("inf"):
+    limit = 900.0
+h, p = None, None
+try:
+    if hs is not None and slots > 0 and os.environ.get("DEVKIT_GATE_SLOT_HELD") != "1":
+        try:
+            wait = float(os.environ.get("DEVKIT_GATE_SLOT_WAIT_S") or 1800)
+        except ValueError:
+            wait = 1800.0
+        h = hs.acquire_pool("gate", hs.pool_paths("gate", slots), wait_s=wait, prio="merge", label="red-on-base " + sid)
+        if h.timed_out:
+            sys.exit(75)
+        env["DEVKIT_GATE_SLOT_HELD"] = "1"
+    p = subprocess.Popen(sys.argv[1], shell=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        rc = p.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.wait()
+        sys.exit(124)
+    sys.exit(2 if rc in (126, 127) else (1 if rc else 0))
+except SystemExit:
+    raise
+except BaseException as exc:   # exit 1 nghia la do tren base: loi bat ky khong duoc ra 1, ra 2 (khong chay duoc) va kill nhom suite
+    print("[merge-gate] base suite: loi %r; coi la khong chay duoc" % (exc,), file=sys.stderr)
+    if p is not None and p.poll() is None:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+    sys.exit(2)
+finally:
+    if h is not None:
+        try:
+            hs.release_pool(h)
+        except Exception:
+            pass' "$1" )
 }
 
 # Mở thẻ bug riêng cho suite đỏ sẵn trên base (không trùng: bỏ qua nếu đã có thẻ mở nhắc id đó). Lỗi mở thẻ → return 1.
+# ponytail: PR3 đưa verify ra ngoài khoá nên tra→tạo của hai gate không còn tuần tự: có thể ra 2 thẻ trùng cho cùng suite; chấp nhận
+# (đóng tay một thẻ), thêm khoá ngắn quanh tra→tạo khi gặp trùng thật.
 file_red_on_base_card() {
   local id="$1" name="$2" url found
   if [ "$DRY" -eq 1 ]; then say "dry run: would file a bug card for ${id} (red on origin/${BASE})"; return 0; fi
@@ -1106,6 +1428,7 @@ red_only_on_base() {
   local base_matrix="$SCRATCH/.red-on-base-matrix.json" merged_matrix="$SCRATCH/.agents/regression_matrix.active.json"
   local jqq='[.. | objects | select(.id? == $id and (.command? | type) == "string")] | first // empty'
   local ids_list=() names=() cmds=()
+  BASE_SUITE_BUSY=0   # #914: run_suite_on_base hết giờ chờ slot pool gate (75) ⇒ 1; chỗ gọi thoát 4, không đẩy thẻ về Build
   [ "$rc" -eq 1 ] || return 1
   case "$vcmd" in *[\;\&\|\<\>]*|*$'\n'*) return 1 ;; esac
   # R2: không ghép lệnh là chưa đủ: `./scripts/verify.sh`, `make verify` có thể chạy post-fix-gate rồi bước khác cũng exit 1. Phải là chính
@@ -1128,10 +1451,11 @@ red_only_on_base() {
   rm -f "$base_matrix"
   git -C "$SCRATCH" reset -q --hard "$BASE_SHA" 2>/dev/null || return 1
   for p in "${!ids_list[@]}"; do
-    sr=0; run_suite_on_base "${cmds[$p]}" || sr=$?
+    sr=0; run_suite_on_base "${cmds[$p]}" "${ids_list[$p]}" || sr=$?
     if [ "$sr" -ne 1 ]; then
       all_red=0
       if [ "$sr" -eq 0 ]; then say "${ids_list[$p]} is green on origin/${BASE}: the PR broke it"
+      elif [ "$sr" -eq 75 ]; then BASE_SUITE_BUSY=1; say "${ids_list[$p]}: the gate pool stayed busy, the base check did not run (not the PR's fault)"
       else say "${ids_list[$p]} did not run to a red result on origin/${BASE} (exit ${sr})"; fi
       break
     fi
@@ -1151,6 +1475,10 @@ red_only_on_base() {
 bash "$HERE/super-board-install-edited-test-approval.sh" \
   --scratch "$SCRATCH" --sha "$REVIEWED_HEAD" --meta "$META" --pr "$PR" --top "$REPO_PATH"
 prepare_scratch_evidence
+# verify_scratch: chạy mọi lệnh verify trên cây scratch HIỆN TẠI (merge(BASE_SHA, head) của vòng này), ghi biên nhận cây khi xanh. Không
+# đổi thân vòng từ trước PR3 (thân giữ cột cũ cho diff gọn): exit 11 / 4 busy / thử lại khi timeout / red_only_on_base / giữ scratch. Gọi
+# như câu lệnh thường. Ngoài khoá trừ khi LOCK_HELD=1 (test bị sửa, vòng cuối).
+verify_scratch() {
 for cmd in "${VERIFY[@]}"; do
   if [ "$TREE_PROVED" -eq 1 ]; then say "verify skipped: this exact merged tree was already verified green with the same commands (receipt ${TREE_KEY:0:12})"; break; fi
   if [ "$TRAIN_PROVED" -eq 1 ]; then say "verify skipped: the merge train already proved this exact tree"; break; fi
@@ -1178,6 +1506,9 @@ for cmd in "${VERIFY[@]}"; do
     say "verify red only on suites that are red on origin/${BASE} too (#251): not rejecting the PR"
     VRC=0
     TREE_RECEIPT=""   # verify tolerated red suites: no receipt, the next gate checks them against the base again
+  elif [ "${BASE_SUITE_BUSY:-0}" -eq 1 ]; then
+    say "base check could not get a gate slot in time (pool busy): keeping PR #${PR} in Review"
+    exit 4
   fi
   if [ "$VRC" -eq 4 ]; then
     # T0056: post-fix-gate thoát 4 kèm JSON .busy == true (hàng đợi gate toàn máy hoặc khoá dự án bận) là tình trạng tạm thời,
@@ -1243,7 +1574,8 @@ if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ]; then
   # Biên nhận cũ hơn 14 ngày không còn cây nào khớp: dọn để thư mục không lớn mãi (OCR 24/10).
   find "${TREE_RECEIPT%/*}" -type f -mtime +14 -delete 2>/dev/null || true
 fi
-own_lock_or_stop   # verify dài có thể đã để gate khác chiếm khoá: không merge song song với nó
+}
+verify_scratch
 
 python3 "$GITHUB_READ" --check
 
@@ -1292,8 +1624,8 @@ ci_precheck() {
     exit 11
   fi
 }
-# wait_ci_settled: lượt thật chờ hết pending, giữ khoá (own_lock_or_stop làm mới mốc mỗi vòng). Mỗi vòng đọc lại PR TRƯỚC khi đọc
-# CI: push mới trong lúc ngủ → exit 6, không rơi xuống migration.
+# wait_ci_settled: lượt thật chờ hết pending; đang giữ khoá thì own_lock_or_stop làm mới mốc mỗi vòng (ngoài khoá — PR3 — không đụng
+# khoá). Mỗi vòng đọc lại PR TRƯỚC khi đọc CI: push mới trong lúc ngủ → exit 6, không rơi xuống migration.
 wait_ci_settled() {
   local start said=0
   start=$(date +%s)
@@ -1306,14 +1638,79 @@ wait_ci_settled() {
       exit 4
     fi
     [ "$said" -eq 1 ] || { say "$(ci_pending) CI check(s) pending on ${HEAD_SHA:0:12}; waiting (poll ${AUTO_POLL_S}s, at most ${AUTO_WAIT_S}s)"; said=1; }
-    own_lock_or_stop
+    [ "$LOCK_HELD" -eq 0 ] || own_lock_or_stop
     sleep "$AUTO_POLL_S"
   done
 }
+# PR3: chờ CI NGOÀI khoá (CI gắn với HEAD_SHA, base dời không đổi nó); PR có test bị sửa đang giữ khoá thì chờ trong khoá như trước.
 if [ "$DRY" -eq 1 ]; then
   ci_precheck
   [ "$(ci_pending)" -eq 0 ] || say "dry run: $(ci_pending) CI check(s) still pending; a real run waits for them before migrating or merging"
 else wait_ci_settled; fi
+
+# ---- khoá ngắn trước merge (PR3) ------------------------------------------------------------------------------------------------------
+# Thứ tự trong khoá: chủ khoá → đọc lại head/state → fetch BASE_NOW → mergeable (14; chỉ khi BASE_NOW khác base lúc GitHub trả lời
+# trước verify) → base dời? → CI một lần → (sau khối) migrations →
+# làm mới approval → kiểm lại AC → own_lock_or_stop → gh pr merge --match-head-commit. Base dời: nhả khoá, dựng lại scratch =
+# merge(BASE_NOW, head), chạy lại ĐÚNG lệnh verify ngoài khoá (tối đa OPT_LEFT lần), lần kế tiếp verify TRONG khoá (bảo đảm tiến) rồi
+# fetch lại: base vẫn dời (push ngoài gate) ⇒ exit 4, không merge. Cây mới đã có biên nhận (QA, gate khác, train) ⇒ không verify lại.
+# Mọi thứ phụ thuộc base (biên nhận cây, ancestry test sửa, red_only_on_base, biên nhận merge, migration chạy từ scratch) theo vòng cuối.
+CI_LEFT=2   # ponytail: CI lại pending trong khoá (check mới chạy lại) ⇒ nhả khoá chờ tối đa 2 lần, rồi chờ trong khoá như trước PR3
+while :; do
+  take_lock || { say "could not take the merge lock within ${LOCK_TIMEOUT}s (verify is green: receipt ${TREE_KEY:0:12} kept for the next run)"; exit 4; }
+  own_lock_or_stop
+  NOW_HEAD=$(pr_head) || exit $?
+  STATE=$(pr_state) || exit $?
+  [ "$(echo "$STATE" | jq -r .state)" = MERGED ] && { say "merged on GitHub while the gate verified; nothing to repeat"; exit 0; }
+  [ "$(echo "$STATE" | jq -r .state)" = OPEN ] || { say "PR closed while the gate verified; refusing merge"; exit 3; }
+  if [ "$NOW_HEAD" != "$HEAD" ]; then
+    say "head moved while the gate verified: ${HEAD_SHA} -> ${NOW_HEAD#* }"
+    say "the review evidence is void — send the card back to Review"
+    exit 6
+  fi
+  fetch_base_now
+  if [ "$BASE_NOW" != "$MG_BASE" ]; then   # base dời từ lần GitHub trả lời mergeable: PR có thể thành CONFLICTING
+    mergeable_or_14
+    MG_BASE=$BASE_NOW
+  fi
+  if [ "$BASE_NOW" != "$BASE_SHA" ]; then
+    old_base=$BASE_SHA
+    BASE_SHA=$BASE_NOW
+    merge_scratch_onto "$BASE_SHA"
+    prove_tree
+    if [ "$TREE_PROVED" -eq 1 ] || [ "$TRAIN_PROVED" -eq 1 ]; then
+      say "base moved ${old_base:0:12} -> ${BASE_SHA:0:12} during verify; merge(BASE_NOW, head) already has a receipt: not verifying again"
+    elif [ "$OPT_LEFT" -gt 0 ]; then
+      OPT_LEFT=$((OPT_LEFT - 1))
+      drop_lock
+      say "base moved ${old_base:0:12} -> ${BASE_SHA:0:12} during verify: verifying merge(BASE_NOW, head) again outside the lock (re-verifies left after this one: ${OPT_LEFT})"
+      verify_scratch
+      continue
+    else
+      say "base moved ${old_base:0:12} -> ${BASE_SHA:0:12} again: last verify inside the merge lock (progress guaranteed)"
+      verify_scratch
+      fetch_base_now
+      if [ "$BASE_NOW" != "$BASE_SHA" ]; then
+        say "base moved ${BASE_SHA:0:12} -> ${BASE_NOW:0:12} while the gate held the merge lock (a push outside the gate); not merging — the next wave retries"
+        exit 4
+      fi
+    fi
+  fi
+  # CI một lần trong khoá (--dry-run: đã đọc trước khoá, không merge nên không đọc lại). Còn pending (check chạy lại): nhả khoá, chờ
+  # ngoài khoá, quay lại đầu khối (đọc lại head/base); chế độ bi quan / test bị sửa chờ trong khoá như trước.
+  [ "$DRY" -eq 1 ] || ci_precheck
+  if [ "$DRY" -ne 1 ] && [ "$(ci_pending)" -gt 0 ]; then
+    if [ "$CI_LEFT" -gt 0 ] && [ "$PESSIMISTIC" -eq 0 ]; then
+      CI_LEFT=$((CI_LEFT - 1))
+      drop_lock
+      say "$(ci_pending) CI check(s) pending again inside the merge lock; waiting outside it"
+      wait_ci_settled
+      continue
+    fi
+    wait_ci_settled   # giữ khoá: own_lock_or_stop mỗi vòng chờ
+  fi
+  break
+done
 
 # ---- migrations (inside the lock, after the build proof) -------------------
 # Run the configured migrate command for every allowed env, from the verified

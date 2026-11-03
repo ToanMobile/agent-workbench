@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Test hồi quy: shard REG-DK-ALL-GATES-01 (tests/gates) được trần gấp đôi --timeout (900 → 1800 s). PASS của nó p90 758 s, p95 860 s sát trần
+# 900 s; 12 TIMEOUT từ 31/10 (runs.jsonl), chủ repo 02/11 "nâng trần timeout REG-DK-ALL-GATES-01". Máy rảnh (tải giả 0, không gia hạn #616 A):
+# (a) suite REG-DK-ALL-GATES-01 4 s, --timeout 3 → PASS (trần 6 s). (b) cùng suite tên khác → TIMEOUT như cũ. (c) --timeout dưới sàn
+# DEVKIT_GATE_EXTEND_MIN_S (giờ của test, không phải suite thật) không nâng → TIMEOUT. (d) lượt kiểu Stop (GATE_TOTAL_BUDGET_S) không nâng
+# (review: ngân sách chỉ chặn suite MỚI, suite gấp đôi sống quá hạn cứng 1800 s của hook) → TIMEOUT. (e) máy bận: gia hạn #616 dừng ở
+# 3 × --timeout GỐC (9 s), không 3 × trần đã nhân (18 s) → suite 30 s TIMEOUT trong < 16 s.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
+set -u
+unset DEVKIT_GATE_CACHE DEVKIT_GATE_CACHE_MAX_S DEVKIT_SUITE_CACHE_MAX_S DEVKIT_SENTINEL_MAX_S CI FLAKY_RETRY DEVKIT_GATE_PARALLEL \
+  DEVKIT_GATE_DONE DEVKIT_IMPACT_TEST_CHANGED DEVKIT_IMPACTED_SINCE DEVKIT_TEST_JOBS DEVKIT_PER_TEST_CACHE DEVKIT_SUITE_CACHE \
+  DEVKIT_TEST_TIMEOUT_S DEVKIT_FLAKY_QUARANTINE_S DEVKIT_CAPACITY_LOAD GATE_TOTAL_BUDGET_S
+DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
+TMP="$(mktemp -d)" || exit 1
+trap 'rm -rf "$TMP"' EXIT
+export SB_HEAVY_SLOT_DIR="$TMP/slots" SB_HEAVY_SLOT_POLL_S=0.1 DEVKIT_CAPACITY_CORES=4 DEVKIT_GATE_EXTEND_STEP_S=1 DEVKIT_GATE_EXTEND_MIN_S=0
+mkdir -p "$SB_HEAVY_SLOT_DIR"
+FAILS=0
+ok() { echo "✔ $1"; }
+fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+
+# run_gate <suite id>: repo mới, ma trận một suite `sleep 4` mang id đó, gate --timeout 3 ở tải 0; in rc
+run_gate() {
+  local R="$TMP/repo-$RANDOM"; mkdir -p "$R/src"
+  git -C "$R" init -q -b main . && git -C "$R" config user.email t@t && git -C "$R" config user.name t
+  echo 0 > "$R/src/a.txt"
+  printf '{"project":"t","rules":[{"component":"S","watch_files":["src/*"],"mandatory_regression_tests":[{"id":"%s","name":"slow","command":"sleep %s"}]}]}\n' "$1" "${SECS:-4}" > "$R/matrix.json"
+  git -C "$R" add -A && git -C "$R" commit -qm init
+  echo 1 > "$R/src/a.txt"
+  ( cd "$R" && DEVKIT_CAPACITY_LOAD="${LOAD:-0}" FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" \
+    --run-tests --timeout 3 --no-checklist >"$TMP/out" 2>&1 ); RC=$?
+}
+run_gate REG-DK-ALL-GATES-01
+if [ "$RC" = 0 ] && ! grep -q 'TIMEOUT' "$TMP/out"; then ok "(a) REG-DK-ALL-GATES-01 4 s, --timeout 3: trần 6 s, PASS"
+else fail "(a) muốn rc=0 không TIMEOUT, được rc=$RC: $(tail -4 "$TMP/out")"; fi
+run_gate REG-OTHER-01
+if [ "$RC" != 0 ] && grep -q 'TIMEOUT' "$TMP/out"; then ok "(b) suite khác: trần --timeout như cũ, TIMEOUT"
+else fail "(b) muốn TIMEOUT rc≠0, được rc=$RC: $(tail -4 "$TMP/out")"; fi
+DEVKIT_GATE_EXTEND_MIN_S=60 run_gate REG-DK-ALL-GATES-01
+if [ "$RC" != 0 ] && grep -q 'TIMEOUT' "$TMP/out"; then ok "(c) --timeout 3 < sàn 60 s: không nâng, TIMEOUT"
+else fail "(c) muốn TIMEOUT rc≠0, được rc=$RC: $(tail -4 "$TMP/out")"; fi
+GATE_TOTAL_BUDGET_S=900 run_gate REG-DK-ALL-GATES-01
+if [ "$RC" != 0 ] && grep -q 'TIMEOUT' "$TMP/out"; then ok "(d) lượt kiểu Stop (GATE_TOTAL_BUDGET_S): không nâng, TIMEOUT"
+else fail "(d) muốn TIMEOUT rc≠0, được rc=$RC: $(tail -4 "$TMP/out")"; fi
+t0=$SECONDS; LOAD=999 SECS=30 run_gate REG-DK-ALL-GATES-01; WALL=$((SECONDS - t0))
+if [ "$RC" != 0 ] && grep -q 'TIMEOUT' "$TMP/out" && [ "$WALL" -lt 16 ]; then ok "(e) máy bận: gia hạn tới 3 × --timeout gốc (9 s) rồi kill, TIMEOUT sau ${WALL}s"
+else fail "(e) muốn TIMEOUT trong < 16 s (trần 3 × 3 s, không 3 × 6 s), được rc=$RC wall=${WALL}s: $(tail -4 "$TMP/out")"; fi
+[ "$FAILS" = 0 ] && echo "PASS" || echo "FAIL: $FAILS"
+exit $(( FAILS > 0 ))

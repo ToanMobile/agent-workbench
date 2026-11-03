@@ -26,6 +26,8 @@ mkdir -p "$TMP/bin"
 printf '#!/usr/bin/env bash\necho "fake gh: $*" >&2\nexit 1\n' > "$TMP/bin/gh"; chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_HEAVY_SLOT_DIR="$TMP/slots"
+# PR3: mặc định khoá lấy SAU verify (gh giả hỏng không bao giờ tới đó); chế độ bi quan lấy khoá trước mọi lần đọc GitHub như cũ.
+export SB_MERGE_OPTIMISTIC=0
 CFG="$TMP/cfg.json"
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["true"]}' > "$CFG"
 LOCK="$(cd "$R" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/super-board/merge.lock"

@@ -45,6 +45,11 @@
             "type": "command",
             "command": "bash -c 'if [ -f \"$1\" ]; then exec bash \"$1\"; fi; echo \"DevKit: hooks are not installed in this checkout, so every DevKit guard and gate is OFF. From the repo root run: bash universal-agent-devkit/bin/agent-kit init . -y -a claude,gemini\"' _ \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/prompt_context.sh\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session_card.sh\"",
+            "timeout": 5
           }
         ]
       }
@@ -108,6 +113,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/precode_gate.sh\"",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session_card.sh\"",
+            "timeout": 5
           }
         ]
       },
@@ -141,6 +151,16 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-key-literals.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/instincts_file_context.sh\"",
+            "timeout": 5
           }
         ]
       }
@@ -197,6 +217,16 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-key-literals.py"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/prompt_context.sh\" --midlane",
+            "timeout": 5
           }
         ]
       }

@@ -69,19 +69,21 @@ rm -f "$TMP/add/ran_t2"
 [ "$RC" = 2 ] && [ ! -f "$TMP/add/ran_t2" ] && grep -q 'did not pass in this run' "$TMP/out" && ok "không --run-tests -> exit 2, nêu test mới chưa XANH" \
   || fail "không --run-tests -> exit $RC (cần 2 + 'did not pass in this run'): $(tail_out)"
 
-# 2. Rule mới chèn ở ĐẦU (review 18/10, P1): nó chạy trước suite base và tác dụng phụ đi vào suite base — chỉ nhận rule thêm ở đuôi.
+# 2. Rule mới chèn ở ĐẦU (review 18/10, P1): từng chạy trước suite base và tác dụng phụ đi vào suite base. Nay rule chèn đầu/giữa là
+# chỉ-thêm hợp lệ (khe băm, bin/matrix_slot.py) nhưng test thêm chạy SAU suite base ("running the new tests last").
 # t1.sh (base) đỏ vì src đổi; t2.sh (test của rule chèn đầu) ghi đè t1.sh thành `exit 0`: chèn đầu từng biến REJECT thành exit 0.
 mk "$TMP/front" 'B["watch_files"] = ["src/*"]; m["rules"].insert(0, B)'
 echo "x = 2" > "$TMP/front/src/a.py"
 printf '#!/bin/sh\nprintf "exit 0\\n" > tests/t1.sh\n' > "$TMP/front/tests/t2.sh"
 git -C "$TMP/front" commit -qam "pr: src đổi, t1 đỏ, t2 vô hiệu t1"
 gate "$TMP/front"
-[ "$RC" = 1 ] && grep -q 'was modified relative to' "$TMP/out" && ok "rule mới chèn ở đầu: ma trận không tin, suite base chạy lệnh base và ĐỎ -> REJECT" \
-  || fail "rule mới chèn ở đầu -> exit $RC (cần 1 + 'was modified relative to'): $(tail_out)"
+[ "$RC" = 1 ] && grep -q 'running the new tests last' "$TMP/out" && ! grep -q 'was modified relative to' "$TMP/out" \
+  && ok "rule mới chèn ở đầu: ma trận được tin, test thêm chạy sau suite base ĐỎ -> REJECT" \
+  || fail "rule mới chèn ở đầu -> exit $RC (cần 1 + 'running the new tests last'): $(tail_out)"
 BASE_EXPR='m["rules"].append({"component": "A2", "watch_files": ["src/*"], "mandatory_regression_tests": [{"id": "REG-A2", "command": "sh tests/t1.sh"}]})' \
   mk "$TMP/mid" 'm["rules"].insert(1, B)'; gate "$TMP/mid"
-[ "$RC" = 2 ] && grep -q 'was modified relative to' "$TMP/out" && ok "rule mới chèn GIỮA hai rule base -> exit 2, không tin" \
-  || fail "rule mới chèn giữa -> exit $RC (cần 2 + 'was modified relative to'): $(tail_out)"
+[ "$RC" = 0 ] && [ -f "$TMP/mid/ran_t2" ] && ok "rule mới chèn GIỮA hai rule base -> được tin, test mới chạy, exit 0" \
+  || fail "rule mới chèn giữa -> exit $RC (cần 0 + test mới đã chạy): $(tail_out)"
 
 # 2a. Test thêm chạy SAU suite STALE của base (--full chạy lại suite STALE): REG-C đỏ vì src/c.py đã đổi sau lần PASS; test của rule
 # thêm ghi đè tests/c.sh thành `exit 0` — chạy trước suite STALE thì REJECT thành exit 0.

@@ -94,6 +94,34 @@ GENUINE_HUMAN_RE = re.compile(
     r"cho\s+xe\s+online|đăng\s+nhập\s+vietmap|spending\s+limit|giới\s+hạn\s+chi\s+tiêu|\b(?:postgres|database|db)\s+production\b|\bproduction\s+(?:db|database)\b",
     re.I,
 )
+# v2 (cờ needs_you_guard_v2, mặc định tắt): đo trên 52 lời 🙋 thật của 6 board (03/11). Mỗi mẫu nhắm đúng THỨ chỉ agent
+# sở hữu: duyệt test đã sửa (chỉ audit Antigravity duyệt), AC/nội dung một thẻ có số, đóng thẻ đã có PR, cây dirty,
+# --full + merge gate. Không có mẫu "quyết định / chọn hướng / chốt": việc đó thuộc ai tuỳ thứ được quyết (secret, LIVE,
+# store, pháp lý, chi tiền…), regex trên phần mở đầu không thấy được (3 lượt review 03/11). Không chặn "review/merge
+# PR": merge-queue gắn needs-you human-gate (exit 7/8) bằng đúng câu "xem PR #N … rồi tự merge".
+V2_RULES = (
+    (
+        re.compile(r"\bauto-approve\b|\bdòng\s+duyệt\s+cho\s+\d+\s+test\b[^\n]*\bđã\s+sửa\b|\bduyệt\s+chéo\s+diff\s+test_\S+\.sh\b", re.I),
+        "test đã sửa do audit Antigravity duyệt, không do người gõ tay",
+    ),
+    (
+        re.compile(r"\bsửa\s+ac\s+thẻ\s+#\d+|\bviết\s+lại\s+thẻ\s+#\d+|\bđóng\s+#\d+\s+vì\b[^\n]*\bpr\s+#\d+", re.I),
+        "sửa AC, viết lại hay đóng một thẻ là việc của agent",
+    ),
+    (
+        re.compile(r"\bdọn\s+cây\s+dirty\b|\bchạy\s+--full\b[^\n]*\bmerge\s+gate\b", re.I),
+        "chạy gate/merge gate và dọn cây làm việc là việc của agent",
+    ),
+)
+# Miễn cho V2_RULES: việc người thật (xe, khoá ký, danh tính, PII) và danh sách phải hỏi người của AGENTS.md
+# (force-push/viết lại lịch sử, deploy/production, thanh toán/billing, đăng nhập).
+V2_HUMAN_RE = re.compile(
+    r"keychain|khoá\s+ký|cấp\s+danh\s+tính|\bpii\b|trên\s+xe\b|chủ\s+xe|\bphát\s+hành\b|"
+    r"force[\s-]?push|viết\s+lại\s+lịch\s+sử|\bdeploy\b|\bproduction\b|thanh\s+toán|\bbilling\b|\blogin\b|đăng\s+nhập|"
+    r"\bsecret\b|mật\s+khẩu|\botp\b|\blive\b|app\s+store|hợp\s+đồng|khóa\s+ký",
+    re.I,
+)
+FLAG = "needs_you_guard_v2"
 TIMEOUT = 60
 
 
@@ -145,6 +173,33 @@ def gh(*args, stdin=None):
         raise GhError(f"gh {' '.join(args[:3])} returned non-JSON output") from e
 
 
+_V2 = None
+
+
+def guard_v2():
+    """Cờ v2: env SB_NEEDS_YOU_GUARD_V2=1/0 thắng; không thì `needs_you_guard_v2` trong
+    <checkout chính>/.agents/local/flags.json (worktree của thẻ dùng chung cờ của repo). Thiếu/hỏng = tắt."""
+    global _V2
+    if _V2 is None:
+        env = os.environ.get("SB_NEEDS_YOU_GUARD_V2")
+        if env in ("0", "1"):
+            _V2 = env == "1"
+        else:
+            _V2 = False
+            try:
+                common = subprocess.run(
+                    ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout.strip()
+                if common:
+                    flags = Path(common).parent / ".agents" / "local" / "flags.json"
+                    _V2 = json.loads(flags.read_text(encoding="utf-8")).get(FLAG) is True
+            except (OSError, ValueError, AttributeError, subprocess.SubprocessError) as e:
+                if not isinstance(e, FileNotFoundError):
+                    print(f"needs-you: {FLAG} đọc lỗi, coi là tắt: {e}", file=sys.stderr)
+    return _V2
+
+
 def one_line(text, what):
     text = " ".join((text or "").split())
     if not text:
@@ -157,16 +212,20 @@ def one_line(text, what):
     # `;` `·` `,` `.` and the words "và"/"rồi"/"and"/"then", so "đăng nhập firebase và chạy lại gate" still trips on the gate clause.
     # Split only when a human keyword is present (else the whole text is one clause: the rules' lookaheads and the
     # `.claude/worktrees/` / `x.py` patterns need it intact). A `.` separates only before a space or the end.
-    clauses = re.split(r"[;·,]|\.(?=\s|$)|\b(?:và|rồi|and|then)\b", text, flags=re.I) if GENUINE_HUMAN_RE.search(text) else [text]
-    for clause in clauses:
-        if GENUINE_HUMAN_RE.search(clause):
-            continue
-        for pat, why in AGENT_DOABLE_RULES:
-            if pat.search(clause):
-                raise ValueError(
-                    f"{what} mô tả việc agent phải tự xử lý ({why}); "
-                    "hãy tự thực thi, tự chốt (Decide, don't ask / AUTO-APPROVE) hoặc trả thẻ về Ready/QA thay vì gắn needs-you"
-                )
+    v1_hint = "hãy tự thực thi, tự chốt (Decide, don't ask / AUTO-APPROVE) hoặc trả thẻ về Ready/QA thay vì gắn needs-you"
+    passes = [(AGENT_DOABLE_RULES, GENUINE_HUMAN_RE.search, v1_hint)]
+    if guard_v2():
+        # V2_HUMAN_RE chỉ miễn cho V2_RULES: v1 giữ nguyên, cờ bật không bao giờ nhận lại câu v1 đã từ chối.
+        passes.append((V2_RULES, lambda s: GENUINE_HUMAN_RE.search(s) or V2_HUMAN_RE.search(s),
+                       "agent tự làm phần đó; nếu câu còn bước chỉ người làm được thì gắn lại needs-you chỉ với bước đó"))
+    for rules, human, hint in passes:
+        clauses = re.split(r"[;·,]|\.(?=\s|$)|\b(?:và|rồi|and|then)\b", text, flags=re.I) if human(text) else [text]
+        for clause in clauses:
+            if human(clause):
+                continue
+            for pat, why in rules:
+                if pat.search(clause):
+                    raise ValueError(f"{what} mô tả việc agent phải tự xử lý ({why}); {hint}")
     return text
 
 

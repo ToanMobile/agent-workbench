@@ -11,7 +11,7 @@ const HEAD = 'ab'.repeat(20);
 
 function temp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-approve-'));
-  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos' }));
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos_toan' }));
   return dir;
 }
 

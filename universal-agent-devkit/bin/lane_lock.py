@@ -12,7 +12,8 @@ kill -9, nên không có khoá mồ côi. Con KHÔNG thừa hưởng fd khoá (c
 gửi cho wrapper được chuyển cho con; wrapper chờ con rồi nhả. Exit = exit của lệnh (127 khi không chạy được, 128+sig khi con bị tín hiệu).
 
 Biến: LANE_LOCK_DIR (mặc định <git common dir>/lane-lock, chung cho main và mọi worktree), LANE_LOCK_SLOTS (2), LANE_LOCK_LOAD_TWO (12),
-LANE_LOCK_LOAD_MAX (24), LANE_LOCK_POLL_S (5), LANE_LOCK_LOG_S (60); tải giả cho test: DEVKIT_SLOT_LOAD_FILE (của heavy_slot.load_now).
+LANE_LOCK_LOAD_MAX (24), LANE_LOCK_POLL_S (5), LANE_LOCK_LOG_S (60), LANE_LOCK_STAGGER_S (60), LANE_LOCK_STAGGER_LOAD (6); tải giả cho
+test: DEVKIT_SLOT_LOAD_FILE (của heavy_slot.load_now).
 ponytail: không có hàng vé/ưu tiên (2–3 người chờ, jitter tránh đồng pha); ≥ 4 lane chờ thường xuyên thì chuyển sang hàng vé của
 heavy_slot.acquire_pool.
 
@@ -29,9 +30,23 @@ nặng (việc nặng cần mọi slot trống); chấp nhận ở 2–3 lane.
 <heavy_slot.slot_dir()>/queue/gate/*.json; vé sống (heavy_slot.ticket_alive), wait_s > 0, đã chờ ≥ LANE_LOCK_POOL_WAIT_S (5 s), ghi sau lúc
 con được tạo, và PID của vé là CHÍNH tiến trình con (lệnh là gate, kể cả qua `env …` / `exec`) ⇒ xoá .owner rồi nhả flock, không lấy lại:
 phần còn lại của gate chạy trong pool gate (hết giờ pool thì gate báo BUSY, không chạy suite), nên số việc chạy thật ngoài pool không vượt
-LANE_LOCK_SLOTS. Wrapper không bao giờ chặn con: không deadlock. Lệnh ghép (`bash -c "…; gate"`, merge gate với verify_commands) giữ slot
-như cũ: phần khác của nó chạy ngoài pool (review 02/11 vòng 2, P2-A/B). ponytail: hậu duệ chờ pool vẫn giữ slot lane; cần nhả cho lệnh
-ghép thì chỉ khi chứng minh được phần còn lại nằm trong pool.
+LANE_LOCK_SLOTS. Wrapper không bao giờ chặn con: không deadlock. Lệnh ghép (`bash -c "…; gate"`) giữ slot như cũ: phần khác của nó chạy
+ngoài pool (review 02/11 vòng 2, P2-A/B). ponytail: hậu duệ chờ pool vẫn giữ slot lane; cần nhả cho lệnh ghép thì chỉ khi chứng minh được
+phần còn lại nằm trong pool (đã chứng minh cho merge gate: P5 dưới).
+
+P5 (02/11) — merge gate: lệnh con là super-board-merge-gate.sh (argv[0], hoặc `[env K=V…] bash <…/super-board-merge-gate.sh>`) thì mỗi
+LANE_LOCK_POOL_POLL_S đọc cây tiến trình MỘT lần (`ps -A -o pid=,ppid=`) và nhả như trên khi một HẬU DUỆ của con có vé chờ pool gate đúng
+luật #849, hoặc đang giữ slot pool gate (<slot_dir>/gate-<k>.lock.held ghi PID hậu duệ đó, mtime ≥ lúc tạo con). Vé queue/heavy không
+bao giờ tính. ps lỗi ⇒ giữ slot (fail closed), log một lần, thăm lại vòng sau. ponytail: ngoài pool merge gate còn git/gh và, khi gate
+REJECT, kiểm "đỏ sẵn trên base" (run_suite_on_base, ≤ 900 s mỗi suite đỏ, không slot): khi đó có thể chạy dư MỘT việc nặng so với
+LANE_LOCK_SLOTS (khoá merge xếp merge gate nối tiếp nên không quá 1); cho run_suite_on_base vào pool gate khi đo thấy dư tải đó.
+
+P7 (02/11) — chống dồn: load1 là trung bình trượt 1 phút, trễ 30–60 s; tải vừa tụt dưới ngưỡng thì cả loạt lane chờ vào cùng một vòng
+(9 → 88 → 10). Lượt KHÔNG nhẹ chưa lấy khi có ≥ 1 slot lane KHÁC đang bị giữ thật (flock bận) mà lane-<j>.owner của nó mới
+< LANE_LOCK_STAGGER_S tuổi (.owner chưa kịp ghi ⇒ tuổi 0), VÀ (lane này đã phải chờ vì tải ở vòng trước — tải ≥ LANE_LOCK_LOAD_TWO hay
+không đọc được — hoặc tải ≥ LANE_LOCK_STAGGER_LOAD) ⇒ chờ vòng sau. 0 slot bị giữ ⇒ không bao giờ chặn. Slot bận gặp trên đường thăm
+được xét tuổi TRƯỚC khi thử slot sau (hai lane cùng thức không khoá chéo slot 1 / slot 2 rồi cùng nhả). Bị chống dồn chặn thì thăm dò việc
+nhẹ #849 như lúc chờ vì tải (việc nhẹ không bị chống dồn, lấy slot trống nếu có). Không file mới trong lock_dir: dùng .owner sẵn có.
 """
 from __future__ import annotations
 
@@ -294,29 +309,143 @@ def _gate_tickets() -> list:
     return out
 
 
-def pool_waiting(root: int, spawned: float):
-    """(pid, nhãn) khi CHÍNH tiến trình con root (lệnh là gate, kể cả qua `env …` / `exec`) có vé chờ pool gate đã chờ
-    ≥ LANE_LOCK_POOL_WAIT_S; None khi không. Vé ghi trước lúc con được tạo (t0 < spawned) là vé mồ côi của một PID cũ trùng số."""
-    min_age = _env_num("LANE_LOCK_POOL_WAIT_S", 5.0)
-    now = time.time()
-    for pid, t0, label in _gate_tickets():
-        if pid == root and t0 >= spawned and now - t0 >= min_age:
-            return pid, label
+_MERGE_GATE = "super-board-merge-gate.sh"
+_HELD = re.compile(r"gate-\d+\.lock\.held")   # marker của heavy_slot._write_gate_held; không khớp file tạm <held>.<pid>.<rand>.tmp
+
+
+def merge_gate_call(argv: list) -> bool:
+    """P5: argv chạy thẳng super-board-merge-gate.sh — argv[0] là nó, hoặc `[env K=V…] [bash] <…/super-board-merge-gate.sh> …`.
+    Lệnh ghép (`bash -c "…"`), cờ của bash / env ⇒ False (luật cũ)."""
+    i = 0
+    if argv and os.path.basename(argv[0]) == "env":
+        i = 1
+        while i < len(argv) and _ASSIGN.match(argv[i]):
+            i += 1
+    if i < len(argv) and os.path.basename(argv[i]) == "bash":
+        i += 1
+    return i < len(argv) and os.path.basename(argv[i]) == _MERGE_GATE
+
+
+class _Tree(set):
+    """Tập PID hậu duệ + `started` {pid: epoch lúc tiến trình bắt đầu} (chỉ những PID ps báo được lstart)."""
+    started: dict
+
+
+def _lstart(parts: list):
+    """lstart của ps (`Mon Nov  3 11:08:00 2026`, 5 token, locale C) → epoch; None khi không đọc được."""
+    try:
+        return time.mktime(time.strptime(" ".join(parts), "%a %b %d %H:%M:%S %Y"))
+    except (ValueError, OverflowError):
+        return None
+
+
+def _descendants(root: int):
+    """P5: tập PID gồm root và mọi hậu duệ còn sống (một lần `ps -A -o pid=,ppid=,stat=,lstart=`); None khi ps lỗi (chỗ gọi giữ slot).
+    Hậu duệ zombie (stat Z) bị bỏ (#914 mục 4): tiến trình đã chết, flock của nó đã nhả. `started` ghi lstart để _gate_held loại marker
+    .held cũ hơn tiến trình mang PID đó (PID tái dụng)."""
+    try:
+        r = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,stat=,lstart="], capture_output=True, text=True, timeout=10,
+                           env={**os.environ, "LC_ALL": "C"})
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    kids, zombie, started = {}, set(), {}
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
+            pid = int(parts[0])
+            kids.setdefault(int(parts[1]), []).append(pid)
+            if parts[2].startswith("Z"):
+                zombie.add(pid)
+            st = _lstart(parts[3:8])
+            if st is not None:
+                started[pid] = st
+    out = _Tree({root})
+    out.started = started
+    todo = [root]
+    while todo:
+        for kid in kids.get(todo.pop(), ()):
+            if kid not in out:
+                todo.append(kid)
+                if kid not in zombie:
+                    out.add(kid)
+    return out
+
+
+def _gate_held(pids: set, spawned: float):
+    """P5: (pid, nhãn) khi <slot_dir>/gate-<k>.lock.held (slot pool gate đang giữ) ghi một PID trong pids và mtime ≥ spawned; None khi
+    không. Chỉ đọc (_read_small: symlink / FIFO không treo); marker lỗi ⇒ bỏ marker đó. Marker cũ hơn lúc tiến trình mang PID đó bắt
+    đầu (lstart > mtime + 2 s) là của tiến trình đã chết trùng số ⇒ bỏ (#914 mục 4)."""
+    d = heavy_slot.slot_dir()
+    started = getattr(pids, "started", {})
+    try:
+        names = [n for n in os.listdir(d) if _HELD.fullmatch(n)]
+    except OSError:
+        return None
+    for n in names:
+        path = os.path.join(d, n)
+        try:
+            pid = int(_read_small(path, 64).decode("ascii").strip())
+            mtime = os.stat(path, follow_symlinks=False).st_mtime
+            if pid in pids and mtime >= spawned and started.get(pid, 0.0) <= mtime + 2.0:
+                return pid, "giữ " + n[:-5]
+        except (OSError, ValueError, UnicodeDecodeError):
+            continue
     return None
 
 
-def try_take(paths: list, load, light: bool = False) -> tuple:
+def pool_waiting(root: int, spawned: float, tree=None):
+    """(pid, nhãn) khi CHÍNH tiến trình con root (lệnh là gate, kể cả qua `env …` / `exec`) có vé chờ pool gate đã chờ
+    ≥ LANE_LOCK_POOL_WAIT_S; None khi không. Vé ghi trước lúc con được tạo (t0 < spawned) là vé mồ côi của một PID cũ trùng số.
+    tree (P5, chỉ merge gate): tập PID hậu duệ của root — vé của một hậu duệ bất kỳ, hay slot pool gate hậu duệ đang giữ, cũng tính."""
+    min_age = _env_num("LANE_LOCK_POOL_WAIT_S", 5.0)
+    now = time.time()
+    pids = {root} if tree is None else tree
+    for pid, t0, label in _gate_tickets():
+        if pid in pids and t0 >= spawned and now - t0 >= min_age:
+            return pid, label
+    return None if tree is None else _gate_held(tree, spawned)
+
+
+def _owner_fresh(path: str, now: float) -> bool:
+    """P7: lane-<j>.owner của slot (đang bị giữ) mới < LANE_LOCK_STAGGER_S tuổi; chưa có / không đọc được ⇒ tuổi 0 (fail closed)."""
+    try:
+        age = now - os.stat(path[:-5] + ".owner").st_mtime
+    except OSError:
+        age = 0.0
+    return age < _env_num("LANE_LOCK_STAGGER_S", 60.0)
+
+
+STAGGERED = -1   # cap trả về khi chống dồn (P7) chặn (slot bận còn non; có thể vẫn còn slot trống)
+
+
+def try_take(paths: list, load, light: bool = False, stagger: bool = False) -> tuple:
     """Một lượt xin slot theo tải. Trả (fh, chỉ số slot, cap) khi lấy được, (None, None, cap) khi phải chờ.
-    light (#849): bỏ ngưỡng tải, lấy slot trống bất kỳ như lúc tải thấp (không quá len(paths) người giữ)."""
+    light (#849): bỏ ngưỡng tải, lấy slot trống bất kỳ như lúc tải thấp (không quá len(paths) người giữ).
+    stagger (P7, chỉ lượt không nhẹ): slot khác bị giữ mà .owner còn non ⇒ (None, None, STAGGERED)."""
     two = _env_num("LANE_LOCK_LOAD_TWO", 12.0)
     cap_max = _env_num("LANE_LOCK_LOAD_MAX", 24.0)
     if not light and load is not None and load >= cap_max:
         return None, None, 0
     if light or (load is not None and load < two):
+        stagger = stagger and not light
+        now = time.time()
         for i, path in enumerate(paths):
             fh = heavy_slot._try_lock_path(path)
-            if fh is not None:
-                return fh, i, len(paths)
+            if fh is None:
+                if stagger and _owner_fresh(path, now):   # xét slot bận TRƯỚC khi thử slot sau: không khoá chéo với lane cùng thức
+                    return None, None, STAGGERED
+                continue
+            if stagger:   # slot sau slot vừa lấy: thăm flock, bận mà .owner còn non ⇒ nhả, chờ vòng sau
+                for later in paths[i + 1:]:
+                    probe = heavy_slot._try_lock_path(later)
+                    if probe is not None:
+                        heavy_slot._unlock(probe)
+                    elif _owner_fresh(later, now):
+                        heavy_slot._unlock(fh)
+                        return None, None, STAGGERED
+            return fh, i, len(paths)
         return None, None, len(paths)
     # tải cao (hoặc đọc lỗi): 1 slot = phải lấy được slot đầu VÀ mọi slot khác đang trống (không ai khác giữ)
     fh = heavy_slot._try_lock_path(paths[0])
@@ -351,19 +480,30 @@ def main(argv=None) -> int:
     t0 = time.monotonic()
     last_log = None
     light = None   # (bool, lý do) của #849: thăm dò một lần, chỉ khi luật cũ vừa bắt chờ vì tải (tải thấp, hay lấy được ngay: không tốn gì)
+    load_waited = False   # P7: lane này đã phải chờ vì tải ở một vòng trước
+    stagger_t0 = None     # P7: lúc lane bị chống dồn lần đầu; quá LANE_LOCK_STAGGER_S thì thôi (review: job ngắn nối đuôi làm lane chờ đói)
     while True:
         load = heavy_slot.load_now()
-        fh, idx, cap = try_take(paths, load, bool(light and light[0]))
-        if fh is None and light is None and (load is None or load >= _env_num("LANE_LOCK_LOAD_TWO", 12.0)):
+        is_light = bool(light and light[0])
+        stagger = not is_light and (load_waited or load is None or load >= _env_num("LANE_LOCK_STAGGER_LOAD", 6.0)) and (
+            stagger_t0 is None or time.monotonic() - stagger_t0 < _env_num("LANE_LOCK_STAGGER_S", 60.0))
+        fh, idx, cap = try_take(paths, load, is_light, stagger)
+        if cap == STAGGERED and stagger_t0 is None:
+            stagger_t0 = time.monotonic()
+        high = load is None or load >= _env_num("LANE_LOCK_LOAD_TWO", 12.0)
+        if fh is None and light is None and (high or cap == STAGGERED):
             light = light_job(args)
             _say(f"[lock] {name} " + (f"nhẹ ({light[1]}): bỏ ngưỡng tải, vẫn giữ số slot" if light[0] else f"việc nặng ({light[1]})"))
             if light[0]:
                 fh, idx, cap = try_take(paths, load, True)
         if fh is not None:
             break
+        load_waited = load_waited or high
         now = time.monotonic()
         if last_log is None or now - last_log >= log_every:
             why = f"load {load:.1f} ≥ {_env_num('LANE_LOCK_LOAD_MAX', 24.0):g}" if cap == 0 else f"đủ {cap} slot"
+            if cap == STAGGERED:
+                why = f"chống dồn: slot khác vừa được lấy < {_env_num('LANE_LOCK_STAGGER_S', 60.0):g} s"
             if load is None:
                 why += " (không đọc được tải: coi là tải cao)"
             _say(f"[lock] {name} chờ ({why}; đang giữ: {_owners(paths)}) {time.strftime('%T')}")
@@ -412,6 +552,8 @@ def main(argv=None) -> int:
             if forwarded:   # tín hiệu tới trước khi con kịp chạy: gửi lại cho nhóm của con
                 _signal_group(forwarded["sig"])
             pool_poll = max(0.05, _env_num("LANE_LOCK_POOL_POLL_S", 5.0))   # None: thôi thăm dò (đã nhả, hoặc lỗi bất ngờ ⇒ giữ slot)
+            merge_gate = merge_gate_call(args)   # P5: hậu duệ của merge gate ở pool gate cũng nhả
+            ps_failed = False
             while True:
                 try:
                     status = proc.wait(timeout=None if released is not None else pool_poll)
@@ -420,7 +562,15 @@ def main(argv=None) -> int:
                     continue
                 except subprocess.TimeoutExpired:
                     try:
-                        waiting = pool_waiting(proc.pid, spawned)
+                        tree = None
+                        if merge_gate:
+                            tree = _descendants(proc.pid)
+                            if tree is None:   # fail closed: giữ slot, thăm lại vòng sau; log một lần
+                                if not ps_failed:
+                                    _say(f"[lock] {name}: ps lỗi khi tìm hậu duệ của merge gate; giữ slot lane", err=True)
+                                ps_failed = True
+                                continue
+                        waiting = pool_waiting(proc.pid, spawned, tree)
                     except Exception as exc:  # noqa: BLE001 - thăm dò vé không được làm chết wrapper khi con còn chạy
                         _say(f"[lock] {name}: thăm dò pool gate lỗi ({exc!r}); giữ slot tới khi lệnh xong", err=True)
                         pool_poll = None
@@ -432,7 +582,8 @@ def main(argv=None) -> int:
                             pass
                         heavy_slot._unlock(fh)
                         released = time.monotonic()
-                        _say(f"[lock] {name} nhả slot lane sau {released - t1:.0f} s: lệnh đang chờ pool gate (pid {waiting[0]}"
+                        who = "hậu duệ của merge gate ở" if tree is not None else "lệnh đang chờ"
+                        _say(f"[lock] {name} nhả slot lane sau {released - t1:.0f} s: {who} pool gate (pid {waiting[0]}"
                              f"{', ' + waiting[1] if waiting[1] else ''}); phần còn lại của gate chạy trong pool, không lấy lại")
             rc = status if status >= 0 else 128 - status
             # cháu cùng nhóm còn sống: chờ ân hạn LANE_LOCK_GRACE_S rồi mới nhả slot; nhận tín hiệu thì giết nốt nhóm sau ân hạn

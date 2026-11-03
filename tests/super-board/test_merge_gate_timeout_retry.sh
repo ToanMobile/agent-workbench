@@ -235,7 +235,10 @@ cat > "$TMP/stamp-green.sh" <<SH
 cat '$LOCK_AT' > '$TMP/stamp-seen'; cat '$TMP/green.log'
 SH
 mkpr 24
+# PR3: khoá chỉ giữ suốt verify ở chế độ bi quan (SB_MERGE_OPTIMISTIC=0, cùng đường với PR có test sửa / vòng verify cuối).
+export SB_MERGE_OPTIMISTIC=0
 run_case 24 "$TMP/zero-stamp-red.sh" 1 "$TMP/stamp-green.sh" 0
+unset SB_MERGE_OPTIMISTIC
 SEEN=$(cat "$TMP/stamp-seen" 2>/dev/null || echo none)
 [ "$CASE_RC" -eq 0 ] && [ "$CASE_RUNS" -eq 2 ] && [ "$SEEN" != 0 ] && [ "$SEEN" != none ] \
   && ok "merge lock stamp refreshed before the retry (stamp ${SEEN})" \
@@ -280,6 +283,8 @@ SH
     || fail "lock taken over during $6 (rc=$CASE_RC runs=$CASE_RUNS lock pid=$LEFT, want $5, 1, $2): $(why "$1")"
   rm -rf "$WT_LOCK"
 }
+# PR3: ca 17-20 cần khoá giữ suốt verify: chế độ bi quan (SB_MERGE_OPTIMISTIC=0).
+export SB_MERGE_OPTIMISTIC=0
 stolen_case 27 999999 "$TMP/red-timeout.log" 1 4 "a timeout-only red verify"
 stolen_case 28 999998 "$TMP/green.log" 0 4 "a green verify"
 stolen_case 29 999997 "$TMP/red-mixed.log" 1 11 "a real FAIL verify"
@@ -300,6 +305,7 @@ SH
     && ok "lock stamp cannot be refreshed: treated as a lost lock, no retry, no merge (exit 4, runs=1)" \
     || fail "lock stamp refresh failure (rc=$CASE_RC runs=$CASE_RUNS, want 4 and 1): $(why 30)"
 fi
+unset SB_MERGE_OPTIMISTIC
 
 echo
 # Ca HANG: post-fix-gate in `[ ] TIMEOUT (HANG) |` cho suite quá giờ lúc máy rảnh (#370); vẫn là chỉ-TIMEOUT nên chạy lại 1 lần.

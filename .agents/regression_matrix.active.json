@@ -3068,6 +3068,267 @@
       ]
     },
     {
+      "component": "suite-env-heavy-slot-knobs-p3",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_suite_env_heavy_knobs.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SUITE-ENV-HEAVY-KNOBS-01",
+          "name": "PR 1 gate kẹt (P3): suite_env bỏ DEVKIT_SLOT_HEAVY_MAX, DEVKIT_SLOT_HEAVY_WAIT_S, DEVKIT_SLOT_HEAVY_BUDGET_S (núm của một lần gate), vẫn giữ DEVKIT_GATE_SLOT_HELD (T0056)",
+          "command": "bash universal-agent-devkit/tests/gates/test_suite_env_heavy_knobs.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-slot-prio-aging",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_aging.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SLOT-AGING-01",
+          "name": "hàng đợi vé heavy_slot lão hoá ưu tiên (P2): mỗi DEVKIT_SLOT_PRIO_AGE_S (450 s) đã chờ lên một mức tới merge; interactive chờ 1000 s đứng trước merge mới đến, chờ 10 s vẫn sau; núm 0/rác = mặc định, không chia cho 0",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_aging.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-pool-mixed-size",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_gate_pool_mixed_size.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-POOL-MIXED-01",
+          "name": "pool gate có vé khác cỡ (P1): vé ghi n = số path; vé đứng sau ghép tham lam (vé trước theo n tăng dần giữ chỗ trống lớn nhất < n), còn dư thì lấy chỗ nhỏ nhất — không còn slot trống mà không ai lấy; chừa đúng slot cho vé nhỏ đứng trước; .held chỉ cho slot giữ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_pool_mixed_size.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-scoped-per-test-cache-p4",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/lib/per_test_cache.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_gate_scoped_per_test_cache.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SCOPED-PER-TEST-CACHE-01",
+          "name": "PR 1 gate kẹt (P4): lượt --scoped bật sổ PASS per-test của run_impacted.sh — cùng cây, test đã PASS in ↺ (ptc_reuse > 0), chỉ test đỏ chạy lại; --scoped --no-cache và DEVKIT_GATE_CACHE=0 chỉ ghi (mọi test chạy thật)",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_scoped_per_test_cache.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-lane-lock-stagger-p7",
+      "watch_files": [
+        "universal-agent-devkit/bin/lane_lock.py",
+        "universal-agent-devkit/tests/gates/test_lane_lock_stagger.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-LANE-LOCK-STAGGER-01",
+          "name": "P7 (gate kẹt và chậm 02/11): lane_lock chống dồn — 2 lane nặng chờ ở tải 30, tải xuống 9 hay 5 ⇒ lane đầu vào ngay (0 slot giữ không chặn), lane sau chỉ vào khi .owner lane đầu ≥ LANE_LOCK_STAGGER_S; đối chứng tải 5 chưa chờ tải ⇒ vào ngay; tải 8: gate scoped nhỏ #849 không bị chống dồn, việc nặng thứ hai chờ; không file mới trong LANE_LOCK_DIR",
+          "command": "bash universal-agent-devkit/tests/gates/test_lane_lock_stagger.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-lane-lock-merge-gate-release-p5",
+      "watch_files": [
+        "universal-agent-devkit/bin/lane_lock.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_lane_lock_merge_gate_release.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-LANE-LOCK-MG-RELEASE-01",
+          "name": "P5 (gate kẹt và chậm 02/11): lane_lock nhả slot lane khi super-board-merge-gate.sh (argv[0] / env … bash <path>) có hậu duệ giữ slot pool gate (.held PID hậu duệ, mtime ≥ lúc tạo con) hoặc chờ vé queue/gate ≥ 5 s; vé queue/heavy, bash -c bọc gate thường, .held của tiến trình lạ ⇒ giữ slot; ps lỗi ⇒ giữ slot, log một lần; không deadlock",
+          "command": "bash universal-agent-devkit/tests/gates/test_lane_lock_merge_gate_release.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "matrix-real-readers-p6",
+      "watch_files": [
+        ".agents/regression_matrix.active.json",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/tests/gates/test_matrix_real_readers.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MATRIX-READER-SHARD-P6-01",
+          "name": "P6: test đọc ma trận thật — #616 khối shard REG-DK-ALL-* (cùng lệnh REG-DK-ALL-SHARD-RULES-616-01, gate chia kết quả theo lệnh)",
+          "command": "bash tests/super-board/test_matrix_shard_rules.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-MATRIX-READER-QA-EXIT2-P6-01",
+          "name": "P6: test đọc ma trận thật — #643 rule qa-exit2 / spawn-load trong ma trận (cùng lệnh REG-SB-QA-EXIT2-643-01)",
+          "command": "bash tests/super-board/test_qa_exit2_edited_test.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-MATRIX-REAL-READERS-P6-01",
+          "name": "P6: test nào mở ma trận thật ở gốc repo (biến dirname $0 + .agents/regression_matrix.active.json) mà không nằm trong rule có ma trận trong watch_files ⇒ ĐỎ (PR nối rule chỉ chạy danh sách đó)",
+          "command": "bash universal-agent-devkit/tests/gates/test_matrix_real_readers.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "scoped-gate-matrix-append-p6",
+      "watch_files": [
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/tests/gates/test_scoped_gate_matrix_append.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SCOPED-MATRIX-APPEND-P6-01",
+          "name": "P6: scoped_gate.decide — ma trận chỉ nối rule (so merge-base, và base khi changed do caller chọn) ⇒ không lõi, chỉ test đọc thật; sửa rule cũ / trùng id / trùng component / covered_by / đổi khoá top-level / JSON hỏng ⇒ như cũ",
+          "command": "bash universal-agent-devkit/tests/gates/test_scoped_gate_matrix_append.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-matrix-append-only-coverage-p6",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_matrix_append_only_coverage.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-MATRIX-APPEND-COVERAGE-P6-01",
+          "name": "P6: PR chỉ nối rule ma trận ở repo không [smoke], không rule theo dõi ma trận — test mới XANH ⇒ exit 0 (không còn no_match exit 2); test mới ĐỎ ⇒ 1; code không test, ma trận không đổi ⇒ vẫn 2",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_matrix_append_only_coverage.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-suite-timeout-gates-shard",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_suite_timeout_gates_shard.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SUITE-TIMEOUT-GATES-01",
+          "name": "#801 / chủ repo 02/11: shard REG-DK-ALL-GATES-01 được trần gấp đôi --timeout (900 → 1800 s, SUITE_TIMEOUT_FACTOR); suite khác giữ trần cũ; --timeout dưới sàn DEVKIT_GATE_EXTEND_MIN_S (giờ ngắn của test) không nâng",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_suite_timeout_gates_shard.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-needs-you-guard-v2",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_needs_you_guard_v2.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-GUARD-V2-01",
+          "name": "optimizer đợt 1: cờ needs_you_guard_v2 tắt = nhận mọi lời 🙋 như v1; bật = từ chối 8 lời nhắm thứ agent sở hữu (duyệt test đã sửa, AC/nội dung thẻ #N, đóng thẻ đã có PR, cây dirty, --full + merge gate), vẫn nhận 44 lời còn lại, việc phải hỏi người dù mở đầu bằng quyết định/chọn hướng, và câu human-gate của merge-queue; cờ đọc từ flags.json của checkout chính",
+          "command": "bash tests/super-board/test_needs_you_guard_v2.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-dependency-unblock-v1",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-waiting-on.py",
+        "tests/super-board/test_dependency_unblock_v1.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-DEPENDENCY-UNBLOCK-V1-01",
+          "name": "P3 cờ dependency_unblock_v1: thẻ Ready còn ## Blocked by mở ở lại Ready (waiting-on), không claim/Building/Blocked/spawn; cờ tắt giữ nguyên writes/log; deps lỗi giao như cũ, file halt riêng",
+          "command": "bash tests/super-board/test_dependency_unblock_v1.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-session-card-hook",
+      "watch_files": [
+        "universal-agent-devkit/hooks/session_card.sh",
+        "universal-agent-devkit/tests/gates/test_session_card_hook.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SESSION-CARD-01",
+          "name": "03/11 chủ repo: task bắt đầu từ chat có đúng MỘT thẻ board (nhãn session, cột Building) từ lần sửa file đầu; bỏ qua subagent, lane issue-N, repo không board, file ngoài repo; không chặn, thử lại 3 lần",
+          "command": "bash universal-agent-devkit/tests/gates/test_session_card_hook.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-session-cards",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_skips_session_cards.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-WB-SESSION-CARD-RECLAIM-01",
+          "name": "03/11: reclaim_stranded_building không trả thẻ Building nhãn session (task từ chat, phiên đang làm) về Ready; thẻ thường vẫn về Ready",
+          "command": "bash tests/super-board/test_runner_skips_session_cards.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-gate-autosync-driver",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_autosync_driver_conflict.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-AUTOSYNC-DRIVER-01",
+          "name": "ngoại lệ hẹp của #570: GitHub báo CONFLICTING mà mọi file hai phía cùng đổi đều có merge driver đặt tên (ma trận merge=devkit-matrix, merge=union) ⇒ gate gộp base ở scratch, đẩy merge commit lên nhánh PR bằng fast-forward (không --force), ghi biên nhận approved-merge-heads, verify và merge theo head mới; file không driver, PR sửa .gitattributes, nhánh remote đã dời, --dry-run: exit 14 không đẩy gì; lượt sau --expect-head cũ nhận head của gate, có commit lạ chồng lên thì exit 6",
+          "command": "bash tests/super-board/test_merge_gate_autosync_driver_conflict.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-gate-base-suite-pool",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_base_suite_pool.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-BASE-SUITE-POOL-914-01",
+          "name": "#914 mục 1: run_suite_on_base (kiểm đỏ sẵn trên base) xin slot pool gate, trần 900 s nhân SUITE_TIMEOUT_FACTOR của suite, hết giờ chờ slot ra 75 (không phải 1 hay 2), exception không ra exit 1",
+          "command": "bash tests/super-board/test_merge_gate_base_suite_pool.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "merge-gate-lock-shared-worktrees",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
