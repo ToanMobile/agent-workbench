@@ -813,3 +813,12 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Test miễn trừ (exemption) dùng câu không chạm luật nào nên không phân biệt được
 - **Nguyên nhân:** test_needs_you_guard_v2_exempt.sh E1/E2: câu 'phải nhận' (Bật auto-approve … không có tests/) không khớp luật V2 nào, nên bỏ miễn trừ vẫn exit 0; test xanh mà không chứng minh gì (đợt 2, 03/11)
 - **Quy tắc phòng ngừa & Cách fix:** Mỗi câu kiểm một miễn trừ phải là câu luật SẼ từ chối nếu không có miễn trừ đó: kiểm bằng mutant gỡ miễn trừ → test phải đỏ; thêm từ khoá miễn trừ mới thì cùng lúc thêm ca dạng tên file (_NOT_FILE)
+
+---
+
+### [INSTINCT-104] Cho qua đích redirect có $BIẾN không biết bằng 'tiền tố đã biết' là lớp lỗ không đóng được: 4 vòng review, vòng nào cũng ra fail-open mới
+- **Ngày phát hiện:** 2026-11-03
+- **Hiện tượng lỗi:** T0237 (03/11): trunk mode chặn oan 204/1.248 lệnh vì đích kiểu > $S/$t.log, cat > "$TMPDIR/x". Luật 'thư mục literal trước biến nằm ngoài main thì cho qua' gỡ được 87-119 lệnh, nhưng reviewer Claude rồi Grok 3 vòng liên tiếp tìm ra lệnh ghi được vào main: env bị mất ở script lồng, cd - / ~-, glob/brace, gán trong ( ) / pipe / $( ), source, .. trong giá trị for/declare/printf -v/here-string, ~ trong nháy, PWD/OLDPWD, glob trong giá trị gán, ln -s/mv tạo symlink, gán trong if false; then (nhiều dòng), $(realpath --relative-to) ở đuôi, /bin/ln.
+- **Nguyên nhân:** Phần đuôi là giá trị shell tính lúc chạy; scanner tĩnh không mô hình được mọi cách shell gán biến, đổi thư mục và tạo symlink. Mỗi điều kiện cấu trúc thêm vào chỉ đóng một dạng (cùng gốc INSTINCT-045).
+- **Quy tắc phòng ngừa & Cách fix:** Không làm lại luật 'tiền tố đã biết' cho đích có biến không biết trong session_lock/trunk_write. Muốn giảm chặn oan thì đổi phía hành vi (agent ghi file bằng tool Write, body qua --body-file, đường dẫn literal) chứ không nới scanner. Mọi đề xuất nới guard shell phải kèm corpus phải-chặn từ 4 vòng T0237 (scratchpad đã xoá; các dạng liệt kê ở Hiện tượng) trước khi review.
+- **Lệnh kiểm tra:** `Replay corpus lệnh bị chặn qua trunk_write (scratchpad T0237: extract.py + replay.py) và thử các dạng ở Hiện tượng; dạng nào được cho qua là fail-open.`

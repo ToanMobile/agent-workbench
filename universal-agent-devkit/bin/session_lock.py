@@ -2169,10 +2169,9 @@ _VAR_USE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)
 # Review #427 vòng 2: `.` là một từ đứng riêng ở BẤT KỲ đâu (sau then / do / { / ! / command / builtin / time, trong nháy của trap …: trước chỉ
 # xét đầu lệnh, `if true; then . "$S/env.sh"; fi` lọt) - fail closed, `git add .` chỉ làm mất luật thân sink; autoload / functions[…] của zsh
 _DEFINES = re.compile(r"\(\s*\)|\b(?:function|functions|alias|autoload|source|eval|enable)\b|(?:^|[\s;&|(){}!`'\"])\.(?=\s)")
-_ENV_SEEDED = ("TMPDIR", "HOME")   # T0237: names _expand_static_vars may read from the hook's environment
 
 
-def _expand_static_vars(target, cmd, seed=False):
+def _expand_static_vars(target, cmd):
     """`target` with every $VAR / ${VAR} replaced by the literal value `cmd` itself assigns (`VAR=/path`, `export VAR=/path`); None when it
     still holds a variable the line does not assign, a $( ) or a backtick - where such a path lands cannot be told. The last assignment wins.
     #427: tên được gán trong thân heredoc dữ liệu (commit message: `git commit -F - <<'EOF'` … `M=/tmp/x` … `EOF`) là không biết - thân không
@@ -2181,13 +2180,6 @@ def _expand_static_vars(target, cmd, seed=False):
     không source / eval): giữ giá trị trước đó. Tên được gán cả trong thân một shell con chạy (`bash <<EOF`, `cat <<EOF | bash`) lẫn ngoài
     nó là không biết: không biết đích `$M` nằm trong thân hay sau thân (sau thân, phép gán trong thân không tới)."""
     text, values, data, sink, inner = cmd, {}, [], [], set()
-    # T0237: with `seed` (the top-level line only: a nested script's own env is set by its outer line) $TMPDIR / $HOME take the hook's
-    # value (the session's environment), as `~` already does through expanduser - only when the line never names them other than as
-    # `$NAME` / `${NAME}` (no assignment, read, for, export, unset ...) and sources / evals nothing: then fail closed
-    for name in _ENV_SEEDED if seed and not _DEFINES.search(cmd) else ():
-        v = os.environ.get(name, "")
-        if v.startswith("/") and not re.search(r"[$`\n]", v) and not re.search(rf"(?<![$\w{{]){name}\b", cmd):
-            values[name] = v
     if "<<" in cmd:
         text = _strip_heredocs(cmd, data=data, child=inner, sink=sink)
         if sink and _DEFINES.search(text):   # `cat` có thể là hàm / alias chạy stdin trong shell này: thân là dữ liệu như mọi thân khác
@@ -2219,48 +2211,6 @@ def _expand_static_vars(target, cmd, seed=False):
 
     out = _VAR_USE.sub(sub, target)
     return None if unknown or "$" in out or "`" in out else out
-
-
-def _known_prefix_outside_main(t, cmd, main, sw, seed=False):
-    """T0237 (replay 03/11: 204 refusals, all outside main): a redirect / file target `t` holding a variable the line does not assign
-    statically - `> $S/$t.log` in a for loop, `> /tmp/r86/$f.png` - is no write into main when the ABSOLUTE literal directory before
-    its first unknown variable (`$x`, `${x:-…}`, `$(`, backtick) lies outside main and is not main or an ancestor of it, or lies in
-    another checkout (a session worktree). Two review rounds each found new ways the shell reads such a line differently (INSTINCT-045),
-    so this holds only for a line shape the scanner models whole - fail closed otherwise:
-    - the whole line: no `..` anywhere (a loop / declare / printf -v / here-string value may hold it), no source / `.` / eval /
-      function / alias;
-    - the target: no quote, no glob or brace (`*?[{` - the shell expands them, realpath does not);
-    - the prefix: absolute after the static expansion (no `~`: a quoted `~` is a folder in cwd; no relative path: a cd, `cd -`,
-      CDPATH or a sourced file moves it);
-    - each variable of the prefix: assigned once on the line, before any `(`, backtick, `|` or `{` (a subshell or pipeline stage
-      does not assign the parent's), or $TMPDIR / $HOME seeded from the hook's environment (see _expand_static_vars).
-    ponytail: a symlink inside the unknown value is not seen - the threat is an agent's slip, not a crafted path."""
-    if ".." in cmd or _DEFINES.search(cmd) or "'" in t or '"' in t or re.search(r"[*?\[]|(?<!\$)\{", t):
-        return False
-    cut = len(t)
-    for i, ch in enumerate(t):
-        if ch not in "$`":
-            continue
-        m = _VAR_USE.match(t, i) if ch == "$" else None
-        if m and _expand_static_vars(t[:m.end()], cmd, seed) is not None:
-            continue
-        cut = i
-        break
-    head = _expand_static_vars(t[:cut], cmd, seed) if cut < len(t) else None
-    if not head or not head.startswith("/"):
-        return False
-    for m in _VAR_USE.finditer(t[:cut]):
-        name = m.group(1) or m.group(2)
-        bare = list(re.finditer(rf"(?<![$\w{{]){name}\b", cmd))
-        if len(bare) > 1 or (bare and re.search(r"[(`|{]", cmd[:bare[0].start()])):
-            return False
-    d = head[:head.rfind("/") + 1]
-    if _inside(main, d):   # main itself or one of its ancestors: the unknown rest may name main's content
-        return False
-    if not _inside(d, main):
-        return True
-    t2 = sw.tree_of(d)
-    return t2 is not None and not _same_dir(t2[0], main)
 
 
 def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
@@ -2297,7 +2247,7 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
     cd_unsafe = False   # a `cd "$VAR"` that leads into main or cannot be told: relative targets of the line may land there
     for kind, t, wd in found:
         if kind == "cdvar":
-            d = _expand_static_vars(t, cmd, depth == 0)
+            d = _expand_static_vars(t, cmd)
             try:
                 dx = None if d is None else os.path.expanduser(d)
             except ValueError:   # `~a<NUL>b` (review #427 vòng 3: hook từng văng): thư mục không biết, như $VAR không gán
@@ -2312,10 +2262,8 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
         if kind not in ("redirect", "file"):
             continue
         if "$" in t or "`" in t:
-            raw, t = t, _expand_static_vars(t, cmd, depth == 0)
+            t = _expand_static_vars(t, cmd)
             if t is None and loose:   # cwd không phải repo: `> "$TMPDIR/x"` không phải ghi vào main (review #427 vòng 2)
-                continue
-            if t is None and _known_prefix_outside_main(raw, cmd, main, sw, depth == 0):   # T0237
                 continue
             if t is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
                 return True
