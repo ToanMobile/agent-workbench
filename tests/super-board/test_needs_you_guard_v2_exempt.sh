@@ -47,8 +47,9 @@ for act in \
   "Viết lại thẻ #12 cho script deploy.sh" \
   "Viết lại thẻ #12 cho .claude/settings.json" \
   "Sửa AC thẻ #14 sửa file settings.gradle" \
-  "Sửa AC thẻ #14 về bước cài đặt hook DevKit" \
-  "gõ tay AUTO-APPROVE cho tests/x.sh trong settings PR"; do
+  "Sửa AC thẻ #14 theo repo settings.yml" \
+  "Viết lại thẻ #12 cho script deploy-prod.sh" \
+  "Viết lại thẻ #12 cho production-checklist.md"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 64 ] && pass || fail "E1 cờ bật phải từ chối (exit $rc, cần 64): $act"
 done
@@ -59,7 +60,8 @@ for act in \
   "Viết lại thẻ #12 sau khi deploy lên store" \
   "Sửa AC thẻ #14 sau khi deploy." \
   "Sửa AC thẻ #14 sau khi deploy/rollback bản 2.3" \
-  "Bật auto-approve cho environment production/staging trên GitHub"; do
+  "Bật auto-approve cho environment production/staging trên GitHub" \
+  "Bật auto-approve cho environment production/staging/canary"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 0 ] && pass || fail "E1 cờ bật chặn nhầm bước deploy thật (exit $rc): $act"
 done
@@ -67,7 +69,12 @@ done
 # E2: bước trên GitHub settings là việc của người.
 for act in \
   "Chủ repo duyệt auto-approve cho Dependabot trên GitHub settings" \
-  "Bật auto-approve trong cài đặt repo"; do
+  "Bật auto-approve trong cài đặt repo" \
+  "Bật auto-approve cho Dependabot trong Settings của tổ chức GitHub" \
+  "Bật auto-approve trong repository settings" \
+  "Bật auto-approve: Settings → Actions → General" \
+  "Bật auto-approve trong cài đặt tổ chức" \
+  "Bật auto-approve trong phần Cài đặt của kho"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 0 ] && pass || fail "E2 cờ bật chặn nhầm bước settings (exit $rc): $act"
 done
