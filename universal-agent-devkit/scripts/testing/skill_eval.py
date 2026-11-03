@@ -27,6 +27,8 @@ VALID_CHECK_TYPES = ("tool_order", "command", "file_glob", "result_regex")
 DEFAULT_ALLOWED_TOOLS = "Read Edit Write Glob Grep Bash(python3 *)"
 GLOBAL_DISALLOWED_TOOLS = ("AskUserQuestion",)
 ACCOUNT_RE = re.compile(r"[A-Za-z0-9_-]+")
+# cc-switcher đã đổi id 3 tài khoản Claude nhưng thư mục ~/.claude-<tên cũ> giữ nguyên (Keychain lưu đăng nhập theo đường dẫn thư mục).
+ACCOUNT_DIR_NAMES = {"finos_toan": "finos", "finos_linh": "finos_team", "finos_toan_max": "max"}
 GIT_ENV_SCRUB = (
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -431,7 +433,7 @@ def resolve_claude_config_dir(explicit_config_dir: str | None, caller_cwd: str) 
                 f"Cảnh báo: bỏ qua giá trị account không hợp lệ trong '{os.path.join(root, '.claude', 'settings.local.json')}' ({acct_info}).\n"
             )
             continue
-        cand_dir = os.path.abspath(os.path.expanduser(f"~/.claude-{acct}"))
+        cand_dir = os.path.abspath(os.path.expanduser(f"~/.claude-{ACCOUNT_DIR_NAMES.get(acct, acct)}"))
         if os.path.isdir(cand_dir):
             return cand_dir
         break

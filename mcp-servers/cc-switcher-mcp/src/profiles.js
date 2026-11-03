@@ -17,41 +17,46 @@ import {
  */
 export const DEFAULT_PROFILES = [
   {
+    // configDir giu ten cu (~/.claude-finos...): Keychain luu dang nhap theo sha256(configDir), doi ten thu muc la mat dang nhap.
+    // appProviderId = id provider trong app CC Switch (DB cua app khong doi theo).
     index: 1,
-    id: 'finos',
-    shortLabel: '1. FinOS',
-    name: '1. FinOS — toan.huynh@finos.asia (5x Team)',
+    id: 'finos_toan',
+    shortLabel: '1. FinOS Toan',
+    name: '1. FinOS Toan — toan.huynh@finos.asia (5x Team)',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-finos'),
     settingsKey: 'currentProviderClaude',
     settingsValue: 'finos',
+    appProviderId: 'finos',
   },
   {
     index: 2,
-    id: 'finos_team',
-    shortLabel: '2. FinOS Team',
-    name: '2. FinOS Team — linhnt@finos.asia (5x Team)',
+    id: 'finos_linh',
+    shortLabel: '2. FinOS Linh',
+    name: '2. FinOS Linh — linhnt@finos.asia (5x Team)',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-finos_team'),
     settingsKey: 'currentProviderClaude',
     settingsValue: 'finos_team',
+    appProviderId: 'finos_team',
   },
   {
     index: 3,
-    id: 'max',
-    shortLabel: '3. Claude Max',
-    name: '3. Personal 5x Max — toan.huynh@finos.asia',
+    id: 'finos_toan_max',
+    shortLabel: '3. FinOS Toan Max',
+    name: '3. FinOS Toan Max — toan.huynh@finos.asia (Personal 5x Max)',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-max'),
     settingsKey: 'currentProviderClaude',
     settingsValue: 'max',
+    appProviderId: 'max',
   },
   {
     index: 4,
-    id: 'antigravity',
+    id: 'antigravity_ultra',
     shortLabel: '4. AGY Ultra',
     name: '4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Argon High)',
     vendor: 'google',
@@ -61,6 +66,7 @@ export const DEFAULT_PROFILES = [
     configDir: path.join(os.homedir(), '.agy-antigravity', '.gemini'),
     settingsKey: 'currentProviderGemini',
     settingsValue: 'antigravity',
+    appProviderId: 'antigravity',
   },
   {
     index: 5,
@@ -85,7 +91,46 @@ export const DEFAULT_PROFILES = [
     settingsKey: 'currentProviderGrokbuild',
     settingsValue: 'grokbuild-official',
   },
+  {
+    // Tai khoan Claude them sau cung: giu nguyen so thu tu 1..6 va thu tu xoay vong cua cac tai khoan cu.
+    index: 7,
+    id: 'finos_lua',
+    shortLabel: '7. FinOS Lua',
+    name: '7. FinOS Lua — ngoclua892@gmail.com (5x)',
+    vendor: 'anthropic',
+    appType: 'claude',
+    configDir: path.join(os.homedir(), '.claude-finos_lua'),
+    settingsKey: 'currentProviderClaude',
+    settingsValue: 'finos_lua',
+  },
 ];
+
+/** Id cu -> id moi cua 4 tai khoan da doi ten. Id cu van duoc nhan khi doc (state, ghim account, CLI/API); ghi ra luon la id moi. */
+export const LEGACY_ID_ALIASES = {
+  finos: 'finos_toan',
+  finos_team: 'finos_linh',
+  max: 'finos_toan_max',
+  antigravity: 'antigravity_ultra',
+};
+
+export function canonicalProfileId(id) {
+  return typeof id === 'string' && Object.hasOwn(LEGACY_ID_ALIASES, id) ? LEGACY_ID_ALIASES[id] : id;
+}
+
+/** Doi khoa id cu -> id moi cua mot map theo profile; hai khoa cung tro mot tai khoan (daemon cu chay song song) thi giu moc lon hon. */
+export function canonicalKeys(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const id = canonicalProfileId(k);
+    const prev = out[id];
+    if (v == null && prev != null) continue; // khoa hong/null khong duoc xoa gia tri hop le cua khoa kia
+    if (typeof v === 'number' && typeof prev === 'number') out[id] = Math.max(prev, v);
+    else if (v && prev && typeof v === 'object' && typeof prev === 'object' && (prev.updatedAtMs || 0) > (v.updatedAtMs || 0)) out[id] = prev; // quotaCache: giu ban moi hon
+    else out[id] = v;
+  }
+  return out;
+}
 
 const DEFAULT_POLICY = {
   // Khoang nghi an toan giua 2 tai khoan Claude lien tiep (mac dinh 900s = 15 phut) de chong quet Sybil/Multi-account
@@ -115,14 +160,14 @@ export function loadSwitcherState(stateDir) {
   const dir = resolveStateDir(stateDir);
   const existing = readJsonSafe(stateFilePath(dir), null);
   const ccSettings = readJsonSafe(ccSwitchSettingsPath(dir), {});
-  const initialActive = existing?.activeProfileId || ccSettings?.currentProviderClaude || 'finos';
+  const initialActive = canonicalProfileId(existing?.activeProfileId || ccSettings?.currentProviderClaude || 'finos_toan');
 
   return {
     activeProfileId: initialActive,
     lastClaudeSwitchAtMs: existing?.lastClaudeSwitchAtMs || 0,
     lastClaudeRateLimitAtMs: existing?.lastClaudeRateLimitAtMs || 0,
-    frozenUntil: existing?.frozenUntil || {},
-    quotaCache: existing?.quotaCache || {},
+    frozenUntil: canonicalKeys(existing?.frozenUntil),
+    quotaCache: canonicalKeys(existing?.quotaCache),
     quotaFetchedAtMs: existing?.quotaFetchedAtMs || 0,
     switchHistory: Array.isArray(existing?.switchHistory) ? existing.switchHistory.slice(-50) : [],
     policy: {
@@ -177,13 +222,13 @@ export function resetLocks(stateDir) {
 }
 
 /**
- * Tim profile theo index (1..6) hoac id ('finos', 'finos_team', ...).
+ * Tim profile theo index hoac id ('finos_toan', 'finos_linh', ...; id cu 'finos', 'finos_team', 'max', 'antigravity' van duoc nhan).
  */
 export function resolveProfile(target) {
   if (target === undefined || target === null || target === '') {
     throw new AppError('INVALID_PROFILE', 'Chua chi dinh profile can chuyen sang.');
   }
-  const str = String(target).trim().toLowerCase();
+  const str = canonicalProfileId(String(target).trim().toLowerCase());
   const num = Number(str);
   const found = DEFAULT_PROFILES.find(
     (p) => p.id.toLowerCase() === str || (Number.isInteger(num) && p.index === num),
@@ -191,7 +236,7 @@ export function resolveProfile(target) {
   if (!found) {
     throw new AppError(
       'PROFILE_NOT_FOUND',
-      `Khong tim thay profile "${target}". Chi chap nhan so 1..6 hoac id: ${DEFAULT_PROFILES.map((p) => p.id).join(', ')}`,
+      `Khong tim thay profile "${target}". Chi chap nhan so 1..${DEFAULT_PROFILES.length} hoac id: ${DEFAULT_PROFILES.map((p) => p.id).join(', ')}`,
     );
   }
   return found;
@@ -217,7 +262,7 @@ function syncToCcSwitchApp(stateDir, profile) {
     }
   }
   if (settingsOk) {
-    currentSettings.currentProviderClaude = profile.id;
+    currentSettings.currentProviderClaude = profile.appProviderId || profile.id;
     if (profile.settingsKey) {
       currentSettings[profile.settingsKey] = profile.settingsValue;
     }
@@ -233,9 +278,10 @@ function syncToCcSwitchApp(stateDir, profile) {
           '-cmd',
           'PRAGMA busy_timeout = 2000;',
           '-cmd',
-          `.param set :pid ${profile.id}`,
+          `.param set :pid ${profile.appProviderId || profile.id}`,
           dbFile,
-          "UPDATE providers SET is_current = CASE WHEN id = :pid THEN 1 ELSE 0 END WHERE app_type = 'claude';",
+          // Chi doi co khi provider da co trong CC Switch: tai khoan moi them (finos_lua) chua tao trong app thi khong xoa co cua provider dang dung.
+          "UPDATE providers SET is_current = CASE WHEN id = :pid THEN 1 ELSE 0 END WHERE app_type = 'claude' AND EXISTS (SELECT 1 FROM providers WHERE id = :pid AND app_type = 'claude');",
         ],
         { timeout: 3000, stdio: 'ignore' },
       );
@@ -400,7 +446,7 @@ export function rotateNextProfile(opts = {}) {
 
   // Tim ung vien khong bi dong bang: neu dang trong Cooldown cua Claude va bat che do uu tien khac hang,
   // xoay theo dung thu tu chong ban: Grok CLI (6) -> AGY Ultra (4) -> AGY Pro (5)
-  const crossVendorOrder = ['grok', 'antigravity', 'antigravity_pro'];
+  const crossVendorOrder = ['grok', 'antigravity_ultra', 'antigravity_pro'];
   let chosen = null;
   if (freshState.policy.preferCrossVendorOnCooldown && isClaudeInCooldown) {
     for (const candId of crossVendorOrder) {
@@ -472,7 +518,7 @@ export function reportRateLimit(opts = {}) {
   // de tuyet doi khong nhay cheo giua cac tai khoan Claude tren cung Repo.
   let nextCandidate = null;
   if (limitedProfile.vendor === 'anthropic') {
-    for (const candId of ['grok', 'antigravity', 'antigravity_pro']) {
+    for (const candId of ['grok', 'antigravity_ultra', 'antigravity_pro']) {
       const cand = DEFAULT_PROFILES.find((p) => p.id === candId);
       if (cand && (state.frozenUntil[cand.id] || 0) <= nowMs) {
         nextCandidate = cand;
@@ -674,32 +720,32 @@ export const DEFAULT_REPOS = [
   {
     name: 'agent-workbench',
     path: '/Volumes/Data/Toan/agent-workbench',
-    defaultAccount: 'finos',
+    defaultAccount: 'finos_toan',
   },
   {
     name: 'OfficeReader',
     path: '/Volumes/Data/Toan/OfficeReader/OfficeReader',
-    defaultAccount: 'finos',
+    defaultAccount: 'finos_toan',
   },
   {
     name: 'Idle-Plaza-3D',
     path: '/Volumes/Data/Toan/Game/Idle-Plaza-3D',
-    defaultAccount: 'finos',
+    defaultAccount: 'finos_toan',
   },
   {
     name: 'GeelyEx2',
     path: '/Volumes/Data/Toan/GeelyEx2',
-    defaultAccount: 'finos_team',
+    defaultAccount: 'finos_linh',
   },
   {
     name: 'Goods-Triple-Shelf-Match-3D',
     path: '/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D',
-    defaultAccount: 'finos_team',
+    defaultAccount: 'finos_linh',
   },
   {
     name: 'Humans-vs.-UFOs',
     path: '/Volumes/Data/Toan/Game/Humans-vs.-UFOs',
-    defaultAccount: 'finos_team',
+    defaultAccount: 'finos_linh',
   },
 ];
 
@@ -772,13 +818,13 @@ export function getRepoAssignments(opts = {}) {
         exists = true;
         const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
         if (typeof parsed.account === 'string') {
-          account = parsed.account.trim();
+          account = canonicalProfileId(parsed.account.trim());
         }
       }
     } catch (err) {
       logStructured('warn', 'read_repo_settings_failed', { repo: r.name, error: err?.message });
     }
-    const fallbackAccount = r.defaultAccount || (r.source === 'custom' ? '' : idx < half ? 'finos' : 'finos_team');
+    const fallbackAccount = r.defaultAccount || (r.source === 'custom' ? '' : idx < half ? 'finos_toan' : 'finos_linh');
     return {
       name: r.name,
       path: r.path,
@@ -812,7 +858,7 @@ function assertClaudeAccount(account) {
  * giu nguyen cac khoa khac (hooks, permissions, autoMemoryDirectory...).
  */
 export function setRepoAccount(opts = {}) {
-  const account = String(opts.account || '').trim();
+  const account = canonicalProfileId(String(opts.account || '').trim());
   assertClaudeAccount(account);
   const repo = findKnownRepo(opts, opts.repoPath);
   if (!fs.existsSync(repo.path)) throw new AppError('INVALID_INPUT', `Không thấy thư mục repo ${repo.path}.`);
@@ -838,7 +884,7 @@ export function addRepo(opts = {}) {
   try { st = fs.statSync(repoPath); } catch { /* xu ly ben duoi */ }
   if (!st || !st.isDirectory()) throw new AppError('INVALID_INPUT', `Không thấy thư mục ${repoPath}.`);
   if (!fs.existsSync(path.join(repoPath, '.git'))) throw new AppError('INVALID_INPUT', `${repoPath} không phải Git repo (thiếu .git).`);
-  const account = String(opts.account || '').trim();
+  const account = canonicalProfileId(String(opts.account || '').trim());
   assertClaudeAccount(account);
   const name = String(opts.name || '').trim() || path.basename(repoPath);
   if (!REPO_NAME_RE.test(name)) throw new AppError('INVALID_INPUT', 'Tên repo chỉ gồm chữ, số, khoảng trắng và . _ ( ) + - (tối đa 80).');
@@ -898,7 +944,7 @@ export function removeRepo(opts = {}) {
 export function balanceRepoAccounts(opts = {}) {
   // chi chia nhom repo mac dinh; repo tu them (repo_add) giu tai khoan nguoi dung da chon (0e1f66b8df)
   const repos = listKnownRepos(opts).filter((r) => r.source !== 'custom');
-  const mode = opts.mode || 'even'; // 'even' | 'swap' | 'all_finos' | 'all_finos_team'
+  const mode = opts.mode || 'even'; // 'even' | 'swap' | 'all_finos' (-> finos_toan) | 'all_finos_team' (-> finos_linh)
   const half = Math.ceil(repos.length / 2);
 
   const results = [];
@@ -916,14 +962,16 @@ export function balanceRepoAccounts(opts = {}) {
       return;
     }
 
-    let nextAccount = r.defaultAccount || (idx < half ? 'finos' : 'finos_team');
+    let nextAccount = r.defaultAccount || (idx < half ? 'finos_toan' : 'finos_linh');
     if (mode === 'swap') {
-      const currentAcc = existing.account || nextAccount;
-      nextAccount = currentAcc === 'finos' ? 'finos_team' : 'finos';
+      const currentAcc = canonicalProfileId(existing.account) || nextAccount;
+      // Chi doi 2 nhom finos <-> finos_team; repo ghim tai khoan khac (max, finos_lua...) la lua chon co chu y, giu nguyen.
+      if (currentAcc !== 'finos_toan' && currentAcc !== 'finos_linh') return;
+      nextAccount = currentAcc === 'finos_toan' ? 'finos_linh' : 'finos_toan';
     } else if (mode === 'all_finos') {
-      nextAccount = 'finos';
+      nextAccount = 'finos_toan';
     } else if (mode === 'all_finos_team') {
-      nextAccount = 'finos_team';
+      nextAccount = 'finos_linh';
     }
 
     const updated = {
