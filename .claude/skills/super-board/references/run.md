@@ -553,8 +553,9 @@ at once, default 3; the queue lock is never held while a verify waits for a slot
 4. Only after step 3 passes — and only when the gate printed no `ac-open: #N` line (T0054: the PR merged with
    AC lines still unproven; the gate kept the issue open, labelled it `ac-open`, commented the open lines and moved the
    card to Ready; `super-board-card.sh move N Done` refuses exit 5 and the runner reopens a closed `ac-open` issue):
-   close the issue, move card Review → Done, rewrite `status` (`> [!TIP]` ✅ Merged) and append the `history` row, post the `[reviewer] [report] ✅ merged` comment
-   citing the merge commit sha.
+   close the issue, move card Review → Done, rewrite `status` (`> [!TIP]` ✅ Merged) and append the `history` row. The gate itself
+   posts the `[reviewer] [report] ✅ merged <sha> · PR #N` comment on every card the PR closes (direct calls; the queue posts its own):
+   do not post a second one.
 5. Merge through the gate (merge queue off; on: the queue steps above), never with a bare `gh pr merge`. Record the head you
    reviewed when review passes, and hand it to the gate:
      HEAD=$(gh pr view <N> --json headRefOid -q .headRefOid)   # at the moment review passes
