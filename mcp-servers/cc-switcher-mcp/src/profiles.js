@@ -62,8 +62,8 @@ export const DEFAULT_PROFILES = [
     vendor: 'google',
     appType: 'gemini',
     // agy chi tach tai khoan qua HOME (khong co bien CONFIG_DIR): ham agy() trong ~/.zshrc dat HOME=homeDir.
-    homeDir: path.join(os.homedir(), '.agy-antigravity'),
-    configDir: path.join(os.homedir(), '.agy-antigravity', '.gemini'),
+    homeDir: path.join(os.homedir(), '.agy-antigravity_ultra'),
+    configDir: path.join(os.homedir(), '.agy-antigravity_ultra', '.gemini'),
     settingsKey: 'currentProviderGemini',
     settingsValue: 'antigravity',
     appProviderId: 'antigravity',

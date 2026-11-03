@@ -55,7 +55,7 @@ agy-profile() {
   [[ $1 =~ ^[A-Za-z0-9_-]+$ ]] || { print -u2 "agy-profile: tên \"$1\" không hợp lệ."; return 1; }
   command -v jq >/dev/null 2>&1 || { print -u2 "agy-profile: cần jq."; return 1; }
   mkdir -p "$root/.claude" || return 1
-  case $1 in antigravity|antigravity_pro) ;; *) print -u2 "⚠️  [agy-profile] \"$1\" không phải profile cc-switcher biết (antigravity, antigravity_pro).";; esac
+  case $1 in antigravity_ultra|antigravity_pro) ;; *) print -u2 "⚠️  [agy-profile] \"$1\" không phải profile cc-switcher biết (antigravity_ultra, antigravity_pro).";; esac
   _agy_build_home "$1" || return 1
   if [[ -s $f ]]; then
     tmp="$f.tmp.$$"
