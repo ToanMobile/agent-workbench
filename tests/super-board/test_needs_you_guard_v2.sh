@@ -202,6 +202,37 @@ rc="$(set +e; cd "$TMP/wt" && env -u SB_NEEDS_YOU_GUARD_V2 python3 "$NEEDS_YOU" 
 echo '{"needs_you_guard_v2": tru' > "$TMP/repo/.agents/local/flags.json"
 rc="$(env -u SB_NEEDS_YOU_GUARD_V2 bash -c "$(declare -f mark_rc); TMP='$TMP'; NEEDS_YOU='$NEEDS_YOU'; mark_rc '$probe'")"
 [ "$rc" = 0 ] && pass || fail "T4 flags.json hỏng phải là tắt (exit $rc)"
+echo '{"needs_you_guard_v2": false}' > "$TMP/repo/.agents/local/flags.json"
+rc="$(env -u SB_NEEDS_YOU_GUARD_V2 bash -c "$(declare -f mark_rc); TMP='$TMP'; NEEDS_YOU='$NEEDS_YOU'; mark_rc '$probe'")"
+[ "$rc" = 0 ] && pass || fail "T4 flags.json false phải là tắt (exit $rc)"
+echo '{"needs_you_guard_v2": "yes"}' > "$TMP/repo/.agents/local/flags.json"
+rc="$(env -u SB_NEEDS_YOU_GUARD_V2 bash -c "$(declare -f mark_rc); TMP='$TMP'; NEEDS_YOU='$NEEDS_YOU'; mark_rc '$probe'")"
+[ "$rc" = 0 ] && pass || fail "T4 flags.json không phải true phải là tắt (exit $rc)"
+
+# T5: câu gần mẫu — mỗi điểm neo của V2_RULES có một câu chỉ khác phần neo; nới neo là câu này bị chặn nhầm.
+for act in \
+  "Approve hợp đồng với luật sư của công ty" \
+  "Gửi dòng duyệt cho luật sư đọc" \
+  "Duyệt chéo hợp đồng với luật sư" \
+  "Viết lại điều khoản pháp lý của app" \
+  "Viết lại thẻ ngân hàng trong hồ sơ công ty" \
+  "Chạy --full trên máy của tester ngoài" \
+  "Dọn cây thư mục upload của khách" \
+  "Sửa AC của hợp đồng NDA với đối tác" \
+  "Đóng #12 vì đối tác huỷ hợp đồng"; do
+  rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
+  [ "$rc" = 0 ] && pass || fail "T5 câu gần mẫu bị chặn (exit $rc): $act"
+done
+
+# T6: neo + việc phải hỏi người trong cùng mệnh đề: chỉ V2_HUMAN_RE cho qua (ghim phần miễn trừ).
+for act in \
+  "Dọn cây dirty sau khi bạn force-push xoá token" \
+  "Sửa AC thẻ #12: bạn chọn gói thanh toán Apple" \
+  "Viết lại thẻ #5 sau khi bạn deploy bản production" \
+  "Đóng #7 vì PR #9 chờ bạn đăng nhập Play Console"; do
+  rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
+  [ "$rc" = 0 ] && pass || fail "T6 miễn trừ V2_HUMAN_RE không có hiệu lực (exit $rc): $act"
+done
 
 echo "Summary: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
