@@ -5005,10 +5005,24 @@ def _env_seconds(name, default):
 # holds test_run.lock writes who it is into the lock file (pid + start time, under the flock; emptied before it lets go). A Stop run
 # (TEST_RUN_LOCK_BUSY_FAST=1, set by hooks/regression_gate.sh) that finds a LIVE gate there — the pid still the process with that start time,
 # the check session_lock makes of its own holder — waits only DEVKIT_REUSE_LOCK_WAIT_S (3 s) and says BUSY: that holder is a whole gate run,
-# minutes long. A holder it cannot name (stale_rerun / testsourceset / worktree.py write no record, a dead or recycled pid, a record a
+# minutes long. A holder it cannot name (testsourceset / worktree.py write no record, a dead or recycled pid, a record a
 # killed gate left) keeps the long wait; a lock nobody holds is taken at once, as before. The CLI never sets the flag: it keeps its wait.
-# ponytail: stale_rerun opens the file with "w" and empties a gate's record while it waits for the lock; the next Stop then waits 45 s again.
-def _write_test_run_lock_holder(fh, clear=False):
+# Wave 2 lane C (03/11): the record also says whose run it is: {pid, pid_start, sid, who} (sid = the gate's --session, else
+# CLAUDE_CODE_SESSION_ID; stale_rerun writes who=stale_rerun). A Stop run that finds a LIVE holder of its OWN session (sid not empty and
+# not "default", the start time read back equal to the recorded one, not this pid) says BUSY at once: that holder is this session's own
+# gate or re-run, minutes long. Its BUSY is never the read-only exit 0 (main: read_only). A Stop run that gives up writes busy_holder
+# (who, sid_match, alive, the raw record cut short) into runs.jsonl; the gate-queue wait in main writes who=gate_queue.
+# Measured 03/11: the 19 Stop runs that waited 45 s were the machine gate queue (DEVKIT_GATE_SLOT_WAIT_S=45), not this lock.
+_BUSY_HOLDER = {}   # who kept this run from the lock or the gate queue (runs.jsonl busy_holder, Stop runs only); acquire_test_run_lock resets it
+
+
+def _lock_session_id(sid=None):
+    """The session a test_run.lock record names: `sid` (the gate's --session) or CLAUDE_CODE_SESSION_ID; "" and "default" are no session."""
+    s = str(sid if sid else os.environ.get("CLAUDE_CODE_SESSION_ID", "")).strip()[:80]
+    return "" if s == "default" else s
+
+
+def _write_test_run_lock_holder(fh, clear=False, sid=None, who="gate"):
     """Record this run as the holder of the test_run.lock `fh` it holds (clear=True: empty the record, still under the flock). Data only:
     a failure leaves the record empty or stale, which a waiter reads as an unknown holder (the long wait)."""
     try:
@@ -5016,7 +5030,8 @@ def _write_test_run_lock_holder(fh, clear=False):
         if not clear:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             import session_lock  # noqa: PLC0415 - sibling module in bin/
-            fh.write(json.dumps({"pid": os.getpid(), "pid_start": session_lock.pid_start(os.getpid())}) + "\n")
+            fh.write(json.dumps({"pid": os.getpid(), "pid_start": session_lock.pid_start(os.getpid()),
+                                 "sid": _lock_session_id(sid), "who": who}) + "\n")
         fh.flush()
         return True
     except (OSError, ImportError, AttributeError, ValueError) as e:
@@ -5024,35 +5039,69 @@ def _write_test_run_lock_holder(fh, clear=False):
         return False
 
 
-def _test_run_lock_live_gate(path):
-    """The record in test_run.lock names a gate run that is still alive: pid > 1 with a recorded start time, and that pid is still the process
-    started then (session_lock.is_pid_alive). No record, another writer's bytes, an unknown start, a dead or recycled pid: False."""
+def _test_run_lock_holder_raw(path):
+    """The text of the test_run.lock record (at most 4 KB); OSError when it cannot be read."""
+    fd = _state_fd(path, "r")
     try:
-        fd = _state_fd(path, "r")
-        try:
-            raw = os.read(fd, 4096)
-        finally:
-            os.close(fd)
-        rec = json.loads(raw.decode("utf-8", "replace") or "null")
-        pid, start = (rec.get("pid"), rec.get("pid_start")) if isinstance(rec, dict) else (None, None)
-        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1 or not isinstance(start, str) or not start:
-            return False
+        return os.read(fd, 4096).decode("utf-8", "replace")
+    finally:
+        os.close(fd)
+
+
+def _test_run_lock_holder(path, sid=None):
+    """What the record in test_run.lock says about its holder: {who, sid_match, alive, same_session, raw}. alive: pid > 1 with a recorded
+    start time and that pid still the process started then (session_lock.is_pid_alive, as B5). same_session: alive, the record's sid equals
+    this run's (neither empty nor "default"), not this pid, and the start time READ BACK equal to the recorded one (an unknown start under
+    load is not enough for the at-once BUSY). No record, another writer's bytes, an unknown start, a dead or recycled pid: alive False."""
+    out = {"who": None, "sid_match": False, "alive": False, "same_session": False, "raw": ""}
+    try:
+        text = _test_run_lock_holder_raw(path)
+        out["raw"] = text.strip()[:200]
+        rec = json.loads(text or "null")
+        if not isinstance(rec, dict):
+            return out
+        pid, start, rsid = rec.get("pid"), rec.get("pid_start"), rec.get("sid")
+        out["who"] = str(rec.get("who"))[:32] if rec.get("who") is not None else None
+        mine = _lock_session_id(sid)
+        out["sid_match"] = bool(mine) and isinstance(rsid, str) and rsid == mine
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1 or pid == os.getpid() or not isinstance(start, str) or not start:
+            return out
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import session_lock  # noqa: PLC0415 - sibling module in bin/
-        return pid != os.getpid() and session_lock.is_pid_alive(pid, start)
+        if out["sid_match"] and session_lock.pid_start(pid) == start:
+            out["alive"] = out["same_session"] = True
+            return out
+        out["alive"] = bool(session_lock.is_pid_alive(pid, start))
     except (OSError, ValueError, ImportError, AttributeError):
-        return False
+        pass
+    return out
 
 
-def acquire_test_run_lock(project_dir, cap=None):
+def _test_run_lock_live_gate(path):
+    """The record in test_run.lock names a gate run that is still alive (_test_run_lock_holder alive)."""
+    return _test_run_lock_holder(path)["alive"]
+
+
+def _note_busy_holder(holder, fast=""):
+    """busy_holder for runs.jsonl (Stop runs: TEST_RUN_LOCK_BUSY_FAST=1): the holder as this run saw it when it gave up."""
+    if os.environ.get("TEST_RUN_LOCK_BUSY_FAST") == "1":
+        _BUSY_HOLDER.clear()
+        _BUSY_HOLDER.update({k: holder.get(k) for k in ("who", "sid_match", "alive", "raw")})
+        if fast:
+            _BUSY_HOLDER["fast"] = fast
+
+
+def acquire_test_run_lock(project_dir, cap=None, sid=None):
     """(file handle, held) — the per-project test-run flock under .claude/audit-gate/. Waits at
     most TEST_RUN_LOCK_WAIT_S (default 900 from the CLI; hooks/regression_gate.sh passes 45 so
     the wait plus the suites stay inside the Stop hook's own 1800 s timeout) for another run, or
     `cap` seconds when that is less (a run with nothing left to run: see main);
     not held → the tests are BUSY (summary "busy"). (None, True) when the lock file cannot be
     made (never worse than no lock). TEST_RUN_LOCK_BUSY_FAST=1 (the Stop hook) and a live gate holds
-    it: DEVKIT_REUSE_LOCK_WAIT_S (3 s) at most (B5 above). Held: this run's record is written into it."""
+    it: DEVKIT_REUSE_LOCK_WAIT_S (3 s) at most (B5 above); a live holder of this run's own session (`sid`):
+    (None, False) at once, _BUSY_HOLDER["fast"] = "same_session". Held: this run's record is written into it."""
     import fcntl  # noqa: PLC0415
+    _BUSY_HOLDER.clear()
     state = Path(project_dir) / ".claude" / "audit-gate"
     try:
         state.mkdir(parents=True, exist_ok=True)
@@ -5066,16 +5115,29 @@ def acquire_test_run_lock(project_dir, cap=None):
     if cap is not None:
         wait = min(wait, cap)
     t0 = time.monotonic()
-    deadline, said = t0 + wait, False
+    deadline, said, seen = t0 + wait, False, None
+    fast = os.environ.get("TEST_RUN_LOCK_BUSY_FAST") == "1"
     while True:
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            _write_test_run_lock_holder(fh)
+            _write_test_run_lock_holder(fh, sid=sid)
             return fh, True
         except OSError:
-            if not said and os.environ.get("TEST_RUN_LOCK_BUSY_FAST") == "1" and _test_run_lock_live_gate(state / TEST_RUN_LOCK):
-                deadline = min(deadline, t0 + _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0))
+            if not said and fast:
+                seen = _test_run_lock_holder(state / TEST_RUN_LOCK, sid)
+                if seen["same_session"]:
+                    _note_busy_holder(seen, "same_session")
+                    fh.close()
+                    return None, False
+                if seen["alive"]:
+                    deadline = min(deadline, t0 + _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0))
             if time.monotonic() >= deadline:
+                if fast:   # the holder at give-up time; the first look stands when the record is unchanged (no second ps)
+                    try:
+                        now = _test_run_lock_holder_raw(state / TEST_RUN_LOCK).strip()[:200]
+                    except OSError:
+                        now = None
+                    _note_busy_holder(seen if seen is not None and seen["raw"] == now else _test_run_lock_holder(state / TEST_RUN_LOCK, sid))
                 fh.close()
                 return None, False
             if not said:
@@ -6305,6 +6367,8 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
         waits = _run_log_slot_waits(regression_tests, slot_waits)
         if waits:
             rec["slot_wait_s"] = waits
+        if _BUSY_HOLDER and rec["busy"]:   # wave 2 C: who the Stop run gave up behind (measured, never decides)
+            rec["busy_holder"] = dict(_BUSY_HOLDER)
         if _MAIN_T0 is not None:
             rec["total_wall_s"] = round(time.monotonic() - _MAIN_T0, 2)
         with _STEP_LOCK:   # seconds per phase (see _lap); a copy, so the record never changes after this line
@@ -7444,7 +7508,7 @@ def main():
     gate_slot_busy = False
     gate_slot_hs = None
     prev_gate_slot_held = os.environ.get("DEVKIT_GATE_SLOT_HELD")
-    lock_fh, lock_held = (acquire_test_run_lock(project_dir, cap=reuse_wait_s if nothing_to_run else None)
+    lock_fh, lock_held = (acquire_test_run_lock(project_dir, cap=reuse_wait_s if nothing_to_run else None, sid=args.session)
                           if run_tests and (reuse_src[0] or keyed_hits or not nothing_to_run) else (None, True))
     # Read-only: every suite was re-used and the lock was not obtained within the short wait. The verdict is the stamp check alone (the file that vouched
     # for the PASS still stands, or still says PASS: exit as before; moved and no longer vouching: UNTESTED, exit 4) and nothing is written: no receipt,
@@ -7455,7 +7519,8 @@ def main():
     # is keyed on the content, as for any PASS.
     # ponytail: a suite that starts to fail on UNCHANGED content while another run holds the lock is seen by this run's reader only after that run
     # persists its FAIL; DEVKIT_REUSE_LOCK_WAIT_S as long as TEST_RUN_LOCK_WAIT_S waits for it instead.
-    read_only = bool(run_tests and not lock_held and nothing_to_run)
+    # Wave 2 C: a live holder of this run's own session (its gate or re-run is still writing results) is BUSY, never the read-only exit 0.
+    read_only = bool(run_tests and not lock_held and nothing_to_run and _BUSY_HOLDER.get("fast") != "same_session")
     # Another run (a second session, or a gate still running in the background) may have recorded a
     # full PASS of this same content since the check above — while we waited for its lock, or just
     # before we reached the lock: re-use it instead of running every suite again (audit 2026-09-29).
@@ -7502,6 +7567,7 @@ def main():
                     "gate", gate_slot_hs.pool_paths("gate", gate_slots_n),
                     wait_s=gate_wait_s, label=os.path.basename(str(project_dir))[:64])
                 if gate_slot.timed_out:
+                    _note_busy_holder({"who": "gate_queue", "raw": "pool gate, %d slot(s), waited %.0f s" % (gate_slots_n, gate_wait_s)})
                     if lock_fh is not None:
                         _write_test_run_lock_holder(lock_fh, clear=True)
                         lock_fh.close()
