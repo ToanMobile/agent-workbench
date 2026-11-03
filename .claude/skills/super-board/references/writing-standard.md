@@ -340,6 +340,10 @@ Next: <owner>
 
 Header regex: `^\[(builder|qa|reviewer|collect|orchestrator)\] \[(blocker|issue|suggestion|nit|question|praise|report)\] \S`
 
+- Write the body of a comment, PR or issue to a file with the Write tool, then pass it as
+  `gh … --body-file <file>`. Never build it with a shell heredoc (`cat > f <<'EOF'`): the git
+  guard reads `push` / `commit` in heredoc text as commands and refuses the call (7 of 20
+  sampled refusals, 03/11).
 - ≤ 8 lines of prose. Evidence before adjectives: the command, the sha, the file:line.
 - Machine lines (`Local tests:`, `gh-quota-on-exit:`, `blocked-by:`, `root-cause-hash:`) go
   last and do not count toward the 8.
