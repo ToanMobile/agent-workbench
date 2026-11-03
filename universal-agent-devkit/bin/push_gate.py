@@ -531,7 +531,8 @@ def session_agent():
 def normalize_reviewer(value):
     """Tên reviewer chuẩn hoá: grok, grok-build, grok-4.x → "grok"; antigravity* → "antigravity"; còn lại chữ thường đã strip."""
     v = value.strip().casefold() if isinstance(value, str) else ""
-    # Đợt 2: khớp normalizeAgent / laGrok của PM — tên rồi hết chuỗi hoặc một trong `-` `_` `.` (grok_x, grok.x, antigravity-pro).
+    # Đợt 2: tên rồi hết chuỗi hoặc một trong `-` `_` `.` (grok_x, grok.x, antigravity-pro). Gần normalizeAgent / laGrok của PM, lệch có
+    # chủ ý: laGrok nhận rộng hơn ("grok build", "grok:"), normalizeAgent chỉ nhận "antigravity-*" (tools.js ghi cùng điều này).
     for name in ("grok", "antigravity"):
         if v == name or (v.startswith(name) and v[len(name)] in "-_."):
             return name
