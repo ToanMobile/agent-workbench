@@ -12,11 +12,15 @@
   * An endpoint that rejects EVERY request is no endpoint either (14/10: the API key hit its usage limit until 01/11; every file
     failed on the provider, 0 tokens, and review_gate then held every Stop): the same delegation, with the provider's reason shown
     (`LLM endpoint unusable`). A review that reviewed some files and failed others stays a failure (exit 1).
+  * A report it keeps gets `content_sha256` {path: sha256} of the files the report says it reviewed (manifest.coverage completed +
+    reused), hashed BEFORE the review (working tree, or the blob at --to / --commit), and `content_base` (HEAD, --from, or the
+    commit's parent): hooks/review_gate.sh then asks OCR again only for files whose bytes changed since (wave 2 lane D, 03/11).
 --delegate-only skips the LLM attempt (hooks/review_gate.sh runs it on a block: no cost, ~1 s).
 Output goes to a new temp folder (or --out DIR, reused and overwritten: review_gate passes one folder per repo so its block
 message is the same text on every run), never into the repo. Exit 0: report or spec ready (or nothing to review); 1: ocr failed;
 3: ocr is not installed. Standard library only.
 """
+import hashlib
 import json
 import os
 import re
@@ -130,6 +134,87 @@ def rejected_all(report):
         return False
 
 
+def _git(*args):
+    r = subprocess.run(["git", *args], capture_output=True, timeout=60)
+    if r.returncode != 0:
+        raise RuntimeError("git %s: %s" % (" ".join(args[:3]), r.stderr.decode("utf-8", "replace").strip()[:200]))
+    return r.stdout
+
+
+def _names(out):
+    return [p for p in out.decode("utf-8", "surrogateescape").split("\0") if p and "\n" not in p]
+
+
+def content_plan(keep):
+    """(base, {path: sha256}) of the code this run is about to review, hashed BEFORE `ocr review` starts (hooks/review_gate.sh credits a
+    file whose current bytes still hash the same, whatever its mtime): the working tree over base HEAD, or the blob at --to / --commit
+    over base --from / the commit's parent. Paths relative to the repo top, as the gate's. git fails: an error (the report gets no map)."""
+    vals = dict(zip(keep[::2], keep[1::2]))
+    top = _git("rev-parse", "--show-toplevel").decode("utf-8", "surrogateescape").rstrip("\n")
+    g = lambda *a: _git("-C", top, *a)   # noqa: E731
+    rev = lambda r: g("rev-parse", "-q", "--verify", r + "^{commit}").decode().strip()   # noqa: E731
+    c = vals.get("--commit") or vals.get("-c")
+    if c:
+        at = rev(c)
+        base, files = rev(at + "^"), _names(g("diff-tree", "-r", "-z", "--no-commit-id", "--name-only", at))
+    elif "--from" in vals:
+        base, at = rev(vals["--from"]), rev(vals.get("--to") or "HEAD")
+        files = _names(g("diff", "--no-relative", "--name-only", "-z", base + "..." + at))
+    else:
+        base, at = rev("HEAD"), ""
+        files = _names(g("diff", "--no-relative", "--name-only", "-z", "HEAD")) \
+            + _names(g("ls-files", "-z", "--others", "--exclude-standard"))
+    shas = {}
+    if not at:
+        for f in files:
+            try:
+                with open(os.path.join(top, f), "rb") as fh:
+                    shas[f] = hashlib.sha256(fh.read()).hexdigest()
+            except OSError:   # deleted: nothing to hash, never credited
+                pass
+        return base, shas
+    if files:   # one `git cat-file --batch` for every blob at the reviewed commit
+        p = subprocess.run(["git", "-C", top, "cat-file", "--batch"], input="".join("%s:%s\n" % (at, f) for f in files).encode(
+            "utf-8", "surrogateescape"), capture_output=True, timeout=120)
+        if p.returncode != 0:
+            raise RuntimeError("git cat-file --batch: " + p.stderr.decode("utf-8", "replace")[:200])
+        buf, i = p.stdout, 0
+        for f in files:
+            nl = buf.index(b"\n", i)
+            head = buf[i:nl].split()
+            i = nl + 1
+            if len(head) == 3 and head[1] == b"blob":
+                size = int(head[2])
+                shas[f] = hashlib.sha256(buf[i:i + size]).hexdigest()
+                i += size + 1
+            elif len(head) == 3:   # a submodule commit or other object: skip its body
+                i += int(head[2]) + 1
+    return base, shas
+
+
+def write_content_map(report, plan):
+    """Add `content_sha256` (only the files the report says it reviewed: manifest.coverage completed + reused) and `content_base` to
+    the report. A report without that coverage is left as it is (review_gate then keeps its mtime rule for it)."""
+    try:
+        with open(report, encoding="utf-8") as fh:
+            d = json.load(fh)
+        cov = d["manifest"]["coverage"]
+        done = (cov.get("completed") or []) + (cov.get("reused") or [])
+        if not isinstance(done, list):
+            raise TypeError("coverage is not a list")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        print("ocr-review: report has no file coverage (%r); no content map" % (e,), file=sys.stderr)
+        return
+    paths = {x.get("path") for x in done if isinstance(x, dict) and isinstance(x.get("path"), str)}
+    base, shas = plan
+    d["content_sha256"] = {p: s for p, s in shas.items() if p in paths}
+    d["content_base"] = base
+    tmp = report + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(d, fh)
+    os.replace(tmp, report)
+
+
 def main(argv):
     if shutil.which("ocr") is None:
         print("ocr-review: `ocr` (OpenCodeReview) is not installed — npm i -g @alibaba-group/open-code-review", file=sys.stderr)
@@ -157,8 +242,18 @@ def main(argv):
             os.unlink(report)
         except FileNotFoundError:
             pass
+        try:
+            plan = content_plan(keep)
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as e:
+            print("ocr-review: content hashes unavailable (%s); the report gets no content map" % (e,), file=sys.stderr)
+            plan = None
         r = ocr("review", "--audience", "agent", "--format", "json", "-o", report, *[a for a in keep if a], timeout=REVIEW_TIMEOUT_S)
         if r.returncode == 0 and os.path.exists(report):
+            if plan is not None:
+                try:
+                    write_content_map(report, plan)
+                except OSError as e:
+                    print("ocr-review: content map not written (%r)" % (e,), file=sys.stderr)
             print("mode: review")
             print("report: " + report)
             return 0

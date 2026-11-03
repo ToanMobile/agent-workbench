@@ -694,6 +694,87 @@ for _f in session_unreviewed:
         _newest = max(_newest, os.path.getmtime(os.path.join(repo_root, _f)))
     except OSError:
         pass   # deleted since the edit: nothing newer to compare
+# Content map (wave 2 lane D, 03/11): bin/ocr-review writes `content_sha256` {path: sha256 of the bytes it reviewed, hashed before the
+# review} and `content_base` into its own report. Such a report is judged by content only, never by mtime (a map edited by hand gets a
+# fresh mtime): a file is OCR-reviewed when its current sha equals the sha in a report of the same scope — workspace: the working-tree
+# file, base == HEAD now, the session's uncommitted files; range: the blob at HEAD, a run that covers the commits since the verified head
+# (_covers_since) from a base at or before it, every file committed since. Other files are the delta: a run whose map holds their
+# current sha. A report without the map keeps the mtime rule below. The agent review rule does not change: a mapped report counts as a
+# review at its own transcript index only, never earlier, so a file edited back to reviewed bytes still needs a review after that edit.
+# ponytail: a map forged by hand with the current sha is not detected (no more than a forged `comments` list); reusing one --out for two
+# runs overwrites the first report and its coverage (use a new --out, or none); a deleted file has no sha and needs a fresh run.
+def _sha_file(rel):
+    import hashlib
+    try:
+        with open(os.path.join(repo_root, rel), "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return None
+
+
+_HEAD_SHA = {}
+
+
+def _sha_head(rel):
+    if rel not in _HEAD_SHA:
+        import hashlib
+        try:
+            r = subprocess.run(["git", "-C", repo_root, "cat-file", "blob", "HEAD:" + rel], capture_output=True, timeout=10)
+            _HEAD_SHA[rel] = hashlib.sha256(r.stdout).hexdigest() if r.returncode == 0 else None
+        except Exception as e:
+            logline(f"[{ts}] HEAD blob of {rel}: {e!r} — not credited")
+            _HEAD_SHA[rel] = None
+    return _HEAD_SHA[rel]
+
+
+def _at_or_before(a, b):
+    try:
+        return bool(a) and bool(b) and subprocess.run(["git", "-C", repo_root, "merge-base", "--is-ancestor", a, b],
+                                                      capture_output=True, timeout=5).returncode == 0
+    except Exception as e:
+        logline(f"[{ts}] merge-base {a[:12]} {b[:12]}: {e!r} — not credited")
+        return False
+
+
+ws_need = sorted(session_unreviewed & dirty)   # the session's uncommitted code: what a workspace map must hold
+range_need = sorted(since)                     # every file committed since the verified head, as the old range rule
+ws_mapped, range_mapped = set(), set()
+map_ws_idx = -1   # newest workspace map report on the current HEAD (a session that edited only committed files: index rule)
+_head_now = _rev("HEAD") if ocr_reports else ""
+for _at, _rp, _argv in list(ocr_reports):
+    try:
+        with open(_rp, encoding="utf-8") as fh:
+            _rep = json.load(fh)
+    except (OSError, ValueError):
+        continue   # the mtime rule below says it is no report
+    if not isinstance(_rep, dict) or "content_sha256" not in _rep:
+        continue
+    ocr_reports.remove((_at, _rp, _argv))   # mapped: judged here only
+    _m, _base = _rep.get("content_sha256"), _rep.get("content_base")
+    if not _reviewed(_rep) or not isinstance(_m, dict) or not isinstance(_base, str) or not _base:
+        logline(f"[{ts}] OCR run at #{_at} named {_rp}: content map malformed or nothing reviewed — not counted")
+        continue
+    if any(w in ("--from", "--commit", "-c") for w in _argv[:-1]):
+        if not _covers_since(_argv) or not _at_or_before(_base, since_base):
+            logline(f"[{ts}] OCR run at #{_at}: content map over a range that does not cover the commits since {since_base[:12]} — not counted")
+            continue
+        _hit = {f for f in range_need if _m.get(f) is not None and _m.get(f) == _sha_head(f)}
+        range_mapped |= _hit
+    else:
+        if _base != _head_now:
+            logline(f"[{ts}] OCR run at #{_at}: workspace content map on base {_base[:12]}, HEAD is {_head_now[:12]} — not counted")
+            continue
+        map_ws_idx = max(map_ws_idx, _at)
+        _hit = {f for f in ws_need if _m.get(f) is not None and _m.get(f) == _sha_file(f)}
+        ws_mapped |= _hit
+    if _hit:   # a review at its own index
+        last_review_idx = max(last_review_idx, _at)
+        review_marks.append(_at)
+    logline(f"[{ts}] OCR run at #{_at}: content map matches {sorted(_hit)}")
+ws_map_ok = set(ws_need) <= ws_mapped if ws_need else map_ws_idx > last_edit_idx
+range_map_ok = bool(range_need) and set(range_need) <= range_mapped
+ocr_delta = [f for f in ws_need if f not in ws_mapped] + [f + " (đã commit)" for f in range_need if f not in range_mapped]
+
 if ocr_reports:
     for _at, _rp, _argv in ocr_reports:
         if _valid_ocr_report(_rp, _newest):
@@ -760,8 +841,8 @@ def _fallback_for(ranged_scope):
     return False
 
 
-ocr_done = ((not need_ws or last_ocr_ws_idx > last_edit_idx or _fallback_for(False))
-            and (not since or last_ocr_range_idx > last_edit_idx or _fallback_for(True)))
+ocr_done = ((not need_ws or last_ocr_ws_idx > last_edit_idx or _fallback_for(False) or ws_map_ok)
+            and (not since or last_ocr_range_idx > last_edit_idx or _fallback_for(True) or range_map_ok))
 ocr_missing = (reviewed_after_edits and not ocr_done
                and os.environ.get("REVIEW_GATE_OCR", "1") != "0" and os.environ.get("REVIEW_GATE_REQUIRE_OCR", "1") != "0"
                and shutil.which("ocr") is not None)
@@ -909,6 +990,8 @@ if ocr_missing:   # the agent review is done: say exactly what is left
            "   (phần đã commit sau lần xác minh cuối: lệnh không --from chỉ xem phần chưa commit)"] if since else []),
         "rồi xử lý từng phát hiện (sửa, hoặc nói vì sao không); sửa code thì review lại. Máy chưa có LLM endpoint thì lệnh tự rơi về",
         "spec delegation: giao spec đó cho một reviewer agent SAU lần chạy đó. Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
+        *([f"OCR theo nội dung đã phủ {len(ws_mapped) + len(range_mapped)} file; còn lệch: {', '.join(ocr_delta[:10])}"]
+          if (ws_mapped or range_mapped) and ocr_delta else []),
         "",
     ] + [f"  • {f}" for f in unrev[:20]] + ([f"  … +{len(unrev) - 20} file nữa"] if len(unrev) > 20 else [])
 # OpenCodeReview, run by the gate itself on this block path only (2026-10-13, user: run ocr review in every repo): the delegation
