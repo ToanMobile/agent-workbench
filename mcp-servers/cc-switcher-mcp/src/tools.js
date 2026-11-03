@@ -18,7 +18,7 @@ import { formatStatusText } from './status-text.js';
 export const TOOLS = [
   {
     name: 'switcher_status',
-    description: 'Xem trang thai 6 profile CC Switch, tai khoan dang active, thoi gian Cooldown chong ban, thong ke token/chi phi va cau hinh Telegram.',
+    description: 'Xem trang thai 7 profile CC Switch, tai khoan dang active, thoi gian Cooldown chong ban, thong ke token/chi phi va cau hinh Telegram.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -41,13 +41,13 @@ export const TOOLS = [
   },
   {
     name: 'switcher_switch',
-    description: 'Chuyen sang mot profile cu the (1..6 hoac id: finos, finos_team, max, antigravity, antigravity_pro, grok) kem kiem tra Anti-Ban Cooldown va gui thong bao Telegram.',
+    description: 'Chuyen sang mot profile cu the (1..7 hoac id: finos_toan, finos_linh, finos_toan_max, antigravity_ultra, antigravity_pro, grok, finos_lua; id cu finos, finos_team, max, antigravity van duoc nhan) kem kiem tra Anti-Ban Cooldown va gui thong bao Telegram.',
     inputSchema: {
       type: 'object',
       properties: {
         target: {
           type: ['string', 'number'],
-          description: 'So thu tu profile (1..6) hoac ID profile (finos, finos_team, max, antigravity, antigravity_pro, grok).',
+          description: 'So thu tu profile (1..7) hoac ID profile (finos_toan, finos_linh, finos_toan_max, antigravity_ultra, antigravity_pro, grok, finos_lua; id cu van duoc nhan).',
         },
         enforceCooldown: {
           type: 'boolean',
@@ -85,7 +85,7 @@ export const TOOLS = [
   },
   {
     name: 'switcher_rotate',
-    description: 'Tu dong xoay sang profile an toan ke tiep trong 6 profile (bo qua tai khoan dang dong bang 5h hoac dang vung cooldown Claude).',
+    description: 'Tu dong xoay sang profile an toan ke tiep trong 7 profile (bo qua tai khoan dang dong bang 5h hoac dang vung cooldown Claude).',
     inputSchema: {
       type: 'object',
       properties: {

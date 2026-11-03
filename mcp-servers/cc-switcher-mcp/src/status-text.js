@@ -33,7 +33,7 @@ export function formatStatusText(report) {
   });
   if (Array.isArray(report.repoAssignments) && report.repoAssignments.length > 0) {
     lines.push('');
-    const accs = ['finos', 'finos_team'];
+    const accs = ['finos_toan', 'finos_linh'];
     for (const r of report.repoAssignments) if (r.account && !accs.includes(r.account)) accs.push(r.account);
     for (const acc of accs) {
       const names = report.repoAssignments.filter((r) => r.account === acc).map((r) => r.name);

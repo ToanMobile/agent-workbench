@@ -72,3 +72,12 @@ class ToolbarMarkupStatic(unittest.TestCase):
         self.assertRegex(self.html, r'<button type="button" class="acct panel empty" id="acctChip" aria-haspopup="dialog" aria-expanded="false" aria-controls="acctPop">')
         self.assertIn('id="acctPop" role="dialog"', self.html)
         self.assertIn("Chưa có phiên", self.html)
+
+    def test_account_popover_quick_switch_and_full_screen(self):
+        """Nút tài khoản góc phải trên: chuyển nhanh tài khoản ngay trong popover + một nút nhảy sang trang /cc-switcher."""
+        pop = self.re.search(r'<section class="acct-pop panel" id="acctPop"[^>]*>(.*?)</section>', self.html, self.re.S).group(1)
+        self.assertRegex(pop, r'<a [^>]*id="apFull"[^>]*href="/cc-switcher"')
+        self.assertIn('id="apQuick"', pop)
+        self.assertIn("'/api/cc-switcher/state'".replace("'/", "'"), self.html)  # đọc 6 tài khoản
+        self.assertRegex(self.html, r"action: 'switch', target: p\.id")  # bấm một tài khoản = gọi thao tác switch
+        self.assertIn("needsForce", self.html)  # tài khoản đang 429 / đang nghỉ chống ban: hỏi ép chuyển, không im lặng

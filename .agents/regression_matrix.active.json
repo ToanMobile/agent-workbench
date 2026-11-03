@@ -3236,6 +3236,84 @@
       ]
     },
     {
+      "component": "super-board-needs-you-guard-v2",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_needs_you_guard_v2.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-GUARD-V2-01",
+          "name": "optimizer đợt 1: cờ needs_you_guard_v2 tắt = nhận mọi lời 🙋 như v1; bật = từ chối 8 lời nhắm thứ agent sở hữu (duyệt test đã sửa, AC/nội dung thẻ #N, đóng thẻ đã có PR, cây dirty, --full + merge gate), vẫn nhận 44 lời còn lại, việc phải hỏi người dù mở đầu bằng quyết định/chọn hướng, và câu human-gate của merge-queue; cờ đọc từ flags.json của checkout chính",
+          "command": "bash tests/super-board/test_needs_you_guard_v2.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-dependency-unblock-v1",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-waiting-on.py",
+        "tests/super-board/test_dependency_unblock_v1.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-DEPENDENCY-UNBLOCK-V1-01",
+          "name": "P3 cờ dependency_unblock_v1: thẻ Ready còn ## Blocked by mở ở lại Ready (waiting-on), không claim/Building/Blocked/spawn; cờ tắt giữ nguyên writes/log; deps lỗi giao như cũ, file halt riêng",
+          "command": "bash tests/super-board/test_dependency_unblock_v1.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-session-card-hook",
+      "watch_files": [
+        "universal-agent-devkit/hooks/session_card.sh",
+        "universal-agent-devkit/tests/gates/test_session_card_hook.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SESSION-CARD-01",
+          "name": "03/11 chủ repo: task bắt đầu từ chat có đúng MỘT thẻ board (nhãn session, cột Building) từ lần sửa file đầu; bỏ qua subagent, lane issue-N, repo không board, file ngoài repo; không chặn, thử lại 3 lần",
+          "command": "bash universal-agent-devkit/tests/gates/test_session_card_hook.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-session-cards",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_skips_session_cards.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-WB-SESSION-CARD-RECLAIM-01",
+          "name": "03/11: reclaim_stranded_building không trả thẻ Building nhãn session (task từ chat, phiên đang làm) về Ready; thẻ thường vẫn về Ready",
+          "command": "bash tests/super-board/test_runner_skips_session_cards.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-gate-autosync-driver",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_autosync_driver_conflict.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-AUTOSYNC-DRIVER-01",
+          "name": "ngoại lệ hẹp của #570: GitHub báo CONFLICTING mà mọi file hai phía cùng đổi đều có merge driver đặt tên (ma trận merge=devkit-matrix, merge=union) ⇒ gate gộp base ở scratch, đẩy merge commit lên nhánh PR bằng fast-forward (không --force), ghi biên nhận approved-merge-heads, verify và merge theo head mới; file không driver, PR sửa .gitattributes, nhánh remote đã dời, --dry-run: exit 14 không đẩy gì; lượt sau --expect-head cũ nhận head của gate, có commit lạ chồng lên thì exit 6",
+          "command": "bash tests/super-board/test_merge_gate_autosync_driver_conflict.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-merge-gate-approve-request",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
