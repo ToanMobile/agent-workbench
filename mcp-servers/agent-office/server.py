@@ -2934,7 +2934,7 @@ def make_handler(app: App):
             if path == "/api/refresh":
                 app.refresh_evt.set()
                 return self.send(200, b'{"ok":true}', CTYPES[".json"])
-            if path in ("/cc-switcher", "/cc-switcher/", "/api/cc-switcher/state"):
+            if path in ("/cc-switcher", "/cc-switcher/", "/cc-switcher.html", "/api/cc-switcher/state"):
                 if not from_mac(self):
                     return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
                 if path == "/api/cc-switcher/state":
@@ -2949,6 +2949,8 @@ def make_handler(app: App):
             full = os.path.realpath(os.path.join(WEB_DIR, rel))
             if not full.startswith(os.path.realpath(WEB_DIR) + os.sep) or not os.path.isfile(full):
                 return self.send(404, b"not found", "text/plain")
+            if os.path.basename(full).lower() == "cc-switcher.html" and not from_mac(self):
+                return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])  # any spelling of the panel file (./, case, trailing /)
             with open(full, "rb") as f:
                 data = f.read()
             if rel == "index.html":

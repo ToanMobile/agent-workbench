@@ -1,4 +1,4 @@
-// Tich hop Telegram Bot 2 chieu: gui canh bao khi het quota/chuyen profile va nhan lenh dieu khien tu dien thoai.
+// Tich hop Telegram Bot: chi gui canh bao khi het quota/chuyen profile (dieu khien da chuyen sang web /cc-switcher).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
