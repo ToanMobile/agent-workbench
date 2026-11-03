@@ -26,6 +26,16 @@ has "post-fix-gate.py --run-tests --scoped --brief" && ok "step 3: the scoped ga
   || fail "step 3 lost the scoped gate command"
 has "Exit 0 is required" && has "writes the task receipt" && ok "step 3: exit 0 and the task receipt stay the bar" \
   || fail "step 3 lost 'Exit 0 is required' or the task receipt"
+# 03/11 owner: in a PR repo the merge gate IS the one gate — no gate in the worktree before pushing the PR branch, XONG waits for
+# the merge receipt; a trunk-push repo still gates before `agent-kit integrate`
+has "PR repo: the merge gate is that gate" && ok "step 3: PR repo — the merge gate is the gate, no pre-push gate" \
+  || fail "step 3 does not make the merge gate the one gate of a PR repo"
+has "XONG waits for its merge receipt" && ok "step 3: PR repo XONG waits for the merge receipt" \
+  || fail "step 3 does not say a PR repo's XONG waits for the merge receipt"
+grep -q "A trunk push and every XONG need the latest gate on that content at exit 0" "$ESS" \
+  && ok "Git: trunk push and XONG keep the gate bar" || fail "Git: trunk push / XONG lost the gate bar"
+grep -q "a PR branch push in a PR repo needs no gate of its own (the merge gate gates it)" "$ESS" \
+  && ok "Git: a PR branch push needs no gate of its own" || fail "Git: still demands a gate before every PR branch push"
 # the Git rule still re-gates after a pull, merge or conflict fix: "once" must not have removed it
 grep -q "re-run the step 3 gate after any pull, merge or conflict fix" "$ESS" \
   && ok "Git: re-gate after a pull, merge or conflict fix is kept" || fail "Git: the re-gate after a pull/merge/conflict fix is gone"
