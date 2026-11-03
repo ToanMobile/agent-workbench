@@ -44,6 +44,14 @@ printf 'module.exports = {};\n' > index.js
 printf 'const u = require("../lib/util");\n' > test/util.test.js
 printf 'const i = require("./index");\n' > app.test.js
 printf 'import subprocess\nsubprocess.run(["python3", "-m", "tools.gen"])\n' > scripts/tests/test_gen.py
+# g. đường dẫn ghép từng mảnh (cd vào gói rồi -m gen) nhưng có tên gói ⇒ vẫn chọn; h. bin/sub/ của gói ⇒ vẫn chọn;
+#    manifest ở gốc repo không biến cả repo thành một gói (ca e vẫn phải giữ)
+mkdir -p mcp-servers/foo/bin/sub
+printf 'print(2)\n' > mcp-servers/py/tools/gen2.py
+printf '#!/usr/bin/env bash\ncd ../mcp-servers/py/tools && python3 -m gen2\n' > tests/y/test_cd_module.sh
+printf '#!/usr/bin/env node\n' > mcp-servers/foo/bin/sub/subtool.js
+printf '#!/usr/bin/env bash\nsubtool --help\n' > tests/y/test_bin_sub.sh
+printf '{"name": "root", "private": true}\n' > package.json
 git add -A && git commit -qm init
 
 fail=0
@@ -69,4 +77,6 @@ check "e. root-level test require ./index kept"  index.js                       
 check "e. python -m tools.gen kept (pyproject)"  mcp-servers/py/tools/gen.py      "$K/tests/x/test_py_module.sh"    1
 check "e. python -m tools.gen kept (root pkg)"   mcp-servers/py/tools/gen.py      scripts/tests/test_gen.py          1
 check "f. package bin/ command kept"             mcp-servers/foo/bin/foo-cli.js   tests/y/test_bin_cmd.sh            1
+check "g. cd into package then -m kept"          mcp-servers/py/tools/gen2.py     tests/y/test_cd_module.sh          1
+check "h. package bin/sub/ command kept"         mcp-servers/foo/bin/sub/subtool.js tests/y/test_bin_sub.sh          1
 exit "$fail"

@@ -299,20 +299,21 @@ def _pkg_root(path, fileset):
 def _stem_in_scope(test, target, fileset, text):
     """Cạnh stem (test chứa stem nguyên từ của file code, không basename) vào file nằm trong một GÓI có manifest (PKG_MANIFESTS) mà test
     ở ngoài gói đó chỉ giữ khi test nêu đường dẫn / module của nó: `<thư mục cha>/<stem>` (require("../src/x")) hay `<cha>.<stem>`
-    (python -m pkg.x), hoặc file nằm trong bin/ của gói (lệnh). Ngoài gói, hay test trong gói: như cũ. Đo 03/11: chữ "profiles" /
+    (python -m pkg.x) hay tên thư mục gói (đường dẫn ghép từng mảnh), hoặc file nằm dưới bin/ của gói (lệnh). Ngoài gói, hay test trong gói: như cũ. Đo 03/11: chữ "profiles" /
     "daemon" / "panel" trong test DevKit kéo 107 test kit cho mcp-servers/cc-switcher-mcp/src/profiles.js (package.json); basename (luật
     `named`) vẫn nối chéo (tests/gates/test_scoped_gate_stem_scope.sh). `text(test)` trả nội dung test (chỉ đọc khi cần), None khi không đọc được."""
     root = _pkg_root(target, fileset)
     if not root or test.startswith(root + "/"):
         return True
-    parent = os.path.basename(os.path.dirname(target))
-    if parent == "bin":
+    if "bin" in target[len(root) + 1:].split("/")[:-1]:     # lệnh của gói (bin/, bin/sub/)
         return True
-    stem = os.path.basename(target).rsplit(".", 1)[0]
     body = text(test)
     if body is None:                                        # không đọc được: giữ cạnh (thừa test, không thiếu)
         return True
-    return (parent + "/" + stem) in body or (parent + "." + stem) in body
+    parent = os.path.basename(os.path.dirname(target))
+    stem = os.path.basename(target).rsplit(".", 1)[0]
+    # tên gói có trong test (cd vào gói, path.join(DIR_GÓI, "x")): đường dẫn ghép từng mảnh, giữ cạnh
+    return os.path.basename(root) in body or (parent + "/" + stem) in body or (parent + "." + stem) in body
 
 
 def build_graph(project, _files=None, _code=None, _reads=None):
