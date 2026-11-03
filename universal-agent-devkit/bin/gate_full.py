@@ -733,7 +733,9 @@ def _pfg():
 def _scoped_pick(pfg, scratch: str, c: str, rules: list, matrix_rel: str = ""):
     """(file test PR của c chạy thật, mã suite chạy cả lệnh, file đổi) — như post-fix-gate --scoped (~6815–6835) TẠI c, base = cha:
     decide + no_full; luật ma trận có watch_files khớp file đổi chạy cả lệnh (trừ runner kit: run_impacted.sh chỉ chạy file scoped chọn);
-    test py/js không luật nào chạy (skip, #741) không chạy ở PR và kéo [core-smoke]. None khi c không có cha (commit gốc)."""
+    test py/js không luật nào chạy (skip, #741) không chạy ở PR và kéo [core-smoke]. None khi c không có cha (commit gốc).
+    ponytail: luật có impacted_command (Gradle/Unity ở app) chạy tập con impacted ở PR, không cả lệnh — vẫn tính "chạy cả suite" nên có thể
+    đếm thiếu lọt lưới; tách khi đo thấy đêm đỏ ở suite impacted mà escape_rate = 0."""
     import scoped_gate
     if git(scratch, "rev-parse", "--verify", "-q", c + "^")[0] != 0:
         return None

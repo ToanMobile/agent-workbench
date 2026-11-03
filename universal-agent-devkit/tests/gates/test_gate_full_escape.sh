@@ -24,7 +24,7 @@
 #   t15. decide ném lỗi ở một commit ⇒ chỉ commit đó không vào mẫu, các suite khác vẫn đo, có ghi chú.
 #   (review Claude 03/11) t16. REG-M-01 (test_b.sh, ứng viên c1): ở c1 luật F chạy cả lệnh `bash …/test_b.sh` — file đó ĐÃ chạy dù mang
 #   mã suite khác ⇒ không lọt. Cả bộ: checked 9, lọt 4 (B E J K), rate 0.444.
-# Thẻ giả qua DEVKIT_GATE_FULL_CARD_CMD, không gh. Tương thích bash 3.2.
+# Thẻ giả qua DEVKIT_GATE_FULL_CARD_CMD; slug rỗng nên không gọi gh (PATH giữ nguyên: python3 mặc định như gate). Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 
@@ -123,13 +123,13 @@ if mode == "boom":   # decide ném lỗi ở c2: chỉ c2 rơi khỏi mẫu
         return real(project, base, **kw)
     scoped_gate.decide = decide
 run.info["trace"] = {"last_green": "", "range": "r", "commits": [], "tests": tests}
-gate_full.escape_check(run, repo, scratch, c3, os.path.join(repo, "matrix.json"), "o/r")
+gate_full.escape_check(run, repo, scratch, c3, os.path.join(repo, "matrix.json"), "")   # slug rỗng: không tìm thẻ trùng bằng gh
 run.finish()
 print(json.dumps(run.info["escape"], ensure_ascii=False))
 PY
 
 run_drive() {   # $1 = mode, $2 = thư mục log
-  CARD_LOG="$T/cards-$1.log" DEVKIT_GATE_FULL_CARD_CMD="$T/card.sh" BIN="$DEVKIT_DIR/bin" PATH="/usr/bin:/bin" \
+  CARD_LOG="$T/cards-$1.log" DEVKIT_GATE_FULL_CARD_CMD="$T/card.sh" BIN="$DEVKIT_DIR/bin" \
     python3 "$T/drive.py" "$R" "$T/scratch" "$C1" "$C2" "$C3" "$C0" "$2" "$1" 2>"$T/err-$1.txt" | tail -1
 }
 OUT="$(run_drive all "$T/log")"
