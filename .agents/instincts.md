@@ -805,3 +805,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Phân loại rủi ro theo diff chỉ xét đường dẫn mới của rename
 - **Nguyên nhân:** numstat rename {a => tests}/x: loại trừ theo đường dẫn mới làm file merge-gate dời vào tests/ hoặc thành .md tụt về S
 - **Quy tắc phòng ngừa & Cách fix:** Rename là thuộc vùng được canh khi đường dẫn cũ HOẶC mới thuộc vùng đó; test có ca git mv ra khỏi vùng
+
+---
+
+### [INSTINCT-103] run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main
+- **Ngày phát hiện:** 2026-11-03
+- **Hiện tượng lỗi:** run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main
+- **Nguyên nhân:** (1) vòng thu kết quả của tests/run_impacted.sh bỏ qua file test không còn trên đĩa ([ -f $t ] || continue): scratch merge gate bị xoá giữa lượt thì mọi test bị bỏ, suite PASS ran=0 dù đã chạy rc=1. (2) .agents/devkit của worktree trỏ về kit ở main checkout: hook sinh lại ngữ cảnh dựng AGENTS.md từ essentials.md CŨ của main, ghi đè phần sửa essentials của worktree, gate sau đó kiểm cây sai
+- **Quy tắc phòng ngừa & Cách fix:** (1) Runner tổng hợp lấy rc thật của test đã khởi chạy (.rc/.log) dù file đã mất; thư mục kit mất ⇒ FAIL; chỉ bỏ qua tên chưa từng chạy (nhánh fix/run-impacted-false-green). (2) Worktree sửa universal-agent-devkit/rules/essentials.md: trước mỗi lần gate chạy git status; AGENTS.md lệch bản commit thì chép lại bằng git show HEAD:AGENTS.md rồi mới gate; không commit bản AGENTS.md do hook sinh lại

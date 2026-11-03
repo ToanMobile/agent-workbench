@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (807 dòng, 88.9 KB) · 97 mục
+> **Tệp gốc:** `.agents/instincts.md` (815 dòng, 90.5 KB) · 98 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -98,5 +98,6 @@
 - [INSTINCT-099] gate-full: nhiều repo cùng chạy --full một lúc làm máy quá tải, mỗi repo chỉ có khoá riêng — `sed -n '779,786p' .agents/instincts.md`
 - [INSTINCT-100] Biên nhận cây của train và cây của merge gate gộp theo hai chiều ngược nhau; tiến trình nền của job… — `sed -n '787,794p' .agents/instincts.md`
 - [INSTINCT-101] Dem dong reflog so voi log -g: dong null-oid bi bo qua — `sed -n '795,802p' .agents/instincts.md`
-- [INSTINCT-102] Phân loại rủi ro theo diff chỉ xét đường dẫn mới của rename — `sed -n '803,807p' .agents/instincts.md`
+- [INSTINCT-102] Phân loại rủi ro theo diff chỉ xét đường dẫn mới của rename — `sed -n '803,810p' .agents/instincts.md`
+- [INSTINCT-103] run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main — `sed -n '811,815p' .agents/instincts.md`
 
