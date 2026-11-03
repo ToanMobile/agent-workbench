@@ -3327,6 +3327,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-needs-you-guard-v2-exempt",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        "tests/super-board/test_needs_you_guard_v2_exempt.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-GUARD-V2-02",
+          "name": "OCR review 03/11 sau #924: deploy/production trong đường dẫn hay tên file không miễn câu nhắm việc agent; bước trên GitHub settings/cài đặt không bị chặn nhầm; env SB_NEEDS_YOU_GUARD_V2 thắng flags.json",
+          "command": "bash tests/super-board/test_needs_you_guard_v2_exempt.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
