@@ -63,7 +63,9 @@ mkrepo; push_other $'#!/usr/bin/env bash\necho v2'; ACTIVE_WORKERS=2; self_reloa
 mkrepo; ( cd "$C/repo" && echo local >> other.txt && git commit -qam local ); : > "$TMP/finish"
 push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
 [ "$(execs)" = 1 ] && [ "$(cat "$TMP/exec")" = "$RELOAD_SELF" ] && grep -q v2 "$RELOAD_SELF" && ok "main has a local commit, origin changed the runner: merged through finish and exec'd" || fail "diverged-clean: exec=$(execs)"
-[ "$(wc -l < "$TMP/finish" | tr -d ' ')" = 1 ] && git log --format=%s | grep -qx local && [ "$(notes)" = 0 ] && ok "  … local commit kept, finish used once, no notice" || fail "diverged-clean: finish/local/notice wrong"
+# #841: đọc git log bằng here-string, không pipe sang grep -q: runner source bật pipefail, git flush stdout sau mỗi commit khi ghi vào pipe,
+# grep -q thoát ở dòng khớp trong khi git còn ghi commit sau ⇒ git dính SIGPIPE (141) ⇒ ca đỏ dù commit local còn nguyên.
+[ "$(wc -l < "$TMP/finish" | tr -d ' ')" = 1 ] && grep -qx local <<<"$(git log --format=%s)" && [ "$(notes)" = 0 ] && ok "  … local commit kept, finish used once, no notice" || fail "diverged-clean: finish/local/notice wrong"
 
 # ── 4b. gộp xung đột (commit local cũng sửa runner): giữ code cũ, notify MỘT lần cho hai tick, HEAD giữ nguyên; bản origin mới → notify lại
 mkrepo; ( cd "$C/repo" && echo '# local' >> "$REL" && git commit -qam local-runner ); before=$(git rev-parse HEAD); RELOAD_RUN_SUM=$(git hash-object "$RELOAD_SELF")
@@ -159,8 +161,13 @@ real_finish() {   # chạy reload_finish_main thật (nạp lại runner trong s
 mkrepo; ( cd "$C/repo" && echo local >> other.txt && git add -A && git commit -qm local )
 push_other $'#!/usr/bin/env bash\necho v2'
 git fetch -q origin; real_finish; rc=$?
-[ "$rc" = 0 ] && grep -q v2 "$RELOAD_SELF" && git log --format=%s | grep -qx local && git merge-base --is-ancestor origin/main HEAD \
-  && ok "real finish on diverged main: origin merged in, local commit kept" || fail "real finish: rc=$rc ($(tail -3 "$TMP/log" | tr '\n' ' '))"
+# #887: cùng bốn điều kiện như trước, mỗi điều kiện hỏng được ghi tên vào why; git log đọc bằng here-string (xem #841 ở ca 4).
+why=""
+[ "$rc" = 0 ] || why="$why rc=$rc"
+grep -q v2 "$RELOAD_SELF" || why="$why runner-not-v2"
+grep -qx local <<<"$(git log --format=%s)" || why="$why local-commit-missing"
+git merge-base --is-ancestor origin/main HEAD || why="$why origin-not-ancestor"
+[ -z "$why" ] && ok "real finish on diverged main: origin merged in, local commit kept" || fail "real finish:$why ($(tail -3 "$TMP/log" | tr '\n' ' '))"
 [ -z "$(git -C "$C/repo" worktree list --porcelain | grep worktrees/self-reload-)" ] && ok "  … temporary worktree removed" || fail "worktree left behind"
 mkrepo; ( cd "$C/repo" && echo '# local' >> "$REL" && git commit -qam local-runner ); before=$(git rev-parse HEAD)
 push_other $'#!/usr/bin/env bash\necho v2'; git fetch -q origin; real_finish; rc=$?
