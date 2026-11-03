@@ -189,6 +189,11 @@ case "$CMD" in
     shift || true
     exec python3 "$DEVKIT_ROOT/bin/post-fix-gate.py" "$@"
     ;;
+  approve-tests)
+    # approve-tests <task-id> — mục duyệt chéo test sửa từ biên bản audit antigravity-pm (reviewer, auditedHead từ PM; author = DEVKIT_AGENT_ID)
+    shift || true
+    exec python3 "$(find_script governance approve_tests.py)" "$@"
+    ;;
   githooks|git-hooks)
     # githooks [install|uninstall|status] [path]
     shift || true
@@ -361,6 +366,9 @@ Commands:
                       --full/--force-full/--auto-approve-tests from verify_commands (init runs it last)
   gate                Run the post-fix static diff gate on the current changes
                       (--staged: static checks on the staged content only)
+  approve-tests <task-id>
+                      Record cross-review entries for edited tests from an antigravity-pm audit pass (reviewer and
+                      auditedHead from the PM record, author = DEVKIT_AGENT_ID); the gate re-checks every entry
   githooks [install|uninstall|status] [path]
                       Git pre-commit hook running the gate's static checks on every
                       commit, also outside any agent (skip once: git commit --no-verify)

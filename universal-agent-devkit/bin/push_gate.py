@@ -11,7 +11,7 @@ gọi trước khi push, CLI): luật biên nhận bên dưới, như cũ — ch
 
 Rule (rules/essentials.md, Git): every push needs the latest `post-fix-gate --run-tests --full`
 at exit 0 on the content pushed, or an edited test an Antigravity audit passed: a pushed commit
-whose trailer is `Test-approved-by: antigravity <task-id>` AND an antigravity-pm record of that
+whose trailer is `Test-approved-by: antigravity|grok <task-id>` AND an antigravity-pm record of that
 task of this repository with an audit pass (approved(); audit 2026-10-09: any line holding
 "Test-approved-by:" used to pass). Audit 2026-09-28: nothing enforced it.
 
@@ -70,7 +70,8 @@ INTEGRATE = ("push lên trunk / release/* chỉ qua `agent-kit integrate` (đi�
              "đúng commit đó). Đang ở worktree: `agent-kit worktree finish <đường dẫn>` trước, rồi `agent-kit integrate` (không --if-due). "
              "Repo đi PR: push nhánh PR bằng tên (`git push origin <nhánh>`), merge gate lo phần còn lại")
 APPROVED = "Test-approved-by:"
-APPROVED_VALUE = re.compile(r"antigravity\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
+# Đợt 2 lane A: reviewer `grok` (PM tự chạy grok audit) được nhận như antigravity; chữ trong trailer phải khớp audit_reviewer().
+APPROVED_VALUE = re.compile(r"(antigravity|grok)\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
 HEX_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
@@ -463,19 +464,82 @@ def audited_head(top, task_id):
     if pm_home_overridden() and not pm_home_test_fixture():
         return None
     for audit in _task_audits(top, task_id):
-        if not isinstance(audit, dict) or audit.get("verdict") != "pass":
+        sha = _audit_head_of(top, audit)
+        if sha:
+            return sha
+    return None
+
+
+def _audit_head_of(top, audit):
+    """sha40 auditedHead của MỘT verdicts.audit pass (trường cấu trúc trước, rồi notes) khi sha đó là commit của repo `top`; None khác."""
+    if not isinstance(audit, dict) or audit.get("verdict") != "pass":
+        return None
+    # Audit T0066 vòng 2: trường cấu trúc verdicts.audit.auditedHead (pm_verdict ghi) trước, rồi `auditedHead: <sha>` trong notes.
+    cands = [audit.get("auditedHead")] if isinstance(audit.get("auditedHead"), str) and SHA40.fullmatch(audit["auditedHead"]) else []
+    m = AUDITED_HEAD.search(audit["notes"]) if isinstance(audit.get("notes"), str) else None
+    cands += [m.group(1)] if m else []
+    for sha in cands:
+        try:
+            rc, out = git(top, "rev-parse", "--verify", "-q", sha + "^{commit}")
+        except (OSError, subprocess.SubprocessError):
             continue
-        # Audit T0066 vòng 2: trường cấu trúc verdicts.audit.auditedHead (pm_verdict ghi) trước, rồi `auditedHead: <sha>` trong notes.
-        cands = [audit.get("auditedHead")] if isinstance(audit.get("auditedHead"), str) and SHA40.fullmatch(audit["auditedHead"]) else []
-        m = AUDITED_HEAD.search(audit["notes"]) if isinstance(audit.get("notes"), str) else None
-        cands += [m.group(1)] if m else []
-        for sha in cands:
-            try:
-                rc, out = git(top, "rev-parse", "--verify", "-q", sha + "^{commit}")
-            except (OSError, subprocess.SubprocessError):
-                continue
-            if rc == 0 and out.strip() == sha:
-                return sha
+        if rc == 0 and out.strip() == sha:
+            return sha
+    return None
+
+
+def audited_heads(top):
+    """[(task_id, auditedHead)] của MỌI task antigravity-pm của repo này có audit pass kèm auditedHead. Đợt 2 lane A: post-fix-gate chỉ
+    dùng audit mới nhất trên chuỗi first-parent của PR, audit cũ hơn có nội dung khác thì không duyệt (chặn replay về bản yếu).
+    Cùng điều kiện pm home với audited_head (pm home lạ không phải fixture test → [])."""
+    if pm_home_overridden() and not pm_home_test_fixture():
+        return []
+    out = []
+    for task in _repo_tasks(top):
+        audit = (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
+        sha = _audit_head_of(top, audit)
+        if sha:
+            out.append((task["id"], sha))
+    return out
+
+
+def normalize_reviewer(value):
+    """Tên reviewer chuẩn hoá: grok, grok-build, grok-4.x → "grok"; antigravity* → "antigravity"; còn lại chữ thường đã strip."""
+    v = value.strip().casefold() if isinstance(value, str) else ""
+    if v == "grok" or v.startswith("grok-"):
+        return "grok"
+    if v == "antigravity" or v.startswith("antigravity-"):
+        return "antigravity"
+    return v
+
+
+def audit_reviewer(top, task_id, legacy=False):
+    """Reviewer đã chuẩn hoá ("antigravity" | "grok") của audit pass của task `task_id`, chỉ từ biên bản PM ngoài repo; None khi không
+    xác định được. Một hàm cho post-fix-gate (mục duyệt + trailer), approved() và `agent-kit approve-tests` (đợt 2 lane A).
+    - verdicts.audit.reviewer = grok / antigravity: chỉ tính khi lượt kind=audit GẦN NHẤT trong task.dispatches là của đúng agent đó
+      (PM tự chạy reviewer; dispatch không ghi agent là antigravity, như mọi biên bản trước khi PM chạy được grok).
+    - reviewer thiếu hoặc "pm" (recordVerdict mặc định cũ): antigravity khi lượt audit gần nhất là antigravity.
+    - legacy=True (gate, approved()): biên bản không có lượt audit nào trong dispatches vẫn là antigravity như trước (giữ hành vi gate);
+      grok không bao giờ được suy ra. approve-tests gọi legacy=False: thiếu bằng chứng → None (từ chối)."""
+    if pm_home_overridden() and not pm_home_test_fixture():
+        return None
+    for task in _repo_tasks(top, task_id):
+        audit = (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
+        if not _audit_head_of(top, audit):
+            continue
+        dispatches = task.get("dispatches") if isinstance(task.get("dispatches"), list) else []
+        audits = [d for d in dispatches if isinstance(d, dict) and d.get("kind") == "audit"]
+        # Lượt audit GẦN NHẤT (theo `at` ISO, rồi thứ tự ghi) quyết định: PM server ghi verdicts.audit.reviewer theo đúng lượt đó.
+        last = max(enumerate(audits), key=lambda iv: (str(iv[1].get("at") or ""), iv[0]))[1] if audits else None
+        last_agent = normalize_reviewer(last["agent"] if isinstance(last.get("agent"), str) and last["agent"].strip()
+                                        else "antigravity") if last else ""
+        named = normalize_reviewer(audit.get("reviewer"))
+        if named in ("", "pm"):
+            named = "antigravity"
+        if named not in ("antigravity", "grok"):
+            continue
+        if named == last_agent or (legacy and named == "antigravity" and not audits):
+            return named
     return None
 
 
@@ -544,6 +608,13 @@ def _task_pattern(task_id):
 def _task_audits(top, task_id):
     """verdicts.audit (có thể None) của từng task.json `task_id` mà `project` thuộc repo này (top, hoặc checkout chính khi top là
     linked worktree của cùng repo). Dùng chung cho audit_record và audited_head."""
+    for task in _repo_tasks(top, task_id):
+        yield (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
+
+
+def _repo_tasks(top, task_id=None):
+    """task.json (dict) của task `task_id`, hoặc của MỌI task khi None, mà `project` thuộc repo này (top, hoặc checkout chính khi top
+    là linked worktree của cùng repo)."""
     roots = [top]
     try:
         rc, common = git(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -554,7 +625,7 @@ def _task_audits(top, task_id):
         main_root = os.path.dirname(common)
         if not _inside(main_root, top):
             roots.append(main_root)
-    for path in sorted(glob.glob(_task_pattern(task_id))):
+    for path in sorted(glob.glob(_task_pattern(task_id or "*"))):
         try:
             if not stat.S_ISREG(os.stat(path).st_mode) or os.path.getsize(path) > 8_000_000:
                 continue
@@ -562,9 +633,10 @@ def _task_audits(top, task_id):
                 task = json.load(f)
         except (OSError, ValueError, RecursionError):
             continue
-        if not isinstance(task, dict) or task.get("id") != task_id or not any(_inside(task.get("project"), r) for r in roots):
+        if not isinstance(task, dict) or not isinstance(task.get("id"), str) or (task_id is not None and task["id"] != task_id) \
+                or not any(_inside(task.get("project"), r) for r in roots):
             continue
-        yield (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
+        yield task
 
 
 def approved(top, rng):
@@ -587,23 +659,29 @@ def approved(top, rng):
     for sha, value in values:
         m = APPROVED_VALUE.fullmatch(value)
         if not m:
-            whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task`)")
+            whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task` hoặc `{APPROVED} grok T0001-ten-task`)")
             continue
+        word, task_id = m.group(1), m.group(2)
         # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
         # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
         if pm_home_overridden() and not pm_home_test_fixture():
             whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
             continue
-        ok, why = audit_record(top, m.group(1))
+        ok, why = audit_record(top, task_id)
         if not ok:
             whys.append(why)
+            continue
+        # Đợt 2 lane A: chữ reviewer của trailer phải đúng reviewer PM đã ghi (audit_reviewer: grok chỉ khi PM tự chạy grok audit).
+        reviewer = audit_reviewer(top, task_id, legacy=True)
+        if reviewer != word:
+            whys.append(f"{APPROVED} {word} {task_id}: biên bản PM ghi reviewer {reviewer or 'không xác định'}, khác `{word}`")
             continue
         # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
         # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
         # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.
         # ponytail: merge main vào nhánh sau audit đổi cây đầu range → push cần audit lại; merge gate (scratch) không bị ảnh hưởng
         # vì nó duyệt theo blob từng file ở auditedHead (post-fix-gate _trailer_cross_review). Nới khi việc audit lại thành phiền.
-        head = audited_head(top, m.group(1))
+        head = audited_head(top, task_id)
         if tip is None:
             rc_tip, tip_out = git(top, "rev-list", "-1", rng)
             tip = tip_out.strip() if rc_tip == 0 else ""
@@ -613,15 +691,15 @@ def approved(top, rng):
         lows = range_lower_bounds(top, rng) if head else None
         after = bool(lows) and all(head_after(top, low, head) for low in lows)
         if len(got) == 3 and len(set(got)) == 1 and after:
-            return True, f"{APPROVED} antigravity {m.group(1)} (antigravity-pm audit pass)"
-        whys.append(f"{APPROVED} antigravity {m.group(1)}: " + (
+            return True, f"{APPROVED} {word} {task_id} (antigravity-pm audit pass)"
+        whys.append(f"{APPROVED} {word} {task_id}: " + (
             "biên bản audit không ghi `auditedHead: <sha>` (hoặc sha không có trong repo)" if not head else
             f"auditedHead {head[:10]} không nằm sau mốc dưới của range (audit một cây cũ trước base): cần audit lại" if not after else
             f"cây đã đổi so với auditedHead {head[:10]} (commit trailer {sha[:10]} / đầu range): cần audit lại"))
     if not whys:
         rc, body = git(top, "log", "--format=%B", rng)
         if rc == 0 and APPROVED in body:
-            whys.append(f"`{APPROVED}` chỉ tính khi là trailer cuối commit (`{APPROVED} antigravity <task-id>`)")
+            whys.append(f"`{APPROVED}` chỉ tính khi là trailer cuối commit (`{APPROVED} antigravity|grok <task-id>`)")
     return False, "; ".join(dict.fromkeys(whys[:3])) or None
 
 

@@ -536,8 +536,8 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
     base = since
     for sha in res.stdout.split():                    # newest first
         ok, note = _push_gate().approved(root, f"{sha}^!")
-        m = re.search(r"antigravity\s+(\S+)", note or "") if ok else None
-        head = _push_gate().audited_head(root, m.group(1)) if m else None
+        m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None   # đợt 2: `antigravity|grok <task-id>`
+        head = _push_gate().audited_head(root, m.group(2)) if m else None
         # auditedHead trước `since` (task cũ, commit rỗng ở nhánh phụ gộp vào range) kéo base lùi về cây yếu cũ: không duyệt.
         if head and _push_gate().head_after(root, since, head):
             base = sha
@@ -649,67 +649,157 @@ def _norm_agent(v):
     return v.strip().casefold()
 
 
-def _blob_is_audited(top, prefix, project_root, f, head) -> bool:
-    """True khi nội dung hiện tại của `f` (đường dẫn so với project_root) đúng bằng blob của nó ở commit `head` (auditedHead).
-    File không có ở head, lỗi git → False (fail closed)."""
-    cur = subprocess.run(["git", "-C", top, "hash-object", "--", str(Path(project_root) / f)],
-                         capture_output=True, text=True, timeout=30)
-    if cur.returncode != 0 or not cur.stdout.strip():
-        return False
-    blob = subprocess.run(["git", "-C", top, "rev-parse", "--verify", "-q", f"{head}:{prefix}{f}"],
-                          capture_output=True, text=True, timeout=30)
-    return blob.returncode == 0 and blob.stdout.strip() == cur.stdout.strip()
+_APPROVAL_CHAIN = {}         # top -> (trunk_ref, base, tip, chain) | None, một lần mỗi lượt gate
+_APPROVAL_AUDITS = {}        # top -> [(task_id, auditedHead)] mọi audit pass của repo (push_gate.audited_heads)
+_FP_CHAIN_MEMO = {}          # (top, sha) -> bool: sha nằm trên chuỗi audit của PR
 
 
-def _branch_base(root, project_root, fallback_head=True) -> str:
-    """Base của nhánh cho duyệt chéo: BASE_REF (đã là merge-base khi có --diff, hoặc mốc --since) khi khác HEAD, không thì
-    merge-base(nhánh đích, HEAD); không có nhánh đích → "HEAD" (fallback_head) hoặc "". Lỗi git → "" (người gọi không duyệt)."""
-    if BASE_REF and BASE_REF != "HEAD":
-        return BASE_REF
+def _git_out(top, *args):
+    """(returncode, stdout đã strip) của `git -C top args`."""
+    r = subprocess.run(["git", "-C", top, *args], capture_output=True, text=True, timeout=30)
+    return r.returncode, r.stdout.strip()
+
+
+def _is_ancestor(top, a, b):
+    """True/False theo `git merge-base --is-ancestor a b`; None khi git lỗi (người gọi không duyệt)."""
+    rc = subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", a, b], capture_output=True, timeout=30).returncode
+    return True if rc == 0 else False if rc == 1 else None
+
+
+def _approval_chain(top, project_root):
+    """(trunk_ref, base, tip, chain) cho luật duyệt test sửa (đợt 2 lane A), None khi không xác định được (lỗi git, không có nhánh
+    đích — người gọi không duyệt). base = merge-base(trunk, HEAD), KHÔNG lấy BASE_REF/--since (agent tự chọn được). tip = đầu PR:
+    HEAD, trừ khi HEAD là merge có parent đầu thuộc trunk (scratch = main + merge PR) thì là parent kia. chain = các commit trên chuỗi
+    first-parent của tip không thuộc trunk (`rev-list --first-parent tip --not trunk`), mới nhất trước."""
+    if top in _APPROVAL_CHAIN:
+        return _APPROVAL_CHAIN[top]
+    res = None
     trunk_ref, _name = task_trunk(project_root)
-    if not trunk_ref:
-        return "HEAD" if fallback_head else ""
-    mb = subprocess.run(["git", "-C", root, "merge-base", trunk_ref, "HEAD"], capture_output=True, text=True, timeout=30)
-    return mb.stdout.strip() if mb.returncode == 0 else ""
+    if trunk_ref:
+        rc_b, base = _git_out(top, "merge-base", trunk_ref, "HEAD")
+        rc_p, parents = _git_out(top, "rev-list", "--parents", "-n", "1", "HEAD")
+        ids = parents.split()
+        if rc_b == 0 and base and rc_p == 0 and ids:
+            tip = ids[0]
+            if len(ids) >= 3:
+                # Chỉ scratch (merge chưa vào trunk): HEAD là chính một merge của main thì đầu PR vẫn là HEAD.
+                head_on_trunk = _is_ancestor(top, ids[0], trunk_ref)
+                first_on_trunk = _is_ancestor(top, ids[1], trunk_ref) if head_on_trunk is False else False
+                tip = "" if head_on_trunk is None or first_on_trunk is None else ids[2] if first_on_trunk else tip
+            rc_c, chain = _git_out(top, "rev-list", "--first-parent", tip, "--not", trunk_ref) if tip else (1, "")
+            if rc_c == 0:
+                res = (trunk_ref, base, tip, chain.split())
+    _APPROVAL_CHAIN[top] = res
+    return res
+
+
+def _on_audit_chain(top, ch, sha) -> bool:
+    """sha nằm trên chuỗi first-parent của đầu PR trong trunk..tip, HOẶC là con cháu first-parent của tip (cây làm việc audit sau tip:
+    `git stash create`, commit chưa đẩy lên nhánh). Tổ tiên của tip qua parent thứ hai (merge một nhánh bỏ dở đã audit) hay cây
+    anh em (không chứa tip) → False. Lỗi git → False."""
+    key = (top, sha)
+    if key not in _FP_CHAIN_MEMO:
+        _trunk, _base, tip, chain = ch
+        ok = sha in chain
+        if not ok:
+            rc, walk = _git_out(top, "rev-list", "--first-parent", sha, "--not", tip)
+            last = walk.split()[-1] if rc == 0 and walk else ""
+            rc_p, parent = _git_out(top, "rev-parse", "--verify", "-q", last + "^1") if last else (1, "")
+            ok = rc_p == 0 and parent == tip
+        _FP_CHAIN_MEMO[key] = ok
+    return _FP_CHAIN_MEMO[key]
+
+
+def audit_covers(top, prefix, project_root, f, head) -> tuple:
+    """(True, "") khi biên bản audit có auditedHead `head` duyệt được nội dung HIỆN TẠI của test `f` (đường dẫn so với project_root);
+    (False, lý do) khác. Một luật cho mục approved_tests.json, trailer `Test-approved-by:` và `agent-kit approve-tests` (đợt 2 lane A),
+    còn hiệu lực sau khi gộp main mới vào nhánh PR hay trong scratch merge gate (main + PR):
+      1. head không là tổ tiên (hoặc chính) của trunk — cây đã nằm trên main là cây cũ;
+      2. head nằm trên chuỗi audit của PR (_on_audit_chain): không nhận audit tới qua parent thứ hai;
+      3. blob hiện tại == blob của f ở head;
+      4. mọi audit pass khác của repo trên chuỗi đó mà không là tổ tiên của head (mới hơn) có cùng blob — chỉ audit mới nhất được dùng,
+         chép lùi về bản đã audit trước khi test được làm mạnh không qua (replay);
+      5. blob của f ở base hiện tại == blob ở merge-base(head, trunk): main không đổi chính file đó kể từ lúc audit (cả hai đều
+         không có file = nhánh đích chưa từng có nó: không đổi).
+    Lỗi git, thiếu merge-base, blob không resolve hay rỗng → không duyệt."""
+    ch = _approval_chain(top, project_root)
+    if not ch:
+        return False, "không xác định được nhánh đích / merge-base (lỗi git)"
+    trunk_ref, base, _tip, _chain = ch
+    h10 = head[:10]
+    on_trunk = _is_ancestor(top, head, trunk_ref)
+    if on_trunk is None:
+        return False, f"không kiểm được auditedHead {h10} (lỗi git)"
+    if on_trunk:
+        return False, f"auditedHead {h10} đã nằm trên nhánh đích (audit cây cũ của main)"
+    if not _on_audit_chain(top, ch, head):
+        return False, (f"auditedHead {h10} không nằm trên chuỗi first-parent của PR (audit tới qua merge nhánh khác / cây khác): "
+                       "cần audit lại")
+    rc_c, cur = _git_out(top, "hash-object", "--", str(Path(project_root) / f))
+    rc_h, at_head = _git_out(top, "rev-parse", "--verify", "-q", f"{head}:{prefix}{f}")
+    if rc_c != 0 or not cur or rc_h != 0 or at_head != cur:
+        return False, f"nội dung khác cây đã audit (auditedHead {h10})"
+    if top not in _APPROVAL_AUDITS:
+        _APPROVAL_AUDITS[top] = _push_gate().audited_heads(top)
+    for tid2, h2 in _APPROVAL_AUDITS[top]:
+        if h2 == head or not _on_audit_chain(top, ch, h2):
+            continue
+        older = _is_ancestor(top, h2, head)
+        if older:
+            continue
+        rc2, b2 = _git_out(top, "rev-parse", "--verify", "-q", f"{h2}:{prefix}{f}") if older is False else (1, "")
+        if rc2 != 0 or b2 != cur:
+            return False, (f"có audit mới hơn trên nhánh ({tid2}, auditedHead {h2[:10]}) với nội dung khác: chỉ audit mới nhất "
+                           "của nhánh được dùng")
+    # ls-tree: rc 0 + rỗng = file không có ở commit đó (nhánh đích chưa từng có file, test thêm phía PR), rc khác 0 = lỗi git.
+    rc_m, mb = _git_out(top, "merge-base", head, trunk_ref)
+    rc_b, at_base = _git_out(top, "ls-tree", base, "--", f"{prefix}{f}") if rc_m == 0 and mb else (1, "")
+    rc_o, at_fork = _git_out(top, "ls-tree", mb, "--", f"{prefix}{f}") if rc_b == 0 else (1, "")
+    if rc_o != 0:
+        return False, f"không kiểm được file ở base / merge-base của auditedHead {h10} (lỗi git)"
+    if at_base != at_fork:
+        return False, f"nhánh đích đã đổi file này kể từ audit (auditedHead {h10}): cần audit lại"
+    return True, ""
+
+
+def _approval_reviewer_label(rv):
+    """Nhãn reviewer duyệt chéo in ra: grok thay Antigravity nói rõ."""
+    return "grok (thay Antigravity)" if rv == "grok" else rv
 
 
 def _trailer_cross_review(paths: list, project_root) -> dict:
-    """{path: task_id} — nguồn duyệt chéo thứ hai (#605 lane E): commit MỚI NHẤT của nhánh (base..HEAD) chạm file, có trailer
-    `Test-approved-by: antigravity <task-id>` mà push_gate.approved công nhận (biên bản audit pass của antigravity-pm, ngoài repo),
-    và nội dung hiện tại của file đúng bằng blob ở auditedHead mà PM ghi trong verdicts.audit.notes của task đó (push_gate.audited_head,
-    audit T0066: không phải blob ở commit mang trailer; đổi sau audit hoặc thiếu auditedHead → không duyệt). Trailer đi theo commit nên tới được
-    scratch worktree của merge gate, nơi .claude/audit-gate/ không được chép. base: BASE_REF (đã là merge-base khi có --diff),
-    HEAD → merge-base(nhánh đích, HEAD). Mọi lỗi git → không duyệt (fail closed).
-    ponytail: --since trên chính nhánh đích không có range ở đây (base = HEAD) → không duyệt; nối args.since vào nếu cần."""
+    """{path: (reviewer, task_id)} — nguồn duyệt chéo thứ hai (#605 lane E): commit của nhánh (merge-base(trunk, HEAD)..HEAD) có trailer
+    `Test-approved-by: antigravity|grok <task-id>` mà push_gate.approved công nhận (biên bản audit pass của antigravity-pm, ngoài repo,
+    reviewer khớp audit_reviewer), và audit_covers nhận nội dung hiện tại của file theo auditedHead của task đó (audit T0066: không phải
+    blob ở commit mang trailer). Trailer đi theo commit nên tới được scratch worktree của merge gate, nơi .claude/audit-gate/ không được
+    chép. Reviewer trùng DEVKIT_AGENT_ID → không duyệt. Mọi lỗi git → không duyệt (fail closed)."""
     if not paths:
         return {}
     try:
         root = str(get_repo_root())
         prefix = get_project_prefix()
-        base = _branch_base(root, project_root, fallback_head=False)
-        if not base:
+        ch = _approval_chain(root, project_root)
+        if not ch:
             return {}
         # Commit có trailer chốt CẢ cây đã audit, không cần chạm file: audit xong ghi một commit rỗng có trailer là đủ.
         res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
-                              "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{base}..HEAD"],
+                              "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{ch[1]}..HEAD"],
                              capture_output=True, text=True, timeout=30)
         if res.returncode != 0:
             return {}
-        audited = []                                  # (auditedHead, task_id), mới nhất trước, chỉ commit push_gate công nhận
+        agent_id = _norm_agent(os.environ.get("DEVKIT_AGENT_ID") or "")
+        audited = []                                  # (auditedHead, reviewer, task_id), mới nhất trước, chỉ commit push_gate công nhận
         for sha in res.stdout.split():
             ok, note = _push_gate().approved(root, f"{sha}^!")
-            m = re.search(r"antigravity\s+(\S+)", note or "") if ok else None
-            # Audit T0066: so với cây PM đã audit (auditedHead ngoài repo), không với commit mang trailer — trailer của task cũ
-            # đặt lên commit sửa test mới không duyệt được nội dung mới (replay). Không có auditedHead → không duyệt.
-            head = _push_gate().audited_head(root, m.group(1)) if m else None
-            # Audit T0066 vòng 2: auditedHead trước base (task cũ audit cây cũ) không duyệt việc chép lùi test về bản yếu đó.
-            if head and _push_gate().head_after(root, base, head):
-                audited.append((head, m.group(1)))
+            m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None
+            head = _push_gate().audited_head(root, m.group(2)) if m else None
+            if head and not (agent_id and m.group(1) == _push_gate().normalize_reviewer(agent_id)):
+                audited.append((head, m.group(1), m.group(2)))
         out = {}
         for f in paths if audited else []:
-            for head, task_id in audited:             # nội dung hiện tại phải đúng bằng blob ở một cây đã audit
-                if _blob_is_audited(root, prefix, project_root, f, head):
-                    out[f] = task_id
+            for head, rv, task_id in audited:
+                if audit_covers(root, prefix, project_root, f, head)[0]:
+                    out[f] = (rv, task_id)
                     break
         return out
     except (OSError, subprocess.SubprocessError, RuntimeError, ImportError) as e:
@@ -795,33 +885,35 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                 APPROVAL_REJECTS.append((f, cur, "sha256 lệch nội dung hiện tại"))
                 continue
             # Audit T0066: file này agent nào cũng ghi được — mục duyệt chỉ tính khi task_id có biên bản audit pass ngoài repo
-            # kèm auditedHead, và nội dung hiện tại đúng bằng blob ở cây đã audit đó.
+            # kèm auditedHead, và audit_covers nhận nội dung hiện tại theo cây đó (đợt 2: còn hiệu lực sau khi gộp main mới).
+            # Reviewer lấy từ biên bản PM (audit_reviewer), không tin chuỗi reviewer trong file này.
+            tid = e["task_id"].strip()
             try:
                 git_top, prefix = str(get_repo_root()), get_project_prefix()
-                head = _push_gate().audited_head(git_top, e["task_id"].strip())
-                # Audit T0066 vòng 2: base của nhánh phải là tổ tiên của auditedHead (không duyệt chép lùi về cây cũ trước base)
-                base = _branch_base(git_top, root) if head else ""
-                after = bool(head) and _push_gate().head_after(git_top, base, head)
-                audited_ok = after and _blob_is_audited(git_top, prefix, root, f, head)
+                head = _push_gate().audited_head(git_top, tid)
+                pm_rv = _push_gate().audit_reviewer(git_top, tid, legacy=True) if head else None
+                covered, why = audit_covers(git_top, prefix, root, f, head) if head and pm_rv else (False, "")
             except (OSError, subprocess.SubprocessError, RuntimeError, ImportError) as err:
-                head, audited_ok, after, base = None, False, False, ""
-                print(f"post-fix-gate: không đọc được biên bản audit của {e['task_id'].strip()} ({type(err).__name__}); không duyệt",
-                      file=sys.stderr)
+                head, pm_rv, covered, why = None, None, False, ""
+                print(f"post-fix-gate: không đọc được biên bản audit của {tid} ({type(err).__name__}); không duyệt", file=sys.stderr)
             if not head:
-                APPROVAL_REJECTS.append((f, cur, f"task {e['task_id'].strip()} không có biên bản audit pass của antigravity-pm "
-                                                 "kèm `auditedHead: <sha>`"))
+                APPROVAL_REJECTS.append((f, cur, f"task {tid} không có biên bản audit pass của antigravity-pm kèm `auditedHead: <sha>`"))
                 continue
-            if not after:
-                APPROVAL_REJECTS.append((f, cur, f"auditedHead {head[:10]} không nằm sau base {base[:10] or '?'} của nhánh (audit cây cũ)"))
+            if not pm_rv:
+                APPROVAL_REJECTS.append((f, cur, f"task {tid}: biên bản PM không xác định được reviewer (verdicts.audit.reviewer khớp "
+                                                 "lượt audit gần nhất trong dispatches)"))
                 continue
-            if not audited_ok:
-                APPROVAL_REJECTS.append((f, cur, f"nội dung khác cây đã audit (auditedHead {head[:10]})"))
+            if pm_rv == _norm_agent(e["author"]) or (agent_id and pm_rv == _push_gate().normalize_reviewer(agent_id)):
+                APPROVAL_REJECTS.append((f, cur, f"reviewer {pm_rv} của biên bản PM trùng author (tự duyệt)"))
+                continue
+            if not covered:
+                APPROVAL_REJECTS.append((f, cur, why))
                 continue
             approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # sha256 gắn nội dung: mtime không quyết định
-            CROSS_REVIEW[f] = (e["reviewer"].strip(), e["task_id"].strip())
-    for f, tid in _trailer_cross_review([f for f in mtimes if f not in CROSS_REVIEW], root).items():
+            CROSS_REVIEW[f] = (pm_rv, tid)
+    for f, (rv, tid) in _trailer_cross_review([f for f in mtimes if f not in CROSS_REVIEW], root).items():
         approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # nội dung = blob đã audit: mtime không quyết định
-        CROSS_REVIEW[f] = ("antigravity", tid)
+        CROSS_REVIEW[f] = (rv, tid)
     folders = []
     if transcript:
         folders.append(Path(transcript).parent)
@@ -8593,6 +8685,7 @@ def main():
             print(f"  • {GREEN}{tr('Test đã có bị sửa — người dùng đã duyệt (AskUserQuestion), file không đổi sau đó:', 'Existing test edited — approved by the user (AskUserQuestion), unchanged since:')}{RESET} {f}")
         else:
             rv, tid = CROSS_REVIEW.get(f, ("?", "?"))
+            rv = _approval_reviewer_label(rv)
             print(f"  • {GREEN}{tr(f'Test đã có bị sửa — duyệt chéo bởi {rv} (task {tid}), sha256 khớp nội dung hiện tại:', f'Existing test edited — cross-reviewed by {rv} (task {tid}), sha256 matches the current content:')}{RESET} {f}")
     for f, sha, why in APPROVAL_REJECTS:
         if f in tests_touched:
