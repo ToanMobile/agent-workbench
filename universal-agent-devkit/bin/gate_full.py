@@ -146,6 +146,12 @@ class Run:
                     "%s %s — %s" % (c["confidence"], ref(c), c["why"]) if c.get("sha") else "%s — %s" % (c["confidence"], c["why"])
                     for c in t["candidates"])))
             out.append("- JSON: " + os.path.join(self.log_dir, "trace-latest.json"))
+        es = i.get("escape")
+        if es and es["checked"]:
+            out += ["", "## Lọt lưới (gate scoped của commit ứng viên không chọn test đỏ)", "",
+                    "- escape_rate: %s (%d/%d suite đỏ có ứng viên)" % (es["rate"], len(es["escaped"]), es["checked"])]
+            out += ["- %s: %s — file đổi %s%s" % (e["id"], "PR #%s" % e["pr"] if e["pr"] else e["sha"][:12], ", ".join(e["files"][:5]) or "-",
+                                               " — thẻ " + e["card"] if e.get("card") else "") for e in es["escaped"]]
         return "\n".join(out) + "\n"
 
     def finish(self) -> None:
@@ -157,7 +163,8 @@ class Run:
             i = self.info
             _write(os.path.join(self.log_dir, "trace-latest.json"), json.dumps(dict(
                 {"at": self.started.isoformat(timespec="seconds"), "result": i["result"], "ref": i["ref"], "sha": i["sha"],
-                 "suspect": i["suspect"], "last_green": "", "range": "", "commits": [], "tests": []}, **(i["trace"] or {})),
+                 "suspect": i["suspect"], "last_green": "", "range": "", "commits": [], "tests": [], "escape": i.get("escape")},
+                **(i["trace"] or {})),
                 ensure_ascii=False, indent=1) + "\n")
         self.raw(text)
         self.log_f.close()
@@ -697,7 +704,7 @@ def trace(run: Run, repo: str, scratch: str, sha: str, last_green: str, checks: 
             why = ("commit nghi vấn của chia đôi" if suspect else "") + (", " if suspect and hit else "") + \
                   ("đụng " + ", ".join(hit[:3]) + (" (+%d)" % (len(hit) - 3) if len(hit) > 3 else "") if hit else "")
             cands.append({"sha": c["sha"], "pr": c["pr"], "issues": c["issues"], "confidence": "chắc" if suspect and hit else "nghi",
-                          "why": why})
+                          "why": why, "hit": bool(hit)})
         cands.sort(key=lambda x: x["confidence"] != "chắc")
         tests.append({"id": sid, "files": files, "candidates": cands or [{"confidence": "không rõ",
                       "why": "không commit nào trong khoảng đụng file test / nguồn liên quan"}]})
@@ -707,6 +714,145 @@ def trace(run: Run, repo: str, scratch: str, sha: str, last_green: str, checks: 
         rng += " — chỉ xét %d commit mới nhất, %d commit cũ hơn không xét" % (TRACE_MAX, len(revs) - TRACE_MAX)
     return {"last_green": last_green if known_good else "", "range": rng,
             "commits": [{k: c[k] for k in ("sha", "pr", "issues", "subject")} for c in commits], "tests": tests}
+
+
+# --- lọt lưới: gate scoped của commit ứng viên có chọn test đỏ không (03/11) ----------------------------------------------------
+
+ESCAPE_PREFIX = "🐛 [fix] gate scoped lọt lưới"
+
+
+def _pfg():
+    """bin/post-fix-gate.py nạp như module (cách của push_gate.py): bước đo dùng ĐÚNG hàm chọn của gate (INSTINCT-015), không chép lại."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("post_fix_gate", os.path.join(BIN, "post-fix-gate.py"))
+    pfg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pfg)
+    return pfg
+
+
+def _scoped_pick(pfg, scratch: str, c: str, rules: list, matrix_rel: str = ""):
+    """(file test PR của c chạy thật, mã suite chạy cả lệnh, file đổi) — như post-fix-gate --scoped (~6815–6835) TẠI c, base = cha:
+    decide + no_full; luật ma trận có watch_files khớp file đổi chạy cả lệnh (trừ runner kit: run_impacted.sh chỉ chạy file scoped chọn);
+    test py/js không luật nào chạy (skip, #741) không chạy ở PR và kéo [core-smoke]. None khi c không có cha (commit gốc)."""
+    import scoped_gate
+    if git(scratch, "rev-parse", "--verify", "-q", c + "^")[0] != 0:
+        return None
+    # như gate (modified_files bỏ devkit_artifacts: .agents/context/, file trạng thái gate…) — chúng không vào decide hay luật
+    files = [f for f in git_out(scratch, "diff", "--name-only", "--no-renames", c + "^", c).splitlines() if not pfg.is_devkit_artifact(f)]
+    if git(scratch, "checkout", "-q", "-f", "--detach", c)[0] != 0:   # cây đứng sai thì đồ thị sai: không tái dựng
+        return None
+    if matrix_rel:   # luật của chính PR (ma trận tại c, như gate PR đọc base + luật thêm ở đuôi), không phải của đỉnh đêm
+        try:
+            with open(os.path.join(scratch, matrix_rel), encoding="utf-8") as f:
+                rules = [r for r in json.load(f).get("rules") or [] if isinstance(r, dict)]
+        except (OSError, ValueError, AttributeError):
+            pass
+    pfg.get_project_dir = lambda: pfg.Path(scratch)
+    covers = pfg.checklist_covers()
+    dec = scoped_gate.no_full(scoped_gate.decide(scratch, c + "^", needs_no_test=pfg.needs_no_test, matrix_rules=rules, changed=files),
+                              scratch)
+    whole, selected = set(), []
+    for r in rules:
+        if any(pfg.match_pattern(f, p) for f in files for p in pfg.rule_watch(r, covers)):
+            for t in r.get("mandatory_regression_tests") or []:
+                if isinstance(t, dict):
+                    selected.append(t)
+                    if not pfg._KIT_RUNNER.search(t.get("command") or ""):
+                        whole.add(t.get("id"))
+    skipped = []
+    added, _, _ = pfg.scoped_suites(dec, rules, selected, covers, skip=skipped)
+    # luật watch khớp FILE TEST scoped chọn ⇒ gate thêm cả lệnh suite đó (scoped_suites); runner kit chỉ chạy file đã chọn
+    whole |= {t.get("id") for _, t in added if not pfg._KIT_RUNNER.search(t.get("command") or "")}
+    if skipped and not dec["core_smoke"]:   # như gate: thêm [core-smoke] rồi gọi lại scoped_suites (luật watch file core-smoke)
+        scoped_gate.add_core_smoke(dec, scratch)
+        added, _, _ = pfg.scoped_suites(dec, rules, selected, covers, skip=skipped)   # py/js của core-smoke cũng không chạy ở PR
+        whole |= {t.get("id") for _, t in added if not pfg._KIT_RUNNER.search(t.get("command") or "")}
+    ran = set(dec.get("tests") or []) | set(dec.get("smoke") or []) | set(dec.get("core_smoke") or [])
+    # suite chạy cả lệnh: file trong lệnh của nó cũng đã chạy, dù file đó thuộc mã suite khác (một file test, nhiều mã)
+    for r in rules:
+        for t in r.get("mandatory_regression_tests") or []:
+            if isinstance(t, dict) and t.get("id") in whole:
+                try:
+                    toks = shlex.split(t.get("command") or "")
+                except ValueError:
+                    toks = (t.get("command") or "").split()
+                ran |= {p for p in toks if not os.path.isabs(p) and os.path.isfile(os.path.join(scratch, p))}
+    return ran - set(skipped), whole, files
+
+
+def escape_check(run: Run, repo: str, scratch: str, sha: str, matrix_path, slug: str) -> None:
+    """Đo lọt lưới (chỉ đo + báo): suite đỏ có commit ứng viên trong truy vết mà KHÔNG commit ứng viên nào được gate scoped chạy (file
+    test của suite trong phạm vi PR thật, hoặc luật ma trận chạy cả lệnh) ⇒ lọt lưới, mở thẻ bug. Ứng viên = "chắc" (chia đôi tái hiện)
+    nếu có, không thì commit "nghi" có đụng file của suite (hit); nghi vấn chia đôi không đụng file, suite nhóm b (thời gian thực / môi
+    trường) và suite "không rõ" không vào mẫu. escape_rate = lọt / suite kiểm được.
+    ponytail: tái dựng bằng bộ chọn HIỆN TẠI tại commit đó (biên nhận scoped chỉ giữ ~24 h); bộ chọn đổi sau PR thì kết quả theo bộ mới.
+    ponytail: decide ở mỗi commit có thể ghi scoped-scan-<cây>.json (giữ 4 bản) — lượt đêm 00:00 ít gate chạy song song, chấp nhận."""
+    try:
+        with open(matrix_path or "", encoding="utf-8") as f:
+            rules = [r for r in json.load(f).get("rules") or [] if isinstance(r, dict)]
+    except (OSError, ValueError, AttributeError):
+        rules = []
+    group_b = set(run.info.get("group_b") or [])
+    # đường ma trận tương đối gốc cây (gate báo đường trong scratch; người gọi khác có thể đưa đường trong repo)
+    rels = [os.path.relpath(matrix_path, b) for b in (scratch, repo)] if matrix_path and os.path.isabs(matrix_path) else []
+    matrix_rel = next((r for r in rels if not r.startswith("..")), "")
+    picks, checked, escaped, pfg = {}, 0, [], None
+    try:
+        for t in (run.info.get("trace") or {}).get("tests") or []:
+            if t.get("id") in group_b:
+                continue
+            cands = [c for c in t.get("candidates") or [] if c.get("sha")]
+            cands = [c for c in cands if c.get("confidence") == "chắc"] or [c for c in cands if c.get("hit")]
+            for c in cands:
+                if c["sha"] not in picks:
+                    pfg = pfg or _pfg()
+                    try:   # một commit không tái dựng được (đồ thị lỗi…) chỉ rơi khỏi mẫu, không làm mất cả lượt đo
+                        picks[c["sha"]] = _scoped_pick(pfg, scratch, c["sha"], rules, matrix_rel)
+                    except Exception as exc:
+                        picks[c["sha"]] = None
+                        run.info["notes"].append("đo lọt lưới: bỏ %s (%r)" % (c["sha"][:12], exc))
+            cands = [c for c in cands if picks[c["sha"]] is not None]
+            if not cands:
+                continue
+            checked += 1
+            # suite không có file test (lệnh pytest / gradle …): chỉ luật ma trận chọn được cả lệnh
+            if not any(set(t.get("files") or []) & picks[c["sha"]][0] or t["id"] in picks[c["sha"]][1] for c in cands):
+                c = cands[0]
+                escaped.append({"id": t["id"], "sha": c["sha"], "pr": c.get("pr"), "tests": t.get("files") or [], "files": picks[c["sha"]][2][:20],
+                                "others": ["PR #%s" % x["pr"] if x.get("pr") else x["sha"][:12] for x in cands[1:]]})
+    finally:
+        if git(scratch, "checkout", "-q", "-f", "--detach", sha)[0] != 0:
+            run.info["notes"].append("đo lọt lưới: không trả scratch về %s" % sha[:12])
+    run.info["escape"] = {"checked": checked, "escaped": escaped, "rate": round(len(escaped) / checked, 3) if checked else None}
+    run.log("lọt lưới: %d/%d suite đỏ không được gate scoped của commit ứng viên chọn" % (len(escaped), checked))
+    for e in escaped:
+        title = "%s: %s (%s)" % (ESCAPE_PREFIX, e["id"], "PR #%s" % e["pr"] if e["pr"] else e["sha"][:12])
+        base = shlex.split(os.environ["DEVKIT_GATE_FULL_CARD_CMD"]) if os.environ.get("DEVKIT_GATE_FULL_CARD_CMD") \
+            else [sys.executable, os.path.join(KIT, "scripts", "governance", "create_task.py")]
+        if shutil.which("gh") and slug:   # thẻ cùng suite còn mở: không mở trùng
+            rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "open", "--search", '"%s" "%s" in:title' % (ESCAPE_PREFIX, e["id"]),
+                          "--json", "url", "--limit", "5"], timeout=60)
+            if rc != 0:   # gh lỗi / hết giờ: không biết đã có thẻ chưa — không mở (tránh trùng), lọt vẫn vào escape_rate
+                e["card"] = "không kiểm được thẻ trùng (gh exit %d): chưa mở" % rc
+                run.log("thẻ lọt lưới %s: %s" % (e["id"], e["card"]))
+                continue
+            if ISSUE_URL.search(out or ""):
+                e["card"] = ISSUE_URL.search(out).group(0) + " (đã có)"
+                run.log("thẻ lọt lưới %s đã có: %s" % (e["id"], e["card"]))
+                continue
+        problem = ("Gate-full đêm %s @ %s: %s đỏ (test %s). Gate scoped của commit ứng viên %s%s KHÔNG chọn test này%s. File đổi: %s. Log: %s"
+                   % (run.info["ref"], sha[:12], e["id"], ", ".join(e["tests"]) or "lệnh suite", e["sha"][:12],
+                      " (PR #%s)" % e["pr"] if e["pr"] else "", " (ứng viên khác cũng không: %s)" % ", ".join(e["others"]) if e["others"] else "",
+                      ", ".join(e["files"]) or "-", run.log_path))
+        rc, out = sh(base + (["--repo", slug] if slug else []) + [
+            "--new-card", "gate scoped lọt lưới", "--labels", "bug", "--title", title, "--problem", problem,
+            "--fix", "Thêm cạnh/luật để bin/scoped_gate.py (hoặc watch_files của %s) chọn test này khi đổi các file trên." % e["id"],
+            "--ac", "Gate --scoped tại %s chạy %s" % (e["sha"][:12], ", ".join(e["tests"]) or e["id"]),
+            "--risk", "🟡 Medium — gate PR báo xanh mà test liên quan không chạy", "--blocked-by", "None."], cwd=repo, timeout=300)
+        run.raw(out)
+        m = ISSUE_URL.search(out or "")
+        e["card"] = m.group(0) if m else "tạo thẻ lỗi (exit %d)" % rc
+        run.log("thẻ lọt lưới %s: %s" % (e["id"], e["card"]))
 
 
 # --- thẻ P1 -------------------------------------------------------------------------------------------------------------------
@@ -974,6 +1120,11 @@ def cmd_run(args) -> int:
                 run.log("truy vết lỗi: %r" % exc)
                 run.info["notes"].append("truy vết lỗi: %r" % exc)
             file_card(run, repo, args.slug or origin_slug(repo), sha)
+            try:   # đo lọt lưới SAU thẻ đỏ (SIGTERM giữa chừng không làm mất thẻ đỏ): chỉ đọc + thẻ riêng, lỗi không đổi kết luận hay exit
+                escape_check(run, repo, scratch, sha, last_json(gate_out_full).get("matrix_path"), args.slug or origin_slug(repo))
+            except Exception as exc:
+                run.log("đo lọt lưới lỗi: %r" % exc)
+                run.info["notes"].append("đo lọt lưới lỗi: %r" % exc)
             rc_final = 3 if all_b else 1
         else:
             rc_final = 3
@@ -1003,7 +1154,8 @@ def cmd_run(args) -> int:
                 f.write(json.dumps({"at": run.started.isoformat(timespec="seconds"), "result": run.info["result"], "ref": run.info["ref"],
                                     "sha": run.info["sha"], "red": run.info["red"], "group_b": run.info["group_b"],
                                     "suspect": run.info["suspect"],
-                                    "card": run.info["card"], "log": run.log_path}, ensure_ascii=False) + "\n")
+                                    "card": run.info["card"], "log": run.log_path,
+                                    "escape": run.info.get("escape")}, ensure_ascii=False) + "\n")
             run.finish()
         finally:
             release_global()
