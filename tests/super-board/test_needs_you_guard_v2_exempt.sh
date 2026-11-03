@@ -2,7 +2,7 @@
 # Rào chắn needs-you v2: các ca OCR review tìm ra ngày 03/11, sau #924.
 #   E1: chữ "production"/"deploy" trong đường dẫn hay tên file (production/qa/…, deploy.sh) không được miễn
 #       cho câu nhắm việc của agent.
-#   E2: bước của người trên GitHub settings (vd. bật auto-approve cho Dependabot) không bị chặn nhầm.
+#   E2: bước của người trên GitHub settings / cài đặt không bị chặn nhầm.
 #   E3: env SB_NEEDS_YOU_GUARD_V2 thắng flags.json (env=0 mà flags.json true thì vẫn là tắt).
 #   E4: bước bật auto-approve cho Dependabot là việc của người, kể cả khi câu nhắc tới tests/ (residual 03/11).
 # Câu "phải nhận" của E1/E2 đều chạm một luật V2 (sửa AC thẻ #N, auto-approve … tests/): bỏ miễn trừ đang thử thì câu bị
@@ -52,7 +52,10 @@ for act in \
   "Sửa AC thẻ #14 sửa file settings.gradle" \
   "Sửa AC thẻ #14 theo repo settings.yml" \
   "Viết lại thẻ #12 cho script deploy-prod.sh" \
-  "Viết lại thẻ #12 cho production-checklist.md"; do
+  "Viết lại thẻ #12 cho production-checklist.md" \
+  "Viết lại thẻ #12 cho .github/dependabot.yml" \
+  "Sửa AC thẻ #14 theo .github/dependabot.yml" \
+  "Viết lại thẻ #12 cho tests/super-board/test-dependabot-merge.sh"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 64 ] && pass || fail "E1 cờ bật phải từ chối (exit $rc, cần 64): $act"
 done

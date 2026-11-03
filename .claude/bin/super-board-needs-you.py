@@ -125,7 +125,7 @@ V2_HUMAN_RE = re.compile(
     rf"\blogin\b|đăng\s+nhập|\bsettings\b{_NOT_FILE}|cài\s+đặt|"
     r"\bsecret\b|mật\s+khẩu|\botp\b|\blive\b|app\s+store|hợp\s+đồng|khóa\s+ký|"
     # Bật auto-approve cho Dependabot là cấu hình GitHub của chủ repo, kể cả khi câu nhắc tests/ (wave 2, 03/11).
-    r"\bdependabot\b",
+    rf"\bdependabot\b{_NOT_FILE}",
     re.I,
 )
 FLAG = "needs_you_guard_v2"
