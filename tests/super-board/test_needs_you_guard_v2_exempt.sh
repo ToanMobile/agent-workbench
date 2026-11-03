@@ -61,7 +61,9 @@ for act in \
   "Sửa AC thẻ #14 sau khi deploy." \
   "Sửa AC thẻ #14 sau khi deploy/rollback bản 2.3" \
   "Bật auto-approve cho environment production/staging trên GitHub" \
-  "Bật auto-approve cho environment production/staging/canary"; do
+  "Bật auto-approve cho environment production/staging/canary" \
+  "Bật auto-approve cho deploy-v2.3 trên GitHub" \
+  "Bật auto-approve cho production-v1.2"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 0 ] && pass || fail "E1 cờ bật chặn nhầm bước deploy thật (exit $rc): $act"
 done
@@ -74,7 +76,9 @@ for act in \
   "Bật auto-approve trong repository settings" \
   "Bật auto-approve: Settings → Actions → General" \
   "Bật auto-approve trong cài đặt tổ chức" \
-  "Bật auto-approve trong phần Cài đặt của kho"; do
+  "Bật auto-approve trong phần Cài đặt của kho" \
+  "Bật auto-approve trên GitHub" \
+  "Bật auto-approve trong cấu hình repo trên GitHub"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 0 ] && pass || fail "E2 cờ bật chặn nhầm bước settings (exit $rc): $act"
 done
