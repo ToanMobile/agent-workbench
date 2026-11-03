@@ -335,3 +335,24 @@ test('F5 pm_dispatch audit agent=grok tu choi khi cay lam viec co thay doi da th
     cleanup(dir);
   }
 });
+
+test('F5 thu muc trang thai PM bi repo track va da doi (vd audit-agent.json lan truoc): khong chan audit lai; file code doi van chan', async () => {
+  const { dir, cfg, task } = repo();
+  try {
+    // repo track ca thu muc trang thai (bat chap .gitignore cua fixture)
+    const st = path.join('.antigravity-pm', 'tracked.txt');
+    writeFile(path.join(dir, st), 'v1\n');
+    execFileSync('git', ['add', '-f', st], { cwd: dir });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'track state'], { cwd: dir });
+    writeFile(path.join(dir, st), 'v2\n');
+    const fake = fakeGrok();
+    await withGrok(fake, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    assert.equal(grokRan(fake), true);
+    writeFile(path.join(dir, 'a.txt'), 'doi\n');
+    await withGrok(fakeGrok(), () => assert.rejects(
+      call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }), /a\.txt/));
+    assert.equal(disk(cfg, task).dispatches.length, 1);
+  } finally {
+    cleanup(dir);
+  }
+});

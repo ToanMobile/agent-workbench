@@ -25,7 +25,7 @@ import { collectTestEvidence, evidenceLine } from './evidence.js';
 import { replayOracle, oracleLine } from './oracle.js';
 import { kiemBaoCao, dongTomTat } from './cite-check.js';
 import { soiThayDoi } from './lint-diff.js';
-import { gitSnapshot, changedFilesOf, baseCommitOf, gateCtx, dongBangCay, goWorktree } from './worktree.js';
+import { gitSnapshot, changedFilesOf, baseCommitOf, gateCtx, dongBangCay, goWorktree, thuMucTrangThai } from './worktree.js';
 import { hashOf, deltaKeHoach, tinhTrangPhanBien, projectIdFor } from './plan-review.js';
 import { cacTaskDangChayKhac, canhBaoTruocKhiGiao } from './dispatch-guard.js';
 import { run, runShell, writeFileAtomic, ensureDir, exists, tail, truncate, nowIso, readJsonIfExists, killGroup } from './util.js';
@@ -87,7 +87,7 @@ export function pathspecArgs(pathspec) {
 
 /** grok, grok-4.7, grok-build... la Grok (khong khop "grokx"). */
 const laGrok = (x) => /^grok(?![a-z0-9])/.test(String(x || '').trim().toLowerCase());
-/** Ten agent chuan hoa, cung luat push_gate.normalize_reviewer: grok* -> grok, antigravity(-*) -> antigravity, con lai chu thuong. */
+/** Ten agent chuan hoa nhu push_gate.normalize_reviewer (grok -> grok, antigravity(-*) -> antigravity, con lai chu thuong), rieng grok rong hon: laGrok coi ca grok_x, grok.x, "grok build" la grok (so tu duyet chat hon). */
 function normalizeAgent(x) {
   const v = String(x || '').trim().toLowerCase();
   if (laGrok(v)) return 'grok';
@@ -95,7 +95,7 @@ function normalizeAgent(x) {
   return v;
 }
 /**
- * Danh tinh agent goi PM (dot 2 F2, cung luat push_gate.session_agent): DEVKIT_AGENT_ID chuan hoa neu co; khong thi "grok" khi
+ * Danh tinh agent goi PM (dot 2 F2; ban Python tuong ung: push_gate.session_agent cua lane FX1): DEVKIT_AGENT_ID chuan hoa neu co; khong thi "grok" khi
  * env co GROK_SESSION_ID / GROK_WORKSPACE_ROOT / GROK_HOOK_EVENT; khong thi "claude" khi CLAUDECODE=1 hoac CLAUDE_CODE_SESSION_ID;
  * khong thi "" (khong biet).
  */
@@ -744,11 +744,15 @@ export const TOOLS = [
         // audit-agent.json; sha256 cua file luu vao lan giao de pm_verdict chan ban ghi de tay.
         // F2: nguoi goi PM la grok thi grok audit viec cua chinh no = tu duyet (force khong bo qua).
         if (callerAgent() === 'grok') fail('Nguoi goi PM la grok — grok khong audit duoc viec cua chinh no (tu duyet). Nho agent khac audit.');
-        // F5: audit phai dung bytes cua HEAD: cay lam viec co thay doi da theo doi (ke ca da stage) thi tu choi; loi git = tu choi.
-        const st = await run('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: cfg.projectRoot, timeoutMs: 60000 });
-        if (st.spawnFailed || st.timedOut || st.code !== 0) fail(`Khong doc duoc git status cua project (exit ${st.code}${st.timedOut ? ', qua han' : ''}) — khong chay grok.`);
-        if (String(st.stdout).trim()) {
-          fail(`git status --porcelain --untracked-files=no khong rong — cay lam viec khac HEAD, grok se audit bytes chua commit:\n${tail(String(st.stdout).trimEnd(), 20)}\nCommit hoac bo thay doi roi giao lai.`);
+        // F5: audit phai dung bytes cua HEAD: cay lam viec co thay doi da theo doi (ke ca da stage) thi tu choi; loi git / output bi
+        // cat = tu choi. Bo thu muc trang thai cua PM (nhu gitSnapshot): audit-agent.json PM tu ghi, neu repo track thu muc do thi
+        // lan audit lai khong bi chan boi chinh bao cao cu.
+        const st = await run('git', ['status', '--porcelain', '-z', '--no-renames', '--untracked-files=no'], { cwd: cfg.projectRoot, timeoutMs: 60000, maxBytes: 16_000_000 });
+        if (st.spawnFailed || st.timedOut || st.code !== 0 || st.truncated) fail(`Khong doc duoc git status cua project (exit ${st.code}${st.timedOut ? ', qua han' : ''}${st.truncated ? ', output bi cat' : ''}) — khong chay grok.`);
+        const stateDir = thuMucTrangThai(cfg);
+        const dirty = String(st.stdout).split('\0').filter((e) => e.length > 3 && !e.slice(3).startsWith(stateDir));
+        if (dirty.length) {
+          fail(`git status --porcelain --untracked-files=no khong rong — cay lam viec khac HEAD, grok se audit bytes chua commit:\n${dirty.slice(0, 20).join('\n')}\nCommit hoac bo thay doi roi giao lai.`);
         }
         const grok = grokPath();
         if (!grok) fail(`Khong tim thay grok chay duoc (${process.env.ANTIGRAVITY_PM_GROK || '~/.grok/bin/grok'}). Cai grok hoac tro ANTIGRAVITY_PM_GROK vao dung file.`);
