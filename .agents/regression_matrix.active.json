@@ -3236,6 +3236,22 @@
       ]
     },
     {
+      "component": "super-board-needs-you-guard-v2",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_needs_you_guard_v2.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-GUARD-V2-01",
+          "name": "optimizer đợt 1: cờ needs_you_guard_v2 tắt = nhận mọi lời 🙋 như v1; bật = từ chối 8 lời nhắm thứ agent sở hữu (duyệt test đã sửa, AC/nội dung thẻ #N, đóng thẻ đã có PR, cây dirty, --full + merge gate), vẫn nhận 44 lời còn lại, việc phải hỏi người dù mở đầu bằng quyết định/chọn hướng, và câu human-gate của merge-queue; cờ đọc từ flags.json của checkout chính",
+          "command": "bash tests/super-board/test_needs_you_guard_v2.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-session-card-hook",
       "watch_files": [
         "universal-agent-devkit/hooks/session_card.sh",
