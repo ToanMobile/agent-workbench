@@ -202,19 +202,25 @@ def queue_order(tickets: list, now: float) -> list:
     """Thứ tự phục vụ: (mức ưu tiên, vé của lượt đã bắt đầu trước, thời lượng ước tính − thời gian đã chờ, lúc đến). Việc dài chờ lâu dần lên
     đầu; một lượt đã chạy suite đầu thì chạy cho xong, không nhường lại cho lượt mới đến (#338). Mức ưu tiên lão hoá (P2, 02/11): mỗi
     DEVKIT_SLOT_PRIO_AGE_S (450 s; 0, rác hay âm thì mặc định) đã chờ thì lên một mức, tới merge (0) thì thôi — vé chờ lâu không bị đói."""
-    age_s = _env_float("DEVKIT_SLOT_PRIO_AGE_S", 450.0) or 450.0
+    env_age_s = _env_float("DEVKIT_SLOT_PRIO_AGE_S", 450.0) or 450.0
 
     def key(t):
+        try:   # #914(3): tuổi do vé ghi lúc tạo — hai tiến trình khác env vẫn thấy cùng một thứ tự
+            age_s = float(t.get("age_s"))
+            if not age_s > 0 or age_s == float("inf"):
+                age_s = env_age_s
+        except (TypeError, ValueError, OverflowError):
+            age_s = env_age_s
         try:
             est = float(t.get("est_s"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             est = DEFAULT_EST_S
         try:
             t0 = float(t.get("t0"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             t0 = now
         waited = max(0.0, now - t0)
-        base, steps = PRIORITY.get(t.get("prio"), PRIORITY["interactive"]), waited // age_s
+        base, steps = PRIORITY.get(str(t.get("prio")), PRIORITY["interactive"]), waited // age_s
         prio = base - int(steps) if steps < base else 0   # steps NaN/vô cực (t0 rác) cũng thành 0, không ném
         return (prio, 0 if t.get("cont") else 1, est - waited, t0, str(t.get("name") or ""))
     return sorted(tickets, key=key)
@@ -243,7 +249,7 @@ def ticket_alive(ticket: dict, now: float, wait_s: Optional[float] = None) -> bo
     try:
         t0 = float(ticket.get("t0"))
         limit = float(ticket.get("wait_s") if wait_s is None else wait_s)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
     return _pid_alive(ticket.get("pid")) and now - t0 <= max(0.0, limit) + 60.0
 
@@ -286,7 +292,8 @@ def _write_ticket(qdir: str, prio: str, est_s: float, wait_s: float, label: str,
         tmp = os.path.join(qdir, "." + name + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"pid": os.getpid(), "prio": prio, "est_s": float(est_s), "t0": time.time(), "wait_s": float(wait_s),
-                       "label": str(label)[:120], "cont": bool(cont), "n": n}, f)
+                       "label": str(label)[:120], "cont": bool(cont), "n": n,
+                       "age_s": _env_float("DEVKIT_SLOT_PRIO_AGE_S", 450.0) or 450.0}, f)
         os.replace(tmp, os.path.join(qdir, name))
         return name
     except OSError as exc:
@@ -318,13 +325,13 @@ def _ticket_n(ticket: dict, size: int) -> int:
 
 def _pick_free(free: list, ahead: list, size: int) -> Optional[int]:
     """Ghép tham lam (P1, 02/11) trên chỉ số 0-based trong paths (pool_paths: paths[i] = <pool>-(i+1).lock, nên vé cỡ n thấy đúng
-    i < n): các vé đứng trước, theo n tăng dần, mỗi vé giữ chỗ chỉ số trống LỚN NHẤT < n của nó; còn dư thì trả chỉ số nhỏ nhất, hết
+    i < n): các vé đứng trước, theo n tăng dần, mỗi vé giữ chỗ chỉ số trống NHỎ nhất < n của nó (vé hạng 0 quét từ chỉ số 0, #914 mục 2); còn dư thì trả chỉ số nhỏ nhất, hết
     thì None. Không vé nào đứng trước ⇒ chỉ số nhỏ nhất (như cũ)."""
     left = sorted(free)
     for n in sorted(_ticket_n(t, size) for t in ahead):
         fit = [i for i in left if i < n]
         if fit:
-            left.remove(fit[-1])
+            left.remove(fit[0])
     return left[0] if left else None
 
 
