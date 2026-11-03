@@ -56,7 +56,9 @@ export const DEFAULT_PROFILES = [
     name: '4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Argon High)',
     vendor: 'google',
     appType: 'gemini',
-    configDir: path.join(os.homedir(), '.gemini'),
+    // agy chi tach tai khoan qua HOME (khong co bien CONFIG_DIR): ham agy() trong ~/.zshrc dat HOME=homeDir.
+    homeDir: path.join(os.homedir(), '.agy-antigravity'),
+    configDir: path.join(os.homedir(), '.agy-antigravity', '.gemini'),
     settingsKey: 'currentProviderGemini',
     settingsValue: 'antigravity',
   },
@@ -67,7 +69,8 @@ export const DEFAULT_PROFILES = [
     name: '5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Argon High)',
     vendor: 'google',
     appType: 'gemini',
-    configDir: path.join(os.homedir(), '.gemini'),
+    homeDir: path.join(os.homedir(), '.agy-antigravity_pro'),
+    configDir: path.join(os.homedir(), '.agy-antigravity_pro', '.gemini'),
     settingsKey: 'currentProviderGemini',
     settingsValue: 'antigravity_pro',
   },
@@ -283,6 +286,9 @@ export function buildSafeEnvForProfile(profile) {
   };
   if (profile.vendor === 'anthropic') {
     env.CLAUDE_CONFIG_DIR = profile.configDir;
+  }
+  if (profile.homeDir) {
+    env.HOME = profile.homeDir;
   }
   return env;
 }
