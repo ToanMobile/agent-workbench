@@ -19,19 +19,19 @@ import { processIncomingTelegramUpdates } from '../src/daemon.js';
 
 function createTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-switcher-c4cov-'));
-  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos' }, null, 2));
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos_toan' }, null, 2));
   return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
 test('resolveProfile nhan so 1..6 (MCP switcher_switch, CLI --switch): "4" va 4 la antigravity, switchProfile target "4" doi tai khoan', () => {
-  assert.equal(resolveProfile('4').id, 'antigravity');
-  assert.equal(resolveProfile(4).id, 'antigravity');
-  assert.equal(resolveProfile('1').id, 'finos');
-  assert.throws(() => resolveProfile('7'), (err) => err.code === 'PROFILE_NOT_FOUND');
+  assert.equal(resolveProfile('4').id, 'antigravity_ultra');
+  assert.equal(resolveProfile(4).id, 'antigravity_ultra');
+  assert.equal(resolveProfile('1').id, 'finos_toan');
+  assert.throws(() => resolveProfile('8'), (err) => err.code === 'PROFILE_NOT_FOUND');
   const tmp = createTempDir();
   try {
     switchProfile({ stateDir: tmp.dir, target: '4', nowMs: Date.now(), enforceCooldown: false });
-    assert.equal(getStatusReport({ stateDir: tmp.dir }).activeProfileId, 'antigravity');
+    assert.equal(getStatusReport({ stateDir: tmp.dir }).activeProfileId, 'antigravity_ultra');
   } finally {
     tmp.cleanup();
   }
@@ -66,12 +66,12 @@ test('chia 3 repo finos + 3 repo finos_team: ca 2 tai khoan Claude isParallelAct
     });
     const report = getStatusReport({ stateDir: tmp.dir, repos });
     const byId = Object.fromEntries(report.profiles.map((p) => [p.id, p]));
-    assert.equal(byId.finos.assignedRepoCount, 3);
-    assert.equal(byId.finos_team.assignedRepoCount, 3);
-    assert.equal(byId.finos.isParallelActive, true);
-    assert.equal(byId.finos_team.isParallelActive, true);
-    assert.equal(byId.max.assignedRepoCount, 0);
-    assert.equal(byId.max.isParallelActive, false);
+    assert.equal(byId.finos_toan.assignedRepoCount, 3);
+    assert.equal(byId.finos_linh.assignedRepoCount, 3);
+    assert.equal(byId.finos_toan.isParallelActive, true);
+    assert.equal(byId.finos_linh.isParallelActive, true);
+    assert.equal(byId.finos_toan_max.assignedRepoCount, 0);
+    assert.equal(byId.finos_toan_max.isParallelActive, false);
   } finally {
     tmp.cleanup();
   }

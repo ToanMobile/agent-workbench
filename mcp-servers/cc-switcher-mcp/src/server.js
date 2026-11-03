@@ -11,7 +11,7 @@ import { logStructured, maskSecret } from './errors.js';
 export const SERVER_NAME = 'cc-switcher-mcp';
 export const SERVER_VERSION = '0.1.0';
 
-const INSTRUCTIONS = `Quan ly va tu dong xoay vong an toan 6 profile CC Switch (3 Claude Code + 2 Antigravity Gemini + 1 Grok CLI) kem canh bao & dieu khien tu xa qua Telegram.
+const INSTRUCTIONS = `Quan ly va tu dong xoay vong an toan 7 profile CC Switch (4 Claude Code + 2 Antigravity Gemini + 1 Grok CLI) kem canh bao & dieu khien tu xa qua Telegram.
 Quy tac chong ban:
 - Khi tai khoan Claude dinh 429 / het quota, goi switcher_report_limit hoac switcher_rotate(markCurrentLimited=true) de dong bang tai khoan do 5 gio va chuyen sang profile an toan tiep theo.
 - Cooldown an toan mac dinh giua 2 tai khoan Claude la 15 phut (900s); chuyen sang Antigravity hoac Grok thi khong can cho.`;
