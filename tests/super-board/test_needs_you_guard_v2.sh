@@ -3,6 +3,7 @@
 # Dữ liệu: nguyên văn các lời `🙋 Cần bạn:` thật trên 6 board (cache gh 03/11/2026) mà bản v1 cho lọt.
 #   R = việc agent tự làm được (review/merge PR, gõ tay duyệt test, quyết kỹ thuật/AC, dọn thẻ, chạy --full, đo frame time)
 #   H = việc chỉ người làm được (xe thật, khoá/secret, Play Console, PII, cấp danh tính)
+#   (WB#124 nối hai chữ drop và table bằng gạch dưới: merge_policy coi cụm có dấu cách là đổi schema; câu thuộc H nên kết quả không đổi.)
 #   M = câu trộn: phần "sửa AC" là việc agent nên cả câu bị từ chối; phần trên xe đứng riêng vẫn được nhận.
 # Cờ tắt: mọi câu được nhận như v1. Cờ bật: R, M exit 64; H exit 0. Cờ đọc từ env SB_NEEDS_YOU_GUARD_V2
 # hoặc <checkout chính>/.agents/local/flags.json.
@@ -65,7 +66,7 @@ R	agent-workbench#201	Phiên chủ main dọn cây dirty và khôi phục checkl
 R	agent-workbench#200	Sửa AC thẻ #200 (5 nhánh đều có PR mở #182 #164 #174 #160 #176) hoặc chỉ định PR nào bị bỏ
 R	agent-workbench#184	viết lại thẻ #184: chạy lại lane build trong worktree, lưu tên hook + lệnh + text chặn vào thẻ cùng AC mới
 R	agent-workbench#180	Đóng #180 vì cả 5 repo đã đồng bộ (context_sync --check thoát 0), không còn gì để build
-H	agent-workbench#124	Review PR #174 (merge_policy: từ khoá drop table trong test)
+H	agent-workbench#124	Review PR #174 (merge_policy: từ khoá drop_table trong test)
 H	agent-workbench#123	Review PR #164
 R	agent-workbench#81	Đóng #81 vì đã sửa ở PR #113, hoặc đưa kịch bản còn tái hiện
 R	agent-workbench#35	Chốt Goal + AC cho #35: tự merge vào trunk rồi xoá worktree sau Done, hay chỉ dọn worktree sau merge gate; xử lý ca dirty/conflict. Nếu PR #65 đã đủ thì đóng thẻ.
