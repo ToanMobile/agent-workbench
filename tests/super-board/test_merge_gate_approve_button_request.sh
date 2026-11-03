@@ -22,15 +22,36 @@ export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"
 mkdir -p "$SB_HEAVY_SLOT_DIR"
 cp -R "$ROOT/.claude/bin" "$TMP/gatebin"
 GATE="$TMP/gatebin/super-board-merge-gate.sh"
-# approval giả: request in đúng một dòng, ghim head (đối số --head) như bản thật.
+# approval giả: request in đúng một dòng, ghim head (đối số --head) như bản thật. Kiểm (không --request) theo luật validate() của bản
+# thật, thu gọn: block MỚI NHẤT (tên file tăng dần) trên PR + issue liên kết (pr<n>.comments, issue7.comments); không block → "no request
+# from …"; block mới nhất không chứa đúng dòng request → "the latest request does not cover …"; có → "waiting for … done …".
+# FAKE_APPROVAL_FAIL=1: thoát 1 (gate lùi về {"approved":false}); FAKE_APPROVAL_UNVERIFIED=1: why "approval evidence could not be verified".
 cat > "$TMP/gatebin/super-board-approval.py" <<'PY'
 #!/usr/bin/env python3
-import json, sys
-if "--request" in sys.argv:
-    head = sys.argv[sys.argv.index("--head") + 1]
-    print('approval-request: {"head":"%s","pr":%s,"repo":"o/r","scope":"%s"}' % (head, sys.argv[sys.argv.index("--pr") + 1], "a" * 64))
+import glob, json, os, re, sys
+a = sys.argv
+head, pr = a[a.index("--head") + 1], a[a.index("--pr") + 1]
+line = 'approval-request: {"head":"%s","pr":%s,"repo":"o/r","scope":"%s"}' % (head, pr, "a" * 64)
+if "--request" in a:
+    print(line); sys.exit(0)
+if os.environ.get("FAKE_APPROVAL_FAIL") == "1":
+    sys.exit(1)
+if os.environ.get("FAKE_APPROVAL_UNVERIFIED") == "1":
+    print(json.dumps({"approved": False, "why": "approval evidence could not be verified"})); sys.exit(0)
+d = os.environ["FAKE_DIR"]
+files = glob.glob(f"{d}/pr{pr}.comments/*") + glob.glob(f"{d}/issue7.comments/*")
+blocks = []
+for f in files:
+    body = open(f, encoding="utf-8").read()
+    if re.search(r"Reason tag:[^\n]*🙋|^approval-request:", body, re.M):
+        blocks.append((os.path.basename(f), body))
+if not blocks:
+    why = "no request from a trusted repository collaborator"
+elif line not in max(blocks)[1].splitlines():
+    why = "the latest request does not cover the current code and human steps"
 else:
-    print(json.dumps({"approved": False}))
+    why = "waiting for a trusted human to comment done on the current request"
+print(json.dumps({"approved": False, "why": why}))
 PY
 cat > "$TMP/gatebin/super-board-notify.py" <<PY
 #!/usr/bin/env python3
@@ -74,7 +95,7 @@ case " $* " in
   *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
   *" pr comment "*)
     [ "${FAKE_COMMENT_FAIL:-0}" = 1 ] && { echo "fake gh: comment refused" >&2; exit 1; }
-    while [ $# -gt 0 ]; do [ "$1" = --body ] && { printf '%s' "$2" > "$cdir/$(date +%s)-$$-$RANDOM"; exit 0; }; shift; done
+    while [ $# -gt 0 ]; do [ "$1" = --body ] && { printf '%s' "$2" > "$cdir/9-$(date +%s)-$$-$RANDOM"; exit 0; }; shift; done
     echo "fake gh: pr comment without --body" >&2; exit 1 ;;
   *" pr merge "*) echo "fake gh: this test never merges" >&2; exit 1 ;;
   *) echo "fake gh: unexpected $*" >&2; exit 1 ;;
@@ -106,7 +127,7 @@ gate() {  # gate <pr> <env…> -- <args…>
   ( cd "$WT" && env ${envs[@]+"${envs[@]}"} bash "$GATE" --pr "$pr" "$@" ) >"$TMP/out" 2>"$TMP/err"; RC=$?
 }
 ncomments() { ls "$TMP/pr$1.comments" 2>/dev/null | wc -l | tr -d ' '; }
-nreq() { cat "$TMP/pr$1.comments"/* 2>/dev/null | grep -cxF "$2" | tr -d ' '; }
+nreq() { for f in "$TMP/pr$1.comments"/*; do [ -f "$f" ] && cat "$f" && echo; done | grep -cxF "$2" | tr -d ' '; }  # mỗi file một thân, cách dòng
 napprove() { grep -c '^approve-button ' "$TMP/notify.log" | tr -d ' '; }
 why() { echo "rc=$RC comments=$(ncomments "${1:-5}") approve=$(napprove) out=[$(tail -3 "$TMP/out" | tr '\n' '|')] err=[$(tail -3 "$TMP/err" | tr '\n' '|')]"; }
 clear_comments() { rm -rf "$TMP/pr$1.comments"; }
@@ -161,5 +182,31 @@ clear_comments 5
 gate 5 -- --config "$CFG_HUMAN_OFF" --expect-head "$H" --dry-run
 [ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 0 ] && ! grep -q ' pr comment ' "$TMP/gh.calls" \
   && ok "--dry-run: no PR comment, exit 7" || fail "dry-run: $(why)"
+
+# ── 7. (a) Block 🙋 của lane trên issue liên kết đã mang đúng dòng request: request hiện hành có rồi → không đăng lên PR (đăng thì PR
+#       giữ block mới nhất và `done` trên issue bị bỏ qua); nút vẫn gửi, exit 7.
+clear_comments 5; rm -rf "$TMP/issue7.comments"; mkdir -p "$TMP/issue7.comments"
+printf '[merge-queue] [blocker] 🛑 blocked · 🙋\nReason tag:  🙋\n%s\nblocked-by: -' "$REQ5" > "$TMP/issue7.comments/001"
+gate 5 -- --config "$CFG_HUMAN_OFF" --expect-head "$H"
+[ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 0 ] && [ "$(napprove)" = 1 ] \
+  && ok "(a) current request already on the linked issue: no PR comment, button sent, exit 7" || fail "(a) linked-issue request: $(why)"
+rm -rf "$TMP/issue7.comments"
+
+# ── 8. (a2) Kiểm duyệt đọc lỗi (approval.py thoát lỗi, hay why "could not be verified"): không đăng (có thể đè một `done`); nút vẫn gửi.
+clear_comments 5
+gate 5 FAKE_APPROVAL_FAIL=1 -- --config "$CFG_HUMAN_OFF" --expect-head "$H"
+[ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 0 ] && [ "$(napprove)" = 1 ] && grep -qxF "$REQ5" "$TMP/out" \
+  && ok "(a2) approval check failed: no PR comment, request still on stdout, button sent, exit 7" || fail "(a2) approval failure: $(why)"
+gate 5 FAKE_APPROVAL_UNVERIFIED=1 -- --config "$CFG_HUMAN_OFF" --expect-head "$H"
+[ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 0 ] && [ "$(napprove)" = 1 ] \
+  && ok "(a2) approval evidence could not be verified: no PR comment, button sent, exit 7" || fail "(a2) unverified: $(why)"
+
+# ── 9. (b) PR có dòng request cũ L nhưng block mới hơn mang scope khác: request hiện hành không còn → đăng lại L, nút gửi, exit 7.
+clear_comments 5; mkdir -p "$TMP/pr5.comments"
+printf '[merge-gate] [blocker] 🛑 needs a person · head %s\n%s' "${H:0:7}" "$REQ5" > "$TMP/pr5.comments/001"
+printf '%s' "${REQ5/aaaaaaaa/bbbbbbbb}" > "$TMP/pr5.comments/002"
+gate 5 -- --config "$CFG_HUMAN_OFF" --expect-head "$H"
+[ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 3 ] && [ "$(nreq 5 "$REQ5")" = 2 ] && [ "$(napprove)" = 1 ] \
+  && ok "(b) newer block with another scope: the current request is posted again, button sent, exit 7" || fail "(b) superseded request: $(why)"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

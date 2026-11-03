@@ -288,17 +288,24 @@ needs_you_notify() {
   # /super-review --standalone --dry-run ngoài board vẫn gửi nút. Queue tắt: gửi như gate cũ. Train gọi --preflight cho mọi PR và PR rớt
   # preflight rời đợt trước lượt --dry-run, nên preflight im lặng khi queue tắt = PR exit 7/8 mất nút duyệt (R2).
   if [ "$MERGE_QUEUE_ON" -eq 1 ]; then case "${SB_MERGE_CALLER-}" in train|queue) return 0 ;; esac; fi
-  # PR #924: bot chỉ ghi `done` khi PR/issue có block approval-request tin cậy ghim đúng head; gate tự gửi nút thì tự đăng request
-  # (một lần: comment đã có đúng dòng đó thì thôi). Đọc lỗi thì vẫn đăng (request trùng vô hại, thiếu request = nút hỏng). Chỉ request,
-  # không bao giờ đăng duyệt; đăng lỗi chỉ log, nút vẫn gửi, exit giữ nguyên; --dry-run không ghi GitHub.
+  # PR #924: bot và approval.py chỉ nhận `done` trên NGUỒN của block tin cậy MỚI NHẤT (PR + issue liên kết) ghim đúng head/scope; gate
+  # tự gửi nút thì tự đăng request, nhưng quyết theo phán quyết approval_check ($APPROVAL .why), không grep comment PR: chỉ đăng khi
+  # chưa có request hiện hành (không block, block mới nhất không khớp, request bị sửa). Request hiện hành ở đâu đó (đang chờ done) hay
+  # bằng chứng không đọc được (đăng có thể đè một `done`) thì không đăng. Chỉ request, không bao giờ duyệt; lỗi chỉ log, nút vẫn gửi,
+  # exit giữ nguyên; --dry-run không ghi GitHub.
   if [ -n "$APPROVAL_REQ_LINE" ]; then
-    if [ "$DRY" -eq 1 ]; then
-      say "dry run: would post the approval-request on PR #${PR} for head ${HEAD_SHA:0:7}"
-    elif ! grep -qxF -- "$APPROVAL_REQ_LINE" <<<"$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json comments -q '.comments[].body' 2>/dev/null || true)"; then
-      gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "[merge-gate] [blocker] 🛑 needs a person · head ${HEAD_SHA:0:7}
+    case "$(printf '%s' "${APPROVAL:-}" | jq -r '.why // empty' 2>/dev/null || true)" in
+      "no request from a trusted repository collaborator"|"the latest request does not cover the current code and human steps"|"approval request was edited; post a fresh request")
+        if [ "$DRY" -eq 1 ]; then
+          say "dry run: would post the approval-request on PR #${PR} for head ${HEAD_SHA:0:7}"
+        else
+          gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "[merge-gate] [blocker] 🛑 needs a person · head ${HEAD_SHA:0:7}
 ${APPROVAL_REQ_LINE}" >/dev/null 2>&1 \
-        || say "warning: could not post the approval-request comment on PR #${PR} (head ${HEAD_SHA:0:7}); the Approve button still goes out but the bot will refuse it until a writer posts the approval-request line above"
-    fi
+            || say "warning: could not post the approval-request comment on PR #${PR} (head ${HEAD_SHA:0:7}); the Approve button still goes out but the bot will refuse it until a writer posts the approval-request line above"
+        fi ;;
+      "waiting for a trusted human to comment done on the current request"|"waiting for a cross-review marker or a trusted human done on the current request") : ;;
+      *) say "approval-request not posted on PR #${PR}: the approval check gave no clear verdict ($(printf '%s' "${APPROVAL:-}" | jq -r '.why // "none"' 2>/dev/null || echo none)); post the approval-request line above by hand if the Approve button is refused" ;;
+    esac
   fi
   board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
