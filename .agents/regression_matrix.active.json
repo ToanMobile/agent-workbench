@@ -3919,6 +3919,67 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "essentials-pr-repo-no-local-regate-997",
+      "watch_files": [
+        "universal-agent-devkit/rules/essentials.md",
+        "universal-agent-devkit/rules/core-rules.md",
+        "universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_regate.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ESSENTIALS-PR-NO-LOCAL-REGATE-997-01",
+          "name": "#997: essentials bước 5 (PR repo: merge receipt), câu Git (not in a PR repo) và core-rules §19 không còn bảo repo đi PR chạy lại gate scoped local; merge gate là gate",
+          "command": "bash universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_regate.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-reject-rerun-trunc-timeout-992",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_reject_rerun_trunc_timeout.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REJECT-RERUN-TRUNC-TIMEOUT-992-01",
+          "name": "#992: khối 'Chạy lại riêng' của REJECT in '… +N' khi cắt 20 lệnh, shard TIMEOUT có lệnh cả shard, vế 'không chạy lại cả gate local' chỉ ở repo đi PR",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_reject_rerun_trunc_timeout.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "checklist-overlay-ttl-3d-992",
+      "watch_files": [
+        "universal-agent-devkit/bin/regression_checklist.py",
+        "universal-agent-devkit/tests/gates/test_checklist_overlay_ttl_3d.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-CHECKLIST-OVERLAY-TTL-3D-992-01",
+          "name": "#992: regression_checklist._overlay_fresh mặc định 3 ngày như hạn PASS của gate (2 ngày tin, 4 ngày không); DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè",
+          "command": "bash universal-agent-devkit/tests/gates/test_checklist_overlay_ttl_3d.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "review-gate-handover-merge-gate-forms-992",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_handover_merge_gate_forms.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-MERGE-GATE-FORMS-992-01",
+          "name": "#992: review_gate — merge gate --dry-run/--preflight không là bàn giao; timeout N bash …merge-gate.sh là bàn giao",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_handover_merge_gate_forms.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
