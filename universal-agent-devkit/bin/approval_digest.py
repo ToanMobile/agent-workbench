@@ -4,7 +4,7 @@ hooks/regression_gate.sh keys its stored "edited test waits for review" reminder
 stay the same the gate would say the same, so a repeat Stop prints the reminder without running the gate (measured 03/11:
 62 edited_test Stop runs a day, 36 of them the same content again, ~47 s each). Anything that can change the verdict moves
 the digest: the ledger .claude/audit-gate/approved_tests.json (of the project dir the gate resolves), approved_hashes.json
-(project and main checkout), the antigravity-pm audit records (verdicts + audit dispatches) of every task id the ledger or a
+(project and main checkout), the antigravity-pm audit records (verdicts + audit dispatches) of every task id the ledger, an auditedHead on the branch or a
 `Test-approved-by:` trailer of the branch names, whether their auditedHead resolves here, the answers of the user
 (`toolUseResult.answers` records) that name a changed file in every transcript the gate scans, the trunk tip, the env that
 changes the verdict and the code that computes it. The scan is a SUPERSET of the gate's (every tracked changed file, not
@@ -193,6 +193,16 @@ def _all_audits(top):
         raise DigestError("audited_heads: %r" % (e,)) from e
 
 
+def _grok_runs(top):
+    """push_gate.grok_audit_runs(top): mọi lượt audit grok PM tự chạy (mọi project của pm home). Lỗi → DigestError (người gọi chạy gate)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import push_gate  # noqa: PLC0415 - sibling module in bin/
+        return push_gate.grok_audit_runs(top)
+    except Exception as e:  # noqa: BLE001 - any error: no digest, the caller runs the gate (fail closed)
+        raise DigestError("grok_audit_runs: %r" % (e,)) from e
+
+
 def _stat_sig(paths):
     sig = []
     for p in paths:
@@ -264,6 +274,15 @@ def digest(repo, transcript, status_z, commit_base=None, code_paths=()):
     trunk_ref, trunk_sha = _trunk(top)
     ranges = ([commit_base + "..HEAD"] if commit_base else []) + ([trunk_ref + "..HEAD"] if trunk_ref else [])
     task_ids |= _trailer_ids(top, ranges)
+    audits = _all_audits(top)
+    if trunk_ref:
+        # 04/11: post-fix-gate _pm_audit_cross_review tra thẳng biên bản của task có auditedHead trên nhánh (không cần ledger/trailer):
+        # reviewer / dispatch của chúng đổi mà head không đổi vẫn đổi kết luận. Superset: mọi commit của HEAD không thuộc trunk.
+        _rc, chain = _git(top, "rev-list", "HEAD", "--not", trunk_ref)
+        on_chain = set(chain.split())
+        task_ids |= {t for t, h in audits if h in on_chain}
+        # review vòng 9: lượt grok (cả fail, mọi project) có head trên nhánh cũng đổi kết luận (post-fix-gate latest_fails)
+        task_ids |= {r[0] for r in _grok_runs(top) if r[1] in on_chain}
     if len(task_ids) > MAX_TASK_IDS:
         raise DigestError("%d task ids" % len(task_ids))
 
@@ -290,7 +309,7 @@ def digest(repo, transcript, status_z, commit_base=None, code_paths=()):
         "hashes": [_file_token(root / ".claude" / "audit-gate" / "approved_hashes.json"),
                    _file_token(main_root / ".claude" / "audit-gate" / "approved_hashes.json")],
         "pm": _pm_tokens(top, task_ids),
-        "audits": _all_audits(top),
+        "audits": audits,
         "answers": _answer_tokens(folders, session_files, cutoff, basenames),
         "trunk": [trunk_ref, trunk_sha],
         "commit_base": commit_base or "",
