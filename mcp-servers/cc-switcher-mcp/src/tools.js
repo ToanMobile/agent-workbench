@@ -5,6 +5,7 @@ import {
   rotateNextProfile,
   reportRateLimit,
   updateAntiBanPolicy,
+  setPmAgyProfile,
 } from './profiles.js';
 import {
   loadTelegramConfig,
@@ -202,6 +203,25 @@ export const TOOLS = [
       const policy = updateAntiBanPolicy(args.stateDir, partial);
       return {
         text: `🛡 Đã cập nhật chính sách Anti-Ban:\n• Nghỉ giữa 2 tài khoản Claude: ${Math.round(policy.claudeSwitchCooldownSec / 60)} phút (${policy.claudeSwitchCooldownSec}s)\n• Đóng băng khi chạm 429: ${Math.round(policy.rateLimitFreezeSec / 60)} phút (${policy.rateLimitFreezeSec}s)`,
+      };
+    },
+  },
+  {
+    name: 'switcher_set_pm_account',
+    description: 'Doi tai khoan Antigravity cho antigravity-pm-mcp (review/audit): antigravity_ultra | antigravity_pro, bo trong = tai khoan mac dinh. Khong doi tai khoan Claude dang active.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        profile: { type: ['string', 'null'], description: 'antigravity_ultra | antigravity_pro; null hoac bo trong = tai khoan mac dinh cua may.' },
+      },
+      additionalProperties: false,
+    },
+    async handler(args = {}) {
+      const res = setPmAgyProfile({ profile: args.profile ?? null });
+      return {
+        text: res.profile
+          ? `✅ antigravity-pm-mcp giờ dùng profile ${res.profile} (trước: ${res.previous || 'mặc định'}). Cần đã chạy agy-profile ${res.profile} và đăng nhập một lần.`
+          : `✅ antigravity-pm-mcp về tài khoản mặc định của máy (trước: ${res.previous || 'mặc định'}).`,
       };
     },
   },

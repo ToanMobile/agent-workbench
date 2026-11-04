@@ -21,7 +21,11 @@
 # With `ocr` installed (REVIEW_GATE_REQUIRE_OCR=0: off) an OCR review after the last
 # edit is REQUIRED (user, 13/10: OCR always runs again after principal-code-reviewer;
 # the two find different defects); with no LLM endpoint, `ocr-review` falling back to
-# its delegation spec plus an agent review after the edit stands in for it.
+# its delegation spec plus an agent review after it stands in for it (in one message: the
+# `ocr-review` call before the Agent call — calls are indexed in the order listed).
+# A progress reply (CHƯA XONG, no status line) is reviewed at the handover: a turn that ran
+# git push, `gh pr create`, `agent-kit worktree finish|integrate` or super-board-merge-gate.sh
+# (also under `timeout N`; not its --dry-run / --preflight) is one unless what it handed over was reviewed.
 #
 # Loop-guard: per-session attempts file, MAX_ATTEMPTS — release with a logged
 # warning if the environment genuinely can't run reviews (avoid infinite block).
@@ -147,6 +151,65 @@ except Exception as e:
 # Audit 2026-10-25 A3: a push this turn that more edits followed is no handover (devkit_harness.push_after_last_edit), but the code it
 # carried must have been reviewed: such a Stop skips only after the scan below finds no push of code edited since the last review.
 wip_push_start = None
+_HANDOVER_KEYS = ("push", "pr create", "agent-kit", "super-board-merge-gate")   # cheap prefilter: a line with none is no handover
+_INTERP = {"python", "python3", "bash", "sh", "zsh"}
+
+
+def _handover_cmd(cmd):
+    """The Bash command line hands the work over (04/11): a git push (devkit_harness.git_writes), `gh pr create`, `agent-kit worktree
+    finish`, `agent-kit integrate`, super-board-merge-gate.sh — as a command word, read like git_writes (devkit_harness._shell_code: quoted
+    text, comments and heredoc bodies are data). ponytail: `bash -c '…'`, eval and aliases are not seen, as in git_writes."""
+    if not isinstance(cmd, str) or not any(k in cmd for k in _HANDOVER_KEYS):
+        return False
+    if "push" in devkit_harness.git_writes(cmd):
+        return True
+    for seg in devkit_harness._CMD_SPLIT.split(devkit_harness._shell_code(cmd)[0]):
+        w = devkit_harness._command_words(seg)
+        if w and os.path.basename(w[0]) == "timeout":   # #992: `timeout [-k N|-s SIG|--opt=…] DURATION <cmd>` (merge gate có trần giờ)
+            w = w[1:]
+            while w and w[0].startswith("-"):
+                w = w[2:] if w[0] in ("-k", "-s", "--kill-after", "--signal") else w[1:]
+            w = w[1:]   # DURATION
+        if w and os.path.basename(w[0]) in _INTERP:   # python3 …/agent-kit, bash …/super-board-merge-gate.sh
+            w = w[1:]
+            while w and w[0].startswith("-"):
+                w = w[1:]
+        if not w:
+            continue
+        c, rest = os.path.basename(w[0]), [x for x in w[1:] if not x.startswith("-")]
+        if c == "super-board-merge-gate.sh":
+            if not {"--dry-run", "--preflight"} & set(w[1:]):   # #992: --dry-run / --preflight chỉ kiểm, không merge: không bàn giao
+                return True
+        elif (c == "agent-kit" and (rest[:2] == ["worktree", "finish"] or rest[:1] == ["integrate"])) \
+                or (c == "gh" and any(w[k] == "pr" and w[k + 1] == "create" for k in range(1, len(w) - 1))):
+            return True
+    return False
+
+
+def _handover_in_turn(tp, start):
+    """A tool call of the turn (after `start`, epoch) ran a _handover_cmd — devkit_harness.git_writes_in_turn's turn filter. Unreadable:
+    True (fail closed: the gate then looks for the handover itself and holds when it cannot find it)."""
+    import datetime
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                if '"command"' not in raw or not any(k in raw for k in _HANDOVER_KEYS):
+                    continue
+                try:
+                    e = json.loads(raw)
+                    t = datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp()
+                except (ValueError, AttributeError):
+                    continue
+                if t < start or e.get("type") != "assistant":
+                    continue
+                for c in (e.get("message") or {}).get("content") or []:
+                    if isinstance(c, dict) and c.get("type") == "tool_use" and _handover_cmd((c.get("input") or {}).get("command", "")):
+                        return True
+    except OSError:
+        return True
+    return False
+
+
 for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             os.path.dirname(os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "review_gate.sh"))),
             os.path.join(repo, ".agents", "devkit", "hooks")):
@@ -158,7 +221,7 @@ for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             if devkit_harness.work_in_progress(d, status_optional=True, repo=repo):
                 _tp0 = d.get("transcript_path")
                 _st0 = devkit_harness.turn_start(_tp0)
-                if _st0 is None or "push" not in devkit_harness.git_writes_in_turn(_tp0, _st0):
+                if _st0 is None or not _handover_in_turn(_tp0, _st0):   # no push, PR, finish, integrate or merge gate this turn
                     logline(f"[{ts}] skip: work in progress — review at the handover turn")
                     sys.exit(0)
                 wip_push_start = _st0
@@ -292,7 +355,7 @@ def _full_report(fdir):
         with open(os.path.join(fdir, "ocr-review.json"), encoding="utf-8") as fh:
             rep_ = json.load(fh)
         return rep_["comments"] if _reviewed(rep_) else None
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):   # RecursionError: JSON nested too deep is no report (review 03/11 G6)
         return None
 
 
@@ -303,7 +366,7 @@ def _valid_ocr_report(rp, newest):
             return False
         with open(rp, encoding="utf-8") as fh:
             return _reviewed(json.load(fh))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return False
 
 
@@ -344,7 +407,7 @@ def in_diff(fp):
 tp = d.get("transcript_path")
 last_edit_idx = -1
 last_review_idx = -1
-edit_marks, review_marks, push_marks = [], [], []   # every edit / review index, and this turn's pushes (wip_push_start only)
+edit_marks, review_marks, push_marks = [], [], []   # every edit / review index, and this turn's handovers (wip_push_start only)
 session_unreviewed = set()   # diff paths edited by me this session
 idx = 0
 # OpenCodeReview (2026-10-13): a FULL review that succeeded counts as the fresh review. The command must START a command segment
@@ -531,7 +594,7 @@ if tp and os.path.exists(tp):
                 elif name == "Bash":
                     _bts = _tt
                     if wip_push_start is not None and _tt is not None and _tt >= wip_push_start \
-                            and "push" in devkit_harness.git_writes(str(inp.get("command") or "")):
+                            and _handover_cmd(str(inp.get("command") or "")):
                         push_marks.append(idx)
                     if _bts is not None:
                         bash_runs.append([idx, _bts, None, str(inp.get("command") or "")])
@@ -694,6 +757,106 @@ for _f in session_unreviewed:
         _newest = max(_newest, os.path.getmtime(os.path.join(repo_root, _f)))
     except OSError:
         pass   # deleted since the edit: nothing newer to compare
+# Content map (wave 2 lane D, 03/11): bin/ocr-review writes `content_sha256` {path: sha256 of the bytes it reviewed, hashed before the
+# review} and `content_base` into its own report. Such a report is judged by content only, never by mtime (a map edited by hand gets a
+# fresh mtime): a file is OCR-reviewed when its current sha equals the sha in a report of the same scope — workspace: the working-tree
+# file, base == HEAD now, the session's uncommitted files; range: the blob at HEAD, a run that covers the commits since the verified head
+# (_covers_since) from a base at or before it, every file committed since. Other files are the delta: a run whose map holds their
+# current sha. A report without the map keeps the mtime rule below. The agent review rule does not change: a mapped report counts as a
+# review at its own transcript index only, never earlier, so a file edited back to reviewed bytes still needs a review after that edit.
+# ponytail: a map forged by hand with the current sha is not detected (no more than a forged `comments` list); reusing one --out for two
+# runs overwrites the first report and its coverage (use a new --out, or none); a deleted file has no sha and needs a fresh run.
+def _sha_file(rel):
+    import hashlib
+    try:
+        with open(os.path.join(repo_root, rel), "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return None
+
+
+_HEAD_SHA = {}
+
+
+def _sha_head(rel):
+    if rel not in _HEAD_SHA:
+        import hashlib
+        try:
+            r = subprocess.run(["git", "-C", repo_root, "cat-file", "blob", "HEAD:" + rel], capture_output=True, timeout=10)
+            _HEAD_SHA[rel] = hashlib.sha256(r.stdout).hexdigest() if r.returncode == 0 else None
+        except Exception as e:
+            logline(f"[{ts}] HEAD blob of {rel}: {e!r} — not credited")
+            _HEAD_SHA[rel] = None
+    return _HEAD_SHA[rel]
+
+
+def _at_or_before(a, b):
+    try:
+        return bool(a) and bool(b) and subprocess.run(["git", "-C", repo_root, "merge-base", "--is-ancestor", a, b],
+                                                      capture_output=True, timeout=5).returncode == 0
+    except Exception as e:
+        logline(f"[{ts}] merge-base {a[:12]} {b[:12]}: {e!r} — not credited")
+        return False
+
+
+ws_need = sorted(session_unreviewed & dirty)   # the session's uncommitted code: what a workspace map must hold
+range_need = sorted(since)                     # every file committed since the verified head, as the old range rule
+ws_mapped, range_mapped = set(), set()
+ws_excl, range_excl = set(), set()   # what OCR's own excludes leave out of a run (content_excluded): no map can hold them
+map_ws_idx = map_range_idx = -1   # newest valid map report per scope (nothing left to hold by sha: index rule, as the old one)
+_head_now = _rev("HEAD") if ocr_reports else ""
+for _at, _rp, _argv in list(ocr_reports):
+    try:
+        with open(_rp, encoding="utf-8") as fh:
+            _rep = json.load(fh)
+    except (OSError, ValueError, RecursionError):
+        continue   # the mtime rule below says it is no report
+    if not isinstance(_rep, dict) or "content_sha256" not in _rep:
+        continue
+    ocr_reports.remove((_at, _rp, _argv))   # mapped: judged here only
+    _m, _base = _rep.get("content_sha256"), _rep.get("content_base")
+    if not _reviewed(_rep) or not isinstance(_m, dict) or not isinstance(_base, str) or not _base:
+        logline(f"[{ts}] OCR run at #{_at} named {_rp}: content map malformed or nothing reviewed — not counted")
+        continue
+    _excl = _rep.get("content_excluded")
+    _excl = {x for x in _excl if isinstance(x, str)} if isinstance(_excl, list) else set()
+    # G4 (review 03/11): content_excluded is in a report the agent can write, so a listed file is never exempt by itself — it is
+    # covered only under the old rule: this run came after the last edit and its report is newer than every edited file
+    try:
+        _old_rule = _at > last_edit_idx and os.path.getmtime(_rp) >= _newest
+    except OSError:
+        _old_rule = False
+    if not _old_rule:
+        _excl = set()
+    if any(w in ("--from", "--commit", "-c") for w in _argv[:-1]):
+        if not _covers_since(_argv) or not _at_or_before(_base, since_base):
+            logline(f"[{ts}] OCR run at #{_at}: content map over a range that does not cover the commits since {since_base[:12]} — not counted")
+            continue
+        _hit = {f for f in range_need if _m.get(f) is not None and _m.get(f) == _sha_head(f)}
+        range_mapped |= _hit
+        _excl &= set(range_need)
+        range_excl |= _excl
+        map_range_idx = max(map_range_idx, _at)
+    else:
+        if _base != _head_now:
+            logline(f"[{ts}] OCR run at #{_at}: workspace content map on base {_base[:12]}, HEAD is {_head_now[:12]} — not counted")
+            continue
+        map_ws_idx = max(map_ws_idx, _at)
+        _hit = {f for f in ws_need if _m.get(f) is not None and _m.get(f) == _sha_file(f)}
+        ws_mapped |= _hit
+        _excl &= set(ws_need)
+        ws_excl |= _excl
+    if _hit:   # a review at its own index (an excluded file is no review mark: it never stands in for the agent review)
+        last_review_idx = max(last_review_idx, _at)
+        review_marks.append(_at)
+    logline(f"[{ts}] OCR run at #{_at}: content map matches {sorted(_hit)}")
+# a file OCR excludes by itself is asked of no map: a run of that scope that meets the old rule for it (above) stands for it; a session
+# that edited nothing of that scope keeps the index rule
+_ws_left, _range_left = set(ws_need) - ws_excl, set(range_need) - range_excl
+ws_map_ok = _ws_left <= ws_mapped if ws_need else map_ws_idx > last_edit_idx
+range_map_ok = bool(range_need) and range_mapped >= _range_left
+ocr_delta = sorted(_ws_left - ws_mapped) + [f + " (đã commit)" for f in sorted(_range_left - range_mapped)]
+
 if ocr_reports:
     for _at, _rp, _argv in ocr_reports:
         if _valid_ocr_report(_rp, _newest):
@@ -724,9 +887,10 @@ if wip_push_start is not None:
             _unreviewed_push = _p
             break
     if _unreviewed_push is None:
-        logline(f"[{ts}] skip: work in progress — this turn pushed reviewed code, then went on editing; review at the handover turn")
+        logline(f"[{ts}] skip: work in progress — this turn's handover (push / PR / finish / integrate / merge gate) carried reviewed code; "
+                "review at the handover turn")
         sys.exit(0)
-    logline(f"[{ts}] work in progress, but push #{_unreviewed_push} of this turn carried code edited after the last review — gated")
+    logline(f"[{ts}] work in progress, but handover #{_unreviewed_push} of this turn carried code edited after the last review — gated")
 
 # No .kt edited by me this session (the dirty files are pre-existing /
 # someone else's) → nothing of mine to gate.
@@ -760,8 +924,8 @@ def _fallback_for(ranged_scope):
     return False
 
 
-ocr_done = ((not need_ws or last_ocr_ws_idx > last_edit_idx or _fallback_for(False))
-            and (not since or last_ocr_range_idx > last_edit_idx or _fallback_for(True)))
+ocr_done = ((not need_ws or last_ocr_ws_idx > last_edit_idx or _fallback_for(False) or ws_map_ok)
+            and (not since or last_ocr_range_idx > last_edit_idx or _fallback_for(True) or range_map_ok))
 ocr_missing = (reviewed_after_edits and not ocr_done
                and os.environ.get("REVIEW_GATE_OCR", "1") != "0" and os.environ.get("REVIEW_GATE_REQUIRE_OCR", "1") != "0"
                and shutil.which("ocr") is not None)
@@ -897,7 +1061,11 @@ lines += [
     "  B) Hoặc Skill code-review / open-code-review trên diff.",
     "  C) Nếu đổi test/CI: thêm test-architect-seti; Android đổi kiến trúc/API: android-principal-architect.",
     "  D) Hoặc Workflow 'multi-lens-audit' nếu môi trường hỗ trợ workflow.",
-    "Gom finding → fix theo CLASS (không chỉ instance) → rồi mới stop.",
+    "Finding P0/P1: sửa ngay trong PR này (theo CLASS, không chỉ instance) rồi review lại.",
+    "Finding P2/P3: KHÔNG sửa trong PR (mỗi lần sửa là lần sửa mới, gate đòi review lại) — tạo thẻ Backlog (skill createTask)",
+    "  rồi ghi số thẻ vào báo cáo.",
+    "`ocr-review` ra mode delegate (không có LLM endpoint): không cần giao spec cho agent thứ hai — gọi `ocr-review` TRƯỚC",
+    "  lời gọi Agent review (cùng một tin nhắn được, lệnh OCR đứng trước); một agent review sau nó là đủ.",
 ]
 if ocr_missing:   # the agent review is done: say exactly what is left
     lines = [
@@ -907,8 +1075,14 @@ if ocr_missing:   # the agent review is done: say exactly what is left
         *(['  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm>'] if need_ws else []),
         *([f'  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm khác> --from {since_base[:12]}'
            "   (phần đã commit sau lần xác minh cuối: lệnh không --from chỉ xem phần chưa commit)"] if since else []),
-        "rồi xử lý từng phát hiện (sửa, hoặc nói vì sao không); sửa code thì review lại. Máy chưa có LLM endpoint thì lệnh tự rơi về",
-        "spec delegation: giao spec đó cho một reviewer agent SAU lần chạy đó. Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
+        "rồi xử lý phát hiện: P0/P1 sửa ngay trong PR (sửa code thì review lại); P2/P3 không sửa trong PR, tạo thẻ Backlog (skill",
+        "createTask) và ghi số thẻ vào báo cáo. Máy chưa có LLM endpoint thì lệnh tự rơi về spec delegation (mode delegate): không cần",
+        "giao spec cho agent thứ hai — gọi `ocr-review` đúng phạm vi trên TRƯỚC lời gọi Agent review (cùng một tin nhắn được, lệnh OCR",
+        "đứng trước), một agent review sau nó là đủ. Đừng cắt output của lệnh (| tail, | head): gate nhận fallback qua dòng đầu",
+        "'no valid LLM endpoint' / 'LLM endpoint unusable'.",
+        "Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
+        *([f"OCR theo nội dung đã phủ {len(ws_mapped) + len(range_mapped)} file; còn lệch: {', '.join(ocr_delta[:10])}"]
+          if (ws_mapped or range_mapped) and ocr_delta else []),
         "",
     ] + [f"  • {f}" for f in unrev[:20]] + ([f"  … +{len(unrev) - 20} file nữa"] if len(unrev) > 20 else [])
 # OpenCodeReview, run by the gate itself on this block path only (2026-10-13, user: run ocr review in every repo): the delegation

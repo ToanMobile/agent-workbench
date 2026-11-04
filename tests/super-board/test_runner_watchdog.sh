@@ -349,12 +349,17 @@ cp "$BIN"/super-board-* "$R3/.claude/bin/"
 sed 's/"tick_seconds": 30/"tick_seconds": "abc"/' "$R/.claude/super-board/configs/t.json" > "$R3/.claude/super-board/configs/t.json"
 ( ( cd "$R3" && exec env "${ENVV[@]}" SB_DAEMON=1 bash "$R3/.claude/bin/super-board-run.sh" t ) > "$TMP/run12.out" 2>&1 & echo $! > "$TMP/rp" )
 RP=$(cat "$TMP/rp"); PIDS="$PIDS $RP"
-wait_for 20 '[ "$(ticks "$TMP/run12.out")" -ge 1 ]'
-sleep 4
-n=$(ticks "$TMP/run12.out")
-kill_tree "$RP"; wait_for 10 '! alive "$RP"'
-[ "$n" -le 2 ] && ok "an invalid tick_seconds does not spin the loop ($n ticks in ~4 s)" \
-  || fail "invalid tick_seconds: $n ticks in ~4 s (busy loop reading GitHub)"
+# Phải thấy ít nhất một tick: runner chết ngay (0 tick) cũng thoả "≤ 2 tick" mà không chứng minh gì về vòng lặp.
+if wait_for 20 '[ "$(ticks "$TMP/run12.out")" -ge 1 ]'; then
+  sleep 4
+  n=$(ticks "$TMP/run12.out")
+  kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+  [ "$n" -le 2 ] && ok "an invalid tick_seconds does not spin the loop ($n ticks in ~4 s)" \
+    || fail "invalid tick_seconds: $n ticks in ~4 s (busy loop reading GitHub)"
+else
+  kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+  fail "invalid tick_seconds: no tick within 20 s (runner died or never reached the loop)"
+fi
 
 # ── 6f. Ctrl-C trên một lần chạy foreground là người dùng dừng: STATE=stopped, watchdog không khởi động lại ─────────
 # Runner chạy trong process group riêng với SIGINT mặc định (như foreground ở terminal); SIGINT gửi cho cả group.

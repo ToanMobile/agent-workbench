@@ -69,7 +69,7 @@ OLD_LABELS = {
     "bug-fix": "bug", "bugfix": "bug", "type:bug": "bug", "kind:bug": "bug",
     "qa-only": "qa", "type:qa": "qa", "kind:qa": "qa",
 }
-SKILLS = ["super-board", "super-build", "super-qa", "super-review", "super-collect", "visual", "git-sync", "ui-refine-loop"]
+SKILLS = ["super-board", "super-build", "super-qa", "super-review", "super-collect", "visual", "git-sync", "ui-refine-loop", "pr-security-review"]
 OLD_SKILL_DIRS = ["super-refine", "cleanup-wt", "arch-loop"]
 BIN = ["super-board-verify-flags.sh", "super-board-verify-cmd.sh", "super-board-project-verifier.py", "super-board-skills-ready.py", "super-board-host.sh", "super-board-codex-wave.sh", "super-board-codex-lane.sh", "super-board-calibration.py", "super-board-verification-ready.py", "super-board-github-read.py", "super-board-collect-state.py", "super-board-run.sh", "super-board-worker-wrap.sh", "super-board-gh-guard.sh", "super-board-card.sh", "super-board-status.py", "super-board-wave-plan.sh",
        "super-board-deps.sh", "super-board-preflight.sh", "super-board-merge-gate.sh", "super-board-merge-cards.py", "super-board-merge-train.sh", "super-board-merge-queue.sh",
@@ -363,7 +363,15 @@ def check(root, pack, host="claude", home=None, catalog=None):
 
 
 def backup(root, paths, stamp):
-    dest = os.path.join(root, ".claude", "super-board", "backup", stamp)
+    base = os.path.join(root, ".claude", "super-board", "backup", stamp)
+    dest, n = base, 1
+    while True:  # a second fix in the same second, even a parallel one, gets its own folder
+        try:
+            os.makedirs(dest)
+            break
+        except FileExistsError:
+            n += 1
+            dest = f"{base}-{n}"
     for p in paths:
         if not os.path.exists(p):
             continue
@@ -378,7 +386,7 @@ def fix(root, pack, helpers=True, dry=False, host="claude", home=None, catalog=N
     before = check(root, pack, host, home, catalog)
     fixed, notes = [], []
     claude = os.path.join(root, ".claude")
-    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M")
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     to_backup = [os.path.join(claude, "settings.json"), os.path.join(claude, "super-board", "configs")]
     to_backup += [os.path.join(claude, "skills", d) for d in before["old_dirs"]]
     bdir = None

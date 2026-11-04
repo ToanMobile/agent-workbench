@@ -92,7 +92,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the EXACT command from Tester's PR `Local tests:` line.
    - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the `post-fix-gate.py --run-tests --scoped` exit 0 (its scoped receipt) for this exact head SHA. When `.claude/bin/super-board-qa-exit2.sh` printed `review`, that is the only reason an existing test was edited: do not demand QA exit 0; the card is in Review for Antigravity, not Blocked and not needs-you. The merge point (the merge queue's train; queue off, the merge gate) verifies the merged tree with `--scoped`, which never escalates to `--full` (#741; review `core-touched` files closely; run.md → Merge protocol).
-   - Before `pm_dispatch kind=audit`: `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. True → audit this HEAD. False → move the card Review → Ready with label `loop:rebase` (the Builder on `issue-<N>-build` merges `origin/<base>` and pushes). The Reviewer does not commit and does not push. After the audit pass, sha256 each edited test, write `.claude/audit-gate/approved_tests.json` (reviewer ≠ author), do not set `ANTIGRAVITY_PM_STATE_HOME`, re-run `post-fix-gate.py --run-tests --brief` on `~/.antigravity-pm` (must exit 0), then `gate_receipt=$(.claude/bin/super-board-gate-receipt.sh <head sha40>)` (nothing printed: fall back to `jq -r .fp "$(git rev-parse --git-path postfix-gate/task_pass.json)"`) (empty fp: do not comment).
+   - Before `pm_dispatch kind=audit`: `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. True → audit this HEAD. False → move the card Review → Ready with label `loop:rebase` (the Builder on `issue-<N>-build` merges `origin/<base>` and pushes). The Reviewer does not commit and does not push. After the audit pass (Antigravity or Grok), run `agent-kit approve-tests <that T… id>` (exit 2/3: no approval), do not set `ANTIGRAVITY_PM_STATE_HOME`, then `gate_receipt=$(.claude/bin/super-board-gate-receipt.sh <head sha40>)`: skip the rerun only on exit 0 with this tree's fp, else run `post-fix-gate.py --run-tests --scoped --brief` once (must exit 0) and read it again (empty fp: do not comment; run.md step 5).
    - Green → continue. Red → open new `[qa]`-prefixed thread quoting failure, move card Review → QA with `loop:rebuild-N`, exit.
    - If QA includes `Runtime checks:`, follow
      [optional runtime verification](../super-qa/references/runtime-verification.md):
@@ -184,10 +184,10 @@ two complete builds. In order, no shortcuts:
    `gh pr view <PR> --json state,mergeCommit` must report `MERGED` plus a commit sha,
    and that sha must be an ancestor of the base branch
    (`git merge-base --is-ancestor <sha> origin/<base>`).
-4. Only then: close the issue, move card Review → **Done**, post the ✅ comment citing
-   the merge commit sha. Exception (T0054): the gate printed `ac-open: #N` — the PR merged with AC lines still
+4. Only then: close the issue, move card Review → **Done** (gate posts `✅ merged`, same repo; not by hand).
+   Exception (T0054): the gate printed `ac-open: #N` — the PR merged with AC lines still
    unproven, so the gate kept the issue open with label `ac-open` and moved the card to Ready. Do NOT close it or
-   move it to Done (card.sh refuses exit 5); post the merged comment and stop.
+   move it to Done (card.sh refuses exit 5); the gate posted ⏳ ac-open: stop.
 5. Merge refused (failing checks, conflicts, branch protection) → card Review →
    **Blocked** with the §4 Block template naming the blocker. Never leave it in Review;
    a card left in Review gets re-picked and re-reviewed indefinitely.

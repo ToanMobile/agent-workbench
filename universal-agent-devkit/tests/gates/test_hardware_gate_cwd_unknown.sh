@@ -113,7 +113,8 @@ for name, cmd, want, env_extra in (
     check("rc %s  control: %s" % (want, name), rc == want and "Traceback" not in err, "rc=%s %s" % (rc, err.strip()[:200]))
 
 # 3. fail closed: forced internal errors, injected into a copy of the hook
-src = open(HOOK, encoding="utf-8").read()
+MOD = os.path.join(os.path.dirname(HOOK), "hardware_safety_gate_main.py")   # #967: the python of the hook
+src = open(MOD, encoding="utf-8").read()
 FIXED = 'os.path.join(c or "/", arg)'
 OLD = "os.path.join(c, arg)"
 RMLINE = "rm_why = None if (label or MCP) else rm_problem(cmd, [CWD])"
@@ -125,15 +126,17 @@ for name, (text, cmd) in injections.items():
     if name.startswith("a Zero") and RMLINE not in src:
         check("injection point present in the hook: " + RMLINE, False, "the hook changed; update this test")
         continue
-    copy = os.path.join(TMP, "hsg_injected.sh")
-    open(copy, "w", encoding="utf-8").write(text)
-    if os.path.isfile(os.path.join(os.path.dirname(HOOK), "shell_norm.py")):   # the reading it loads from its own directory (W3)
-        shutil.copy(os.path.join(os.path.dirname(HOOK), "shell_norm.py"), TMP)
+    idir = os.path.join(TMP, "inj%d" % len(os.listdir(TMP)))   # one directory per injection: a stale bytecode of the other never loads
+    os.makedirs(idir)
+    copy = os.path.join(idir, "hardware_safety_gate.sh")
+    shutil.copy(HOOK, copy)
+    open(os.path.join(idir, "hardware_safety_gate_main.py"), "w", encoding="utf-8").write(text)
+    shutil.copy(os.path.join(os.path.dirname(HOOK), "shell_norm.py"), idir)   # the reading it loads from its own directory (W3)
     rc, err = run(copy, cmd)
     lines = [l for l in err.splitlines() if l.strip()]
     check("fail closed on %s: rc 2" % name, rc == 2, "rc=%s (1 = the command would have run) %s" % (rc, err.strip()[:160]))
     check("  … with one line of reason and no traceback", len(lines) == 1 and "Traceback" not in err and "lỗi nội bộ" in err, repr(err[:200]))
-    check("  … and that line names an escape hatch the hook really reads", "HARDWARE_OVERRIDE" in err and "HARDWARE_OVERRIDE:-0" in src,
+    check("  … and that line names an escape hatch the hook really reads", "HARDWARE_OVERRIDE" in err and "HARDWARE_OVERRIDE:-0" in open(HOOK, encoding="utf-8").read(),
           repr(err[:300]))
 
 shutil.rmtree(TMP, ignore_errors=True)

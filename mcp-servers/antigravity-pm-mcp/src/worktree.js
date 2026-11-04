@@ -48,7 +48,7 @@ async function fileDaCommitTu(cfg, base) {
 }
 
 /** Thu muc trang thai cua chinh tool (task.json tu ghi moi lan record) — khong phai thay doi cua agent. */
-function thuMucTrangThai(cfg) {
+export function thuMucTrangThai(cfg) {
   return `${String(cfg.stateDir || '.antigravity-pm').replace(/^\.\//, '').replace(/\/+$/, '')}/`;
 }
 

@@ -101,7 +101,7 @@ GENUINE_HUMAN_RE = re.compile(
 # PR": merge-queue gắn needs-you human-gate (exit 7/8) bằng đúng câu "xem PR #N … rồi tự merge".
 V2_RULES = (
     (
-        re.compile(r"\bauto-approve\b|\bdòng\s+duyệt\s+cho\s+\d+\s+test\b[^\n]*\bđã\s+sửa\b|\bduyệt\s+chéo\s+diff\s+test_\S+\.sh\b", re.I),
+        re.compile(r"\bauto-approve\b[^\n]*\btests?[/_]|\bdòng\s+duyệt\s+cho\s+\d+\s+test\b[^\n]*\bđã\s+sửa\b|\bduyệt\s+chéo\s+diff\s+test_\S+\.sh\b", re.I),
         "test đã sửa do audit Antigravity duyệt, không do người gõ tay",
     ),
     (
@@ -114,11 +114,18 @@ V2_RULES = (
     ),
 )
 # Miễn cho V2_RULES: việc người thật (xe, khoá ký, danh tính, PII) và danh sách phải hỏi người của AGENTS.md
-# (force-push/viết lại lịch sử, deploy/production, thanh toán/billing, đăng nhập).
+# (force-push/viết lại lịch sử, deploy/production, thanh toán/billing, đăng nhập, settings/cài đặt). Miễn để rộng: khớp
+# thừa chỉ trả về v1 (an toàn), khớp hụt chặn nhầm bước của người — hai lượt thu hẹp theo ngữ cảnh 03/11 đều hụt. Chỉ
+# loại một dạng: chữ nằm trong tên file có đuôi (deploy.sh, deploy-prod.sh, production/qa/x.md, settings.json).
+# "production/staging", "deploy/rollback", "Settings → Actions" vẫn miễn (OCR + review 03/11).
+_NOT_FILE = r"(?![\w/-]*\.[A-Za-z]\w*)"
 V2_HUMAN_RE = re.compile(
     r"keychain|khoá\s+ký|cấp\s+danh\s+tính|\bpii\b|trên\s+xe\b|chủ\s+xe|\bphát\s+hành\b|"
-    r"force[\s-]?push|viết\s+lại\s+lịch\s+sử|\bdeploy\b|\bproduction\b|thanh\s+toán|\bbilling\b|\blogin\b|đăng\s+nhập|"
-    r"\bsecret\b|mật\s+khẩu|\botp\b|\blive\b|app\s+store|hợp\s+đồng|khóa\s+ký",
+    rf"force[\s-]?push|viết\s+lại\s+lịch\s+sử|\bdeploy\b{_NOT_FILE}|\bproduction\b{_NOT_FILE}|thanh\s+toán|\bbilling\b|"
+    rf"\blogin\b|đăng\s+nhập|\bsettings\b{_NOT_FILE}|cài\s+đặt|"
+    r"\bsecret\b|mật\s+khẩu|\botp\b|\blive\b|app\s+store|hợp\s+đồng|khóa\s+ký|"
+    # Bật auto-approve cho Dependabot là cấu hình GitHub của chủ repo, kể cả khi câu nhắc tests/ (wave 2, 03/11).
+    rf"\bdependabot\b{_NOT_FILE}",
     re.I,
 )
 FLAG = "needs_you_guard_v2"

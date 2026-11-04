@@ -183,11 +183,13 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'"'"'`)}'`;
 }
 
-/** {{out}} is the png path, {{project}} is this checkout. Both are shell-quoted. */
-export function renderShellCommand(command, outFile, projectRoot) {
+/** {{out}} is the png path, {{project}} is this checkout, {{configRoot}} the folder of the config file in use (the main checkout when a
+ * worktree inherits it: point a script that lives only there at it). All are shell-quoted. */
+export function renderShellCommand(command, outFile, projectRoot, configRoot) {
   return String(command)
     .replaceAll('{{out}}', shellQuote(outFile))
-    .replaceAll('{{project}}', shellQuote(projectRoot || ''));
+    .replaceAll('{{project}}', shellQuote(projectRoot || ''))
+    .replaceAll('{{configRoot}}', shellQuote(configRoot || projectRoot || ''));
 }
 
 /** Chay 1 provider, tra ve duong dan anh vua tao. */
@@ -222,7 +224,8 @@ async function capture(cfg, provider, outFile, extra = {}) {
   }
   if (type === 'shell') {
     if (!provider.command) throw new Error(`provider shell thieu "command"`);
-    const cmd = renderShellCommand(provider.command, outFile, cfg.projectRoot);
+    const cmd = renderShellCommand(provider.command, outFile, cfg.projectRoot, cfg.configRoot);
+    // cwd = cay dang lam (worktree PR): lenh proof chay test / render cay nay, khong phai cay main (review 75df5df3 P1)
     const r = await runShell(cmd, { timeoutMs: provider.timeoutMs || 180000, cwd: cfg.projectRoot });
     return { cmd, r };
   }

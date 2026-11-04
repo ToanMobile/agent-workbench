@@ -111,6 +111,7 @@
 #      quotes its last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
 #      — also when the newest `[qa] [report]` comment still has a non-empty `❌ Not done:` line, or a `- [x]` AC of the PR body has
 #      no `↳ <proof>` line (super-board-qa-report.py, #364); stdout lists each `qa-report: <reason>`
+#      — also when that newest QA report names a PR-branch sha with code commits after it (T0255: QA must re-run on the head)
 #      — also when a CI check of the PR head is red (`gh pr checks`: a bucket other than pass / skipping / pending, an empty or
 #      unknown one included): stdout and stderr list each `ci-check: <name> — <state>`; nothing migrated, nothing merged
 #   3  PR is closed without a merge; no merge attempted
@@ -128,10 +129,13 @@
 #      with the new --expect-head (for a board card: a rebase pass)
 #      — EXCEPT (narrow exception to #570): a real run (no --dry-run / --preflight / train receipt) where every file changed on
 #      BOTH sides since the merge base has a named merge driver in origin/<base>'s .gitattributes (merge=devkit-matrix,
-#      merge=union…) and the PR carries no edited-test approval: the gate merges the base into the scratch tree, pushes that
+#      merge=union…) and the PR carries no edited-test approval — or only one read from the antigravity-pm record (`pm`) while a
+#      verify command runs post-fix-gate.py (it re-checks that approval on the merged tree, inside the merge lock): the gate merges
+#      the base into the scratch tree, pushes that
 #      merge commit to the PR branch as a plain fast-forward (never --force; the branch must still be at the pinned head), pins
 #      the new head and verifies/merges it. Every refusal to sync (as opposed to a lock lost, exit 4) is this same exit 14;
-#      a PR that edits .gitattributes is never synced (its own attributes could swap the named driver)
+#      a PR that edits .gitattributes is never synced (its own attributes could swap the named driver), nor one with an
+#      edited-tests comment approval (#643, bound to the head) or an approval that could not be read (pm-unknown)
 #   1  could not read the PR head, resolve origin/<base>, or create the scratch
 #      worktree. Not a conflict and not a rebase pass (the lane treats only 2, 5 and 14
 #      as a rebase pass).
@@ -297,11 +301,46 @@ pr_title() {
   if [ -n "$SUBJECT" ]; then printf '%s' "$SUBJECT"; return 0; fi
   gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
 }
+APPROVAL_REQ_LINE=   # dòng approval-request: lần approval_request gần nhất in ra (rỗng = chưa có request)
 needs_you_notify() {
   # Queue bật: train / queue gọi thì không gửi (queue gửi đúng một lần ở nhánh exit 7/8); #453: theo BÊN GỌI, không theo cờ, nên
   # /super-review --standalone --dry-run ngoài board vẫn gửi nút. Queue tắt: gửi như gate cũ. Train gọi --preflight cho mọi PR và PR rớt
   # preflight rời đợt trước lượt --dry-run, nên preflight im lặng khi queue tắt = PR exit 7/8 mất nút duyệt (R2).
   if [ "$MERGE_QUEUE_ON" -eq 1 ]; then case "${SB_MERGE_CALLER-}" in train|queue) return 0 ;; esac; fi
+  # PR #924: bot và approval.py chỉ nhận `done` trên NGUỒN của block tin cậy MỚI NHẤT (PR + issue liên kết) ghim đúng head/scope; gate
+  # tự gửi nút thì tự đăng request, nhưng quyết theo phán quyết approval_check ($APPROVAL .why), không grep comment PR: chỉ đăng khi
+  # chưa có request hiện hành (không block, block mới nhất không khớp, request bị sửa). Request hiện hành ở đâu đó (đang chờ done) hay
+  # bằng chứng không đọc được (đăng có thể đè một `done`) thì không đăng. Chỉ request, không bao giờ duyệt; lỗi chỉ log, nút vẫn gửi,
+  # exit giữ nguyên; --dry-run không ghi GitHub. approved=true (người đã `done` / duyệt chéo, nhưng migration lỗi sau verify): im lặng,
+  # không đăng, không khuyên đăng tay (request mới sẽ đè lần duyệt đó).
+  # Grok review: SB_NOTIFY_SKIP=1 (board_notify không gửi nút) thì không đăng gì, như trước PR #924. APPROVAL rỗng (approval_check chưa
+  # chạy: migration lỗi khi policy không human / needs_you) thì đọc phán quyết ngay bằng đúng lệnh của approval_check, nhưng không fatal.
+  if [ "${SB_NOTIFY_SKIP:-0}" = "1" ]; then return 0; fi
+  if [ -n "$APPROVAL_REQ_LINE" ] && [ -z "${APPROVAL:-}" ]; then
+    git -C "$REPO_PATH" fetch origin "$HEAD_REF" --quiet 2>/dev/null || :
+    APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
+      --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || APPROVAL=
+    # Như approval_check (#932): có biên nhận Y→X mà chưa duyệt thì đọc lại cho chính head Y (request ghi --head Y).
+    if [ -n "$APPROVED_HEAD" ] && [ "$(printf '%s' "$APPROVAL" | jq -r '.approved // false' 2>/dev/null || true)" != true ]; then
+      APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
+        --head "$HEAD_SHA" --plan "$PLAN") || APPROVAL=
+    fi
+  fi
+  if [ -n "$APPROVAL_REQ_LINE" ] \
+    && [ "$(printf '%s' "${APPROVAL:-}" | jq -r '.approved == true' 2>/dev/null || true)" != true ]; then
+    case "$(printf '%s' "${APPROVAL:-}" | jq -r '.why // empty' 2>/dev/null || true)" in
+      "no request from a trusted repository collaborator"|"the latest request does not cover the current code and human steps"|"approval request was edited; post a fresh request")
+        if [ "$DRY" -eq 1 ]; then
+          say "dry run: would post the approval-request on PR #${PR} for head ${HEAD_SHA:0:7}"
+        else
+          gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "[merge-gate] [blocker] 🛑 needs a person · head ${HEAD_SHA:0:7}
+${APPROVAL_REQ_LINE}" >/dev/null 2>&1 \
+            || say "warning: could not post the approval-request comment on PR #${PR} (head ${HEAD_SHA:0:7}); the Approve button still goes out but the bot will refuse it until a writer posts the approval-request line above"
+        fi ;;
+      "waiting for a trusted human to comment done on the current request"|"waiting for a cross-review marker or a trusted human done on the current request") : ;;
+      *) say "approval-request not posted on PR #${PR}: the approval check gave no clear verdict ($(printf '%s' "${APPROVAL:-}" | jq -r '.why // "none"' 2>/dev/null || echo none)); approval state unclear, so no request is posted — check the PR and its linked issue before posting anything" ;;
+    esac
+  fi
   board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
@@ -399,7 +438,7 @@ if [ "$PREFLIGHT" -ne 1 ]; then
   SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
 fi
 # SCRATCH rỗng (--preflight): không gọi worktree remove / rm với đường dẫn rỗng.
-cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${MERGE_LOG:+"$MERGE_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
+cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree unlock "$SCRATCH" 2>/dev/null || true; git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${MERGE_LOG:+"$MERGE_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
 # #559: thư mục đã đổi tên bằng git worktree move thì SCRATCH rỗng, trap không gỡ.
 trap cleanup EXIT
 
@@ -465,8 +504,14 @@ python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} 
 # #364: report QA mới nhất của người đáng tin còn "❌ Not done" nêu tên một AC, hay AC [x] không có dòng bằng chứng ↳: không merge,
 # thẻ về Build (exit 11). Checker thoát 2 (metadata không đọc được), crash, hay thoát 1 mà không in dòng "qa-report:" nào là
 # KHÔNG quyết định được: cùng đường với policy không đọc được (exit 7, người duyệt), không phải lỗi build của thẻ.
+# T0255: kèm head + base để checker từ chối report QA nêu sha cũ mà head còn commit code sau đó. Base phải vừa fetch (base cũ
+# làm sha main mới trông như commit của nhánh): fetch lỗi thì bỏ phần ghim sha, không biến lỗi mạng thành cổng người.
+QA_PIN=(--head "$HEAD_SHA" --repo "$REPO_PATH" --base "origin/$BASE")
+git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || {
+  say "WARNING: git fetch origin ${HEAD_REF} ${BASE} failed — QA head pin skipped"; QA_PIN=(); }
 QA_REPORT_RC=0
-QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" 2>/dev/null) || QA_REPORT_RC=$?
+QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"}) \
+  || QA_REPORT_RC=$?
 if [ "$QA_REPORT_RC" -ne 0 ]; then
   if [ "$QA_REPORT_RC" -eq 1 ] && printf '%s\n' "$QA_REPORT_OUT" | grep -q '^qa-report: '; then
     printf '%s\n' "$QA_REPORT_OUT"
@@ -487,6 +532,7 @@ PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$M
 # The label is display-only. A request posted before `done` pins the exact head
 # and policy/commands. Re-read trusted approval evidence; never mint it here.
 APPROVED=false
+APPROVAL=        # phán quyết approval.py; không nhận giá trị từ môi trường của bên gọi (hàm gửi nút đọc nó)
 APPROVED_HEAD=   # #262: head người đã duyệt, đọc từ biên nhận (nếu có) trước khi kiểm duyệt
 # #570: gate không đẩy merge commit lên nhánh PR; head PR giữ nguyên X và chính X là head người duyệt. Ngoại lệ duy nhất (exit 14,
 # khối "đồng bộ nhánh PR"): gate tự đẩy Y = merge(X, base) và ghi biên nhận Y→X (AH_DIR ở head guard) trước khi đẩy. Biên nhận Y→X
@@ -508,8 +554,13 @@ approval_check() {
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')
 }
 approval_request() {
-  python3 "$HERE/super-board-approval.py" --request --repo "$REPO" --pr "$PR" \
-    --head "$HEAD_SHA" --plan "$PLAN"
+  # In nguyên như cũ, nhớ dòng approval-request: để needs_you_notify đăng lên PR khi chính gate gửi nút (PR #924).
+  local out rc=0
+  out=$(python3 "$HERE/super-board-approval.py" --request --repo "$REPO" --pr "$PR" \
+    --head "$HEAD_SHA" --plan "$PLAN") || rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out"
+  APPROVAL_REQ_LINE=$(printf '%s\n' "$out" | grep '^approval-request: ' | tail -1) || APPROVAL_REQ_LINE=
+  return "$rc"
 }
 HUMAN=$(echo "$PLAN" | jq -r '.human[] | "human-gate: \(.category) — \(.why)"')
 if [ -n "$HUMAN" ] || [ "$(echo "$PLAN" | jq '.needs_you | length')" -gt 0 ]; then
@@ -672,7 +723,8 @@ wait_for_load() {
 # Ngoại lệ hẹp của #570 (02/11, PR #916 đụng #911: gần như PR nào cũng nối đuôi ma trận, hai PR merge sát nhau là PR sau CONFLICTING
 # trên GitHub, mỗi lần một vòng gộp-push-chạy-lại bằng tay; test_durations.txt không còn track từ #920, ma trận là lý do chính): CONFLICTING ở lượt thật (không --dry-run, --preflight,
 # biên nhận train hay SB_MERGE_CALLER=train — các lối đó thoát 14 như cũ) mà mọi file hai phía cùng đổi từ merge-base đều có driver gộp đặt
-# tên trong .gitattributes của origin/<base> (sync_candidate), và PR không có test sửa đã duyệt ⇒ AUTOSYNC=1, đi tiếp; khối "đồng bộ nhánh
+# tên trong .gitattributes của origin/<base> (sync_candidate), và PR không có test sửa đã duyệt (04/11: hoặc duyệt tra thẳng biên bản
+# antigravity-pm — `pm` — khi verify chạy post-fix-gate) ⇒ AUTOSYNC=1, đi tiếp; khối "đồng bộ nhánh
 # PR" sau merge scratch kiểm lại rồi đẩy merge commit đó lên nhánh PR. Mọi trường hợp khác: thoát 14 ngay tại đây, đúng câu báo cũ.
 mergeable_now() { gh pr view "$PR" ${REPO:+--repo "$REPO"} --json mergeable -q .mergeable 2>/dev/null | head -1 | tr -d '[:space:]' || true; }
 MG_POLL=${SB_MERGEABLE_POLL_S:-10}; [[ "$MG_POLL" =~ ^[0-9]{1,3}$ ]] || MG_POLL=10
@@ -725,13 +777,23 @@ driver_only_overlap() {
   done <<<"$shared"
   SYNC_FILES=$(printf '%s\n' "$shared" | tr '\n' ' ' | sed 's/ $//')
 }
-# sync_candidate: chỉ lượt thật; PR có test sửa đã duyệt thì không (#643: duyệt gắn head X, base phải là tổ tiên của X — thoát 14 như cũ).
+# sync_candidate: chỉ lượt thật. PR có test sửa: comment edited-tests (true, #643: duyệt gắn head X, base phải là tổ tiên của X) và
+# pm-unknown (không kiểm được biên bản) thoát 14 như cũ. 04/11: duyệt tra thẳng biên bản antigravity-pm (pm) thì đồng bộ được NẾU verify
+# chạy post-fix-gate: prove_tree lấy khoá trước khối đẩy (verify và đẩy trong khoá), post-fix-gate audit_covers nhận Y = merge(X, base)
+# vì auditedHead X nằm trên chuỗi first-parent của Y và kiểm base không đổi file test; prove_tree không exit 2 cho pm khi verify có gate.
+# sb_verify_runs_gate gọi thẳng: verify_runs_gate định nghĩa phía dưới (VERIFY đã dựng ở trên).
 sync_candidate() {
-  local et_rc=0 base_pre
+  local et_rc=0 et_src base_pre
   [ "$DRY" -eq 0 ] && [ "$PREFLIGHT" -eq 0 ] && [ "$REQUIRE_RECEIPT" -eq 0 ] && [ -z "$TRAIN_RECEIPT" ] \
     && [ "${SB_MERGE_CALLER-}" != train ] || return 1
-  bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$HEAD_SHA" >/dev/null 2>&1 || et_rc=$?
-  [ "$et_rc" -eq 1 ] || { SYNC_WHY="the PR carries edited-test approval for ${HEAD_SHA:0:12} (or it could not be read)"; return 1; }
+  et_src=$(bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$HEAD_SHA" \
+    --top "$REPO_PATH" --base "origin/${BASE}" 2>/dev/null) || et_rc=$?
+  if [ "$et_rc" -eq 0 ] && [ "$et_src" = pm ]; then
+    sb_verify_runs_gate "${VERIFY[@]}" \
+      || { SYNC_WHY="the PR carries edited-test approval for ${HEAD_SHA:0:12} from the antigravity-pm record, but no verify command runs post-fix-gate.py to re-check it on the merged tree"; return 1; }
+  elif [ "$et_rc" -ne 1 ]; then
+    SYNC_WHY="the PR carries edited-test approval for ${HEAD_SHA:0:12} (or it could not be read)"; return 1
+  fi
   git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || { SYNC_WHY="git fetch origin ${HEAD_REF} ${BASE} failed"; return 1; }
   base_pre=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { SYNC_WHY="cannot resolve origin/${BASE}"; return 1; }
   driver_only_overlap "$HEAD_SHA" "$base_pre"
@@ -839,6 +901,10 @@ merge_scratch_onto() {
   if [ -z "${MERGED_SHA:-}" ]; then
     git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
       say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
+    # 03/11 (PR #940): một phiên khác chạy `git worktree remove <scratch>` trần giữa lúc verify (cây sạch nên git gỡ luôn). Khoá
+    # devkit-kept mang pid gate: remove/prune không -f -f bị git từ chối; gate chết (SIGKILL) thì worktree gc mở khoá pid chết.
+    git -C "$REPO_PATH" worktree lock --reason "devkit-kept session=merge-gate-pr${PR} pid=$$" "$SCRATCH" 2>/dev/null \
+      || say "warning: could not lock the scratch worktree ${SCRATCH}; another session could remove it while verify runs"
   else
     { git -C "$SCRATCH" reset -q --hard "$HEAD_SHA" && git -C "$SCRATCH" clean -fdq -e /.agents/devkit; } 2>/dev/null || {
       say "could not reset the scratch tree to ${HEAD_SHA:0:12} to merge the moved ${BASE}"; exit 1; }
@@ -876,13 +942,29 @@ OPT_LEFT=${SB_MERGE_OPTIMISTIC_RETRIES:-2}
 OPT_LEFT=$((10#$OPT_LEFT))
 [ "$PESSIMISTIC" -eq 0 ] || OPT_LEFT=0
 EDITED=""   # rỗng = chưa hỏi; 1 = PR có test bị sửa (#643)
+EDITED_SRC=""   # true = duyệt từ comment edited-tests; pm = từ biên bản antigravity-pm; pm-unknown = không kiểm được biên bản (04/11)
+# verify_runs_gate: 0 khi một lệnh verify chạy post-fix-gate.py (kiểm lại duyệt test sửa trên cây gộp với base hiện tại).
+verify_runs_gate() { sb_verify_runs_gate "${VERIFY[@]}"; }
+# edited_query: EDITED / EDITED_SRC một lần mỗi lượt (#643; 04/11: pm = duyệt tra thẳng biên bản antigravity-pm). Lỗi bộ kiểm: thoát mã đó.
+edited_query() {
+  local et_rc
+  [ -z "$EDITED" ] || return 0
+  if EDITED_SRC=$(bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" \
+      --top "$REPO_PATH" --base "$BASE_SHA"); then   # stderr (lý do không kiểm được biên bản) vào log của gate
+    EDITED=1
+  else
+    et_rc=$?
+    [ "$et_rc" -eq 1 ] || exit "$et_rc"
+    EDITED=0
+  fi
+}
 # #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA.
 REVIEWED_HEAD=$HEAD_SHA
 # prove_tree: mọi thứ phụ thuộc base, tính lại cho cây scratch HIỆN TẠI (BASE_SHA của vòng này): biên nhận train / cây (#226), exit 12
 # (--require-receipt), ancestry của duyệt test sửa (exit 2), số commit chậm hơn base. PR có test bị sửa lấy khoá ngay sau kiểm ancestry,
 # TRƯỚC verify (như trước PR3): base dời sau đó là exit 2 chắc chắn nên verify ngoài khoá vô ích. Gọi như câu lệnh thường.
 prove_tree() {
-  local tree et_rc
+  local tree
   tree=$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')
   # Nhánh chậm hơn base nhưng merge scratch sạch: verify trên cây đã gộp. Timeout phía dưới vẫn thử lại một lần.
   TRAIN_PROVED=0; TREE_PROVED=0
@@ -894,7 +976,16 @@ prove_tree() {
   # sau (vd. lượt trước thoát exit 4 sau verify) trên đúng cây gộp và đúng bộ lệnh bỏ verify. Base đổi, head đổi hay lệnh đổi: khoá khác.
   TREE_RECEIPT=$(sb_verified_tree_receipt "$tree" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
   TREE_KEY=${TREE_RECEIPT##*/}
-  if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
+  if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then
+    # 04/11 (review P2-2): duyệt test sửa tra thẳng biên bản PM không nằm trong khoá biên nhận (cây + lệnh): lượt grok sau trên cùng head
+    # có thể đã REVISE. Verify (post-fix-gate) phải đọc lại biên bản — không dùng biên nhận cây cho PR đó.
+    edited_query
+    if [ "$EDITED_SRC" = true ] || [ "$EDITED_SRC" = false ]; then
+      TRAIN_PROVED=1; TREE_PROVED=1
+    else
+      say "tree receipt ${TREE_KEY:0:12} not used: the edited-test approval comes from the antigravity-pm record (${EDITED_SRC:-?}), which verify must re-read"
+    fi
+  fi
   # #676: --require-receipt (train): cây gộp với base HIỆN TẠI chưa được chứng minh (base dời sau verify của train) ⇒ không verify ở
   # gate; thoát 12 (lần đầu: chưa lấy khoá; trong khoá ngắn: trap EXIT thả khoá) TRƯỚC khối #643 và bước cài DevKit, để train verify
   # lại ngoài khoá rồi gọi lại.
@@ -902,18 +993,15 @@ prove_tree() {
     say "base moved since the train verified ${HEAD_SHA:0:12}: tree $(git -C "$SCRATCH" rev-parse --short 'HEAD^{tree}') has no receipt; not verifying inside the merge lock (exit 12)"
     exit 12
   fi
-  # #643: exit 2 chỉ khi train chưa chứng minh cây này, comment edited-tests còn đúng head, và base không còn là tổ tiên của head đó.
+  # #643: exit 2 chỉ khi train chưa chứng minh cây này, comment edited-tests còn đúng head (04/11: hoặc biên bản PM có audit pass trên
+  # base..head — duyệt tra thẳng biên bản), và base không còn là tổ tiên của head đó.
   if [ "$TRAIN_PROVED" -eq 0 ]; then
-    if [ -z "$EDITED" ]; then
-      if bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" >/dev/null 2>&1; then
-        EDITED=1
-      else
-        et_rc=$?
-        [ "$et_rc" -eq 1 ] || exit "$et_rc"
-        EDITED=0
-      fi
-    fi
-    if [ "$EDITED" -eq 1 ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
+    edited_query
+    # 04/11: duyệt tra thẳng biên bản PM (EDITED_SRC=pm) không cũ khi base dời NẾU verify chạy post-fix-gate (trong khoá, trên base hiện
+    # tại, audit_covers kiểm main không đổi file test — Grok review). Comment #643 (true), và pm khi verify không có gate: base phải là tổ
+    # tiên head. pm-unknown (không kiểm được biên bản) không phải duyệt gắn head: chỉ khoá, không exit 2.
+    if [ "$EDITED" -eq 1 ] && { [ "$EDITED_SRC" = true ] || { [ "$EDITED_SRC" = pm ] && ! verify_runs_gate; }; } \
+        && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
       say "edited-test review is stale before fast-forward (origin/${BASE} is not an ancestor of ${REVIEWED_HEAD})"
       exit 2
     fi
@@ -945,7 +1033,8 @@ MERGED_SHA=""
 merge_scratch_onto "$BASE_SHA"
 prove_tree
 # ---- đồng bộ nhánh PR (ngoại lệ hẹp của #570, chỉ khi AUTOSYNC=1 ở khối CONFLICTING) ---------------------------------------------------
-# Chạy ngoài khoá merge (PR3: verify cũng ngoài khoá; đẩy lên nhánh PR không đụng main), trên base đã chốt (BASE_SHA có thể mới hơn lúc
+# Chạy ngoài khoá merge (PR3: verify cũng ngoài khoá; đẩy lên nhánh PR không đụng main) — trừ PR có test sửa duyệt từ biên bản PM
+# (04/11: prove_tree đã lấy khoá, đẩy và verify đều trong khoá) — trên base đã chốt (BASE_SHA có thể mới hơn lúc
 # kiểm ở khối CONFLICTING). Đẩy merge commit của scratch Y (cha 1 = head đã review X, cha 2 = BASE_SHA, không gì khác) lên nhánh PR:
 # push thường, không bao giờ --force / --force-with-lease, và chỉ khi GitHub lẫn origin vẫn trỏ nhánh về X (nhánh đã dời: thoát 14,
 # không ghi đè). Biên nhận approved-merge-heads/Y = X ghi TRƯỚC khi đẩy: head guard của lượt gate sau (--expect-head X) và approval.py
@@ -958,7 +1047,8 @@ if [ "$AUTOSYNC" -eq 1 ]; then
   driver_only_overlap "$HEAD_SHA" "$BASE_SHA" || { say "not syncing ${HEAD_REF} itself after pinning ${BASE} at ${BASE_SHA:0:12}: ${SYNC_WHY}"; conflicting_exit; }
   [ "$(git -C "$SCRATCH" rev-list --parents -n 1 "$MERGED_SHA" 2>/dev/null)" = "$MERGED_SHA $HEAD_SHA $BASE_SHA" ] \
     || { say "not syncing ${HEAD_REF} itself: the scratch commit ${MERGED_SHA:0:12} is not exactly merge(${HEAD_SHA:0:12}, ${BASE_SHA:0:12})"; conflicting_exit; }
-  # Gate đang giữ khoá (chế độ bi quan SB_MERGE_OPTIMISTIC=0): khoá đã bị gate khác chiếm thì không ghi gì lên nhánh PR.
+  # Gate đang giữ khoá (chế độ bi quan SB_MERGE_OPTIMISTIC=0, hay PR có test sửa duyệt từ biên bản PM): khoá đã bị gate khác chiếm thì
+  # không ghi gì lên nhánh PR.
   # (Viết thẳng như own_lock_or_stop: hàm đó định nghĩa phía dưới.)
   [ "$LOCK_HELD" -eq 0 ] || [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$$" ] || { say "the merge lock is no longer this gate's; stopping without pushing or merging"; exit 4; }
   SYNC_NOW=$(pr_head) || exit $?
@@ -1198,6 +1288,8 @@ keep_failed_scratch() {
   ts=$(date +%Y%m%d-%H%M%S)
   dest="$BASE_WT/.claude/worktrees/.merge-scratch-keep-pr${PR}-${ts}"
   if [ -e "$dest" ]; then sleep 1; ts=$(date +%Y%m%d-%H%M%S); dest="$BASE_WT/.claude/worktrees/.merge-scratch-keep-pr${PR}-${ts}"; fi
+  # khoá lúc verify (merge_scratch_onto) chặn cả move; bản giữ là bằng chứng, không còn ai chạy trong nó
+  git -C "$BASE_WT" worktree unlock "$SCRATCH" 2>/dev/null || true
   git -C "$BASE_WT" worktree move "$SCRATCH" "$dest" || return 1
   say "kept scratch at ${dest} because REG-DK-ALL-01 (or a REG-DK-ALL-*-01 shard) was not PASS"
   gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "merge-gate kept the scratch worktree at ${dest} because REG-DK-ALL-01 (or a REG-DK-ALL-*-01 shard) was not PASS. Evidence: ${dest}/.merge-evidence" \
@@ -1884,6 +1976,32 @@ ac_after_merge() {
   bash "$HERE/super-board-card.sh" --config "$CONFIG" move "$AC_CARD" Ready >&2 || say "warning: could not move #${AC_CARD} to Ready"
   say "card #${AC_CARD} keeps label ac-open: $(printf '%s\n' "$AC_UNTICKED" | grep -c .) AC line(s) not proven — do not close it or move it to Done"
 }
+# P2 (optimizer đợt 2, 03/11): sau merge, comment "✅ merged" lên mọi thẻ PR đóng (closingIssuesReferences của GitHub). Trước chỉ
+# reviewer (LLM) viết dòng này: 130/177 thẻ WB vào Done từ 28/10 không có nó (PR nhánh split/… merge qua gate --standalone,
+# WB#325/#392). Chỉ thẻ cùng repo với PR (tiền tố URL của chính PR, không phân biệt hoa thường; không dựng lại từ REPO): ở repo khác,
+# "PR #N" trỏ sai và số có thể trùng. Queue bật thì queue/train không comment ở đây (queue comment khi route train-result); queue tắt
+# thì merge-train worker (#228) chỉ có gate comment. Thẻ ac-open (và thành viên đợt) bỏ qua dù GitHub còn liệt kê (liên kết tay ở
+# Development). Không comment khi merge chỉ được xác nhận ở lượt gate sau ("already merged").
+# $1: sha squash (rỗng = không đọc được). Lỗi chỉ cảnh báo: đã merge rồi.
+card_merged_comment() {
+  local u n cards skip=""
+  if [ "$MERGE_QUEUE_ON" -eq 1 ]; then case "${SB_MERGE_CALLER-}" in train|queue) return 0 ;; esac; fi
+  cards=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json url,closingIssuesReferences 2>/dev/null | jq -r '
+      (.url | ascii_downcase | sub("/pull/[0-9]+/?$"; "/issues/")) as $base
+      | .closingIssuesReferences[]?.url | select(ascii_downcase | startswith($base))' 2>/dev/null) \
+    || { say "warning: could not read the cards PR #${PR} closes; no ✅ merged comment"; return 0; }
+  # AC_BATCH là một số mỗi dòng (jq): echo không nháy gộp thành một dòng cách nhau bằng dấu cách.
+  # shellcheck disable=SC2086
+  [ -z "$AC_UNTICKED" ] || skip=" $(echo $AC_CARD $AC_BATCH) "
+  for u in $cards; do
+    n=${u##*/}
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    case "$skip" in *" $n "*) continue ;; esac
+    gh issue comment "$u" --body "[reviewer] [report] ✅ merged ${1:-head ${HEAD_SHA:0:12}} · PR #${PR}
+Did: merged through the merge gate
+✅ Done: PR #${PR} merged${1:+ as $1}" >/dev/null 2>&1 || say "warning: could not comment ✅ merged on ${u}"
+  done
+}
 # Biên nhận merge (27/10): proof_gate.sh (merge_receipt_evidence) nhận lượt đã gộp qua gate này kể cả khi gate chạy nền, output vào file
 # (không có dòng "merged <H>" trong transcript). Ghi <git common dir>/postfix-gate/merge_receipts/<PR>-<HEAD_SHA>.json: pr, head (HEAD_SHA,
 # commit truyền cho --match-head-commit), base (BASE_SHA gộp vào scratch), verified_tree (cây của MERGED_SHA, cây mà vòng verify chạy trên),
@@ -1918,8 +2036,10 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
   say "merged ${HEAD_SHA}"
-  write_merge_receipt || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
+  MSHA=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json mergeCommit -q '.mergeCommit.oid // ""' 2>/dev/null) || MSHA=""
+  write_merge_receipt "$MSHA" || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
   ac_after_merge
+  card_merged_comment "$MSHA"
   board_notify send --card "PR #${PR}" --repo "$REPO" --title "$(pr_title)" --text "✅ đã merge ${HEAD_SHA}"
   # Dọn sau merge: fast-forward nhánh base local và xoá worktree + nhánh local của CHÍNH thẻ vừa merge
   # (không bao giờ của thẻ khác), để không phải dọn tay. worktree_merge_gate.state là sổ nợ worktree toàn repo
@@ -2120,9 +2240,10 @@ while :; do
     say "merge response was lost; GitHub confirms the merge commit"
     # Nhánh này không tới bước fetch sau merge: lấy squash về kho object chung để proof_gate đọc được nó (lỗi mạng: chỉ bỏ qua).
     git -C "$REPO_PATH" fetch origin "$BASE" --quiet 2>/dev/null || true
-    write_merge_receipt "$(echo "$STATE" | jq -r '.mergeCommit.oid // ""' 2>/dev/null || true)" \
-      || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
+    MSHA=$(echo "$STATE" | jq -r '.mergeCommit.oid // ""' 2>/dev/null || true)
+    write_merge_receipt "$MSHA" || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
     ac_after_merge
+    card_merged_comment "$MSHA"
     exit 0
   fi
   NOW_SHA=$(echo "$STATE" | jq -r .headRefOid)

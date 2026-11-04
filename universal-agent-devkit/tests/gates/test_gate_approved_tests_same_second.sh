@@ -34,6 +34,9 @@ def case(name, test_dt, appr_dt, edit_after, want_ok, fmt="approvals"):
     # ghi `auditedHead: <sha>` của cây chứa đúng nội dung test lúc duyệt: commit nội dung đó, ghi biên bản với HEAD.
     git = ["git", "-C", root, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
     subprocess.run(git + ["init", "-q"], check=True)
+    # Đợt 2 lane A: auditedHead đã nằm trên nhánh đích không duyệt; test sửa nằm trên nhánh feat như một PR thật.
+    subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "init"], check=True)
+    subprocess.run(git + ["checkout", "-q", "-b", "feat"], check=True)
     subprocess.run(git + ["add", "tests/test_old.sh"], check=True)
     subprocess.run(git + ["commit", "-qm", "test"], check=True)
     head = subprocess.run(git + ["rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()

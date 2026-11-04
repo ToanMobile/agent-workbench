@@ -15,6 +15,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { run, redact, truncate, homeStateDir, readJsonIfExists, writeJsonAtomic, ensureDir, nowIso, trackChild, untrackChild, logStderr, killGroup } from './util.js';
 import { discover, forgetCache, AntigravityUnavailable, ENV_ADDRESS, ENV_TOKEN } from './discover.js';
 import { ENV_PROJECT_ID, resolveProject } from './projects.js';
+import { globalConfigPath } from './config.js';
 
 export const TIERS = ['flash_lite', 'flash', 'pro'];
 export const AGY_MODELS = [
@@ -117,6 +118,50 @@ export function agyPath() {
     try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { /* thu cai ke tiep */ }
   }
   return null;
+}
+
+// ---- grok (reviewer thay Antigravity khi agy bi gioi han, chu repo 03/11/2026) ---------------------------------------------
+export const GROK_MODEL = 'grok-4.7';
+const GROK_TIMEOUT_MS = 20 * 60 * 1000;
+const GROK_TIMEOUT_MAX_MS = 60 * 60 * 1000;
+const ENV_GROK_TIMEOUT = 'ANTIGRAVITY_PM_GROK_TIMEOUT_MS';
+/**
+ * Han grok theo kich thuoc diff (04/11: PR #977, 26 file / 1692 dong doi, bi giet dung 20 phut; lan chay lai ~1700 dong mat 17m51s).
+ * San 20 phut (diff < 100 dong giu dung han cu) + 1 phut moi 100 dong doi (them + xoa): 1700 dong -> 37 phut, gap doi lan chay do duoc.
+ * Khong biet so dong (git loi) thi +1 phut moi file (PR #977 trung binh 65 dong/file; danh sach file co the thieu file moi them).
+ * Tran 60 phut: grok treo cung chi chan tool MCP toi da 1 gio. ANTIGRAVITY_PM_GROK_TIMEOUT_MS dat hop le (> 0) thi THANG, khong bi tran.
+ */
+export function grokTimeoutMs({ files, lines, env = process.env } = {}) {
+  const t = Number(env[ENV_GROK_TIMEOUT]);
+  if (Number.isFinite(t) && t > 0) return t;
+  const n = (x) => (Number.isFinite(x) && x > 0 ? x : 0);
+  const extraMin = typeof lines === 'number' && Number.isFinite(lines) ? Math.floor(n(lines) / 100) : n(files);
+  return Math.min(GROK_TIMEOUT_MS + extraMin * 60 * 1000, GROK_TIMEOUT_MAX_MS);
+}
+/** Binary grok. ANTIGRAVITY_PM_GROK dat thi CHI dung no (nhu agyPath); khong thi ~/.grok/bin/grok. Khong chay duoc -> null. */
+export function grokPath() {
+  const home = process.env.HOME || os.homedir();
+  const c = process.env.ANTIGRAVITY_PM_GROK || path.join(home, '.grok/bin/grok');
+  try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { return null; }
+}
+
+/**
+ * PM tu chay grok o che do plan (chi doc) tren project, mot luot `-p`, DONG BO co tran gio (util.run giet ca nhom khi qua han).
+ * Env bo bien messaging cua phien Claude (#734, nhu agyEnv; spawn bo qua bien gia tri undefined).
+ * timeoutMs: han nguoi goi da tinh (grokTimeoutMs theo kich thuoc diff); khong truyen / khong hop le thi nhu cu (env, khong thi 20 phut).
+ * ponytail: tool MCP bi chan toi khi grok xong (toi da han tren, tran 60 phut tru khi env dat); can chay nen thi theo khuon agyStart.
+ */
+export function runGrokAudit({ grok, cwd, prompt, timeoutMs }) {
+  const env = Object.fromEntries(CLAUDE_SESSION_ENV.map((k) => [k, undefined]));
+  return run(grok, ['-m', GROK_MODEL, '--permission-mode', 'plan', '--cwd', cwd, '-p', prompt], {
+    cwd, env, timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : grokTimeoutMs(),
+  });
+}
+
+/** Ket luan cua grok: chi dong dung khuon `VERDICT: PASS|REVISE|FAIL`; pass khi moi dong VERDICT deu PASS (it nhat mot), con lai fail. */
+export function grokVerdictOf(stdout) {
+  const all = [...String(stdout || '').matchAll(/^[ \t]*VERDICT:[ \t]*(PASS|REVISE|FAIL)[ \t]*$/gm)].map((m) => m[1]);
+  return { verdict: all.length && all.every((v) => v === 'PASS') ? 'pass' : 'fail', lines: all };
 }
 
 const agyRegistryFile = () => path.join(homeStateDir(), 'agy-conversations.json');
@@ -355,9 +400,55 @@ function assertProjectDir(cwd) {
 // #734: bien messaging cua phien Claude dang chay PM (MCP stdio thua env cua phien) khong duoc xuong agy va moi lenh cua agent
 // (--dangerously-skip-permissions). Danh sach TUONG MINH, khong loc theo mau: bo nham bien agy can thi luot agy hong.
 const CLAUDE_SESSION_ENV = ['CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_CODE_MESSAGING_SOCKET'];
-function agyEnv(outFile) {
+/**
+ * Profile agy cho luot review/audit: agy chi tach tai khoan qua HOME (Keychain va ~/.gemini deu theo HOME), nen khai agyProfile
+ * (env ANTIGRAVITY_PM_AGY_PROFILE hoac ~/.antigravity-pm.json) thi child agy chay voi HOME=~/.agy-<ten> (dung bang agy-profile cua cc-switcher-mcp).
+ * Chi child agy doi HOME; PM giu HOME that (state o homeStateDir). Chua khai -> null. Khai ma sai/chua dung -> NEM LOI, khong am tham dung tai khoan mac dinh.
+ */
+function agyProfileHome() {
+  let name = process.env.ANTIGRAVITY_PM_AGY_PROFILE;
+  if (!name) {
+    const cfgFile = globalConfigPath();
+    if (fs.existsSync(cfgFile)) {
+      // readJsonIfExists nuot loi parse: file chung hong ma coi nhu chua khai agyProfile thi review chay nham tai khoan mac dinh.
+      try { name = JSON.parse(fs.readFileSync(cfgFile, 'utf8'))?.agyProfile; } catch (err) {
+        throw new AntigravityUnavailable(`${cfgFile} khong doc duoc (JSON hong): ${err?.message}`, 'Sua file cau hinh chung roi thu lai; PM khong tu chay bang tai khoan mac dinh khi khong biet agyProfile.');
+      }
+    }
+  }
+  if (!name) return null;
+  if (typeof name !== 'string' || !/^[A-Za-z0-9_-]+$/.test(name)) {
+    throw new AntigravityUnavailable(`agyProfile "${name}" khong hop le (chi chu, so, _ va -).`, 'Sua agyProfile trong ~/.antigravity-pm.json hoac ANTIGRAVITY_PM_AGY_PROFILE.');
+  }
+  const real = process.env.AGY_REAL_HOME || process.env.HOME || os.homedir();
+  const home = path.join(real, `.agy-${name}`);
+  if (!fs.existsSync(path.join(home, '.gemini'))) {
+    throw new AntigravityUnavailable(`Profile agy "${name}" chua dung (khong co ${home}).`, `Chay: agy-profile ${name}, roi chay agy mot lan de dang nhap tai khoan cua profile do.`);
+  }
+  if (process.platform === 'darwin') {
+    // agy luu tai khoan o Keychain theo HOME: profile cu (Library la symlink ve ~/Library that) hoac thieu keychain rieng se dung Keychain THAT cua may.
+    let lib = null;
+    try { lib = fs.lstatSync(path.join(home, 'Library')); } catch { /* chua co */ }
+    if (!lib || lib.isSymbolicLink() || !fs.existsSync(path.join(home, 'Library', 'Keychains', 'login.keychain-db'))) {
+      throw new AntigravityUnavailable(`Profile agy "${name}" chua co Keychain rieng (${home}/Library phai la thu muc that co Keychains/login.keychain-db).`, `Chay lai: agy-profile ${name} (nap shell/agy-profile.zsh ban moi) roi agy mot lan de dang nhap.`);
+    }
+  }
+  return { real, home };
+}
+
+export function agyEnv(outFile) {
   const env = { ...process.env, [RUN_ENV]: runOf(outFile) };
   for (const k of CLAUDE_SESSION_ENV) delete env[k];
+  const profile = agyProfileHome();
+  if (profile) {
+    env.AGY_REAL_HOME = profile.real;
+    env.HOME = profile.home;
+    // Keychain rieng cua profile co the da tu khoa (nghi lau): mo lai, khong duoc thi agy se doi dang nhap lai.
+    const kc = path.join(profile.home, 'Library', 'Keychains', 'login.keychain-db');
+    if (fs.existsSync(kc)) {
+      try { execFileSync('security', ['unlock-keychain', '-p', '', kc], { env, stdio: 'ignore', timeout: 3000 }); } catch (err) { logStderr(`agy profile keychain unlock skipped: ${err?.message}`); }
+    }
+  }
   return env;
 }
 

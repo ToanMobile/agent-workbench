@@ -61,7 +61,9 @@ export const DEFAULT_PROFILES = [
     name: '4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Argon High)',
     vendor: 'google',
     appType: 'gemini',
-    configDir: path.join(os.homedir(), '.gemini'),
+    // agy chi tach tai khoan qua HOME (khong co bien CONFIG_DIR): ham agy() trong ~/.zshrc dat HOME=homeDir.
+    homeDir: path.join(os.homedir(), '.agy-antigravity_ultra'),
+    configDir: path.join(os.homedir(), '.agy-antigravity_ultra', '.gemini'),
     settingsKey: 'currentProviderGemini',
     settingsValue: 'antigravity',
     appProviderId: 'antigravity',
@@ -73,7 +75,8 @@ export const DEFAULT_PROFILES = [
     name: '5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Argon High)',
     vendor: 'google',
     appType: 'gemini',
-    configDir: path.join(os.homedir(), '.gemini'),
+    homeDir: path.join(os.homedir(), '.agy-antigravity_pro'),
+    configDir: path.join(os.homedir(), '.agy-antigravity_pro', '.gemini'),
     settingsKey: 'currentProviderGemini',
     settingsValue: 'antigravity_pro',
   },
@@ -329,6 +332,9 @@ export function buildSafeEnvForProfile(profile) {
   };
   if (profile.vendor === 'anthropic') {
     env.CLAUDE_CONFIG_DIR = profile.configDir;
+  }
+  if (profile.homeDir) {
+    env.HOME = profile.homeDir;
   }
   return env;
 }
@@ -1056,5 +1062,51 @@ export function getStatusReport(opts = {}) {
     repoAssignments,
     recentSwitches: state.switchHistory.slice(-5),
   };
+}
+
+function pmConfigPath(configPath) {
+  return configPath || process.env.ANTIGRAVITY_PM_GLOBAL_CONFIG || path.join(os.homedir(), '.antigravity-pm.json');
+}
+
+function readPmConfig(file) {
+  if (!fs.existsSync(file)) return {};
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    throw new AppError('PM_CONFIG_UNREADABLE', `${file} không đọc được (JSON hỏng), giữ nguyên: ${err?.message}`);
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new AppError('PM_CONFIG_UNREADABLE', `${file} không phải đối tượng JSON, giữ nguyên.`);
+  }
+  return data;
+}
+
+/** Tài khoản Antigravity mà antigravity-pm-mcp (review/audit) đang dùng: khoá agyProfile trong ~/.antigravity-pm.json, null = tài khoản mặc định của máy. */
+export function getPmAgyProfile({ configPath } = {}) {
+  const v = readPmConfig(pmConfigPath(configPath)).agyProfile;
+  return typeof v === 'string' && v ? v : null;
+}
+
+/**
+ * Đổi tài khoản Antigravity cho antigravity-pm-mcp (profile=null bỏ khoá, về tài khoản mặc định). Chỉ nhận profile Antigravity (vendor google);
+ * id cũ được đổi sang id mới; giữ nguyên các khoá khác; file hỏng thì ném lỗi và không ghi đè. Không đụng tài khoản mặc định (Claude).
+ */
+export function setPmAgyProfile({ configPath, profile } = {}) {
+  const file = pmConfigPath(configPath);
+  const data = readPmConfig(file);
+  const previous = typeof data.agyProfile === 'string' && data.agyProfile ? data.agyProfile : null;
+  let next = null;
+  if (profile !== null && profile !== undefined && profile !== '') {
+    const id = canonicalProfileId(String(profile).trim());
+    const found = DEFAULT_PROFILES.find((p) => p.id === id && p.vendor === 'google');
+    if (!found) {
+      throw new AppError('INVALID_PROFILE', `Chọn một tài khoản Antigravity: ${DEFAULT_PROFILES.filter((p) => p.vendor === 'google').map((p) => p.id).join(', ')}.`);
+    }
+    next = found.id;
+  }
+  if (next) data.agyProfile = next; else delete data.agyProfile;
+  writeJsonAtomic(file, data, 0o600);
+  return { profile: next, previous, configPath: file };
 }
 

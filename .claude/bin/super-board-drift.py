@@ -4,7 +4,7 @@
     super-board-drift.py --source <repo nguồn> --target <repo app> [--target ...]
 
 So sha256 từng file super-board của nguồn (.claude/bin/super-*, .claude/workflows/super-board-wave.js,
-.claude/skills/super-board*/, super-build, super-qa, super-review, super-collect) với cùng đường dẫn ở mỗi target.
+.claude/skills/super-board*/, super-build, super-qa, super-review, super-collect, pr-security-review) với cùng đường dẫn ở mỗi target.
 In một dòng JSON: {"source": ..., "targets": {<repo>: {"missing": [...], "changed": [...]}}, "drifted": bool}.
 Thoát 0 khi mọi target khớp, 1 khi có lệch (missing = nguồn có, bản sao thiếu; changed = nội dung khác), 64 khi dùng sai.
 Target trùng chính nguồn thì bỏ qua. File chỉ có ở target (bản địa phương) không tính là lệch.
@@ -16,7 +16,7 @@ import os
 import subprocess
 import sys
 
-SKILLS = ("super-board", "super-build", "super-qa", "super-review", "super-collect")
+SKILLS = ("super-board", "super-build", "super-qa", "super-review", "super-collect", "pr-security-review")
 
 
 def git_listed(root):
