@@ -35,6 +35,9 @@ SH
 chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH"
 export SB_GITHUB_RETRY_DELAY=0 SB_HEAVY_SLOT_DIR="$TMP/slots"
+# Từ PR3 (#920) gate mặc định lấy khoá ngay trước merge, sau mọi lần đọc GitHub; gh giả luôn lỗi nên gate dừng (79) trước khoá.
+# Chế độ bi quan lấy khoá trước mọi lần đọc GitHub, như các test khoá khác (dead_holder, heartbeat, timeout_retry).
+export SB_MERGE_OPTIMISTIC=0
 CFG="$TMP/cfg.json"
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["true"]}' > "$CFG"
 # Mỗi lượt gate một file halt riêng: gh giả thất bại ghi halt, và `--check` (trước khoá) của gate sau không được dừng vì nó.
