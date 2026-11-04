@@ -46,7 +46,10 @@ WRAP
 
 run_mono() {   # run_mono <mode>: the monotonic test with the wrapped hardware hook; prints nothing, returns its exit code
   mkdir -p "$TMP/$1"
-  LOAD_MODE="$1" LOAD_DIR="$TMP/$1" REAL_HW="$REAL_HW" HW_HOOK="$TMP/loaded_hw.sh" bash "$MONO" > "$TMP/$1.out" 2>&1
+  # 04/11: what this test proves is the retry of run() and the CONTROL report, not the rows. The whole net here ran ~1.5k hook calls on
+  # 8 threads per mode (310 s, 1496 s CPU alone at load 31); the shard runs the whole net in test_guard_shell_norm_monotonic.sh itself.
+  # GUARD_MONO_SAMPLE keeps the first 4 jobs of each (kind, hook) pair: dangerous, harmless, control and accepted rows of both hooks.
+  GUARD_MONO_SAMPLE=4 LOAD_MODE="$1" LOAD_DIR="$TMP/$1" REAL_HW="$REAL_HW" HW_HOOK="$TMP/loaded_hw.sh" bash "$MONO" > "$TMP/$1.out" 2>&1
 }
 
 run_mono once;   rc=$?
