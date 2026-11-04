@@ -630,7 +630,7 @@ class SuiteCache:
         # tên (install.sh → adapters/setup_claude.sh) nên mở hàng xóm không phải test của nó, lặp tới điểm bất động (hub → script → hub2)
         # 04/11: _reach từ MỌI hàng xóm không phải test (mỗi nút một lần), kể cả nút đã trong `ran`: trước đây bỏ qua nút đã có, nên hàng xóm
         # lõi được mở (cả test nó chạy) hay chỉ được VÀO tuỳ thứ tự duyệt set (PYTHONHASHSEED) — tập input khác nhau giữa hai tiến trình
-        # cùng cây (tests/gates/test_gate_per_test_input_key.sh K7). Nay là hợp của mọi thứ tự: không phụ thuộc thứ tự, không nhỏ hơn bản nào.
+        # cùng cây (tests/gates/test_gate_selection_inputs_order.sh K7). Nay là hợp của mọi thứ tự: không phụ thuộc thứ tự, không nhỏ hơn bản nào.
         opened, started = set(), set()
         while True:
             hubs = {c for c in ran & core if c not in opened and not sg.is_test(c)}
