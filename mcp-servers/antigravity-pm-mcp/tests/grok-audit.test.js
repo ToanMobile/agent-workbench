@@ -659,3 +659,27 @@ test('AV10 audit pham vi day du: prompt khong co tieu de / brief / DoD cua tac g
     cleanup(dir);
   }
 });
+
+test('AV11 test doi ten roi sua: pham vi grok ghi ca duong cu va duong MOI (gate bao test sua theo duong moi)', async () => {
+  const dir = tmpProject({ projectName: 'grok-audit-rename', testCommand: 'echo ok' });
+  const g = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: dir, encoding: 'utf8' }).trim();
+  const lines = Array.from({ length: 10 }, (_, k) => `assert(${k})`);
+  g('init', '-q', '-b', 'main');
+  writeFile(path.join(dir, '.gitignore'), '.antigravity-pm/\n');
+  writeFile(path.join(dir, 'tests', 'old.test.js'), `${lines.join('\n')}\n`);
+  g('add', '-A'); g('commit', '-qm', 'init');
+  g('checkout', '-q', '-b', 'feat');
+  g('mv', 'tests/old.test.js', 'tests/renamed.test.js');
+  writeFile(path.join(dir, 'tests', 'renamed.test.js'), `${[...lines.slice(0, 9), 'assert(true)'].join('\n')}\n`);
+  g('commit', '-qam', 'doi ten + sua test');
+  const cfg = loadConfig(dir);
+  const task = createTask(cfg, sampleTaskArgs());
+  try {
+    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const d = disk(cfg, task).dispatches.at(-1);
+    assert.ok(d.edited.includes('tests/renamed.test.js'), JSON.stringify(d.edited));
+    assert.ok(d.edited.includes('tests/old.test.js'), JSON.stringify(d.edited));
+  } finally {
+    cleanup(dir);
+  }
+});

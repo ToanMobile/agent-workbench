@@ -166,6 +166,8 @@ def chain_audit(sha, base, top=None):
     top = top or repo_top()
     gate = push_gate()
     if not top or gate is None or not isinstance(sha, str) or not SHA.fullmatch(sha) or not base:
+        print(f"audit-check: --chain-audit cannot check ({'push_gate.py of the kit not found next to this script' if gate is None else 'bad repo / sha / base'})",
+              file=sys.stderr)
         return None
     try:
         if not edited_existing(top, sha, base, gate):
@@ -176,6 +178,7 @@ def chain_audit(sha, base, top=None):
         print(f"audit-check: cannot read the audit records: {error.__class__.__name__}", file=sys.stderr)
         return None
     if run.returncode != 0:
+        print(f"audit-check: --chain-audit cannot check (git rev-list {sha[:12]} --not {base} exit {run.returncode})", file=sys.stderr)
         return None
     pr_commits = set(run.stdout.split())
     return any(h in pr_commits for _tid, h in heads)

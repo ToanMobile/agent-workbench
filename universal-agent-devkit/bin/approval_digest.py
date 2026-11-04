@@ -193,6 +193,16 @@ def _all_audits(top):
         raise DigestError("audited_heads: %r" % (e,)) from e
 
 
+def _grok_runs(top):
+    """push_gate.grok_audit_runs(top): mọi lượt audit grok PM tự chạy (mọi project của pm home). Lỗi → DigestError (người gọi chạy gate)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import push_gate  # noqa: PLC0415 - sibling module in bin/
+        return push_gate.grok_audit_runs(top)
+    except Exception as e:  # noqa: BLE001 - any error: no digest, the caller runs the gate (fail closed)
+        raise DigestError("grok_audit_runs: %r" % (e,)) from e
+
+
 def _stat_sig(paths):
     sig = []
     for p in paths:
@@ -271,6 +281,8 @@ def digest(repo, transcript, status_z, commit_base=None, code_paths=()):
         _rc, chain = _git(top, "rev-list", "HEAD", "--not", trunk_ref)
         on_chain = set(chain.split())
         task_ids |= {t for t, h in audits if h in on_chain}
+        # review vòng 9: lượt grok (cả fail, mọi project) có head trên nhánh cũng đổi kết luận (post-fix-gate latest_fails)
+        task_ids |= {r[0] for r in _grok_runs(top) if r[1] in on_chain}
     if len(task_ids) > MAX_TASK_IDS:
         raise DigestError("%d task ids" % len(task_ids))
 

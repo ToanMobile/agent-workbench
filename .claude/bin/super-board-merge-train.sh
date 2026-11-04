@@ -268,7 +268,7 @@ edited_review_stale() {
   emeta=$(mktemp)
   gh pr view "$1" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
   src=$(bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$emeta" "$(head_of "$1")" \
-    --top "$REPO_PATH" --base "$BASE_SHA" 2>/dev/null) || et_rc=$?
+    --top "$REPO_PATH" --base "$BASE_SHA") || et_rc=$?   # stderr (lý do không kiểm được biên bản) vào log của train
   rm -f "$emeta"
   case "$et_rc" in 0) ;; 1) return 1 ;; *) exit "$et_rc" ;; esac
   # 04/11: duyệt tra thẳng biên bản PM không cũ khi base dời, nếu verify chạy post-fix-gate (audit_covers kiểm file test trên main).

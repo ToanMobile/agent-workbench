@@ -7,7 +7,8 @@
 #  G3 đối chứng: duyệt bằng comment edited-tests (đường cũ) + main tiến -> vẫn exit 2 stale như #643.
 #  G4 duyệt từ biên bản PM nhưng verify_commands không chạy post-fix-gate -> vẫn exit 2 (không ai kiểm lại trên base mới).
 #  G5 như G4 qua train.  G6 duyệt từ biên bản PM: biên nhận cây không bỏ verify (lượt grok sau có thể REVISE).
-#  G7 verify có gate = token post-fix-gate.py nguyên.
+#  G7 verify có gate = post-fix-gate.py ở vị trí chạy.  G8 không kiểm được biên bản (pm-unknown): khoá, không exit 2.
+#  G9 pm-unknown không dùng biên nhận cây.
 # Chạy offline với gh giả. Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -163,6 +164,33 @@ sb_verify_runs_gate "npm test" "cd x && python3 bin/post-fix-gate.py" || g7="$g7
 sb_verify_runs_gate "bash scripts/post-fix-gate-lite.sh" && g7="$g7 lite"
 sb_verify_runs_gate "echo post-fix-gate; npm test" && g7="$g7 echo"
 sb_verify_runs_gate "npm test" && g7="$g7 npm"
+sb_verify_runs_gate "echo post-fix-gate.py" && g7="$g7 echo.py"
+sb_verify_runs_gate "test -f universal-agent-devkit/bin/post-fix-gate.py && npm test" && g7="$g7 test-f"
+sb_verify_runs_gate "npm test # post-fix-gate.py" && g7="$g7 comment"
+sb_verify_runs_gate "universal-agent-devkit/bin/post-fix-gate.py --run-tests" || g7="$g7 trực-tiếp"
+sb_verify_runs_gate "sh tests/x.sh && bash kit/bin/post-fix-gate.py" || g7="$g7 sau-&&"
+sb_verify_runs_gate "python3 -u universal-agent-devkit/bin/post-fix-gate.py --run-tests" || g7="$g7 py-u"
+sb_verify_runs_gate "/usr/bin/python3 universal-agent-devkit/bin/post-fix-gate.py" || g7="$g7 py-tuyệt-đối"
+sb_verify_runs_gate "python3.12 universal-agent-devkit/bin/post-fix-gate.py" || g7="$g7 py3.12"
 [ -z "$g7" ] && ok "G7: chỉ token post-fix-gate.py nguyên là verify có gate" || fail "G7: sai ở:$g7"
+
+# G8 (review vòng 5): không kiểm được biên bản (bản gate chép ra ngoài, không thấy kit -> pm-unknown), main tiến, verify không có gate:
+#     vẫn lấy khoá (verify trong khoá) nhưng KHÔNG exit 2 — không có duyệt gắn head nào để cũ.
+cp -R "$ROOT/.claude/bin" "$TMP/gatebin"
+card 8 0; advance_main; reset_run
+( cd "$W/review" && bash "$TMP/gatebin/super-board-merge-gate.sh" --config "$TMP/cfg-nogate.json" --pr 8 --expect-head "$(cat "$TMP/pr8.head")" --subject card --lock-timeout 20 ) >"$TMP/g8.log" 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && grep -q "verifying inside the merge lock" "$TMP/g8.log" && ! grep -q "stale before fast-forward" "$TMP/g8.log" \
+    && grep -q "audit-check:" "$TMP/g8.log"; then   # lý do không kiểm được biên bản phải tới log gate (stderr không bị nuốt)
+  ok "G8: pm-unknown -> khoá, không exit 2"
+else fail "G8: exit $rc: $(tail -5 "$TMP/g8.log" | tr '\n' ' ')"; fi
+
+# G9 (OCR P3): pm-unknown với biên nhận cây đã có -> vẫn không dùng biên nhận, verify chạy lại (2 lượt dry-run -> 2 lần verify)
+card 9 0; reset_run
+for i in 1 2; do
+  ( cd "$W/review" && bash "$TMP/gatebin/super-board-merge-gate.sh" --config "$TMP/cfg.json" --pr 9 --expect-head "$(cat "$TMP/pr9.head")" --subject card --lock-timeout 20 --dry-run ) >"$TMP/g9-$i.log" 2>&1
+done
+runs9=$( [ -f "$TMP/verify.count" ] && wc -l < "$TMP/verify.count" | tr -d ' ' || echo 0)
+[ "$runs9" = 2 ] && ok "G9: pm-unknown -> không dùng biên nhận cây, verify chạy lại" || fail "G9: verify chạy $runs9 lần (muốn 2): $(grep -iE 'receipt' "$TMP/g9-2.log" | tail -2 | tr '\n' ' ')"
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

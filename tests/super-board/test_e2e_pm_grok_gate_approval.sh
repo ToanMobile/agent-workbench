@@ -9,7 +9,8 @@
 #  E2E3 grok REVISE -> không biên bản -> gate exit 2.   E2E4 pm_dispatch có message -> không tự ghi -> gate exit 2.
 #  E2E5 phiên chạy gate là grok -> exit 2 (tự duyệt).   E2E6 người gọi PM là grok -> PM từ chối, gate exit 2.
 #  E2E7 main tiến không chạm test, scratch merge gate -> vẫn duyệt.  E2E8 main sửa chính test sau audit -> exit 2.
-#  E2E9 grok PASS rồi REVISE cùng head -> exit 2.
+#  E2E9 grok PASS rồi REVISE cùng head -> exit 2.  E2E10 PASS rồi REVISE ở task MỚI cùng head -> exit 2.
+#  E2E11 test đổi tên rồi sửa -> duyệt theo đường mới.
 set -u
 export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -138,5 +139,27 @@ console.log(await TOOLS_BY_NAME.get("pm_dispatch").handler({ project, taskId: id
 printf '%s' "$OUT" | grep -q "VERDICT REVISE" || bad "E2E9: lượt grok REVISE không chạy trên task $T9: $(printf '%s' "$OUT" | tail -2)"
 run_gate "$TMP/e9" CLAUDECODE=1
 if refused; then ok "E2E9: PASS rồi REVISE cùng head -> không duyệt"; else bad "E2E9: rc=$RC, $(tailout)"; fi
+
+# E2E10 (OCR vòng 6). task 1 grok PASS; task MỚI (pm_task_create như thông điệp gate hướng dẫn) grok REVISE cùng head -> không duyệt
+mk "$TMP/e10"; pm "$TMP/e10" "$TMP/gpass" ""; pm "$TMP/e10" "$TMP/grev" ""
+run_gate "$TMP/e10" CLAUDECODE=1
+if refused; then ok "E2E10: REVISE ở task mới sau PASS -> không duyệt"; else bad "E2E10: rc=$RC, $(tailout)"; fi
+
+# E2E11 (OCR vòng 6). test bị ĐỔI TÊN rồi sửa một dòng: PM ghi cả đường cũ lẫn mới vào phạm vi, gate (báo theo đường mới) duyệt
+mkdir -p "$TMP/e11/src" "$TMP/e11/tests" && cd "$TMP/e11" || exit 1
+git init -q -b main . && git config user.email t@t && git config user.name t && git config commit.gpgsign false
+printf '.claude/audit-gate/\n.antigravity-pm/\n.antigravity-pm.json\n' > .gitignore
+printf '{"projectName":"e2e","testCommand":"sh tests/t2.sh"}\n' > .antigravity-pm.json
+mkdir -p .claude && echo '{"DEVKIT_IMPACT_TEST_ENABLED":"1","DEVKIT_REGRESSION_TEST_ENABLED":"1"}' > .claude/config.json
+printf '{"project":"t","rules":[{"component":"Core","watch_files":["src/*","tests/*"],"mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"sh tests/t2.sh"}]}]}\n' > matrix.json
+echo 'fun ok()=1' > src/Core.kt
+printf '#!/bin/sh\ngrep -q "ok" src/Core.kt\ngrep -q "fun" src/Core.kt\ngrep -q "1" src/Core.kt\ntrue\n' > tests/t.sh
+git add -A && git commit -qm M0 && git checkout -q -b feat && git mv tests/t.sh tests/t2.sh
+printf '#!/bin/sh\ngrep -q "ok()" src/Core.kt\ngrep -q "fun" src/Core.kt\ngrep -q "1" src/Core.kt\ntrue\n' > tests/t2.sh
+git add -A && git commit -qm "đổi tên + sửa test"
+pm "$TMP/e11" "$TMP/gpass" ""
+run_gate "$TMP/e11" CLAUDECODE=1
+if [ "$RC" = 0 ] && has "duyệt chéo bởi grok (thay Antigravity)"; then ok "E2E11: test đổi tên rồi sửa -> duyệt theo đường mới"
+else bad "E2E11: rc=$RC, $(tailout)"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

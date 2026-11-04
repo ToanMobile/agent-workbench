@@ -627,6 +627,29 @@ def audit_scope(top, task_id):
     return None
 
 
+def grok_audit_runs(top):
+    """[(task_id, auditedHead, verdict, at, edited, auditBase)] của MỌI lượt audit grok PM tự chạy (dispatches kind=audit, agent grok, auditedHead sha40)
+    của mọi task của repo — kể cả lượt fail (PM không ghi verdict khi grok REVISE). post-fix-gate không duyệt khi lượt mới nhất cho cùng
+    nội dung test (cùng head hoặc head sau) là fail, dù fail đó nằm ở task khác (OCR vòng 6). edited = danh sách phạm vi lượt đó ghi (None
+    khi không ghi: lượt có message / thiếu merge-base — PASS như thế không được tính là pass). at = finishedAt (giờ grok chạy xong) khi có,
+    không thì giờ giao (review vòng 6: hai lượt chạy chồng nhau xếp theo lúc xong). Cùng điều kiện pm home với audited_heads."""
+    if pm_home_overridden() and not pm_home_test_fixture():
+        return []
+    out = []
+    # OCR vòng 8: mọi task của pm home, không lọc theo project (lượt REVISE chạy từ worktree anh em ../<repo>-x vẫn phải chặn); người gọi
+    # chỉ giữ lượt có auditedHead trên chuỗi PR của mình — đó mới là bằng chứng lượt đó audit PR này.
+    for task in _repo_tasks(top, any_project=True):
+        for d in task.get("dispatches") if isinstance(task.get("dispatches"), list) else []:
+            if isinstance(d, dict) and d.get("kind") == "audit" and isinstance(d.get("auditedHead"), str) \
+                    and SHA40.fullmatch(d["auditedHead"]) \
+                    and normalize_reviewer(d.get("agent") if isinstance(d.get("agent"), str) else "") == "grok":
+                base = d.get("auditBase") if isinstance(d.get("auditBase"), str) and SHA40.fullmatch(d["auditBase"]) else None
+                ed = d.get("edited") if isinstance(d.get("edited"), list) and base else None
+                at = d.get("finishedAt") if isinstance(d.get("finishedAt"), str) and d["finishedAt"] else d.get("at")
+                out.append((task["id"], d["auditedHead"], str(d.get("verdict") or ""), str(at or ""), ed, base))
+    return out
+
+
 def head_after(top, base, head):
     """True khi `base` là tổ tiên của (hoặc chính là) `head` — auditedHead nằm SAU base, không phải một cây cũ hơn base mà task cũ đã
     audit (audit T0066 vòng 2, #605: chặn chép lùi test về bản yếu trước base rồi khai task cũ). Lỗi git, thiếu đối số → False."""
@@ -696,7 +719,7 @@ def _task_audits(top, task_id):
         yield (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
 
 
-def _repo_tasks(top, task_id=None):
+def _repo_tasks(top, task_id=None, any_project=False):
     """task.json (dict) của task `task_id`, hoặc của MỌI task khi None, mà `project` thuộc repo này (top, hoặc checkout chính khi top
     là linked worktree của cùng repo)."""
     roots = [top]
@@ -718,7 +741,7 @@ def _repo_tasks(top, task_id=None):
         except (OSError, ValueError, RecursionError):
             continue
         if not isinstance(task, dict) or not isinstance(task.get("id"), str) or (task_id is not None and task["id"] != task_id) \
-                or not any(_inside(task.get("project"), r) for r in roots):
+                or not (any_project or any(_inside(task.get("project"), r) for r in roots)):
             continue
         yield task
 

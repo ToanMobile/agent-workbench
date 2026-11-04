@@ -923,7 +923,7 @@ edited_query() {
   local et_rc
   [ -z "$EDITED" ] || return 0
   if EDITED_SRC=$(bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" \
-      --top "$REPO_PATH" --base "$BASE_SHA" 2>/dev/null); then
+      --top "$REPO_PATH" --base "$BASE_SHA"); then   # stderr (lý do không kiểm được biên bản) vào log của gate
     EDITED=1
   else
     et_rc=$?
@@ -953,10 +953,10 @@ prove_tree() {
     # 04/11 (review P2-2): duyệt test sửa tra thẳng biên bản PM không nằm trong khoá biên nhận (cây + lệnh): lượt grok sau trên cùng head
     # có thể đã REVISE. Verify (post-fix-gate) phải đọc lại biên bản — không dùng biên nhận cây cho PR đó.
     edited_query
-    if [ "$EDITED_SRC" = pm ] || [ "$EDITED_SRC" = pm-unknown ]; then
-      say "tree receipt ${TREE_KEY:0:12} not used: the edited-test approval comes from the antigravity-pm record ($EDITED_SRC), which verify must re-read"
-    else
+    if [ "$EDITED_SRC" = true ] || [ "$EDITED_SRC" = false ]; then
       TRAIN_PROVED=1; TREE_PROVED=1
+    else
+      say "tree receipt ${TREE_KEY:0:12} not used: the edited-test approval comes from the antigravity-pm record (${EDITED_SRC:-?}), which verify must re-read"
     fi
   fi
   # #676: --require-receipt (train): cây gộp với base HIỆN TẠI chưa được chứng minh (base dời sau verify của train) ⇒ không verify ở

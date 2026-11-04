@@ -7,7 +7,8 @@
 #  N1-N8: phiên là grok; audit mới hơn khác blob; pm home lạ không phải fixture; reviewer pm không dispatch (biên bản cũ); auditedHead đã
 #      nằm trên main; mục json tự khai author grok-build; head chỉ còn trong auditHistory; hai biên bản cùng task id (reviewer khác biên bản).
 #  N9-N11: lượt grok không ghi phạm vi; test ngoài danh sách edited; auditBase muộn hơn merge-base. N12 PASS rồi fail cùng head.
-#  N13 auditBase muộn hơn merge-base dù edited có test.
+#  N13 auditBase muộn hơn merge-base dù edited có test. N14/N14c REVISE ở task khác / PASS mới hơn. N15/N15c REVISE ở head sau
+#  (cùng / khác blob). N16 PASS do message dẫn không đè REVISE. N17 REVISE thiếu at coi là mới nhất.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 unset DEVKIT_AUTO_APPROVE_TESTS DEVKIT_TRANSCRIPTS_DIR TARGET_DIR DEVKIT_AGENT_ID CLAUDE_CODE_SESSION_ID DEVKIT_SESSION_ID CLAUDE_SESSION_ID
@@ -185,5 +186,86 @@ mk "$TMP/n13"; pr_commit "$V1" "PR sửa test" >/dev/null; echo 'fun other()=13'
 X="$(git rev-parse HEAD)"; pm_grok T1131-n13 "$TMP/n13" "$X" p-n13 latefull
 run_gate "$TMP/n13"
 if refused; then ok "N13: auditBase muộn hơn merge-base dù edited có test -> không duyệt"; else bad "N13: phạm vi muộn: rc=$RC, $(tailout)"; fi
+
+# N14 (OCR vòng 6): T1 grok PASS ở head; task KHÁC T2 chạy grok cùng head trả REVISE (lượt fail, không verdict) -> không duyệt.
+#     N14c: task thứ ba T3 sau đó grok PASS cùng head -> lượt mới nhất pass -> nhận.
+grok_fail() {   # grok_fail <task-id> <project> <head> <at> <dir>: task chỉ có một lượt grok fail (PM không ghi verdict khi fail)
+  mkdir -p "$TMP/pm/projects/$5/tasks/$1"
+  printf '{"id":"%s","project":"%s","dispatches":[{"kind":"audit","agent":"grok","at":"%s","auditedHead":"%s","verdict":"fail"}]}\n' \
+    "$1" "$(cd "$2" && pwd -P)" "$4" "$3" > "$TMP/pm/projects/$5/tasks/$1/task.json"
+}
+mk "$TMP/n14"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1141-n14 "$TMP/n14" "$X" p-n14a
+grok_fail T1142-n14 "$TMP/n14" "$X" "2026-11-04T05:00:00Z" p-n14b
+run_gate "$TMP/n14"
+if refused; then ok "N14: REVISE mới hơn ở task khác, cùng head -> không duyệt"; else bad "N14: REVISE task khác: rc=$RC, $(tailout)"; fi
+python3 - "$TMP/pm/projects/p-n14a/tasks/T1141-n14/task.json" "$TMP/pm/projects/p-n14c/tasks/T1143-n14/task.json" <<'PY'
+import json, os, sys
+src, dest = sys.argv[1:3]
+t = json.load(open(src)); t["id"] = "T1143-n14"
+for d in t["dispatches"]:
+    d["at"] = "2026-11-04T06:00:00Z"
+os.makedirs(os.path.dirname(dest), exist_ok=True); json.dump(t, open(dest, "w"))
+PY
+run_gate "$TMP/n14"
+if [ "$RC" = 0 ] && has "duyệt chéo bởi grok (thay Antigravity)"; then ok "N14c: PASS mới hơn REVISE (task thứ ba) -> nhận"; else bad "N14c: PASS sau REVISE: rc=$RC, $(tailout)"; fi
+
+# N15 (OCR vòng 6b): PASS ở X; REVISE ở head SAU (X2, cùng blob test) ở task khác -> không duyệt.
+#     N15c: REVISE ở X2 nhưng test ở X2 khác blob (V2), rồi test về V1 ở X3 -> REVISE không xét V1 -> nhận (qua audit X).
+mk "$TMP/n15"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1151-n15 "$TMP/n15" "$X" p-n15a
+echo 'fun other()=15' > src/Other.kt && git commit -qam "PR tiếp"; X2="$(git rev-parse HEAD)"
+grok_fail T1152-n15 "$TMP/n15" "$X2" "2026-11-04T05:00:00Z" p-n15b
+run_gate "$TMP/n15"
+if refused; then ok "N15: REVISE ở head sau, cùng blob test -> không duyệt"; else bad "N15: REVISE head sau: rc=$RC, $(tailout)"; fi
+mk "$TMP/n15c"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1153-n15c "$TMP/n15c" "$X" p-n15ca
+X2="$(pr_commit "$V2" "V2")"; grok_fail T1154-n15c "$TMP/n15c" "$X2" "2026-11-04T05:00:00Z" p-n15cb
+printf "$V1" > tests/t.sh; git commit -qam "về V1"
+run_gate "$TMP/n15c"
+if [ "$RC" = 0 ] && has "duyệt chéo bởi grok (thay Antigravity) (task T1153-n15c)"; then ok "N15c: REVISE xét blob khác -> không chặn V1 đã PASS"
+else bad "N15c: REVISE blob khác: rc=$RC, $(tailout)"; fi
+
+# N16 (OCR vòng 6b, P1): PASS có phạm vi (A), REVISE (B), rồi lượt grok có `message` PASS (C, không ghi phạm vi, mới nhất) -> không duyệt
+mk "$TMP/n16"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1161-n16 "$TMP/n16" "$X" p-n16a
+grok_fail T1162-n16 "$TMP/n16" "$X" "2026-11-04T05:00:00Z" p-n16b
+mkdir -p "$TMP/pm/projects/p-n16c/tasks/T1163-n16"
+printf '{"id":"T1163-n16","project":"%s","dispatches":[{"kind":"audit","agent":"grok","at":"2026-11-04T06:00:00Z","auditedHead":"%s","verdict":"pass"}]}\n' \
+  "$(pwd -P)" "$X" > "$TMP/pm/projects/p-n16c/tasks/T1163-n16/task.json"
+run_gate "$TMP/n16"
+if refused; then ok "N16: PASS do message dẫn (không phạm vi) không đè REVISE -> không duyệt"; else bad "N16: message PASS: rc=$RC, $(tailout)"; fi
+
+# N17 (OCR vòng 6b): REVISE cùng `at` với PASS -> fail thắng; REVISE thiếu `at` -> coi là mới nhất -> không duyệt
+mk "$TMP/n17"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1171-n17 "$TMP/n17" "$X" p-n17a
+grok_fail T1172-n17 "$TMP/n17" "$X" "" p-n17b
+run_gate "$TMP/n17"
+if refused; then ok "N17: REVISE thiếu at -> coi là mới nhất -> không duyệt"; else bad "N17: fail thiếu at: rc=$RC, $(tailout)"; fi
+
+# N17b (review vòng 6): PASS và REVISE trùng `at` -> fail thắng -> không duyệt
+mk "$TMP/n17b"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1173-n17b "$TMP/n17b" "$X" p-n17ba
+grok_fail T1174-n17b "$TMP/n17b" "$X" "2026-11-04T00:00:00Z" p-n17bb
+run_gate "$TMP/n17b"
+if refused; then ok "N17b: PASS và REVISE trùng at -> fail thắng"; else bad "N17b: trùng at: rc=$RC, $(tailout)"; fi
+
+# N18 (review vòng 6): REVISE phạm vi đầy đủ (B), rồi PASS mới hơn nhưng phạm vi muộn (C: auditBase = head^, edited vẫn có test vì test
+#     đổi ở commit cuối) -> PASS đó không đè REVISE -> không duyệt (A là PASS phạm vi đầy đủ cũ hơn REVISE)
+mk "$TMP/n18"; echo 'fun other()=18' > src/Other.kt && git commit -qam "PR code trước"; X="$(pr_commit "$V1" "PR sửa test ở commit cuối")"
+pm_grok T1181-n18 "$TMP/n18" "$X" p-n18a
+grok_fail T1182-n18 "$TMP/n18" "$X" "2026-11-04T05:00:00Z" p-n18b
+pm_grok T1183-n18 "$TMP/n18" "$X" p-n18c late
+python3 - "$TMP/pm/projects/p-n18c/tasks/T1183-n18/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]; t = json.load(open(p))
+t["dispatches"][0]["at"] = "2026-11-04T06:00:00Z"
+json.dump(t, open(p, "w"))
+PY
+run_gate "$TMP/n18"
+if refused; then ok "N18: PASS phạm vi muộn không đè REVISE phạm vi đầy đủ"; else bad "N18: PASS phạm vi muộn: rc=$RC, $(tailout)"; fi
+
+# N19 (OCR vòng 8, P2): REVISE chạy từ worktree ANH EM (project ngoài checkout chính, kiểu agent-kit worktree add ../<repo>-x) cùng head
+#     -> vẫn chặn: lượt fail có auditedHead trên chuỗi PR là của PR này dù project ở đâu
+mk "$TMP/n19"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1191-n19 "$TMP/n19" "$X" p-n19a
+mkdir -p "$TMP/n19-sibling" "$TMP/pm/projects/p-n19b/tasks/T1192-n19"
+printf '{"id":"T1192-n19","project":"%s","dispatches":[{"kind":"audit","agent":"grok","at":"2026-11-04T05:00:00Z","auditedHead":"%s","verdict":"fail"}]}\n' \
+  "$(cd "$TMP/n19-sibling" && pwd -P)" "$X" > "$TMP/pm/projects/p-n19b/tasks/T1192-n19/task.json"
+run_gate "$TMP/n19"
+if refused; then ok "N19: REVISE từ worktree anh em cùng head -> không duyệt"; else bad "N19: REVISE worktree anh em: rc=$RC, $(tailout)"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

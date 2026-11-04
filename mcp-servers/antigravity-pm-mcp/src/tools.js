@@ -149,11 +149,21 @@ async function auditRange(cfg, head) {
     const mb = await git(['merge-base', trunk, head]);
     const base = ok(mb) ? String(mb.stdout).trim() : '';
     if (!/^[0-9a-f]{40}$/.test(base)) continue;   // Grok P3: nhanh nay khong co merge-base voi head -> thu nhanh dich ke tiep
-    const ns = await git(['diff', '--name-status', '--no-renames', '-z', base, head]);
+    // OCR vong 6: doi ten roi sua (R) -> ghi ca duong cu va duong MOI (gate bao test sua theo duong moi); R/C co 2 duong sau trang thai.
+    const ns = await git(['diff', '--name-status', '-M', '-z', base, head]);
     if (!ok(ns)) return { base: null };
     const parts = String(ns.stdout).split('\0');
     const edited = [];
-    for (let i = 0; i + 1 < parts.length; i += 2) if (/^[MDT]/.test(parts[i])) edited.push(parts[i + 1]);
+    for (let i = 0; i + 1 < parts.length;) {
+      const st = parts[i];
+      if (/^[RC]/.test(st)) {
+        if (st[0] === 'R') edited.push(parts[i + 1], parts[i + 2]);
+        i += 3;
+      } else {
+        if (/^[MDT]/.test(st)) edited.push(parts[i + 1]);
+        i += 2;
+      }
+    }
     return { base, trunk, edited };
   }
   return { base: null };
@@ -858,6 +868,7 @@ export const TOOLS = [
           kind: 'audit', agent: 'grok', model: GROK_MODEL, promptFile, at,
           extra: {
             conversationId: null, auditedHead: head, verdict, grokVerdicts: v.lines, exitCode: r.code, timedOut: r.timedOut, reportSha256, logFile,
+            finishedAt: nowIso(),   // gate DevKit xep cac lan grok theo luc chay XONG (hai lan chay chong nhau)
             ...(fullScope && { auditBase: range.base, edited: range.edited }),
           },
         });

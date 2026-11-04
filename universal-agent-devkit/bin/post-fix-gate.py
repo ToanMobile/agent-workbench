@@ -816,7 +816,8 @@ def _pm_audit_cross_review(paths: list, project_root, declared: dict) -> dict:
     đó là grok PM tự chạy có ghi phạm vi (push_gate.audit_scope: auditBase là tổ tiên-hoặc-chính merge-base(trunk, head) và file nằm trong
     danh sách edited đã đưa grok — audit phạm vi hẹp như /giao không duyệt test sửa trước phạm vi đó); rồi audit_covers như hai nguồn kia.
     Mọi lỗi → không duyệt (fail closed). ponytail: không biết ai là tác giả test (git không ghi agent) — như trailer; nâng khi PM ghi
-    builder của PR."""
+    builder của PR. Chạy lại grok trên cùng nội dung tới khi PASS thì lượt PASS mới nhất thắng (như luồng cũ: ai cũng audit lại được).
+    """
     if not paths:
         return {}
     try:
@@ -840,10 +841,45 @@ def _pm_audit_cross_review(paths: list, project_root, declared: dict) -> dict:
             rc_m, mb = _git_out(root, "merge-base", ch[0], head)
             if rc_m == 0 and mb and _is_ancestor(root, scope[0], mb):
                 cands.append((head, rv, tid, set(scope[1])))
+        # OCR vòng 6: lượt grok fail ở task KHÁC (luồng chuẩn: pm_task_create mới mỗi lần audit lại) cũng chặn — lượt mới nhất (theo `at`)
+        # cho cùng blob của test, ở head này hoặc head sau trên chuỗi, phải pass. Vòng 6b: pass chỉ tính khi lượt đó có phạm vi chứa file
+        # (PASS do `message` của tác giả dẫn không đè REVISE); fail luôn tính, cả khi không đọc được blob; trùng `at` thì fail thắng, fail
+        # thiếu `at` coi là mới nhất. "Head sau" theo vị trí trong ch[3] (mới nhất trước), không gọi git.
+        idx = {h: i for i, h in enumerate(ch[3])}
+        runs = [r[1:] for r in _push_gate().grok_audit_runs(root) if r[1] in on_chain] if cands else []
+        blob, mbs = {}, {}
+
+        def scope_ok(base, h):
+            """auditBase là tổ tiên-hoặc-chính merge-base(trunk, h): phạm vi lượt đó phủ mọi commit PR tới h (luật N13)."""
+            if h not in mbs:
+                rc_mb, out_mb = _git_out(root, "merge-base", ch[0], h)
+                mbs[h] = out_mb if rc_mb == 0 else ""
+            return bool(base and mbs[h]) and _is_ancestor(root, base, mbs[h]) is True
+
+        def blob_at(h, f):
+            if (h, f) not in blob:
+                rc_b, out_b = _git_out(root, "rev-parse", "--verify", "-q", f"{h}:{prefix}{f}")
+                blob[(h, f)] = out_b if rc_b == 0 else ""
+            return blob[(h, f)]
+
+        def latest_fails(f, head):
+            mine, rel = blob_at(head, f), []
+            for h2, v, at, ed, base in runs:
+                if idx[h2] > idx[head]:
+                    continue                          # lượt ở head cũ hơn: audit_covers luật 4 lo
+                b2 = blob_at(h2, f)
+                if v == "pass":
+                    if b2 == mine and isinstance(ed, list) and prefix + f in ed and scope_ok(base, h2):
+                        rel.append((at, 0, v))
+                elif not b2 or b2 == mine:
+                    rel.append((at or "~", 1, v))
+            return bool(rel) and max(rel)[2] != "pass"
+
         out = {}
         for f in paths if cands else []:
             for head, rv, tid, edited in cands:
-                if prefix + f in edited and rv not in declared.get(f, ()) and audit_covers(root, prefix, project_root, f, head)[0]:
+                if prefix + f in edited and rv not in declared.get(f, ()) and not latest_fails(f, head) \
+                        and audit_covers(root, prefix, project_root, f, head)[0]:
                     out[f] = (rv, tid)
                     break
         return out
