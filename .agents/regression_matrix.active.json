@@ -3432,6 +3432,24 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-hook-cached-python",
+      "watch_files": [
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/hardware_safety_gate_main.py",
+        "universal-agent-devkit/hooks/block_dangerous_git_main.py",
+        "universal-agent-devkit/tests/gates/test_hook_cached_python.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-HOOK-CACHED-PY-01",
+          "name": "04/11 (#967): python của hardware_safety_gate.sh / block-dangerous-git.sh là module cạnh hook, bytecode chỉ ở thư mục riêng $TMPDIR/devkit-pycache-$UID (thư mục nhóm ghi được / symlink thì không dùng, không bao giờ __pycache__ cạnh hook); thiếu hoặc hỏng module thì chặn rc 2 nêu tên module; phán quyết giữ nguyên",
+          "command": "bash universal-agent-devkit/tests/gates/test_hook_cached_python.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
