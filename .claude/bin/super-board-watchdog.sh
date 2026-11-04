@@ -315,8 +315,11 @@ run_capped() {   # run_capped <giây> <lệnh…>: hết giờ thì TERM rồi K
     if (!$p) { setpgrp(0, 0); sigprocmask(SIG_SETMASK, $old); exec @ARGV; exit 127 }
     setpgrp($p, 0); sigprocmask(SIG_SETMASK, $old);
     # bash cha bị TERM (launchd bootout, AbandonProcessGroup) thì wrapper mồ côi, getppid đổi: dừng thay vì sống tới hết hạn.
-    my $pp = getppid; alarm $t;
-    while (1) { my $w = waitpid($p, WNOHANG); last if $w != 0; stop(143, "TERM") if getppid != $pp; select(undef, undef, undef, 0.5) }
+    # Chu kỳ chờ 0,02 s nhân đôi, trần 0,5 s: lệnh xong tức thì không phải ngủ chẵn 0,5 s (mỗi gh/card của watchdog),
+    # lệnh dài vẫn chỉ thức mỗi 0,5 s.
+    my $pp = getppid; my $d = 0.02; alarm $t;
+    while (1) { my $w = waitpid($p, WNOHANG); last if $w != 0; stop(143, "TERM") if getppid != $pp;
+      select(undef, undef, undef, $d); $d = $d * 2 > 0.5 ? 0.5 : $d * 2 }
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
 }
 GH_CAP="${SB_BOARD_GH_TIMEOUT:-20}"

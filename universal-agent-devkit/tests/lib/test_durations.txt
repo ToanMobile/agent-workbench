@@ -315,9 +315,16 @@
 2 tests/gates/test_regression_gate_stale_label.sh
 55 tests/gates/test_gate_readonly_receipt_race.sh
 3 tests/gates/test_tree_fp_checklist_temp.sh
-30 tests/gates/test_guard_shell_norm.sh
+# 03/11 lane 2 (shard GATES-01): test_guard_shell_norm.sh tách 5 file, _load_retry.sh tách 3 file theo chế độ (đo ở tải 25–50)
+80 tests/gates/test_guard_shell_norm.sh
+53 tests/gates/test_guard_shell_norm_reader.sh
+103 tests/gates/test_guard_shell_norm_r4.sh
+193 tests/gates/test_guard_shell_norm_r5.sh
+185 tests/gates/test_guard_shell_norm_r6.sh
 30 tests/gates/test_guard_shell_norm_monotonic.sh
-30 tests/gates/test_guard_shell_norm_load_retry.sh
+108 tests/gates/test_guard_shell_norm_load_retry.sh
+203 tests/gates/test_guard_shell_norm_load_retry_always.sh
+185 tests/gates/test_guard_shell_norm_load_retry_blocks.sh
 10 tests/gates/test_hook_big_command_fast_path.sh
 3 tests/verification/test_evidence_check7_pair.sh
 1 tests/gates/test_review_claim_follow_worktree.sh
