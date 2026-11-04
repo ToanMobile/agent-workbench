@@ -5,16 +5,16 @@ import { loadConfig, existingRulesFiles, CONFIG_NAME, withGateSnapshot } from '.
 import {
   createTask, loadTask, listTasks, save, updateTask, setPhase, recordVerdict, recordRun, recordProof,
   recordDispatch, markRework, accept, gate, freshness, contractPaths, addHistory, PHASES, TASK_TYPES,
-  discardProofs, anhTrung, hashFile, ackWarning, locCanhBaoDaXem, ghiMocGiao, chupThemCam } from './tasks.js';
+  discardProofs, anhTrung, hashFile, ackWarning, locCanhBaoDaXem, ghiMocGiao, chupThemCam, headCommitOf } from './tasks.js';
 import {
   newConversation, sendMessage, getConversationMetadata, conversationProgress, transcriptErrors, MODELS, isAgyModel, agyPath, agyTurnStatus, agyTurnStatusSafe, agyRegistryProblem, agyPermissionPolicy,
-  sameProcess, reapTurnLeftovers,
+  sameProcess, reapTurnLeftovers, grokPath, runGrokAudit, grokVerdictOf, GROK_MODEL,
 } from './agentapi.js';
 import { discover, agentapiPath } from './discover.js';
 import { requireProjectId, resolveProject } from './projects.js';
 import {
   buildPlanCritiquePrompt, buildImplementMessage, buildReworkMessage, buildAuditPrompt,
-  buildProofRequestMessage, buildNudgeMessage, planTemplate, kiemTraKeHoach, buildPlanReviewFixMessage,
+  buildProofRequestMessage, buildNudgeMessage, planTemplate, kiemTraKeHoach, buildPlanReviewFixMessage, buildGrokAuditPrompt,
 } from './prompt.js';
 import { captureProof, describeProviders, adbReadinessLines } from './proof.js';
 import { renderReport } from './report.js';
@@ -25,7 +25,7 @@ import { collectTestEvidence, evidenceLine } from './evidence.js';
 import { replayOracle, oracleLine } from './oracle.js';
 import { kiemBaoCao, dongTomTat } from './cite-check.js';
 import { soiThayDoi } from './lint-diff.js';
-import { gitSnapshot, changedFilesOf, baseCommitOf, gateCtx, dongBangCay, goWorktree } from './worktree.js';
+import { gitSnapshot, changedFilesOf, baseCommitOf, gateCtx, dongBangCay, goWorktree, thuMucTrangThai } from './worktree.js';
 import { hashOf, deltaKeHoach, tinhTrangPhanBien, projectIdFor } from './plan-review.js';
 import { cacTaskDangChayKhac, canhBaoTruocKhiGiao } from './dispatch-guard.js';
 import { run, runShell, writeFileAtomic, ensureDir, exists, tail, truncate, nowIso, readJsonIfExists, killGroup } from './util.js';
@@ -83,6 +83,54 @@ export function pathspecArgs(pathspec) {
   const parts = (Array.isArray(pathspec) ? pathspec : String(pathspec ?? '').split(/\s+/))
     .map((x) => String(x).trim()).filter(Boolean);
   return parts.length ? ['--', ...parts] : [];
+}
+
+/** Tap ky tu strip CHUNG voi push_gate._AGENT_WS (vong kiem lai H3): hop cua trim() JS (co ﻿) va str.strip() Python (co \x1c-\x1f, \x85). */
+const AGENT_WS = '\\t\\n\\v\\f\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff';
+const AGENT_TRIM = new RegExp(`^[${AGENT_WS}]+|[${AGENT_WS}]+$`, 'g');
+const agentText = (x) => String(x || '').replace(AGENT_TRIM, '').toLowerCase();
+/** grok, grok-4.7, grok-build, "grok build", "grok:"... la Grok (khong khop "grokx", "grok4"). */
+const laGrok = (x) => /^grok(?![a-z0-9])/.test(agentText(x));
+/** Ten agent chuan hoa, khop push_gate.normalize_reviewer (H3): cung tap strip, grok theo laGrok, antigravity roi het chuoi hoac - _ . -> antigravity,
+ *  con lai chu thuong (ten khac chi so trong cung mot ben: toLowerCase o day, casefold o Python). */
+function normalizeAgent(x) {
+  const v = agentText(x);
+  if (laGrok(v)) return 'grok';
+  if (/^antigravity(?:$|[-_.])/.test(v)) return 'antigravity';
+  return v;
+}
+/**
+ * Danh tinh agent goi PM (dot 2 F2, mot gia tri; ban Python: push_gate.session_agent; tu duyet xet TAP: callerAgents): DEVKIT_AGENT_ID chuan hoa neu co; khong thi "grok" khi
+ * env co GROK_SESSION_ID / GROK_WORKSPACE_ROOT / GROK_HOOK_EVENT; khong thi "claude" khi CLAUDECODE=1 hoac CLAUDE_CODE_SESSION_ID;
+ * khong thi "" (khong biet).
+ */
+export function callerAgent(env = process.env) {
+  const id = normalizeAgent(env.DEVKIT_AGENT_ID);
+  if (id) return id;
+  if (['GROK_SESSION_ID', 'GROK_WORKSPACE_ROOT', 'GROK_HOOK_EVENT'].some((k) => env[k])) return 'grok';
+  if (env.CLAUDECODE === '1' || env.CLAUDE_CODE_SESSION_ID) return 'claude';
+  return '';
+}
+/**
+ * TAP danh tinh phien goi PM (vong kiem lai H4; ban Python: push_gate.session_agents): {DEVKIT_AGENT_ID chuan hoa} + {grok khi GROK_*}
+ * + {claude khi CLAUDECODE=1 / CLAUDE_CODE_SESSION_ID}, bo rong. DEVKIT_AGENT_ID=codex trong phien Grok van la grok: tu duyet xet ca tap.
+ */
+export function callerAgents(env = process.env) {
+  const out = new Set([normalizeAgent(env.DEVKIT_AGENT_ID)]);
+  if (['GROK_SESSION_ID', 'GROK_WORKSPACE_ROOT', 'GROK_HOOK_EVENT'].some((k) => env[k])) out.add('grok');
+  if (env.CLAUDECODE === '1' || env.CLAUDE_CODE_SESSION_ID) out.add('claude');
+  out.delete('');
+  return out;
+}
+
+/** Dong `git status --porcelain --untracked-files=no` cua projectRoot, bo thu muc trang thai PM (F5): { error } hoac { dirty: [...] }. */
+async function trackedChanges(cfg) {
+  const st = await run('git', ['status', '--porcelain', '-z', '--no-renames', '--untracked-files=no'], { cwd: cfg.projectRoot, timeoutMs: 60000, maxBytes: 16_000_000 });
+  if (st.spawnFailed || st.timedOut || st.code !== 0 || st.truncated) {
+    return { error: `exit ${st.code}${st.timedOut ? ', qua han' : ''}${st.truncated ? ', output bi cat' : ''}` };
+  }
+  const stateDir = thuMucTrangThai(cfg);
+  return { dirty: String(st.stdout).split('\0').filter((e) => e.length > 3 && !e.slice(3).startsWith(stateDir)) };
 }
 
 /** Cong chan kem bang chung do duoc tu git ngay luc goi. */
@@ -599,6 +647,7 @@ export const TOOLS = [
         focus: { type: 'string', enum: ['full', 'delta'], description: 'plan_review: delta = chi phan bien phan doi so voi ban truoc' },
         message: { type: 'string', description: 'custom: noi dung · proof: can chung minh gi · audit: trong tam' },
         model: { type: 'string', enum: MODELS },
+        agent: { type: 'string', enum: ['antigravity', 'grok'], description: 'audit: grok = PM tu chay grok (thay Antigravity khi agy bi gioi han)' },
         force: { type: 'boolean', description: 'Bo qua kiem tra giai doan' },
       },
       required: ['taskId', 'kind'],
@@ -612,6 +661,7 @@ export const TOOLS = [
       validate(this.inputSchema, args);
       const kind = args.kind;
       const L = [];
+      if (args.agent === 'grok' && kind !== 'audit') fail('agent=grok chi dung cho kind=audit.');
 
       if (kind === 'plan_review') {
         if (!freshness(cfg, task).planExists) {
@@ -715,6 +765,66 @@ export const TOOLS = [
         ].join('\n');
       }
 
+      if (kind === 'audit' && args.agent === 'grok') {
+        // Chu repo 03/11/2026: Grok tam thay Antigravity audit khi agy bi gioi han. Reviewer chi duoc tin vi PM TU chay grok va TU ghi
+        // audit-agent.json; sha256 cua file luu vao lan giao de pm_verdict chan ban ghi de tay.
+        // F2/H4: grok thuoc TAP danh tinh nguoi goi PM (ke ca DEVKIT_AGENT_ID khac trong phien Grok) = grok audit viec cua chinh no,
+        // tu duyet (force khong bo qua).
+        if (callerAgents().has('grok')) fail('Nguoi goi PM la grok — grok khong audit duoc viec cua chinh no (tu duyet). Nho agent khac audit.');
+        // F5: audit phai dung bytes cua HEAD: cay lam viec co thay doi da theo doi (ke ca da stage) thi tu choi; loi git / output bi
+        // cat = tu choi. Bo thu muc trang thai cua PM (nhu gitSnapshot): audit-agent.json PM tu ghi, neu repo track thu muc do thi
+        // lan audit lai khong bi chan boi chinh bao cao cu.
+        const st = await trackedChanges(cfg);
+        if (st.error) fail(`Khong doc duoc git status cua project (${st.error}) — khong chay grok.`);
+        if (st.dirty.length) {
+          fail(`git status --porcelain --untracked-files=no khong rong — cay lam viec khac HEAD, grok se audit bytes chua commit:\n${st.dirty.slice(0, 20).join('\n')}\nCommit hoac bo thay doi roi giao lai.`);
+        }
+        const grok = grokPath();
+        if (!grok) fail(`Khong tim thay grok chay duoc (${process.env.ANTIGRAVITY_PM_GROK || '~/.grok/bin/grok'}). Cai grok hoac tro ANTIGRAVITY_PM_GROK vao dung file.`);
+        const head = headCommitOf(cfg.projectRoot);
+        if (!head) fail('Khong doc duoc HEAD cua project (git) — khong biet audit cay nao, khong chay grok.');
+        const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '' });
+        const promptFile = saveOutgoing(cfg, task, `prompt-audit-grok-r${task.round}`, prompt);
+        // Moc giao chot TRUOC khi chay: bao cao PM ghi sau moc nay (pm_verdict tu choi bao cao cu hon lan giao audit gan nhat).
+        const at = nowIso();
+        const r = await runGrokAudit({ grok, cwd: cfg.projectRoot, prompt });
+        // H5 (TOCTOU cua F5): cung lenh git status ngay sau grok; cay doi trong luc audit (hoac khong doc duoc) -> bao cao fail kem ly do.
+        const stAfter = await trackedChanges(cfg);
+        const pd = contractPaths(cfg, task);
+        const logFile = path.join(ensureDir(pd.logsDir), `audit-grok-r${task.round}-${Date.now()}.log`);
+        writeFileAtomic(logFile, `${r.stdout}\n--- stderr ---\n${r.stderr}`);
+        const v = grokVerdictOf(r.stdout);
+        const headAfter = headCommitOf(cfg.projectRoot);
+        const why = [];
+        if (r.spawnFailed) why.push('khong chay duoc grok');
+        if (r.timedOut) why.push('qua han');
+        if (r.code !== 0) why.push(`exit ${r.code}`);
+        if (!v.lines.length) why.push('khong co dong VERDICT');
+        if (headAfter !== head) why.push(`HEAD doi trong luc audit (${head} -> ${headAfter || '?'})`);
+        if (stAfter.error) why.push(`khong doc duoc git status sau audit (${stAfter.error})`);
+        else if (stAfter.dirty.length) why.push(`cay lam viec doi trong luc audit (git status --untracked-files=no khong rong: ${stAfter.dirty.slice(0, 5).join(', ')})`);
+        const verdict = why.length ? 'fail' : v.verdict;
+        const repFile = path.join(pd.dir, 'audit-agent.json');
+        writeFileAtomic(repFile, `${JSON.stringify({
+          phase: 'AUDIT', verdict, reviewer: 'grok', model: GROK_MODEL, auditedHead: head, findings: [],
+          notes: `Grok thay Antigravity (agy bi gioi han): PM tu chay grok ${GROK_MODEL} --permission-mode plan; VERDICT: ${v.lines.join(', ') || '(khong co)'}`
+            + `${why.length ? `; loi: ${why.join('; ')}` : ''}; log: ${logFile}`,
+        }, null, 2)}\n`);
+        const reportSha256 = hashFile(repFile);
+        if (task.phase === 'IMPLEMENT') setPhase(cfg, task, 'AUDIT', 'pm', 'da giao audit grok');
+        recordDispatch(cfg, task, {
+          kind: 'audit', agent: 'grok', model: GROK_MODEL, promptFile, at,
+          extra: { conversationId: null, auditedHead: head, verdict, grokVerdicts: v.lines, exitCode: r.code, timedOut: r.timedOut, reportSha256, logFile },
+        });
+        return [
+          `Da chay AUDIT grok (${GROK_MODEL}, plan mode) tren ${head}: VERDICT ${v.lines.at(-1) || '(khong co)'} -> audit-agent.json verdict=${verdict}.`,
+          ...(why.length ? [`CANH BAO: ${why.join('; ')} — bao cao ghi fail.`] : []),
+          `Bao cao: ${repFile} (sha256 ${reportSha256})`,
+          `Log grok: ${logFile}`,
+          'PM van la nguoi chot: doc log + tu kiem tra, roi pm_verdict kind=audit (pass can auditedHead dung head tren).',
+        ].join('\n');
+      }
+
       if (kind === 'audit') {
         const prompt = buildAuditPrompt(cfg, task, args.message || '');
         const promptFile = saveOutgoing(cfg, task, `prompt-audit-r${task.round}`, prompt);
@@ -724,7 +834,7 @@ export const TOOLS = [
         });
         updateTask(cfg, task, (t) => { t.auditConversationId = conversationId; });
         if (task.phase === 'IMPLEMENT') setPhase(cfg, task, 'AUDIT', 'pm', 'da giao audit doc lap');
-        recordDispatch(cfg, task, { kind: 'audit', conversationId, model: args.model || task.model, promptFile });
+        recordDispatch(cfg, task, { kind: 'audit', agent: 'antigravity', conversationId, model: args.model || task.model, promptFile });
         return [
           `Da mo hoi thoai AUDIT doc lap: ${conversationId}`,
           `Ket qua se nam o: ${path.join(contractPaths(cfg, task).dir, 'audit-agent.json')}`,
@@ -799,6 +909,11 @@ export const TOOLS = [
       // Audit T0066 vong 2: task chi audit (audit cheo mot PR co san) co lan giao audit (dispatches kind=audit) la du de ghi audit;
       // review van can da giao trien khai.
       const coAudit = (task.dispatches || []).some((d) => d.kind === 'audit');
+      // Lan giao audit gan nhat (theo moc) quyet reviewer: ban ghi cua PM, khong phai chuoi tu khai trong audit-agent.json.
+      // Lan giao khong co truong agent = Antigravity (truoc 03/11/2026 chi co duong agy). Chua giao audit nao: reviewer 'pm' nhu cu.
+      const lastAuditD = (task.dispatches || []).filter((d) => d.kind === 'audit')
+        .reduce((a, d) => (!a || (Date.parse(d.at) || 0) >= (Date.parse(a.at) || 0) ? d : a), null);
+      const auditAgent = lastAuditD ? (lastAuditD.agent || 'antigravity') : null;
       if (['audit', 'review'].includes(args.kind) && !task.implementDispatchedAt && !(args.kind === 'audit' && coAudit)) {
         fail(`Chua giao trien khai (pm_dispatch kind=implement) — chua co gi de ${args.kind}.`);
       }
@@ -826,24 +941,42 @@ export const TOOLS = [
       // #629 (review 29/10 sau #609): auditedHead la thu gate DevKit tin de duyet test bi sua, nen chi ghi khi auditor that da bao
       // cao pass cho dung cay do (audit-agent.json, viet SAU lan giao audit gan nhat, reviewer khac builder); PM tu ghi pass ma
       // khong co / bo qua bao cao = tu duyet.
+      // Lan audit gan nhat do PM chay grok: audit-agent.json phai dung la ban PM da ghi (sha256 luu o lan giao) — chan ghi de tay.
+      if (args.kind === 'audit' && args.verdict === 'pass' && auditAgent === 'grok') {
+        const repFile = path.join(contractPaths(cfg, task).dir, 'audit-agent.json');
+        const rep = readJsonIfExists(repFile);
+        if (!rep) fail('Lan giao audit gan nhat la grok nhung khong co audit-agent.json — chay lai pm_dispatch kind=audit agent=grok.');
+        if (!laGrok(rep.reviewer)) fail(`Lan giao audit gan nhat la grok (PM chay) nhung audit-agent.json ghi reviewer "${rep.reviewer ?? '(thieu)'}" — khong phai ban PM ghi.`);
+        const sha = hashFile(repFile);
+        if (!sha || !lastAuditD.reportSha256 || sha !== lastAuditD.reportSha256) {
+          fail(`audit-agent.json sha256 ${sha || '(khong doc duoc)'} khac sha256 PM luu luc chay grok (${lastAuditD.reportSha256 || 'thieu'}) — bao cao bi sua sau lan audit. Chay lai pm_dispatch kind=audit agent=grok.`);
+        }
+      }
       if (auditedHead) {
         const repFile = path.join(contractPaths(cfg, task).dir, 'audit-agent.json');
         const rep = readJsonIfExists(repFile);
         if (!rep) fail('auditedHead can bao cao audit-agent.json cua auditor — chua co (pm_dispatch kind=audit roi cho bao cao).');
         const lastAudit = Math.max(0, ...(task.dispatches || []).filter((d) => d.kind === 'audit').map((d) => Date.parse(d.at) || 0));
+        // Chua co lan giao audit nao thi moi bao cao deu "moi hon" moc 0: bao cao ghi tay khong duoc thanh auditedHead.
+        if (!lastAudit) fail('Chua co lan giao audit nao (pm_dispatch kind=audit) — audit-agent.json khong do PM giao, khong ghi auditedHead.');
         if (fs.statSync(repFile).mtimeMs < lastAudit) fail('audit-agent.json cu hon lan giao audit gan nhat — chua phai bao cao cua lan audit nay.');
         if (String(rep.verdict || '').toLowerCase() !== 'pass') fail(`audit-agent.json ghi verdict "${rep.verdict ?? '(thieu)'}", khong phai pass — khong ghi auditedHead.`);
         const repHead = typeof rep.auditedHead === 'string' ? rep.auditedHead : AUDITED_HEAD.exec(String(rep.notes || ''))?.[1];
         if (repHead !== auditedHead) fail(`audit-agent.json ghi auditedHead ${repHead || '(thieu)'}, khac ${auditedHead} — auditor chua audit cay nay.`);
-        // Builder: agent goi PM (DEVKIT_AGENT_ID, mac dinh claude); task da giao implement thi Antigravity cung la builder.
-        const reviewer = typeof rep.reviewer === 'string' ? rep.reviewer.trim().toLowerCase() : '';
-        const builders = [process.env.DEVKIT_AGENT_ID || 'claude', ...(task.implementDispatchedAt ? ['antigravity'] : [])]
-          .map((b) => String(b).trim().toLowerCase());
+        // Builder: agent goi PM (DEVKIT_AGENT_ID, mac dinh claude) va TAP danh tinh doc tu env phien (callerAgents, F2/H4); task da giao
+        // implement thi Antigravity cung la builder. G3: ca builders lan reviewer chuan hoa (grok-4.7, grok-build -> grok) truoc khi so.
+        const reviewer = typeof rep.reviewer === 'string' ? normalizeAgent(rep.reviewer) : '';
+        const builders = [...new Set([normalizeAgent(process.env.DEVKIT_AGENT_ID) || 'claude', ...callerAgents(),
+          ...(task.implementDispatchedAt ? ['antigravity'] : [])].map(normalizeAgent).filter(Boolean))];
         if (!reviewer) fail('audit-agent.json thieu reviewer — khong biet ai audit, khong ghi auditedHead.');
+        if (laGrok(reviewer) && auditAgent !== 'grok') fail(`audit-agent.json ghi reviewer "${rep.reviewer}" nhung lan giao audit gan nhat khong phai grok do PM chay — khong ghi auditedHead.`);
         // Reviewer trung builder (luong /giao: Antigravity build roi audit): van ghi ket luan audit nhung KHONG ghi auditedHead
         // (ca truong lan dong trong notes, gate doc ca hai) — gate DevKit khong duyet test sua dua vao lan tu audit nay.
-        if (builders.includes(reviewer)) {
-          selfAudit = `CANH BAO: reviewer "${rep.reviewer}" trung builder (${builders.join(', ')}) — khong phai duyet cheo, khong ghi auditedHead.`;
+        // OCR P2 (dot 2): reviewer gate tin la auditAgent (verdicts.audit.reviewer), nen so ca auditAgent: bao cao tu khai chuoi la
+        // (vd "gemini-3") khong lach duoc khi Antigravity vua build vua audit.
+        const viaAgent = auditAgent ? normalizeAgent(auditAgent) : '';
+        if (builders.includes(reviewer) || (viaAgent && builders.includes(viaAgent))) {
+          selfAudit = `CANH BAO: reviewer "${rep.reviewer}" (lan giao audit: ${viaAgent || '?'}) trung builder (${builders.join(', ')}) — khong phai duyet cheo, khong ghi auditedHead.`;
           auditedHead = undefined;
         }
         // ponytail: bao cao nam trong thu muc project, agent cung user OS ghi tay duoc, va builder la chuoi tu khai (task audit-only rieng
@@ -899,6 +1032,8 @@ export const TOOLS = [
       }
       recordVerdict(cfg, task, {
         kind: args.kind, verdict: args.verdict, findings: args.findings || [], notes: notesOut, ...(auditedHead && { auditedHead }),
+        // verdicts.audit.reviewer = agent cua lan giao audit gan nhat (antigravity | grok); nguoi ghi ket luan (history) van la PM.
+        ...(args.kind === 'audit' && auditAgent && { reviewer: auditAgent, actor: 'pm' }),
       });
       if (args.kind === 'audit' && args.verdict === 'pass') {
         L.push(auditedHead ? `auditedHead = ${auditedHead}.` : (selfAudit || 'CANH BAO: audit pass khong co auditedHead — gate DevKit se khong duyet test sua dua vao audit nay.'));

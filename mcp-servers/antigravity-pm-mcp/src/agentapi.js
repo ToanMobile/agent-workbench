@@ -120,6 +120,35 @@ export function agyPath() {
   return null;
 }
 
+// ---- grok (reviewer thay Antigravity khi agy bi gioi han, chu repo 03/11/2026) ---------------------------------------------
+export const GROK_MODEL = 'grok-4.7';
+const GROK_TIMEOUT_MS = 20 * 60 * 1000;
+/** Binary grok. ANTIGRAVITY_PM_GROK dat thi CHI dung no (nhu agyPath); khong thi ~/.grok/bin/grok. Khong chay duoc -> null. */
+export function grokPath() {
+  const home = process.env.HOME || os.homedir();
+  const c = process.env.ANTIGRAVITY_PM_GROK || path.join(home, '.grok/bin/grok');
+  try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { return null; }
+}
+
+/**
+ * PM tu chay grok o che do plan (chi doc) tren project, mot luot `-p`, DONG BO co tran gio (util.run giet ca nhom khi qua han).
+ * Env bo bien messaging cua phien Claude (#734, nhu agyEnv; spawn bo qua bien gia tri undefined).
+ * ponytail: tool MCP bi chan toi khi grok xong (toi da ANTIGRAVITY_PM_GROK_TIMEOUT_MS, mac dinh 20 phut); can chay nen thi theo khuon agyStart.
+ */
+export function runGrokAudit({ grok, cwd, prompt }) {
+  const env = Object.fromEntries(CLAUDE_SESSION_ENV.map((k) => [k, undefined]));
+  const t = Number(process.env.ANTIGRAVITY_PM_GROK_TIMEOUT_MS);
+  return run(grok, ['-m', GROK_MODEL, '--permission-mode', 'plan', '--cwd', cwd, '-p', prompt], {
+    cwd, env, timeoutMs: Number.isFinite(t) && t > 0 ? t : GROK_TIMEOUT_MS,
+  });
+}
+
+/** Ket luan cua grok: chi dong dung khuon `VERDICT: PASS|REVISE|FAIL`; pass khi moi dong VERDICT deu PASS (it nhat mot), con lai fail. */
+export function grokVerdictOf(stdout) {
+  const all = [...String(stdout || '').matchAll(/^[ \t]*VERDICT:[ \t]*(PASS|REVISE|FAIL)[ \t]*$/gm)].map((m) => m[1]);
+  return { verdict: all.length && all.every((v) => v === 'PASS') ? 'pass' : 'fail', lines: all };
+}
+
 const agyRegistryFile = () => path.join(homeStateDir(), 'agy-conversations.json');
 /** So dang ky hoi thoai agy. File hong thi NEM LOI (khong coi la rong roi ghi de: se mat model + cwd cua moi hoi thoai dang chay). */
 function readAgyRegistry() {

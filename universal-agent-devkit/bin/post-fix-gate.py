@@ -536,8 +536,8 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
     base = since
     for sha in res.stdout.split():                    # newest first
         ok, note = _push_gate().approved(root, f"{sha}^!")
-        m = re.search(r"antigravity\s+(\S+)", note or "") if ok else None
-        head = _push_gate().audited_head(root, m.group(1)) if m else None
+        m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None   # đợt 2: `antigravity|grok <task-id>`
+        head = _push_gate().audited_head(root, m.group(2)) if m else None
         # auditedHead trước `since` (task cũ, commit rỗng ở nhánh phụ gộp vào range) kéo base lùi về cây yếu cũ: không duyệt.
         if head and _push_gate().head_after(root, since, head):
             base = sha
@@ -649,67 +649,157 @@ def _norm_agent(v):
     return v.strip().casefold()
 
 
-def _blob_is_audited(top, prefix, project_root, f, head) -> bool:
-    """True khi nội dung hiện tại của `f` (đường dẫn so với project_root) đúng bằng blob của nó ở commit `head` (auditedHead).
-    File không có ở head, lỗi git → False (fail closed)."""
-    cur = subprocess.run(["git", "-C", top, "hash-object", "--", str(Path(project_root) / f)],
-                         capture_output=True, text=True, timeout=30)
-    if cur.returncode != 0 or not cur.stdout.strip():
-        return False
-    blob = subprocess.run(["git", "-C", top, "rev-parse", "--verify", "-q", f"{head}:{prefix}{f}"],
-                          capture_output=True, text=True, timeout=30)
-    return blob.returncode == 0 and blob.stdout.strip() == cur.stdout.strip()
+_APPROVAL_CHAIN = {}         # top -> (trunk_ref, base, tip, chain) | None, một lần mỗi lượt gate
+_APPROVAL_AUDITS = {}        # top -> [(task_id, auditedHead)] mọi audit pass của repo (push_gate.audited_heads)
+_FP_CHAIN_MEMO = {}          # (top, sha) -> bool: sha nằm trên chuỗi audit của PR
 
 
-def _branch_base(root, project_root, fallback_head=True) -> str:
-    """Base của nhánh cho duyệt chéo: BASE_REF (đã là merge-base khi có --diff, hoặc mốc --since) khi khác HEAD, không thì
-    merge-base(nhánh đích, HEAD); không có nhánh đích → "HEAD" (fallback_head) hoặc "". Lỗi git → "" (người gọi không duyệt)."""
-    if BASE_REF and BASE_REF != "HEAD":
-        return BASE_REF
+def _git_out(top, *args):
+    """(returncode, stdout đã strip) của `git -C top args`."""
+    r = subprocess.run(["git", "-C", top, *args], capture_output=True, text=True, timeout=30)
+    return r.returncode, r.stdout.strip()
+
+
+def _is_ancestor(top, a, b):
+    """True/False theo `git merge-base --is-ancestor a b`; None khi git lỗi (người gọi không duyệt)."""
+    rc = subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", a, b], capture_output=True, timeout=30).returncode
+    return True if rc == 0 else False if rc == 1 else None
+
+
+def _approval_chain(top, project_root):
+    """(trunk_ref, base, tip, chain) cho luật duyệt test sửa (đợt 2 lane A), None khi không xác định được (lỗi git, không có nhánh
+    đích — người gọi không duyệt). base = merge-base(trunk, HEAD), KHÔNG lấy BASE_REF/--since (agent tự chọn được). tip = đầu PR:
+    HEAD, trừ khi HEAD là merge có parent đầu thuộc trunk (scratch = main + merge PR) thì là parent kia. chain = các commit trên chuỗi
+    first-parent của tip không thuộc trunk (`rev-list --first-parent tip --not trunk`), mới nhất trước."""
+    if top in _APPROVAL_CHAIN:
+        return _APPROVAL_CHAIN[top]
+    res = None
     trunk_ref, _name = task_trunk(project_root)
-    if not trunk_ref:
-        return "HEAD" if fallback_head else ""
-    mb = subprocess.run(["git", "-C", root, "merge-base", trunk_ref, "HEAD"], capture_output=True, text=True, timeout=30)
-    return mb.stdout.strip() if mb.returncode == 0 else ""
+    if trunk_ref:
+        rc_b, base = _git_out(top, "merge-base", trunk_ref, "HEAD")
+        rc_p, parents = _git_out(top, "rev-list", "--parents", "-n", "1", "HEAD")
+        ids = parents.split()
+        if rc_b == 0 and base and rc_p == 0 and ids:
+            tip = ids[0]
+            if len(ids) >= 3:
+                # Chỉ scratch (merge chưa vào trunk): HEAD là chính một merge của main thì đầu PR vẫn là HEAD.
+                head_on_trunk = _is_ancestor(top, ids[0], trunk_ref)
+                first_on_trunk = _is_ancestor(top, ids[1], trunk_ref) if head_on_trunk is False else False
+                tip = "" if head_on_trunk is None or first_on_trunk is None else ids[2] if first_on_trunk else tip
+            rc_c, chain = _git_out(top, "rev-list", "--first-parent", tip, "--not", trunk_ref) if tip else (1, "")
+            if rc_c == 0:
+                res = (trunk_ref, base, tip, chain.split())
+    _APPROVAL_CHAIN[top] = res
+    return res
+
+
+def _on_audit_chain(top, ch, sha) -> bool:
+    """sha nằm trên chuỗi first-parent của đầu PR trong trunk..tip, HOẶC là con cháu first-parent của tip (cây làm việc audit sau tip:
+    `git stash create`, commit chưa đẩy lên nhánh). Tổ tiên của tip qua parent thứ hai (merge một nhánh bỏ dở đã audit) hay cây
+    anh em (không chứa tip) → False. Lỗi git → False."""
+    key = (top, sha)
+    if key not in _FP_CHAIN_MEMO:
+        _trunk, _base, tip, chain = ch
+        ok = sha in chain
+        if not ok:
+            rc, walk = _git_out(top, "rev-list", "--first-parent", sha, "--not", tip)
+            last = walk.split()[-1] if rc == 0 and walk else ""
+            rc_p, parent = _git_out(top, "rev-parse", "--verify", "-q", last + "^1") if last else (1, "")
+            ok = rc_p == 0 and parent == tip
+        _FP_CHAIN_MEMO[key] = ok
+    return _FP_CHAIN_MEMO[key]
+
+
+def audit_covers(top, prefix, project_root, f, head) -> tuple:
+    """(True, "") khi biên bản audit có auditedHead `head` duyệt được nội dung HIỆN TẠI của test `f` (đường dẫn so với project_root);
+    (False, lý do) khác. Một luật cho mục approved_tests.json, trailer `Test-approved-by:` và `agent-kit approve-tests` (đợt 2 lane A),
+    còn hiệu lực sau khi gộp main mới vào nhánh PR hay trong scratch merge gate (main + PR):
+      1. head không là tổ tiên (hoặc chính) của trunk — cây đã nằm trên main là cây cũ;
+      2. head nằm trên chuỗi audit của PR (_on_audit_chain): không nhận audit tới qua parent thứ hai;
+      3. blob hiện tại == blob của f ở head;
+      4. mọi audit pass khác của repo trên chuỗi đó mà không là tổ tiên của head (mới hơn) có cùng blob — chỉ audit mới nhất được dùng,
+         chép lùi về bản đã audit trước khi test được làm mạnh không qua (replay);
+      5. blob của f ở TIP nhánh đích == blob ở merge-base(head, trunk): main không đổi chính file đó kể từ lúc audit, kể cả khi PR
+         chưa gộp main (đợt 2 G2: base cũ của PR bỏ sót) (cả hai đều không có file = nhánh đích chưa từng có nó: không đổi).
+    Lỗi git, thiếu merge-base, blob không resolve hay rỗng → không duyệt."""
+    ch = _approval_chain(top, project_root)
+    if not ch:
+        return False, "không xác định được nhánh đích / merge-base (lỗi git)"
+    trunk_ref, _base, _tip, _chain = ch
+    h10 = head[:10]
+    on_trunk = _is_ancestor(top, head, trunk_ref)
+    if on_trunk is None:
+        return False, f"không kiểm được auditedHead {h10} (lỗi git)"
+    if on_trunk:
+        return False, f"auditedHead {h10} đã nằm trên nhánh đích (audit cây cũ của main)"
+    if not _on_audit_chain(top, ch, head):
+        return False, (f"auditedHead {h10} không nằm trên chuỗi first-parent của PR (audit tới qua merge nhánh khác / cây khác): "
+                       "cần audit lại")
+    rc_c, cur = _git_out(top, "hash-object", "--", str(Path(project_root) / f))
+    rc_h, at_head = _git_out(top, "rev-parse", "--verify", "-q", f"{head}:{prefix}{f}")
+    if rc_c != 0 or not cur or rc_h != 0 or at_head != cur:
+        return False, f"nội dung khác cây đã audit (auditedHead {h10})"
+    if top not in _APPROVAL_AUDITS:
+        _APPROVAL_AUDITS[top] = _push_gate().audited_heads(top)
+    for tid2, h2 in _APPROVAL_AUDITS[top]:
+        if h2 == head or not _on_audit_chain(top, ch, h2):
+            continue
+        older = _is_ancestor(top, h2, head)
+        if older:
+            continue
+        rc2, b2 = _git_out(top, "rev-parse", "--verify", "-q", f"{h2}:{prefix}{f}") if older is False else (1, "")
+        if rc2 != 0 or b2 != cur:
+            return False, (f"có audit mới hơn trên nhánh ({tid2}, auditedHead {h2[:10]}) với nội dung khác: chỉ audit mới nhất "
+                           "của nhánh được dùng")
+    # ls-tree: rc 0 + rỗng = file không có ở commit đó (nhánh đích chưa từng có file, test thêm phía PR), rc khác 0 = lỗi git.
+    rc_m, mb = _git_out(top, "merge-base", head, trunk_ref)
+    rc_b, at_tip = _git_out(top, "ls-tree", trunk_ref, "--", f"{prefix}{f}") if rc_m == 0 and mb else (1, "")
+    rc_o, at_fork = _git_out(top, "ls-tree", mb, "--", f"{prefix}{f}") if rc_b == 0 else (1, "")
+    if rc_o != 0:
+        return False, f"không kiểm được file ở nhánh đích / merge-base của auditedHead {h10} (lỗi git)"
+    if at_tip != at_fork:
+        return False, f"nhánh đích đã đổi file này kể từ audit (auditedHead {h10}): cần audit lại"
+    return True, ""
+
+
+def _approval_reviewer_label(rv):
+    """Nhãn reviewer duyệt chéo in ra: grok thay Antigravity nói rõ."""
+    return "grok (thay Antigravity)" if rv == "grok" else rv
 
 
 def _trailer_cross_review(paths: list, project_root) -> dict:
-    """{path: task_id} — nguồn duyệt chéo thứ hai (#605 lane E): commit MỚI NHẤT của nhánh (base..HEAD) chạm file, có trailer
-    `Test-approved-by: antigravity <task-id>` mà push_gate.approved công nhận (biên bản audit pass của antigravity-pm, ngoài repo),
-    và nội dung hiện tại của file đúng bằng blob ở auditedHead mà PM ghi trong verdicts.audit.notes của task đó (push_gate.audited_head,
-    audit T0066: không phải blob ở commit mang trailer; đổi sau audit hoặc thiếu auditedHead → không duyệt). Trailer đi theo commit nên tới được
-    scratch worktree của merge gate, nơi .claude/audit-gate/ không được chép. base: BASE_REF (đã là merge-base khi có --diff),
-    HEAD → merge-base(nhánh đích, HEAD). Mọi lỗi git → không duyệt (fail closed).
-    ponytail: --since trên chính nhánh đích không có range ở đây (base = HEAD) → không duyệt; nối args.since vào nếu cần."""
+    """{path: (reviewer, task_id)} — nguồn duyệt chéo thứ hai (#605 lane E): commit của nhánh (merge-base(trunk, HEAD)..HEAD) có trailer
+    `Test-approved-by: antigravity|grok <task-id>` mà push_gate.approved công nhận (biên bản audit pass của antigravity-pm, ngoài repo,
+    reviewer khớp audit_reviewer), và audit_covers nhận nội dung hiện tại của file theo auditedHead của task đó (audit T0066: không phải
+    blob ở commit mang trailer). Trailer đi theo commit nên tới được scratch worktree của merge gate, nơi .claude/audit-gate/ không được
+    chép. Reviewer thuộc tập danh tính phiên (push_gate.session_agents) → không duyệt. Mọi lỗi git → không duyệt (fail closed)."""
     if not paths:
         return {}
     try:
         root = str(get_repo_root())
         prefix = get_project_prefix()
-        base = _branch_base(root, project_root, fallback_head=False)
-        if not base:
+        ch = _approval_chain(root, project_root)
+        if not ch:
             return {}
         # Commit có trailer chốt CẢ cây đã audit, không cần chạm file: audit xong ghi một commit rỗng có trailer là đủ.
         res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
-                              "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{base}..HEAD"],
+                              "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{ch[1]}..HEAD"],
                              capture_output=True, text=True, timeout=30)
         if res.returncode != 0:
             return {}
-        audited = []                                  # (auditedHead, task_id), mới nhất trước, chỉ commit push_gate công nhận
+        agents = _push_gate().session_agents()       # vòng kiểm lại H4: TẬP danh tính phiên (rỗng = không biết: không từ chối thêm)
+        audited = []                                  # (auditedHead, reviewer, task_id), mới nhất trước, chỉ commit push_gate công nhận
         for sha in res.stdout.split():
             ok, note = _push_gate().approved(root, f"{sha}^!")
-            m = re.search(r"antigravity\s+(\S+)", note or "") if ok else None
-            # Audit T0066: so với cây PM đã audit (auditedHead ngoài repo), không với commit mang trailer — trailer của task cũ
-            # đặt lên commit sửa test mới không duyệt được nội dung mới (replay). Không có auditedHead → không duyệt.
-            head = _push_gate().audited_head(root, m.group(1)) if m else None
-            # Audit T0066 vòng 2: auditedHead trước base (task cũ audit cây cũ) không duyệt việc chép lùi test về bản yếu đó.
-            if head and _push_gate().head_after(root, base, head):
-                audited.append((head, m.group(1)))
+            m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None
+            head = _push_gate().audited_head(root, m.group(2)) if m else None
+            if head and m.group(1) not in agents:
+                audited.append((head, m.group(1), m.group(2)))
         out = {}
         for f in paths if audited else []:
-            for head, task_id in audited:             # nội dung hiện tại phải đúng bằng blob ở một cây đã audit
-                if _blob_is_audited(root, prefix, project_root, f, head):
-                    out[f] = task_id
+            for head, rv, task_id in audited:
+                if audit_covers(root, prefix, project_root, f, head)[0]:
+                    out[f] = (rv, task_id)
                     break
         return out
     except (OSError, subprocess.SubprocessError, RuntimeError, ImportError) as e:
@@ -795,33 +885,36 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                 APPROVAL_REJECTS.append((f, cur, "sha256 lệch nội dung hiện tại"))
                 continue
             # Audit T0066: file này agent nào cũng ghi được — mục duyệt chỉ tính khi task_id có biên bản audit pass ngoài repo
-            # kèm auditedHead, và nội dung hiện tại đúng bằng blob ở cây đã audit đó.
+            # kèm auditedHead, và audit_covers nhận nội dung hiện tại theo cây đó (đợt 2: còn hiệu lực sau khi gộp main mới).
+            # Reviewer lấy từ biên bản PM (audit_reviewer), không tin chuỗi reviewer trong file này.
+            tid = e["task_id"].strip()
             try:
                 git_top, prefix = str(get_repo_root()), get_project_prefix()
-                head = _push_gate().audited_head(git_top, e["task_id"].strip())
-                # Audit T0066 vòng 2: base của nhánh phải là tổ tiên của auditedHead (không duyệt chép lùi về cây cũ trước base)
-                base = _branch_base(git_top, root) if head else ""
-                after = bool(head) and _push_gate().head_after(git_top, base, head)
-                audited_ok = after and _blob_is_audited(git_top, prefix, root, f, head)
+                head = _push_gate().audited_head(git_top, tid)
+                pm_rv = _push_gate().audit_reviewer(git_top, tid, legacy=True) if head else None
+                covered, why = audit_covers(git_top, prefix, root, f, head) if head and pm_rv else (False, "")
             except (OSError, subprocess.SubprocessError, RuntimeError, ImportError) as err:
-                head, audited_ok, after, base = None, False, False, ""
-                print(f"post-fix-gate: không đọc được biên bản audit của {e['task_id'].strip()} ({type(err).__name__}); không duyệt",
-                      file=sys.stderr)
+                head, pm_rv, covered, why = None, None, False, ""
+                print(f"post-fix-gate: không đọc được biên bản audit của {tid} ({type(err).__name__}); không duyệt", file=sys.stderr)
             if not head:
-                APPROVAL_REJECTS.append((f, cur, f"task {e['task_id'].strip()} không có biên bản audit pass của antigravity-pm "
-                                                 "kèm `auditedHead: <sha>`"))
+                APPROVAL_REJECTS.append((f, cur, f"task {tid} không có biên bản audit pass của antigravity-pm kèm `auditedHead: <sha>`"))
                 continue
-            if not after:
-                APPROVAL_REJECTS.append((f, cur, f"auditedHead {head[:10]} không nằm sau base {base[:10] or '?'} của nhánh (audit cây cũ)"))
+            if not pm_rv:
+                APPROVAL_REJECTS.append((f, cur, f"task {tid}: biên bản PM không xác định được reviewer (verdicts.audit.reviewer khớp "
+                                                 "lượt audit gần nhất trong dispatches)"))
                 continue
-            if not audited_ok:
-                APPROVAL_REJECTS.append((f, cur, f"nội dung khác cây đã audit (auditedHead {head[:10]})"))
+            # Đợt 2 F3/G3: author chuẩn hoá như reviewer (grok-build = grok); H4: reviewer thuộc TẬP danh tính phiên (session_agents) = tự duyệt.
+            if pm_rv == _push_gate().normalize_reviewer(e["author"]) or pm_rv in _push_gate().session_agents():
+                APPROVAL_REJECTS.append((f, cur, f"reviewer {pm_rv} của biên bản PM trùng author (tự duyệt)"))
+                continue
+            if not covered:
+                APPROVAL_REJECTS.append((f, cur, why))
                 continue
             approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # sha256 gắn nội dung: mtime không quyết định
-            CROSS_REVIEW[f] = (e["reviewer"].strip(), e["task_id"].strip())
-    for f, tid in _trailer_cross_review([f for f in mtimes if f not in CROSS_REVIEW], root).items():
+            CROSS_REVIEW[f] = (pm_rv, tid)
+    for f, (rv, tid) in _trailer_cross_review([f for f in mtimes if f not in CROSS_REVIEW], root).items():
         approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # nội dung = blob đã audit: mtime không quyết định
-        CROSS_REVIEW[f] = ("antigravity", tid)
+        CROSS_REVIEW[f] = (rv, tid)
     folders = []
     if transcript:
         folders.append(Path(transcript).parent)
@@ -5005,10 +5098,24 @@ def _env_seconds(name, default):
 # holds test_run.lock writes who it is into the lock file (pid + start time, under the flock; emptied before it lets go). A Stop run
 # (TEST_RUN_LOCK_BUSY_FAST=1, set by hooks/regression_gate.sh) that finds a LIVE gate there — the pid still the process with that start time,
 # the check session_lock makes of its own holder — waits only DEVKIT_REUSE_LOCK_WAIT_S (3 s) and says BUSY: that holder is a whole gate run,
-# minutes long. A holder it cannot name (stale_rerun / testsourceset / worktree.py write no record, a dead or recycled pid, a record a
+# minutes long. A holder it cannot name (testsourceset / worktree.py write no record, a dead or recycled pid, a record a
 # killed gate left) keeps the long wait; a lock nobody holds is taken at once, as before. The CLI never sets the flag: it keeps its wait.
-# ponytail: stale_rerun opens the file with "w" and empties a gate's record while it waits for the lock; the next Stop then waits 45 s again.
-def _write_test_run_lock_holder(fh, clear=False):
+# Wave 2 lane C (03/11): the record also says whose run it is: {pid, pid_start, sid, who} (sid = the gate's --session, else
+# CLAUDE_CODE_SESSION_ID; stale_rerun writes who=stale_rerun). A Stop run that finds a LIVE holder of its OWN session (sid not empty and
+# not "default", the start time read back equal to the recorded one, not this pid) says BUSY at once: that holder is this session's own
+# gate or re-run, minutes long. Its BUSY is never the read-only exit 0 (main: read_only). A Stop run that gives up writes busy_holder
+# (who, sid_match, alive, the raw record cut short) into runs.jsonl; the gate-queue wait in main writes who=gate_queue.
+# Measured 03/11: the 19 Stop runs that waited 45 s were the machine gate queue (DEVKIT_GATE_SLOT_WAIT_S=45), not this lock.
+_BUSY_HOLDER = {}   # who kept this run from the lock or the gate queue (runs.jsonl busy_holder, Stop runs only); acquire_test_run_lock resets it
+
+
+def _lock_session_id(sid=None):
+    """The session a test_run.lock record names: `sid` (the gate's --session) or CLAUDE_CODE_SESSION_ID; "" and "default" are no session."""
+    s = str(sid if sid else os.environ.get("CLAUDE_CODE_SESSION_ID", "")).strip()[:80]
+    return "" if s == "default" else s
+
+
+def _write_test_run_lock_holder(fh, clear=False, sid=None, who="gate"):
     """Record this run as the holder of the test_run.lock `fh` it holds (clear=True: empty the record, still under the flock). Data only:
     a failure leaves the record empty or stale, which a waiter reads as an unknown holder (the long wait)."""
     try:
@@ -5016,7 +5123,8 @@ def _write_test_run_lock_holder(fh, clear=False):
         if not clear:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             import session_lock  # noqa: PLC0415 - sibling module in bin/
-            fh.write(json.dumps({"pid": os.getpid(), "pid_start": session_lock.pid_start(os.getpid())}) + "\n")
+            fh.write(json.dumps({"pid": os.getpid(), "pid_start": session_lock.pid_start(os.getpid()),
+                                 "sid": _lock_session_id(sid), "who": who}) + "\n")
         fh.flush()
         return True
     except (OSError, ImportError, AttributeError, ValueError) as e:
@@ -5024,35 +5132,117 @@ def _write_test_run_lock_holder(fh, clear=False):
         return False
 
 
-def _test_run_lock_live_gate(path):
-    """The record in test_run.lock names a gate run that is still alive: pid > 1 with a recorded start time, and that pid is still the process
-    started then (session_lock.is_pid_alive). No record, another writer's bytes, an unknown start, a dead or recycled pid: False."""
+def _test_run_lock_holder_raw(path):
+    """The text of the test_run.lock record (at most 4 KB); OSError when it cannot be read."""
+    fd = _state_fd(path, "r")
     try:
-        fd = _state_fd(path, "r")
-        try:
-            raw = os.read(fd, 4096)
-        finally:
-            os.close(fd)
-        rec = json.loads(raw.decode("utf-8", "replace") or "null")
-        pid, start = (rec.get("pid"), rec.get("pid_start")) if isinstance(rec, dict) else (None, None)
-        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1 or not isinstance(start, str) or not start:
-            return False
+        return os.read(fd, 4096).decode("utf-8", "replace")
+    finally:
+        os.close(fd)
+
+
+def _test_run_lock_holder(path, sid=None):
+    """What the record in test_run.lock says about its holder: {who, sid_match, alive, same_session, raw}. alive: pid > 1 with a recorded
+    start time and that pid still the process started then (session_lock.is_pid_alive, as B5). same_session: alive, the record's sid equals
+    this run's (neither empty nor "default"), not this pid, and the start time READ BACK equal to the recorded one (an unknown start under
+    load is not enough for the at-once BUSY). No record, another writer's bytes, an unknown start, a dead or recycled pid: alive False."""
+    out = {"who": None, "sid_match": False, "alive": False, "same_session": False, "raw": ""}
+    try:
+        text = _test_run_lock_holder_raw(path)
+        out["raw"] = text.strip()[:200]
+        rec = json.loads(text or "null")
+        if not isinstance(rec, dict):
+            return out
+        pid, start, rsid = rec.get("pid"), rec.get("pid_start"), rec.get("sid")
+        out["who"] = str(rec.get("who"))[:32] if rec.get("who") is not None else None
+        mine = _lock_session_id(sid)
+        out["sid_match"] = bool(mine) and isinstance(rsid, str) and rsid == mine
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1 or pid == os.getpid() or not isinstance(start, str) or not start:
+            return out
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import session_lock  # noqa: PLC0415 - sibling module in bin/
-        return pid != os.getpid() and session_lock.is_pid_alive(pid, start)
+        if out["sid_match"] and session_lock.pid_start(pid) == start:
+            out["alive"] = out["same_session"] = True
+            return out
+        out["alive"] = bool(session_lock.is_pid_alive(pid, start))
     except (OSError, ValueError, ImportError, AttributeError):
-        return False
+        pass
+    return out
 
 
-def acquire_test_run_lock(project_dir, cap=None):
+def _test_run_lock_live_gate(path):
+    """The record in test_run.lock names a gate run that is still alive (_test_run_lock_holder alive)."""
+    return _test_run_lock_holder(path)["alive"]
+
+
+def _note_busy_holder(holder, fast=""):
+    """busy_holder for runs.jsonl (Stop runs: TEST_RUN_LOCK_BUSY_FAST=1): the holder as this run saw it when it gave up."""
+    if os.environ.get("TEST_RUN_LOCK_BUSY_FAST") == "1":
+        _BUSY_HOLDER.clear()
+        _BUSY_HOLDER.update({k: holder.get(k) for k in ("who", "sid_match", "alive", "raw")})
+        if fast:
+            _BUSY_HOLDER["fast"] = fast
+
+
+# Wave 2 lane C2 (03/11): the B5 rule for the machine-wide gate queue. In 61 of the 62 Stop waits of >= 20 s measured on 03/11 a gate of
+# another project held a gate slot for the whole wait (the 45 s DEVKIT_GATE_SLOT_WAIT_S the Stop hook sets), never this project's lock. A
+# Stop run (TEST_RUN_LOCK_BUSY_FAST=1) that finds EVERY slot of the pool held by a LIVE gate waits only DEVKIT_REUSE_LOCK_WAIT_S (3 s), then
+# BUSY as before (exit 4, busy_reason gate_queue): those holders are whole gate runs, minutes long. A free slot, a slot held with no
+# <slot>.held marker, a marker naming a dead pid, or one older than the process that has that pid now (a recycled pid): the whole wait.
+# ponytail: the start time is read with `ps -o lstart` (macOS); a "proc:" start (Linux) is unknown here, so Linux keeps the whole wait.
+def _gate_pool_all_live(paths):
+    """(True, pids) when every lock in `paths` (pool 'gate') is held and its <lock>.held marker names a live process that started no later
+    than the marker was written (+2 s: lstart has whole seconds), other than this one; else (False, []). Probes with LOCK_SH|LOCK_NB and
+    lets go at once; reads only. Any doubt (a missing file, an unreadable marker, an unknown start time) is False: the whole wait."""
+    import calendar  # noqa: PLC0415
+    import fcntl  # noqa: PLC0415
+    pids = []
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import session_lock  # noqa: PLC0415 - sibling module in bin/
+        for path in paths:
+            try:
+                fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            except OSError:
+                return False, []   # never made: a free slot
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                return False, []   # free now
+            except OSError:
+                pass   # held
+            finally:
+                os.close(fd)
+            mfd = _state_fd(path + ".held", "r")
+            try:
+                pid = int(os.read(mfd, 64).decode("ascii").strip())
+                mtime = os.fstat(mfd).st_mtime
+            finally:
+                os.close(mfd)
+            if pid <= 1 or pid == os.getpid():
+                return False, []
+            start = session_lock.pid_start(pid)
+            if not isinstance(start, str) or start.startswith("proc:"):
+                return False, []
+            if calendar.timegm(time.strptime(" ".join(start.split()), "%a %b %d %H:%M:%S %Y")) > mtime + 2.0:
+                return False, []   # the process with that pid started after the marker: not the holder that wrote it
+            pids.append(pid)
+    except (OSError, ValueError, ImportError, AttributeError, OverflowError):
+        return False, []
+    return bool(pids), pids
+
+
+def acquire_test_run_lock(project_dir, cap=None, sid=None):
     """(file handle, held) — the per-project test-run flock under .claude/audit-gate/. Waits at
     most TEST_RUN_LOCK_WAIT_S (default 900 from the CLI; hooks/regression_gate.sh passes 45 so
     the wait plus the suites stay inside the Stop hook's own 1800 s timeout) for another run, or
     `cap` seconds when that is less (a run with nothing left to run: see main);
     not held → the tests are BUSY (summary "busy"). (None, True) when the lock file cannot be
     made (never worse than no lock). TEST_RUN_LOCK_BUSY_FAST=1 (the Stop hook) and a live gate holds
-    it: DEVKIT_REUSE_LOCK_WAIT_S (3 s) at most (B5 above). Held: this run's record is written into it."""
+    it: DEVKIT_REUSE_LOCK_WAIT_S (3 s) at most (B5 above); a live holder of this run's own session (`sid`):
+    (None, False) at once, _BUSY_HOLDER["fast"] = "same_session". Held: this run's record is written into it."""
     import fcntl  # noqa: PLC0415
+    _BUSY_HOLDER.clear()
     state = Path(project_dir) / ".claude" / "audit-gate"
     try:
         state.mkdir(parents=True, exist_ok=True)
@@ -5066,16 +5256,35 @@ def acquire_test_run_lock(project_dir, cap=None):
     if cap is not None:
         wait = min(wait, cap)
     t0 = time.monotonic()
-    deadline, said = t0 + wait, False
+    deadline, said, seen = t0 + wait, False, None
+    fast = os.environ.get("TEST_RUN_LOCK_BUSY_FAST") == "1"
     while True:
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            _write_test_run_lock_holder(fh)
+            _write_test_run_lock_holder(fh, sid=sid)
             return fh, True
         except OSError:
-            if not said and os.environ.get("TEST_RUN_LOCK_BUSY_FAST") == "1" and _test_run_lock_live_gate(state / TEST_RUN_LOCK):
-                deadline = min(deadline, t0 + _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0))
+            if not said and fast:
+                seen = _test_run_lock_holder(state / TEST_RUN_LOCK, sid)
+                if seen["same_session"]:
+                    _note_busy_holder(seen, "same_session")
+                    fh.close()
+                    return None, False
+                if seen["alive"]:
+                    deadline = min(deadline, t0 + _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0))
             if time.monotonic() >= deadline:
+                if fast:   # the holder at give-up time; the first look stands when the record is unchanged and names another session (no second ps)
+                    try:
+                        now = _test_run_lock_holder_raw(state / TEST_RUN_LOCK).strip()[:200]
+                    except OSError:
+                        now = None
+                    # Recheck H2: this session's own run may have taken the lock since the first look (or that look could not read its
+                    # start time): classified again here, a live holder of this session is BUSY (fast same_session), never read-only exit 0.
+                    holder = (seen if seen is not None and seen["raw"] == now and not seen["sid_match"]
+                              else _test_run_lock_holder(state / TEST_RUN_LOCK, sid))
+                    # Final review P3-2: at give-up (not the at-once cut) a live holder of this session whose start time ps could not read
+                    # back is still this session's: BUSY, fail closed.
+                    _note_busy_holder(holder, "same_session" if holder["same_session"] or (holder["sid_match"] and holder["alive"]) else "")
                 fh.close()
                 return None, False
             if not said:
@@ -6328,6 +6537,8 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
         waits = _run_log_slot_waits(regression_tests, slot_waits)
         if waits:
             rec["slot_wait_s"] = waits
+        if _BUSY_HOLDER and rec["busy"]:   # wave 2 C: who the Stop run gave up behind (measured, never decides)
+            rec["busy_holder"] = dict(_BUSY_HOLDER)
         if _MAIN_T0 is not None:
             rec["total_wall_s"] = round(time.monotonic() - _MAIN_T0, 2)
         with _STEP_LOCK:   # seconds per phase (see _lap); a copy, so the record never changes after this line
@@ -7467,7 +7678,7 @@ def main():
     gate_slot_busy = False
     gate_slot_hs = None
     prev_gate_slot_held = os.environ.get("DEVKIT_GATE_SLOT_HELD")
-    lock_fh, lock_held = (acquire_test_run_lock(project_dir, cap=reuse_wait_s if nothing_to_run else None)
+    lock_fh, lock_held = (acquire_test_run_lock(project_dir, cap=reuse_wait_s if nothing_to_run else None, sid=args.session)
                           if run_tests and (reuse_src[0] or keyed_hits or not nothing_to_run) else (None, True))
     # Read-only: every suite was re-used and the lock was not obtained within the short wait. The verdict is the stamp check alone (the file that vouched
     # for the PASS still stands, or still says PASS: exit as before; moved and no longer vouching: UNTESTED, exit 4) and nothing is written: no receipt,
@@ -7478,7 +7689,8 @@ def main():
     # is keyed on the content, as for any PASS.
     # ponytail: a suite that starts to fail on UNCHANGED content while another run holds the lock is seen by this run's reader only after that run
     # persists its FAIL; DEVKIT_REUSE_LOCK_WAIT_S as long as TEST_RUN_LOCK_WAIT_S waits for it instead.
-    read_only = bool(run_tests and not lock_held and nothing_to_run)
+    # Wave 2 C: a live holder of this run's own session (its gate or re-run is still writing results) is BUSY, never the read-only exit 0.
+    read_only = bool(run_tests and not lock_held and nothing_to_run and _BUSY_HOLDER.get("fast") != "same_session")
     # Another run (a second session, or a gate still running in the background) may have recorded a
     # full PASS of this same content since the check above — while we waited for its lock, or just
     # before we reached the lock: re-use it instead of running every suite again (audit 2026-09-29).
@@ -7528,10 +7740,19 @@ def main():
                 # ponytail: test_run.lock của dự án vẫn bị giữ trong lúc chờ slot, nên một Stop hook cùng checkout báo BUSY với
                 # busy_reason=project_lock dù máy thực ra đang nghẽn hàng đợi gate; và dưới SB_HEAVY_SLOT_HELD=1 acquire_pool trả
                 # prev_held mà vẫn đặt DEVKIT_GATE_SLOT_HELD. Ghi nhãn holder vào khoá khi người dùng thấy báo sai lý do.
+                gate_paths = gate_slot_hs.pool_paths("gate", gate_slots_n)
+                live_pool, live_pids = False, []
+                if os.environ.get("TEST_RUN_LOCK_BUSY_FAST") == "1" and os.environ.get("SB_HEAVY_SLOT_HELD") != "1":
+                    live_pool, live_pids = _gate_pool_all_live(gate_paths)   # C2: every slot a live gate's: the B5 short wait
+                    if live_pool:
+                        gate_wait_s = min(gate_wait_s, _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0))
                 gate_slot = gate_slot_hs.acquire_pool(
-                    "gate", gate_slot_hs.pool_paths("gate", gate_slots_n),
+                    "gate", gate_paths,
                     wait_s=gate_wait_s, label=os.path.basename(str(project_dir))[:64])
                 if gate_slot.timed_out:
+                    _note_busy_holder({"who": "gate_queue", "raw": "pool gate, %d slot(s), waited %.0f s%s" % (
+                        gate_slots_n, gate_wait_s, ", live holders %s" % live_pids[:8] if live_pool else "")},
+                        "live_pool" if live_pool else "")
                     if lock_fh is not None:
                         _write_test_run_lock_holder(lock_fh, clear=True)
                         lock_fh.close()
@@ -8219,6 +8440,14 @@ def main():
     # the lock (BUSY: the wait ran out) there is no way to check it: UNTESTED the same.
     if not lock_held and not read_only:   # suites to run and no lock: they are BUSY, and so is every PASS that cannot be checked without it
         gone, why = reused_pass(), "BUSY"
+        if _BUSY_HOLDER.get("fast") == "same_session":
+            # Wave 2 fix G1: behind a live run of this run's OWN session even a content-key PASS is BUSY (exit 4, busy), never exit 0: that
+            # run is still writing results for this content, and the Stop hook records pass_fp on an exit 0.
+            seen_ids = {id(x) for x in gone}
+            for t in keyed_hits:
+                if t.get("status") == "PASS" and id(t) not in seen_ids:
+                    KEYED_IDS.discard(id(t))
+                    gone.append(t)
     else:
         gone, why = stale_reused(), "STALE"
     if gone and stale_to_untested(why, gone):
@@ -8623,6 +8852,7 @@ def main():
             print(f"  • {GREEN}{tr('Test đã có bị sửa — người dùng đã duyệt (AskUserQuestion), file không đổi sau đó:', 'Existing test edited — approved by the user (AskUserQuestion), unchanged since:')}{RESET} {f}")
         else:
             rv, tid = CROSS_REVIEW.get(f, ("?", "?"))
+            rv = _approval_reviewer_label(rv)
             print(f"  • {GREEN}{tr(f'Test đã có bị sửa — duyệt chéo bởi {rv} (task {tid}), sha256 khớp nội dung hiện tại:', f'Existing test edited — cross-reviewed by {rv} (task {tid}), sha256 matches the current content:')}{RESET} {f}")
     for f, sha, why in APPROVAL_REJECTS:
         if f in tests_touched:
