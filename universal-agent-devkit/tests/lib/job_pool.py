@@ -12,6 +12,10 @@ together never run more than <size> at once, as one shard did.
 - The locks are handed to <command> by exec (the fds stay open across it); run_bounded.py then holds them for the test's whole life.
 - No pool (missing dir, size not a positive integer, a lock file that cannot be opened): <command> runs at once, with a note on stderr.
   A broken pool never blocks a run.
+- <size> is the most slots the pool ever has. <dir>/size (an integer the gate rewrites every few seconds from capacity.test_jobs(), 04/11)
+  is how many it has NOW: another gate that starts shrinks it, one that ends grows it back (a pool fixed at its start ran 26 min at
+  6 slots while the other gate had long finished). A test starts only while fewer than that many slots are held (counted under
+  <dir>/pick.lock, so two waiters never both take the last one); a running test is never stopped. No file / not a number: <size>.
 - --wait-file F gets the whole seconds spent waiting, so the runner can leave them out of the test's own duration.
 - --start-fd N --start-line TEXT: TEXT goes to fd N once the place is held (run_impacted.sh's `· start <test>`: a test still waiting is not
   running, and the gate's HANG report must not name it), then fd N is closed so <command> never inherits it. A reader that is gone (EPIPE):
@@ -30,6 +34,16 @@ USAGE_RC = 64
 USAGE = "usage: job_pool.py <dir> <size> [--alone] [--wait-file F] [--start-fd N --start-line TEXT] -- <command> [args...]"
 
 
+def _allowed(pool: str, size: int) -> int:
+    """How many slots the pool has now: <dir>/size clamped to 1..size; <size> when the file is missing or not a number."""
+    try:
+        with open(os.path.join(pool, "size"), encoding="utf-8") as f:
+            n = int(f.read().strip())
+    except (OSError, ValueError):
+        return size
+    return min(max(n, 1), size)
+
+
 def _take(pool: str, size: int, alone: bool) -> list:
     """The fds holding this test's place: [alone.lock] for --alone, [alone.lock, tok.<i>] otherwise. Raises OSError when a file cannot
     be opened (the caller runs without the pool)."""
@@ -41,20 +55,41 @@ def _take(pool: str, size: int, alone: bool) -> list:
         raise
     if alone:
         return [gate]
-    while True:
-        for k in range(size):
+    try:
+        pick = os.open(os.path.join(pool, "pick.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        os.close(gate)
+        raise
+    try:
+        while True:
+            free, held = None, 0
+            fcntl.flock(pick, fcntl.LOCK_EX)   # count + take as one step: two waiters never both see "one slot left"
             try:
-                fd = os.open(os.path.join(pool, f"tok.{k}"), os.O_RDWR | os.O_CREAT, 0o600)
-            except OSError:
-                os.close(gate)
-                raise
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:   # held by another test (BlockingIOError): try the next one
-                os.close(fd)
-                continue
-            return [gate, fd]
-        time.sleep(POLL_S)
+                allowed = _allowed(pool, size)
+                for k in range(size):
+                    fd = os.open(os.path.join(pool, f"tok.{k}"), os.O_RDWR | os.O_CREAT, 0o600)
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except OSError:   # held by a running test (BlockingIOError)
+                        os.close(fd)
+                        held += 1
+                        continue
+                    if free is None:
+                        free = fd
+                    else:
+                        os.close(fd)   # closing the only fd of a lock releases it
+                if free is not None and held < allowed:
+                    return [gate, free]
+                if free is not None:
+                    os.close(free)
+            finally:
+                fcntl.flock(pick, fcntl.LOCK_UN)
+            time.sleep(POLL_S)
+    except OSError:
+        os.close(gate)
+        raise
+    finally:
+        os.close(pick)
 
 
 def main(argv: list) -> int:

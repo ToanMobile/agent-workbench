@@ -9,6 +9,8 @@
 #   7. the group's heavy slot follows its heaviest member: a first shard whose selection is light beside a cpu one still holds one slot
 #   8. a Stop-like run (GATE_TOTAL_BUDGET_S: its budget stops new suites) keeps the shards one after another, no pool
 #   9. every member gets the SUM of the members' timeouts: two shards of 7 s each pass under --timeout 5 (each waits on the other's slots)
+#  10. DEVKIT_TEST_JOBS set by the user: a fixed pool of that size, as many workers
+#  11. the pool follows capacity: about every POOL_REFRESH_S (5 s) the gate rewrites its size; with no other gate it grows to the workers
 #   6. a run_impacted.sh suite without the DEVKIT_IMPACTED_DIRS= prefix (not a shard) never joins: no pool; a DEVKIT_TEST_POOL_DIR /
 #      DEVKIT_JOB_POOL in the caller's env never reaches a suite (suite_env drops them, INSTINCT-046)
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
@@ -41,7 +43,7 @@ make_repo() {
   printf 'exit 0\n' > tests/x/test_long.sh; printf 'exit 0\n' > tests/x/test_short.sh
   cat > tests/run_impacted.sh <<'SH'
 # devkit-selection-list: (the marker bin/suite_cache.py needs before it asks --list: heavy_slot then classes each shard by its selection)
-case "${1:-}" in --jobs) echo 3; exit 0 ;; --list) if [ "${DEVKIT_IMPACTED_DIRS:-}" = light ]; then echo tests/x/test_short.sh; else echo tests/x/test_long.sh; fi; exit 0 ;; esac
+case "${1:-}" in --jobs) echo "${DEVKIT_TEST_JOBS:-3}"; exit 0 ;; --list) if [ "${DEVKIT_IMPACTED_DIRS:-}" = light ]; then echo tests/x/test_short.sh; else echo tests/x/test_long.sh; fi; exit 0 ;; esac
 d="${DEVKIT_IMPACTED_DIRS:-none}"
 held="$(python3 -c '
 import fcntl, glob, os, sys
@@ -54,13 +56,16 @@ for p in glob.glob(os.path.join(sys.argv[1], "heavy-*.lock")):
         n += 1
     os.close(fd)
 print(n)' "$SB_HEAVY_SLOT_DIR")"
-echo "$d pool=${DEVKIT_TEST_POOL_DIR:-} jobs=${DEVKIT_TEST_JOBS:-} heavy=$held" >> "$MARK/env"
+size="$(cat "${DEVKIT_TEST_POOL_DIR:-/nonexistent}/size" 2>/dev/null)"
+echo "$d pool=${DEVKIT_TEST_POOL_DIR:-} jobs=${DEVKIT_TEST_JOBS:-} size=${size:-} heavy=$held" >> "$MARK/env"
 [ -n "${DEVKIT_TEST_POOL_DIR:-}" ] && [ -d "$DEVKIT_TEST_POOL_DIR" ] && echo "$DEVKIT_TEST_POOL_DIR" > "$MARK/pooldir"
 touch "$MARK/start.$d"
 [ "$d" = red ] && exit 1
 i=0; while [ "$(ls "$MARK" | grep -c '^start\.')" -lt "${WANT:-2}" ] && [ $i -lt 80 ]; do sleep 0.1; i=$((i + 1)); done
 [ "$(ls "$MARK" | grep -c '^start\.')" -ge "${WANT:-2}" ] || exit 1
 sleep "${SLEEP_S:-0}"
+[ -n "${DEVKIT_TEST_POOL_DIR:-}" ] && echo "$d late=$(cat "$DEVKIT_TEST_POOL_DIR/size" 2>/dev/null) jobs=${DEVKIT_TEST_JOBS:-}" >> "$MARK/late"
+exit 0
 SH
   printf '{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],"mandatory_regression_tests":[%s]}]}\n' "$1" > matrix.json
   git add -A && git commit -qm init
@@ -80,9 +85,10 @@ if [ "$RC" = 0 ] && passed REG-S-A && passed REG-S-B; then ok "1: two shards tha
 else bad "1: the shards did not overlap (exit $RC)"; printf '%s\n' "$OUT" | grep -E 'REG-S|FAIL|✖' | tail -8; fi
 pools="$(sed -n 's/.* pool=\([^ ]*\) .*/\1/p' "$MARK/env" | sort -u)"
 jobs="$(sed -n 's/.* jobs=\([^ ]*\) .*/\1/p' "$MARK/env" | sort -u)"
-if [ "$(printf '%s\n' "$pools" | wc -l | tr -d ' ')" = 1 ] && [ -n "$pools" ] && [ "$jobs" = 3 ]; then
-  ok "2: both shards got the same pool and DEVKIT_TEST_JOBS=3 (the runner's --jobs)"
-else bad "2: pools '$(printf '%s' "$pools" | tr '\n' ' ')' jobs '$(printf '%s' "$jobs" | tr '\n' ' ')'"; cat "$MARK/env"; fi
+size="$(sed -n 's/.* size=\([^ ]*\) .*/\1/p' "$MARK/env" | sort -u)"
+if [ "$(printf '%s\n' "$pools" | wc -l | tr -d ' ')" = 1 ] && [ -n "$pools" ] && [ "$size" = 3 ] && [ "$jobs" -ge 3 ] 2>/dev/null; then
+  ok "2: both shards got the same pool, sized 3 now (the runner's --jobs), with $jobs workers (no other gate on the machine)"
+else bad "2: pools '$(printf '%s' "$pools" | tr '\n' ' ')' size '$size' jobs '$(printf '%s' "$jobs" | tr '\n' ' ')'"; cat "$MARK/env"; fi
 [ -s "$MARK/pooldir" ] && [ ! -e "$(cat "$MARK/pooldir")" ] && ok "2: the pool dir is removed after the group" \
   || bad "2: pool dir '$(cat "$MARK/pooldir" 2>/dev/null)' still there or never made"
 heavy="$(sed -n 's/.* heavy=\([0-9]*\)$/\1/p' "$MARK/env" | sort -u | tr '\n' ' ')"
@@ -105,6 +111,20 @@ make_repo "$(printf '{"id":"REG-P-1","name":"p","command":"bash tests/run_impact
 WANT=1 DEVKIT_TEST_POOL_DIR="$TMP" DEVKIT_JOB_POOL=x run_gate   # 6b (INSTINCT-046): a pool variable of the caller never reaches a suite
 if [ "$RC" = 0 ] && ! grep -q 'pool=/' "$MARK/env"; then ok "6: a run_impacted.sh suite that is not a shard does not join a group, nor the caller's pool"
 else bad "6: exit $RC, env: $(tr '\n' ' ' < "$MARK/env")"; fi
+
+# 10. a user pin is a fixed pool
+make_repo "$(shard REG-S-A a),$(shard REG-S-B b)"
+WANT=2 DEVKIT_TEST_JOBS=2 run_gate
+pinned="$(sed -n 's/.* jobs=\([^ ]*\) size=\([^ ]*\) .*/\1:\2/p' "$MARK/env" | sort -u)"
+[ "$RC" = 0 ] && [ "$pinned" = "2:2" ] && ok "10: DEVKIT_TEST_JOBS=2 from the user: 2 workers, pool size 2" || bad "10: exit $RC, jobs:size '$pinned'"
+
+# 11. the pool grows while the group runs
+make_repo "$(shard REG-S-A a),$(shard REG-S-B b)"
+WANT=2 SLEEP_S=7 run_gate
+late="$(sed -n 's/.* late=\([0-9]*\) jobs=\([0-9]*\)$/\1:\2/p' "$MARK/late" 2>/dev/null | sort -u | head -1)"
+if [ "$RC" = 0 ] && [ -n "$late" ] && [ "${late%%:*}" = "${late##*:}" ] && [ "${late%%:*}" -gt 3 ]; then
+  ok "11: the pool grew from 3 to ${late%%:*} slots while the group ran (capacity re-read)"
+else bad "11: exit $RC, late size:jobs '$late'"; fi
 
 # 7. a light first member beside a cpu one: the group still holds one heavy slot
 make_repo "$(shard REG-S-L light),$(shard REG-S-B b)"

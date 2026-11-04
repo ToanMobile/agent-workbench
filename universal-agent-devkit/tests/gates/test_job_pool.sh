@@ -7,6 +7,8 @@
 #   e. the wait file holds the seconds waited (whole seconds), the command's exit code is passed through.
 #   f. --start-fd/--start-line: the line is written only once the slot is held (a waiting test is not "started"), and fd N is closed
 #      before the command runs (it never inherits it).
+#   g. <dir>/size is the pool's size NOW (the gate rewrites it): size 2 of 4 caps at 2 at once; raised to 4 mid-run, the pool grows to 4;
+#      a broken size file means <size>.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -77,5 +79,20 @@ wait "$h"; wait "$w"
 [ -z "$early" ] && ok "f: no start line while the test waits for its slot" || bad "f: start line written while waiting: '$early'"
 [ "$(cat "$TMP/start")" = "· start t" ] && ok "f: start line written once the slot is held" || bad "f: start file '$(cat "$TMP/start")'"
 [ "$(cat "$TMP/f.out")" = fd3-closed ] && ok "f: the command does not inherit fd 3" || bad "f: command saw fd 3: $(cat "$TMP/f.out")"
+
+# g: a live size file
+P5="$TMP/pool5"; mkdir -p "$P5"; echo 2 > "$P5/size"; : > "$TMP/log"
+for i in 1 2 3 4 5 6; do job "$P5" 4 "s$i" 1.2 & done
+sleep 0.6
+peak_before="$(peak "$TMP/log" | cut -d' ' -f1)"
+for i in 7 8 9 10 11 12; do job "$P5" 4 "t$i" 1.5 & done
+echo 4 > "$P5/size"
+wait
+read -r m _ <<< "$(peak "$TMP/log")"
+[ "$peak_before" -le 2 ] && ok "g: size file 2: at most $peak_before at once" || bad "g: size file 2 but $peak_before at once"
+[ "$m" -ge 3 ] && [ "$m" -le 4 ] && ok "g: size raised to 4 mid-run: the pool grew ($m at once, never more than 4)" || bad "g: peak $m after the size went to 4"
+echo junk > "$P5/size"; : > "$TMP/log"
+for i in 1 2 3 4; do job "$P5" 4 "u$i" 0.6 & done; wait
+[ "$(peak "$TMP/log" | cut -d' ' -f1)" = 4 ] && ok "g: a size file that is not a number means <size>" || bad "g: junk size file: peak $(peak "$TMP/log")"
 
 [ "$fails" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS ($fails)"; exit 1; }

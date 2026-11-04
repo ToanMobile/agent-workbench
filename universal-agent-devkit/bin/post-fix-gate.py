@@ -4552,6 +4552,7 @@ EXTEND_MIN_TIMEOUT_S = 60   # #616 A: a --timeout below this is a test's own sho
 # #801 / owner 02/11: the workbench tests/gates shard passes at p95 860 s of the 900 s --timeout (12 TIMEOUTs since 31/10): it gets
 # this many times --timeout. ponytail: ids fixed in the kit; move to a per-test matrix key when a second suite needs its own ceiling.
 SUITE_TIMEOUT_FACTOR = {"REG-DK-ALL-GATES-01": 2}
+POOL_REFRESH_S = 5   # 04/11: how often the shard group's pool size (tests/lib/job_pool.py <dir>/size) follows capacity.test_jobs()
 
 
 def _extend_step_s() -> float:
@@ -7640,6 +7641,26 @@ def main():
         out = (p.stdout or "").strip()
         return int(out) if p.returncode == 0 and out.isdigit() and int(out) > 0 else None
 
+    def pool_size_writer(pool, jobs, jmax, stop):
+        """<pool>/size = the slots the shard group may use NOW (tests/lib/job_pool.py reads it): capacity.test_jobs() again every
+        POOL_REFRESH_S, so the pool grows when another gate ends and shrinks when one starts (04/11: fixed at its start, a group ran 26 min
+        at 6 slots). The first value is the runner's own --jobs; never above jmax (the runner's workers). capacity unreadable: keep the last."""
+        def write(n):
+            tmp = os.path.join(pool, f".size.{os.getpid()}")
+            try:
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    fh.write(f"{max(1, min(n, jmax))}\n")
+                os.replace(tmp, os.path.join(pool, "size"))
+            except OSError as exc:
+                log_warn(f"shard group: pool size: {exc!r}")
+        write(jobs)
+        while not stop.wait(POOL_REFRESH_S):
+            try:
+                import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+                write(_capacity.test_jobs())
+            except Exception as exc:   # noqa: BLE001 - capacity broken: the pool keeps its last size
+                log_warn(f"shard group: capacity.test_jobs: {exc!r}; pool size kept")
+
     def budget_spent():
         return budget_s > 0 and time.monotonic() - budget_start >= budget_s
 
@@ -8047,6 +8068,9 @@ def main():
         if shard_group:
             if shard_group.get("slots") is not None and slot_mod and slot_mod[0] is not None:
                 slot_mod[0].release_suite(shard_group["slots"])
+            if shard_group.get("stop") is not None:
+                shard_group["stop"].set()
+                shard_group["sizer"].join(timeout=5)
             shutil.rmtree(shard_group.get("dir") or "", ignore_errors=True)
             shard_group.clear()
         if errors:   # before sharing: a worker that died left its suite without a status
@@ -8224,12 +8248,28 @@ def main():
                                        sem=threading.BoundedSemaphore(len(members)),
                                        tmo=sum(suite_timeout(m, args.timeout, _stop_like) for m in members))
                     shard_group["slots"] = take_slots(t, cmd, group=members[1:])
+                    # DEVKIT_TEST_JOBS set by the user is a fixed count; otherwise the runners get the workers of a machine with no other
+                    # gate (capacity.test_jobs(busy=1)) and the pool's size file says how many may run now
+                    pinned = (os.environ.get("DEVKIT_TEST_JOBS") or "").strip()
+                    jmax = jobs
+                    if not (pinned.isdigit() and int(pinned) > 0):
+                        try:
+                            import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+                            jmax = max(jobs, _capacity.test_jobs(busy=1))
+                        except Exception as exc:   # noqa: BLE001 - capacity broken: a fixed pool of the runner's --jobs
+                            log_warn(f"shard group: capacity.test_jobs: {exc!r}; pool fixed at {jobs}")
+                    with open(os.path.join(shard_group["dir"], "size"), "w", encoding="utf-8") as fh:   # before any member starts
+                        fh.write(f"{jobs}\n")
+                    shard_group["jmax"], shard_group["stop"] = jmax, threading.Event()
+                    shard_group["sizer"] = threading.Thread(target=pool_size_writer, name="shard-pool-size", daemon=True,
+                                                            args=(shard_group["dir"], jobs, jmax, shard_group["stop"]))
+                    shard_group["sizer"].start()
                 shard_group["ids"].add(id(t))
                 t["shard_timeout_s"] = shard_group["tmo"]
                 env = suite_env()
                 if done_scripts:
                     env["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
-                env.update(DEVKIT_TEST_POOL_DIR=shard_group["dir"], DEVKIT_TEST_JOBS=str(shard_group["jobs"]))
+                env.update(DEVKIT_TEST_POOL_DIR=shard_group["dir"], DEVKIT_TEST_JOBS=str(shard_group["jmax"]))
                 start_job(t, cmd, mode, env, kind="shard", sem=shard_group["sem"])
                 ran_cmds[key] = t
                 if t.get("keyed_full") or t.get("stale_rerun"):
