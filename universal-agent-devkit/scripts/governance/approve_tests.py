@@ -89,10 +89,13 @@ def main(argv):
         print("approve-tests: không có test sửa nào khớp cây đã audit; không ghi gì", file=sys.stderr)
         return 1
     ledger_dir = project / ".claude" / "audit-gate"
-    ledger_dir.mkdir(parents=True, exist_ok=True)
+    # OCR P3 (đợt 2): kiểm realpath TRƯỚC mkdir — .claude là symlink ra ngoài thì không tạo thư mục nào ở đích.
     real_dir = os.path.realpath(ledger_dir)
     if not real_dir.startswith(str(project) + os.sep):
         return refuse(f"{ledger_dir} trỏ ra ngoài checkout hiện tại ({real_dir})")
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+    if os.path.realpath(ledger_dir) != real_dir:
+        return refuse(f"{ledger_dir} đổi đích trong lúc tạo ({os.path.realpath(ledger_dir)})")
     ledger = Path(real_dir) / "approved_tests.json"
     if ledger.is_symlink():
         return refuse(f"{ledger} là symlink")

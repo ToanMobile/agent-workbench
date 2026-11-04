@@ -149,6 +149,12 @@ mkdir -p "$TMP/outside" && ln -s "$TMP/outside" "$TMP/c10/.claude/audit-gate"
 DEVKIT_AGENT_ID=claude-lane kit "$TMP/c10" T0910-c10
 if [ "$RC" = 2 ] && has "ngoài checkout" && [ ! -f "$TMP/outside/approved_tests.json" ]; then ok "C10: thư mục duyệt trỏ ra ngoài checkout -> từ chối"
 else bad "C10: symlink ra ngoài: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
+# C10b (OCR P3 đợt 2): .claude là symlink ra ngoài -> từ chối VÀ không tạo audit-gate/ ở đích ngoài checkout (cũ: mkdir trước khi kiểm)
+mk "$TMP/c10b"; pm_rec T0910-c10b "$TMP/c10b" "$X" grok "[$DG]"
+mkdir -p "$TMP/outside2" && mv "$TMP/c10b/.claude/config.json" "$TMP/outside2/" && rmdir "$TMP/c10b/.claude" && ln -s "$TMP/outside2" "$TMP/c10b/.claude"
+DEVKIT_AGENT_ID=claude-lane kit "$TMP/c10b" T0910-c10b
+if [ "$RC" = 2 ] && has "ngoài checkout" && [ ! -e "$TMP/outside2/audit-gate" ]; then ok "C10b: .claude trỏ ra ngoài -> từ chối, không tạo thư mục ở ngoài"
+else bad "C10b: .claude symlink: rc=$RC audit-gate ngoài=$([ -e "$TMP/outside2/audit-gate" ] && echo có || echo không) $(printf '%s' "$OUT" | tail -2)"; fi
 
 # ── Đợt 2, sửa sau review (F2, F6) ────────────────────────────────────────────────────────────────────────────────────────
 # C11 (F2): không DEVKIT_AGENT_ID, phiên Claude Code (CLAUDECODE=1) -> author "claude", lệnh ghi

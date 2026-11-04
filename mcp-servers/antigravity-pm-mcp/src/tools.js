@@ -972,8 +972,11 @@ export const TOOLS = [
         if (laGrok(reviewer) && auditAgent !== 'grok') fail(`audit-agent.json ghi reviewer "${rep.reviewer}" nhung lan giao audit gan nhat khong phai grok do PM chay — khong ghi auditedHead.`);
         // Reviewer trung builder (luong /giao: Antigravity build roi audit): van ghi ket luan audit nhung KHONG ghi auditedHead
         // (ca truong lan dong trong notes, gate doc ca hai) — gate DevKit khong duyet test sua dua vao lan tu audit nay.
-        if (builders.includes(reviewer)) {
-          selfAudit = `CANH BAO: reviewer "${rep.reviewer}" trung builder (${builders.join(', ')}) — khong phai duyet cheo, khong ghi auditedHead.`;
+        // OCR P2 (dot 2): reviewer gate tin la auditAgent (verdicts.audit.reviewer), nen so ca auditAgent: bao cao tu khai chuoi la
+        // (vd "gemini-3") khong lach duoc khi Antigravity vua build vua audit.
+        const viaAgent = auditAgent ? normalizeAgent(auditAgent) : '';
+        if (builders.includes(reviewer) || (viaAgent && builders.includes(viaAgent))) {
+          selfAudit = `CANH BAO: reviewer "${rep.reviewer}" (lan giao audit: ${viaAgent || '?'}) trung builder (${builders.join(', ')}) — khong phai duyet cheo, khong ghi auditedHead.`;
           auditedHead = undefined;
         }
         // ponytail: bao cao nam trong thu muc project, agent cung user OS ghi tay duoc, va builder la chuoi tu khai (task audit-only rieng

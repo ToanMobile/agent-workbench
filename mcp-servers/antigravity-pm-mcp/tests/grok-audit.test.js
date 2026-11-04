@@ -171,6 +171,21 @@ test('G5 luong cu (lan giao audit khong co agent = Antigravity): reviewer antigr
   }
 });
 
+test('G7 OCR P2: Antigravity build roi Antigravity audit, bao cao tu khai reviewer la chuoi la: van la tu duyet (theo agent cua lan giao PM)', async () => {
+  const { dir, cfg, task, head } = repo();
+  try {
+    recordDispatch(cfg, task, { kind: 'implement', conversationId: 'c-impl', headCommit: null });
+    recordDispatch(cfg, task, { kind: 'audit', conversationId: 'c-audit' });
+    writeFile(repOf(dir, task), JSON.stringify({ verdict: 'pass', reviewer: 'gemini-3', auditedHead: head }));
+    await call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head });
+    const a = disk(cfg, task).verdicts.audit;
+    assert.equal(a.reviewer, 'antigravity');
+    assert.equal(a.auditedHead, undefined, 'agent lan giao audit (antigravity) trung builder: khong ghi auditedHead');
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('G6 khong co grok: pm_dispatch tu choi, khong ghi lan giao; agent=grok chi cho kind=audit', async () => {
   const { dir, cfg, task } = repo();
   try {
