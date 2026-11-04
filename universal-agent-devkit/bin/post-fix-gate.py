@@ -6247,6 +6247,9 @@ _MAIN_T0 = None                   # time.monotonic() at the start of main()
 _SHADOW_ON = False                # #476: DEVKIT_SHADOW_MAP=1 đọc ở đầu main() rồi gỡ khỏi env, để suite con (test_gate_run_log) không thấy
 _SHADOW = None                   # #476: (shadow_skip, shadow_miss) của lượt này — map test→nguồn so với cách chọn cũ; chỉ log
 _MAIN_LOAD1 = None                # #472 C: tải 1 phút lúc main() bắt đầu (runs.jsonl load1)
+# #984 (a): slot pool 'gate' của lượt này (runs.jsonl gate_slot) — chỉ khi lượt thật sự xin slot: giữ được (slot, n, prio, waited_s, t_acq,
+# t_rel, held_s, outside_suites_s, released) hay hết giờ chờ (timed_out, waited_s). Chỉ là số đo: không bao giờ quyết định gate.
+_GATE_SLOT_REC = {}
 # #472: worktree scratch của điểm gộp (scripts/git/integrate.py, .claude/bin/super-board-merge-gate.sh, super-board-merge-train.sh);
 # cùng tiền tố với scripts/governance/gate_speed_report.py MERGE_POINT_PREFIXES và bin/batch_canary.py
 MERGE_POINT_PREFIXES = (".integrate-scratch-", ".merge-scratch-", ".train-scratch-")
@@ -6294,6 +6297,44 @@ def _lap(name):
         _STEP_LAST = now
     except Exception:  # noqa: BLE001 - the numbers are data; the verdict never depends on them
         return
+
+
+def _gate_slot_note_acquire(hs, handle, n):
+    """#984 (a): ghi kết quả xin slot pool 'gate' vào _GATE_SLOT_REC. Slot giữ thật (fh): tên slot, mốc lấy và giây suite đã có; hết giờ:
+    timed_out. prev_held (cha giữ hộ) không phải lượt giữ slot: không ghi. Chỉ là số đo: lỗi nào cũng bỏ qua."""
+    try:
+        base = {"n": int(n), "prio": str(hs.priority_name())[:16], "waited_s": round(float(handle.waited_s), 1)}
+        if handle.timed_out:
+            _GATE_SLOT_REC.update(base, timed_out=True, t_gave_up=round(time.time(), 1))
+        elif handle.fh is not None and handle.path:
+            name = os.path.basename(str(handle.path))
+            _GATE_SLOT_REC.update(base, slot=(name[:-5] if name.endswith(".lock") else name)[:32], t_acq=round(time.time(), 1),
+                                  _mono=time.monotonic(), _suites0=_STEPS.get("suites", 0.0))
+    except Exception:  # noqa: BLE001 - the numbers are data; the verdict never depends on them
+        return
+
+
+def _gate_slot_note_release(why):
+    """#984 (a): mốc trả slot (why: end = khối finally sau suite/verdict, nothing_to_run = trả sớm sau khi chờ vì không còn suite).
+    held_s đo bằng đồng hồ đơn điệu; outside_suites_s = phần giữ không nằm trong bước suites."""
+    try:
+        if "_mono" in _GATE_SLOT_REC and "t_rel" not in _GATE_SLOT_REC:
+            held = max(0.0, time.monotonic() - _GATE_SLOT_REC["_mono"])
+            in_suites = max(0.0, _STEPS.get("suites", 0.0) - _GATE_SLOT_REC["_suites0"])
+            _GATE_SLOT_REC.update(t_rel=round(time.time(), 1), held_s=round(held, 1),
+                                  outside_suites_s=round(max(0.0, held - in_suites), 1), released=why)
+    except Exception:  # noqa: BLE001 - the numbers are data; the verdict never depends on them
+        return
+
+
+def _gate_slot_log(git_dir):
+    """gate_slot cho runs.jsonl, hoặc None khi lượt không xin slot. repo = tên thư mục chứa git common dir (worktree, scratch merge gate
+    và checkout chính của một repo cùng một tên)."""
+    if not _GATE_SLOT_REC:
+        return None
+    out = {k: v for k, v in _GATE_SLOT_REC.items() if not k.startswith("_")}
+    out["repo"] = os.path.basename(os.path.dirname(os.path.dirname(_run_log_dir(git_dir))))[:64]
+    return out
 
 
 def _add_step(name, seconds):
@@ -6636,6 +6677,9 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             rec["slot_wait_s"] = waits
         if _BUSY_HOLDER and rec["busy"]:   # wave 2 C: who the Stop run gave up behind (measured, never decides)
             rec["busy_holder"] = dict(_BUSY_HOLDER)
+        gate_slot_rec = _gate_slot_log(git_dir)
+        if gate_slot_rec:   # #984 (a): chỉ khi lượt xin slot pool gate (giữ được hay hết giờ); lượt khác giữ nguyên bộ trường cũ
+            rec["gate_slot"] = gate_slot_rec
         if _MAIN_T0 is not None:
             rec["total_wall_s"] = round(time.monotonic() - _MAIN_T0, 2)
         with _STEP_LOCK:   # seconds per phase (see _lap); a copy, so the record never changes after this line
@@ -6679,6 +6723,7 @@ def main():
         _MAIN_LOAD1 = None
     _STEP_LAST = None
     _STEPS.clear()   # one run, one set of steps (a test may call main() again in the same process)
+    _GATE_SLOT_REC.clear()
     if threading.current_thread() is threading.main_thread():
         # SIGINT too (A9, 2026-10-09): its KeyboardInterrupt left the suites running; the handler dies by SIGINT like an
         # uncaught KeyboardInterrupt does, so the exit status is unchanged. An ignored signal (nohup, a background job's
@@ -7850,6 +7895,7 @@ def main():
                 gate_slot = gate_slot_hs.acquire_pool(
                     "gate", gate_paths,
                     wait_s=gate_wait_s, label=os.path.basename(str(project_dir))[:64])
+                _gate_slot_note_acquire(gate_slot_hs, gate_slot, gate_slots_n)
                 if gate_slot.timed_out:
                     _note_busy_holder({"who": "gate_queue", "raw": "pool gate, %d slot(s), waited %.0f s%s" % (
                         gate_slots_n, gate_wait_s, ", live holders %s" % live_pids[:8] if live_pool else "")},
@@ -7886,6 +7932,7 @@ def main():
                     nothing_to_run = not any(t.get("command") for t in to_run)
                     if nothing_to_run:
                         gate_slot_hs.release_pool(gate_slot)
+                        _gate_slot_note_release("nothing_to_run")
                         gate_slot = None
                         if prev_gate_slot_held is None:
                             os.environ.pop("DEVKIT_GATE_SLOT_HELD", None)
@@ -9221,6 +9268,7 @@ def main():
         # T0056: nhả slot hàng đợi gate toàn máy và khôi phục DEVKIT_GATE_SLOT_HELD trong khối finally sẵn có.
         if gate_slot_hs is not None:
             gate_slot_hs.release_pool(gate_slot)
+            _gate_slot_note_release("end")
             gate_slot = None
         if prev_gate_slot_held is None:
             os.environ.pop("DEVKIT_GATE_SLOT_HELD", None)

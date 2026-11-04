@@ -196,6 +196,70 @@ def metrics(recs):
     return m
 
 
+def holder_kind(r):
+    """Loại lượt giữ slot (#984): merge = điểm gộp (merge gate, integrate, train), full = mode=full ngoài điểm gộp (nightly, --full),
+    stop = Stop hook (source hook), task = còn lại (gate task impacted/scoped từ CLI)."""
+    mp = r.get("merge_point")
+    if not isinstance(mp, bool):
+        mp = str(r.get("project", "")).startswith(MERGE_POINT_PREFIXES)
+    if mp:
+        return "merge"
+    if r["mode"] == "full":
+        return "full"
+    return "stop" if r["source"] == "hook" else "task"
+
+
+def slot_holders(recs, extra):
+    """#984 (a): giây giữ slot pool gate theo loại lượt và theo repo (gate_slot của mọi log: log chính + --holders-log), và giây các lượt
+    đó giữ trong lúc một merge gate (.merge-scratch-*) của log chính chờ slot. None khi không log nào có gate_slot (log cũ)."""
+    def gs(r):
+        g = r.get("gate_slot")
+        return g if isinstance(g, dict) else None
+    allr = list(recs) + list(extra)
+    if not any(gs(r) for r in allr):
+        return None
+    holds = []   # (t_acq, t_rel, kind, repo, record)
+    for r in allr:
+        g = gs(r)
+        a, b = grr.num((g or {}).get("t_acq")), grr.num((g or {}).get("t_rel"))
+        if a is not None and b is not None and b >= a:
+            holds.append((a, b, holder_kind(r), str(g.get("repo") or r.get("project") or "?"), r))
+    h = {"kind": collections.Counter(), "repo": collections.Counter(), "held": 0.0, "outside": 0.0,
+         "w_kind": collections.Counter(), "w_repo": collections.Counter(), "waits": 0, "timed_out": 0, "wait_s": 0.0}
+    for a, b, kind, repo, r in holds:
+        h["kind"][kind] += b - a
+        h["repo"][repo] += b - a
+        h["held"] += b - a
+        h["outside"] += grr.num(gs(r).get("outside_suites_s")) or 0.0
+    for r in recs:
+        g = gs(r)
+        if not g or not str(r.get("project", "")).startswith(".merge-scratch-"):
+            continue
+        waited = grr.num(g.get("waited_s")) or 0.0
+        end = grr.num(g.get("t_gave_up") if g.get("timed_out") is True else g.get("t_acq"))
+        if waited <= 0 or end is None:
+            continue
+        h["waits"] += 1
+        h["timed_out"] += 1 if g.get("timed_out") is True else 0
+        h["wait_s"] += waited
+        for a, b, kind, repo, other in holds:
+            o = min(b, end) - max(a, end - waited)
+            if o > 0 and other is not r:
+                h["w_kind"][kind] += o
+                h["w_repo"][repo] += o
+    return h
+
+
+def print_holders(h, out):
+    def secs(c):
+        return " ".join("%s=%.0fs" % kv for kv in c.most_common()) or "-"
+    out.write("gate slot held by kind: %s (merge = merge point, full = mode full outside it, stop = Stop hook, task = the rest)\n" % secs(h["kind"]))
+    out.write("gate slot held by repo: %s\n" % secs(h["repo"]))
+    out.write("gate slot held outside the suites step: %.1fs of %.0fs held\n" % (h["outside"], h["held"]))
+    out.write("gate slot held while a merge gate waited: waits=%d timed_out=%d wait=%.0fs by kind: %s by repo: %s\n" % (
+        h["waits"], h["timed_out"], h["wait_s"], secs(h["w_kind"]), secs(h["w_repo"])))
+
+
 def print_report(label, m, ignored, out):
     w = out.write
     w("== %s ==\n" % label)
@@ -270,6 +334,8 @@ def main(argv=None):
     ap.add_argument("--since", type=day_epoch, help="YYYY-MM-DD, giờ địa phương, gồm ngày này")
     ap.add_argument("--until", type=day_epoch, help="YYYY-MM-DD, giờ địa phương, gồm ngày này")
     ap.add_argument("--baseline", help="runs.jsonl để so (bảng trước/sau)")
+    ap.add_argument("--holders-log", action="append", default=[], metavar="FILE",
+                    help="runs.jsonl của repo khác dùng chung máy (lặp được): chỉ thêm vào mục người giữ slot pool gate (#984)")
     a = ap.parse_args(argv)
     until = None if a.until is None else time.mktime((datetime.fromtimestamp(a.until) + timedelta(days=1)).timetuple())
     path = a.log
@@ -279,8 +345,9 @@ def main(argv=None):
             print("✖ %s" % problem, file=sys.stderr)
             return 1
     base = None
+    extra = []
     # mỗi file đọc riêng để lỗi nêu đúng file hỏng (ValueError của read_runs không mang tên file)
-    for which, f in (("log", path), ("baseline", a.baseline)):
+    for which, f in [("log", path), ("baseline", a.baseline)] + [("holders", h) for h in a.holders_log]:
         if not f:
             continue
         try:
@@ -290,10 +357,15 @@ def main(argv=None):
             return 1
         if which == "log":
             recs, ignored = got
+        elif which == "holders":
+            extra += got[0]
         else:
             base = got
     cur = metrics(recs)
     print_report("current: %s (%d runs)" % (path, len(recs)), cur, ignored, sys.stdout)
+    holders = slot_holders(recs, extra)
+    if holders is not None:   # #984: chỉ khi có bản ghi gate_slot; log cũ in y như trước
+        print_holders(holders, sys.stdout)
     if base is not None:
         bm = metrics(base[0])
         print_report("baseline: %s (%d runs)" % (a.baseline, len(base[0])), bm, base[1], sys.stdout)
