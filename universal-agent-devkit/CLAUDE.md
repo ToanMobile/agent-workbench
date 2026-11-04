@@ -5,5 +5,5 @@ nested in the repo that holds the kit, and an import loads ~94 KB the first time
 - Central Engineering Rules & SSOT: `AGENTS.md`
 - Active Domain Profile: `.active-profile.json`
 - High-Performance & Security Standards: `rules/core-rules.md`
-- Post-Fix Verification Gate: `python3 bin/post-fix-gate.py --run-tests` (or `postfix-gate --run-tests` after `make install`)
+- Post-Fix Verification Gate: `python3 bin/post-fix-gate.py --run-tests --scoped` (or `postfix-gate --run-tests --scoped` after `make install`)
 <!-- universal-agent-devkit:end -->
