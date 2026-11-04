@@ -9,11 +9,16 @@ pm home lạ (ANTIGRAVITY_PM_STATE_HOME, HOME=/tmp/x) không phải fixture test
 pm_home_test_fixture, audit T0066 vòng 3). `--pr N`: head chưa có object trong repo thì fetch refs/pull/N/head trước (lỗi → không duyệt).
 
 CLI: super-board-audit-check.py <task_id> <sha40> [--top DIR] [--pr N]   exit 0 = khớp, 1 = không khớp / không kiểm được.
+CLI: super-board-audit-check.py --chain-audit <sha40> --base <ref> [--top DIR]   (04/11, merge gate / train --has-edited-tests)
+     exit 0 = PR sửa/xoá file đã có mà gate có thể coi là test (edited_existing) VÀ có biên bản audit pass của antigravity-pm với
+     auditedHead thuộc <base>..<sha40> (duyệt test sửa tra thẳng biên bản, post-fix-gate _pm_audit_cross_review), HOẶC không kiểm được
+     (giữ đường bi quan: khoá, không autosync); exit 1 = không có (PR chỉ có audit lớn mà không sửa test thì không bi quan).
 """
 from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -102,7 +107,59 @@ def matches(task_id, sha, top=None):
     return isinstance(sha, str) and bool(SHA.fullmatch(sha)) and audited(task_id, top) == sha
 
 
+def edited_existing(top, sha, base, gate):
+    """Siêu tập các file đã có ở merge-base(base, sha) mà PR sửa/xoá và gate có thể coi là test đã có bị sửa: đường dẫn test
+    (post-fix-gate.is_test_path, nạp từ kit cạnh push_gate) hoặc file mà ma trận hồi quy nhắc tên (script suite như bin/agent-kit).
+    ponytail: chỉ khớp tên trong văn bản ma trận (một tầng), không đi theo script suite gọi script như suite_runner_paths; nâng khi
+    thấy PR chỉ sửa script tầng hai lọt đường lạc quan. Lỗi git/nạp → raise (người gọi coi là có)."""
+    run = subprocess.run(["git", "-C", top, "diff", "--name-status", "--no-renames", "-z", f"{base}...{sha}"],
+                         capture_output=True, text=True, timeout=60)
+    if run.returncode != 0:
+        raise RuntimeError(f"git diff {base}...{sha[:12]}: exit {run.returncode}")
+    parts = run.stdout.split("\0")
+    paths = [parts[i + 1] for i in range(0, len(parts) - 1, 2) if parts[i][:1] in ("M", "D", "T")]
+    if not paths:
+        return []
+    spec = importlib.util.spec_from_file_location("sb_post_fix_gate", Path(gate.__file__).with_name("post-fix-gate.py"))
+    pfg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pfg)
+    try:
+        matrix = (Path(top) / gate.MATRIX).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        matrix = ""
+    return [p for p in paths if pfg.is_test_path(p) or p in matrix or os.path.basename(p) in matrix]
+
+
+def chain_audit(sha, base, top=None):
+    """True khi PR (head sha) có thể đang dựa vào duyệt test sửa tra thẳng từ biên bản PM: PR sửa file test đã có (edited_existing) và
+    một audit pass của repo có auditedHead trong `git rev-list sha --not base` (tổ tiên-hoặc-chính head PR, không thuộc base). Lỗi /
+    không kiểm được → True (fail về phía bi quan)."""
+    top = top or repo_top()
+    gate = push_gate()
+    if not top or gate is None or not isinstance(sha, str) or not SHA.fullmatch(sha) or not base:
+        return True
+    try:
+        if not edited_existing(top, sha, base, gate):
+            return False
+        heads = gate.audited_heads(top)
+        run = subprocess.run(["git", "-C", top, "rev-list", sha, "--not", base], capture_output=True, text=True, timeout=60)
+    except Exception as error:   # noqa: BLE001 - biên bản / git hỏng: giữ đường bi quan
+        print(f"audit-check: cannot read the audit records: {error.__class__.__name__}", file=sys.stderr)
+        return True
+    if run.returncode != 0:
+        return True
+    pr_commits = set(run.stdout.split())
+    return any(h in pr_commits for _tid, h in heads)
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--chain-audit":
+        cp = argparse.ArgumentParser(prog="super-board-audit-check.py --chain-audit")
+        cp.add_argument("sha")
+        cp.add_argument("--base", required=True)
+        cp.add_argument("--top")
+        cargs = cp.parse_args(sys.argv[2:])
+        return 0 if chain_audit(cargs.sha, cargs.base, cargs.top) else 1
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("task_id")
     ap.add_argument("sha")

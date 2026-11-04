@@ -100,13 +100,14 @@ test('G2 audit-agent.json bi ghi de tay sau lan grok: pm_verdict tu choi (sha kh
   const { dir, cfg, task, head } = repo();
   try {
     await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const before = disk(cfg, task).verdicts;   // 04/11: grok PASS da tu ghi verdict; pm_verdict bi tu choi khong duoc doi gi
     const rep = repOf(dir, task);
     const orig = fs.readFileSync(rep, 'utf8');
     fs.writeFileSync(rep, `${orig} `);
     await assert.rejects(call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head }), /sha256/);
     fs.writeFileSync(rep, JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: head }));
     await assert.rejects(call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head }), /grok/);
-    assert.equal(disk(cfg, task).verdicts?.audit, undefined);
+    assert.deepEqual(disk(cfg, task).verdicts, before);
   } finally {
     cleanup(dir);
   }
@@ -289,13 +290,14 @@ test('F2 pm_verdict: nguoi goi la grok (env phien Grok, khong DEVKIT_AGENT_ID) +
   const { dir, cfg, task, head } = repo();
   try {
     await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const hist = disk(cfg, task).verdicts.auditHistory;   // 04/11: do grok PASS tu ghi
     const out = await withEnv({ GROK_SESSION_ID: 's2' },
       () => call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head }));
     assert.match(out, /trung builder/);
     const t = disk(cfg, task);
     assert.equal(t.verdicts.audit.verdict, 'pass');
     assert.equal(t.verdicts.audit.auditedHead, undefined);
-    assert.equal((t.verdicts.auditHistory || []).length, 0);
+    assert.deepEqual(t.verdicts.auditHistory, hist);
   } finally {
     cleanup(dir);
   }
@@ -415,11 +417,12 @@ test('H4 DEVKIT_AGENT_ID=codex nhung phien co GROK_*: pm_dispatch grok tu choi (
   const { dir, cfg, task, head } = repo();
   try {
     await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const hist = disk(cfg, task).verdicts.auditHistory;   // 04/11: do grok PASS tu ghi
     const out = await withEnv(env, () => call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head }));
     assert.match(out, /trung builder/);
     const t = disk(cfg, task);
     assert.equal(t.verdicts.audit.auditedHead, undefined);
-    assert.equal((t.verdicts.auditHistory || []).length, 0);
+    assert.deepEqual(t.verdicts.auditHistory, hist);
   } finally {
     cleanup(dir);
   }
@@ -445,6 +448,120 @@ test('H5 cay lam viec doi TRONG luc grok audit (file da theo doi sua, HEAD giu n
     await withGrok(fakeGrok({ sh: 'echo moi > moi-untracked.txt' }), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
     assert.equal(JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8')).verdict, 'pass');
     assert.equal(disk(cfg, task).dispatches.at(-1).verdict, 'pass');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// 04/11 (khong buoc nguoi): grok PASS + khong loi -> PM tu ghi verdicts.audit (pass, reviewer grok, actor pm, auditedHead) NGAY SAU lan
+// giao; dung khuon push_gate.audit_reviewer(legacy=False) doc: verdicts.audit.reviewer grok + lan audit gan nhat trong dispatches la grok.
+// Prompt grok so voi merge-base(nhanh dich, head) va liet ke file da co bi sua/xoa: task chi-audit tao tren worktree PR co baseCommit = head.
+function repoPr() {
+  const dir = tmpProject({ projectName: 'grok-audit-pr', testCommand: 'echo ok' });
+  const g = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: dir, encoding: 'utf8' }).trim();
+  g('init', '-q', '-b', 'main');
+  writeFile(path.join(dir, '.gitignore'), '.antigravity-pm/\n');
+  writeFile(path.join(dir, 'tests', 'old.test.js'), 'assert(1)\n');
+  writeFile(path.join(dir, 'a.txt'), 'a\n');
+  g('add', '-A'); g('commit', '-qm', 'init');
+  const mb = g('rev-parse', 'HEAD');
+  g('checkout', '-q', '-b', 'feat');
+  writeFile(path.join(dir, 'tests', 'old.test.js'), 'assert(2)\n');
+  writeFile(path.join(dir, 'new.txt'), 'n\n');
+  g('add', '-A'); g('commit', '-qm', 'PR sua test');
+  const head = g('rev-parse', 'HEAD');
+  const cfg = loadConfig(dir);
+  const task = createTask(cfg, sampleTaskArgs());   // task chi-audit: baseCommit = head PR
+  return { dir, cfg, task, head, mb };
+}
+
+test('AV1 grok PASS: PM tu ghi verdicts.audit pass (reviewer grok, auditedHead) + auditHistory ngay sau lan giao, khong can pm_verdict', async () => {
+  const { dir, cfg, task, head } = repo();
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: dir });   // nhanh dich co that, khong phu thuoc init.defaultBranch cua may
+  try {
+    const out = await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const t = disk(cfg, task);
+    const a = t.verdicts.audit;
+    assert.equal(a.verdict, 'pass');
+    assert.equal(a.reviewer, 'grok');
+    assert.equal(a.auditedHead, head);
+    assert.deepEqual(t.verdicts.auditHistory.map((h) => [h.auditedHead, h.reviewer]), [[head, 'grok']]);
+    const d = t.dispatches.filter((x) => x.kind === 'audit').at(-1);
+    assert.equal(d.agent, 'grok');
+    assert.ok(Date.parse(d.at) <= Date.parse(a.at), 'lan giao ghi truoc ket luan (audit_reviewer doc lan giao gan nhat)');
+    const h = (t.history || []).filter((x) => x.event === 'verdict_audit').at(-1);
+    assert.equal(h?.actor, 'pm');
+    assert.match(out, /auditedHead = [0-9a-f]{40}/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('AV2 grok REVISE / exit khac 0 / HEAD doi / cay ban: KHONG ghi verdicts.audit', async () => {
+  for (const opt of [{ out: 'VERDICT: REVISE\n' }, { code: 3 }, { sh: 'echo doi >> a.txt' },
+    { sh: 'git -c user.name=t -c user.email=t@t commit -qm x --allow-empty' }]) {
+    const { dir, cfg, task } = repo();
+    try {
+      await withGrok(fakeGrok(opt), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+      const t = disk(cfg, task);
+      assert.equal(t.dispatches.at(-1).verdict, 'fail', JSON.stringify(opt));
+      assert.equal(t.verdicts?.audit, undefined, JSON.stringify(opt));
+      assert.equal(t.verdicts?.auditHistory, undefined, JSON.stringify(opt));
+    } finally {
+      cleanup(dir);
+    }
+  }
+});
+
+test('AV3 nguoi goi PM la grok: tu choi truoc khi chay, khong ghi verdict', async () => {
+  const { dir, cfg, task } = repo();
+  try {
+    await withEnv({ GROK_SESSION_ID: 's9' }, () => withGrok(fakeGrok(), () => assert.rejects(
+      call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }), /tu duyet/)));
+    assert.equal(disk(cfg, task).verdicts?.audit, undefined);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('AV4 task chi-audit tren worktree PR (baseCommit = head): prompt grok so voi merge-base(main, head) va liet ke test da co bi sua', async () => {
+  const { dir, task, head, mb } = repoPr();
+  assert.equal(task.baseCommit, head, 'tien de: task tao tren head PR');
+  const fake = fakeGrok();
+  try {
+    await withGrok(fake, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const prompt = fake.argv().slice(7).join('\n');
+    assert.match(prompt, new RegExp(`git diff ${mb} ${head}`));
+    assert.match(prompt, /tests\/old\.test\.js/);
+    assert.doesNotMatch(prompt, /new\.txt.*da co/, 'file moi khong nam trong danh sach file da co bi sua');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('AV5 grok PASS nhung pm_dispatch co message (chu tac gia trong prompt) hoac khong co nhanh dich: KHONG tu ghi verdict', async () => {
+  {
+    const { dir, cfg, task } = repo();
+    try {
+      const out = await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', message: 'chi xem a.txt' }));
+      assert.equal(disk(cfg, task).dispatches.at(-1).verdict, 'pass');
+      assert.equal(disk(cfg, task).verdicts?.audit, undefined);
+      assert.match(out, /Khong tu ghi verdict/);
+    } finally {
+      cleanup(dir);
+    }
+  }
+  const dir = tmpProject({ projectName: 'grok-audit-notrunk', testCommand: 'echo ok' });
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'dev'], { cwd: dir });
+    writeFile(path.join(dir, '.gitignore'), '.antigravity-pm/\n');
+    writeFile(path.join(dir, 'a.txt'), 'a\n');
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init'], { cwd: dir });
+    const cfg = loadConfig(dir);
+    const task = createTask(cfg, sampleTaskArgs());
+    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    assert.equal(disk(cfg, task).verdicts?.audit, undefined, 'khong co main/master/trunk: khong tu ghi');
   } finally {
     cleanup(dir);
   }

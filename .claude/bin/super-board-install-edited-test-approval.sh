@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # Cài .claude/audit-gate/approved_tests.json vào scratch từ comment edited-tests thắng cuộc (#643).
-# --has-edited-tests <meta.json> <sha40>: in true hoặc false, thoát 0 hoặc 1.
+# --has-edited-tests <meta.json> <sha40> [--top DIR --base REF]: in true hoặc false, thoát 0 hoặc 1. 04/11: không có comment edited-tests
+# thì --top/--base hỏi thẳng biên bản antigravity-pm (super-board-audit-check.py --chain-audit): audit pass có auditedHead trong
+# <base>..<sha40> (hoặc không kiểm được) = true — duyệt test sửa tra thẳng biên bản cũng giữ khoá và không autosync như comment.
 # Chế độ cài luôn thoát 0, kể cả khi không ghi gì.
 HERE=$(cd "$(dirname "$0")" && pwd)
 JQ_FILTER="$HERE/super-board-approved-head.jq"
 AUDIT="$HERE/super-board-audit-check.py"
 
 has_mode=0
-SCRATCH="" SHA="" META="" PR="" TOP=""
+SCRATCH="" SHA="" META="" PR="" TOP="" BASE_REF=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --has-edited-tests)
       has_mode=1
       META="${2:-}"
       SHA="${3:-}"
-      shift $#
+      shift $(( $# < 3 ? $# : 3 ))
       ;;
+    --base) BASE_REF="${2:-}"; shift 2 ;;
     --scratch) SCRATCH="${2:-}"; shift 2 ;;
     --sha) SHA="${2:-}"; shift 2 ;;
     --meta) META="${2:-}"; shift 2 ;;
@@ -40,8 +43,18 @@ winning() {
   [ -n "$TASK_ID" ]
 }
 
+# pm_chain: 0 khi biên bản PM có audit pass trên <base>..<sha> (hoặc không kiểm được); 1 khi không, hoặc người gọi cũ không truyền --top.
+pm_chain() {
+  [ -n "$TOP" ] && [ -n "$BASE_REF" ] || return 1
+  python3 "$AUDIT" --chain-audit "$SHA" --base "$BASE_REF" --top "$TOP"
+}
+
 if [ "$has_mode" -eq 1 ]; then
   if ! winning; then
+    if pm_chain; then
+      printf '%s\n' true
+      exit 0
+    fi
     printf '%s\n' false
     exit 1
   fi
@@ -75,6 +88,10 @@ except (ValueError, TypeError):
 sys.exit(0 if isinstance(arr, list) and len(arr) > 0 else 1)
 PY
 )"; then
+    printf '%s\n' true
+    exit 0
+  fi
+  if pm_chain; then
     printf '%s\n' true
     exit 0
   fi

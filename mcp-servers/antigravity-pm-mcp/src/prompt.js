@@ -329,15 +329,21 @@ export function buildAuditPrompt(cfg, task, scope = '') {
  * Brief AUDIT cho grok (PM tu chay `grok -p` o che do plan, chi doc). Grok KHONG ghi file: PM doc dong VERDICT cuoi cua no roi tu
  * ghi audit-agent.json (reviewer grok, auditedHead = head duoi day).
  */
-export function buildGrokAuditPrompt(cfg, task, { head, scope = '' }) {
+export function buildGrokAuditPrompt(cfg, task, { head, scope = '', range = {} }) {
   const paths = contractPaths(cfg, task);
-  const base = task.implementBaseCommit || task.baseCommit;
+  // 04/11: gate DevKit duyet MOI test da co bi sua ma blob o head khop, so voi merge-base(nhanh dich, head) — task chi-audit tao tren
+  // worktree PR co baseCommit = head (diff rong), nen pham vi lay merge-base do khi tinh duoc (range: tools.js auditRange).
+  const base = range.base || task.implementBaseCommit || task.baseCommit;
+  const edited = range.base ? (range.edited || []) : [];
   return [
     `# AUDIT doc lap cho task ${task.id}: ${task.title}`,
     '',
     'Ban la Auditor doc lap (thay Antigravity). Ban KHONG phai nguoi viet code nay va KHONG duoc sua bat ky file nao.',
     `Project: ${cfg.projectRoot}`,
     `Commit can audit: ${head}${base && base !== head ? ` (so voi goc: git diff ${base} ${head})` : ''}`,
+    ...(range.base ? [`Goc = merge-base(${range.trunk}, ${head}): audit pass se duyet moi file test da co bi sua trong toan bo khoang nay.`] : []),
+    ...(edited.length ? ['File da co o goc bi sua/xoa (doc diff TUNG file, nhat la test va script chay test: assertion co bi xoa / noi long khong):',
+      ...edited.slice(0, 200).map((f) => `- ${f}`), ...(edited.length > 200 ? [`- ... va ${edited.length - 200} file nua (git diff --name-status)`] : [])] : []),
     `Ho so task: ${paths.dir} (doc brief.md, plan.md, result.json neu co)`,
     '',
     '## Viec can lam',

@@ -807,6 +807,44 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
         return {}
 
 
+def _pm_audit_cross_review(paths: list, project_root, declared: dict) -> dict:
+    """{path: (reviewer, task_id)} — nguồn duyệt chéo thứ ba (04/11, không bước người): tra THẲNG biên bản antigravity-pm, không cần mục
+    approved_tests.json, trailer hay comment PR (chúng chỉ là con trỏ tới task_id). Cặp (task_id, auditedHead) của push_gate.audited_heads
+    chỉ tính khi head nằm trên chuỗi first-parent của PR (không thuộc trunk), head == audited_head(task_id) (head và reviewer cùng MỘT biên
+    bản verdicts.audit, không mượn head auditHistory hay biên bản khác cùng id), audit_reviewer(legacy=False) xác định được reviewer (PM tự
+    chạy: lượt audit gần nhất cùng agent), reviewer ∉ session_agents() và ∉ author mà mục json của chính file đó tự khai (declared); rồi
+    audit_covers như hai nguồn kia. Mọi lỗi → không duyệt (fail closed)."""
+    if not paths:
+        return {}
+    try:
+        root = str(get_repo_root())
+        prefix = get_project_prefix()
+        ch = _approval_chain(root, project_root)
+        if not ch:
+            return {}
+        if root not in _APPROVAL_AUDITS:
+            _APPROVAL_AUDITS[root] = _push_gate().audited_heads(root)
+        on_chain = set(ch[3])
+        agents = _push_gate().session_agents()
+        cands = []                                    # (auditedHead, reviewer, task_id), mới nhất trên chuỗi trước
+        for tid, head in sorted(_APPROVAL_AUDITS[root], key=lambda th: ch[3].index(th[1]) if th[1] in on_chain else len(ch[3])):
+            if head not in on_chain or _push_gate().audited_head(root, tid) != head:
+                continue
+            rv = _push_gate().audit_reviewer(root, tid, legacy=False)
+            if rv and rv not in agents:
+                cands.append((head, rv, tid))
+        out = {}
+        for f in paths if cands else []:
+            for head, rv, tid in cands:
+                if rv not in declared.get(f, ()) and audit_covers(root, prefix, project_root, f, head)[0]:
+                    out[f] = (rv, tid)
+                    break
+        return out
+    except (OSError, subprocess.SubprocessError, RuntimeError, ImportError, ValueError) as e:
+        print(f"post-fix-gate: biên bản antigravity-pm không đọc được ({type(e).__name__}); không duyệt", file=sys.stderr)
+        return {}
+
+
 def _main_checkout_root(root) -> Path:
     """The main checkout of the repository `root` belongs to (the parent of its `.git` common dir); `root` itself when it is
     the main checkout or git cannot say. #628 AC2."""
@@ -849,6 +887,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     appr_file = root / ".claude" / "audit-gate" / "approved_tests.json"
     approved_at = {}                              # path -> latest approving answer (epoch s)
     user_at = {}                                  # path -> latest approving answer of the user
+    declared = {}                                 # path -> {author tự khai trong mục json}: nguồn tra thẳng PM không duyệt reviewer đó
     if appr_file.is_file():
         def _cur_sha(f):
             try:
@@ -873,6 +912,8 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             f = e.get("path") if isinstance(e, dict) else None
             if not isinstance(f, str) or f not in mtimes:
                 continue                          # names no edited test of this run: approves nothing
+            if isinstance(e.get("author"), str) and e["author"].strip():
+                declared.setdefault(f, set()).add(_push_gate().normalize_reviewer(e["author"]))
             if not all(isinstance(e.get(k), str) and e[k].strip() for k in CROSS_REVIEW_FIELDS):
                 APPROVAL_REJECTS.append((f, _cur_sha(f), "mục duyệt thiếu trường (" + ", ".join(CROSS_REVIEW_FIELDS) + ")"))
                 continue
@@ -914,6 +955,10 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             CROSS_REVIEW[f] = (pm_rv, tid)
     for f, (rv, tid) in _trailer_cross_review([f for f in mtimes if f not in CROSS_REVIEW], root).items():
         approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # nội dung = blob đã audit: mtime không quyết định
+        CROSS_REVIEW[f] = (rv, tid)
+    # 04/11: nguồn thứ ba, tra thẳng biên bản PM (không comment / json / trailer); CROSS_REVIEW nên pm_relaxed xét như trailer.
+    for f, (rv, tid) in _pm_audit_cross_review([f for f in mtimes if f not in CROSS_REVIEW], root, declared).items():
+        approved_at[f] = max(approved_at.get(f, 0), mtimes[f])
         CROSS_REVIEW[f] = (rv, tid)
     folders = []
     if transcript:
@@ -8737,15 +8782,13 @@ def main():
                                                     "UNVERIFIED — regression matrix is not trusted (see section 4): have a human review and commit the matrix file — the gate trusts only a committed matrix, or one byte-identical to `agent-kit matrix`"), YELLOW, 2
     elif tests_touched:
         exit_reason = "edited_test"
-        # Kept UNVERIFIED (an edited test can weaken the very assertion the run relies on);
-        # the verdict names the one cure: a person reads that diff, or it gets committed.
+        # Kept UNVERIFIED (an edited test can weaken the very assertion the run relies on).
         in_range = bool(set(tests_touched) & set(since_touched))
         touched_diff = f"git diff {args.since if in_range else base_ref} -- " + " ".join(tests_touched[:3]) + (" …" if len(tests_touched) > 3 else "")
-        # A range-flagged test is already committed: committing again cures nothing.
-        cure_vi, cure_en = (("hoặc một commit có dòng `Test-approved-by:` (audit Antigravity)", "or a commit carrying a `Test-approved-by:` line (an Antigravity audit)")
-                            if in_range else ("hoặc commit nó", "or commit it"))
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần duyệt chéo diff test (`{touched_diff}`): agent sửa test KHÔNG tự duyệt (--auto-approve-tests / `AUTO-APPROVE:` bị từ chối); agent khác (audit `/giao` Antigravity hoặc phiên reviewer) đọc diff, xác nhận không nới assertion rồi ghi mục {{path, sha256, reviewer, author, task_id, reason}} vào `.claude/audit-gate/approved_tests.json` (khoá `approvals`) — {cure_vi} — rồi chạy lại gate; mục duyệt và trailer chỉ tính khi task_id có audit Antigravity pass mà verdict của antigravity-pm ghi `auditedHead: <sha>` của cây chứa đúng nội dung test hiện tại",
-                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: needs a cross-review of the test diff (`{touched_diff}`): the agent that edited a test does NOT approve it (--auto-approve-tests / `AUTO-APPROVE:` are refused); another agent (an Antigravity `/giao` audit or a reviewer session) reads the diff, confirms no assertion was weakened and records {{path, sha256, reviewer, author, task_id, reason}} in `.claude/audit-gate/approved_tests.json` (key `approvals`) — {cure_en} — then re-run the gate; an entry or trailer counts only when its task_id has an Antigravity audit pass whose antigravity-pm verdict records `auditedHead: <sha>` of a tree holding the test's current content"), YELLOW, 2
+        # 04/11 (không bước người): cách chữa là audit của agent khác do PM tự chạy và tự ghi biên bản; gate tra thẳng biên bản đó
+        # (_pm_audit_cross_review), không ai phải ghi json, comment hay trailer.
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần duyệt chéo diff test (`{touched_diff}`) bởi agent khác; agent sửa test KHÔNG tự duyệt (--auto-approve-tests / `AUTO-APPROVE:` bị từ chối), KHÔNG ghi json / comment / trailer: commit cho cây sạch rồi, trên worktree của PR (dưới checkout chính, vd .claude/worktrees/<tên>), gọi antigravity-pm `pm_task_create` rồi `pm_dispatch kind=audit agent=grok` (hoặc audit Antigravity) cho head PR — PM tự chạy reviewer và tự ghi biên bản audit pass kèm auditedHead — rồi chạy lại gate. Gate tra thẳng biên bản đó: chỉ nhận audit mới nhất trên chuỗi first-parent của PR, reviewer khác phiên đang chạy, nội dung test hiện tại đúng cây đã audit",
+                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: the test diff (`{touched_diff}`) needs a cross-review by another agent; the agent that edited a test does NOT approve it (--auto-approve-tests / `AUTO-APPROVE:` are refused) and writes no json / comment / trailer: commit so the tree is clean, then in the PR's worktree (under the main checkout, e.g. .claude/worktrees/<name>) call antigravity-pm `pm_task_create` then `pm_dispatch kind=audit agent=grok` (or an Antigravity audit) on the PR head — the PM runs the reviewer itself and records the audit pass with its auditedHead — then re-run the gate. The gate reads that record directly: only the latest audit on the PR's first-parent chain counts, its reviewer must differ from the running session, and the test's current content must be the audited tree's"), YELLOW, 2
     elif unverified:
         exit_reason = "dry_run"
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2

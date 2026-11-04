@@ -259,7 +259,11 @@ The essentials keep the obligation; this section keeps how the tools carry it ou
   PR branch only to clear GitHub CONFLICTING (owner 02/11): push it plainly with no new gate, the merge gate verifies base + PR
   in its own scratch (a merge with a conflict fix still re-gates). A trunk-push repo pushes main only
   through `agent-kit integrate` (one `--scoped` run in a scratch worktree, then the push); never a `--full` in the main checkout.
-  The edited-test exception needs `Test-approved-by: antigravity|grok <task-id>` (the word matching the PM record's reviewer) in
+  An edited existing test is approved by the antigravity-pm audit record alone: the agent commits, then in the PR's worktree
+  (under the main checkout) runs `pm_task_create` and `pm_dispatch kind=audit agent=grok` (or an Antigravity audit) on the PR
+  head; the PM runs the reviewer and records the pass with its `auditedHead`, and post-fix-gate and the merge gate read that
+  record directly (no approved_tests.json, PR comment, trailer or hand `pm_verdict`). A push the push gate checks without a
+  receipt still needs `Test-approved-by: antigravity|grok <task-id>` (the word matching the PM record's reviewer) in
   `git log origin/<branch>..HEAD`. Session start
   names branch drift and leftover worktrees (AGENTS.md §7.1).
 - **Worktree finish**: `agent-kit worktree finish <path>` fast-forwards the trunk and removes the worktree; the Stop hook

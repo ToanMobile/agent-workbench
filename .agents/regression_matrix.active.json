@@ -3619,6 +3619,40 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-gate-pm-direct-approval",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_pm_direct_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-PM-DIRECT-APPROVAL-01",
+          "name": "04/11: test sửa được duyệt bằng biên bản antigravity-pm tra thẳng (không comment / json / trailer); phiên cùng reviewer, audit mới hơn khác blob, pm home lạ, biên bản cũ, head trên main, author tự khai, head chỉ trong history, hai biên bản cùng id đều bị từ chối",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_pm_direct_approval.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-has-edited-tests-pm-record",
+      "watch_files": [
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_has_edited_tests_pm_record.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-HAS-EDITED-PM-01",
+          "name": "04/11: merge gate / train --has-edited-tests nhận duyệt test sửa từ biên bản PM (audit pass trên base..head) để giữ khoá và không autosync; base hỏng = bi quan",
+          "command": "bash tests/super-board/test_has_edited_tests_pm_record.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

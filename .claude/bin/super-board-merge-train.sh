@@ -267,7 +267,8 @@ edited_review_stale() {
   local emeta et_rc=0
   emeta=$(mktemp)
   gh pr view "$1" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
-  bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$emeta" "$(head_of "$1")" >/dev/null 2>&1 || et_rc=$?
+  bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$emeta" "$(head_of "$1")" \
+    --top "$REPO_PATH" --base "$BASE_SHA" >/dev/null 2>&1 || et_rc=$?
   rm -f "$emeta"
   case "$et_rc" in 0) ;; 1) return 1 ;; *) exit "$et_rc" ;; esac
   ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$(head_of "$1")"

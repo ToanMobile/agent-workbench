@@ -764,7 +764,8 @@ sync_candidate() {
   local et_rc=0 base_pre
   [ "$DRY" -eq 0 ] && [ "$PREFLIGHT" -eq 0 ] && [ "$REQUIRE_RECEIPT" -eq 0 ] && [ -z "$TRAIN_RECEIPT" ] \
     && [ "${SB_MERGE_CALLER-}" != train ] || return 1
-  bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$HEAD_SHA" >/dev/null 2>&1 || et_rc=$?
+  bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$HEAD_SHA" \
+    --top "$REPO_PATH" --base "origin/${BASE}" >/dev/null 2>&1 || et_rc=$?
   [ "$et_rc" -eq 1 ] || { SYNC_WHY="the PR carries edited-test approval for ${HEAD_SHA:0:12} (or it could not be read)"; return 1; }
   git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || { SYNC_WHY="git fetch origin ${HEAD_REF} ${BASE} failed"; return 1; }
   base_pre=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { SYNC_WHY="cannot resolve origin/${BASE}"; return 1; }
@@ -940,10 +941,12 @@ prove_tree() {
     say "base moved since the train verified ${HEAD_SHA:0:12}: tree $(git -C "$SCRATCH" rev-parse --short 'HEAD^{tree}') has no receipt; not verifying inside the merge lock (exit 12)"
     exit 12
   fi
-  # #643: exit 2 chỉ khi train chưa chứng minh cây này, comment edited-tests còn đúng head, và base không còn là tổ tiên của head đó.
+  # #643: exit 2 chỉ khi train chưa chứng minh cây này, comment edited-tests còn đúng head (04/11: hoặc biên bản PM có audit pass trên
+  # base..head — duyệt tra thẳng biên bản), và base không còn là tổ tiên của head đó.
   if [ "$TRAIN_PROVED" -eq 0 ]; then
     if [ -z "$EDITED" ]; then
-      if bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" >/dev/null 2>&1; then
+      if bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" \
+          --top "$REPO_PATH" --base "$BASE_SHA" >/dev/null 2>&1; then
         EDITED=1
       else
         et_rc=$?
