@@ -6196,6 +6196,29 @@ def default_gate_parallel() -> int:
         return 6
 
 
+def _unity_only_run(hs, tests, project_dir, selections=None) -> bool:
+    """P5: mọi suite cần chạy là Unity hoặc nhẹ, và có ít nhất một Unity (heavy_slot.classify). Phân lớp lỗi ⇒ False (xin slot gate như cũ).
+    selections: tập `run_impacted.sh --list` đã đọc trong lượt (suite_cache), như take_slots — không sinh thêm --list khi có."""
+    runs = [t for t in tests if t.get("command")]
+    try:
+        # Bước rẻ: classify tính engine trước nhánh fan_out, và heavy_slot.selection_seconds chỉ gọi suite_cache.selection_list
+        # khi selection là None — nên selection=[] không sinh --list; repo không có suite Unity dừng ở đây
+        # (review 04/11: gate DevKit có 10 lệnh run_impacted, mỗi --list 0,5–60 s trong lúc giữ test_run.lock).
+        if not any(hs.classify(t["command"], str(project_dir), selection=[])["engine"] == "unity" for t in runs):
+            return False
+        rec = _recorded_seconds(median=True)
+        for t in runs:
+            info = hs.classify(t["command"], str(project_dir), rec.get(t.get("id")),
+                               device=bool(HARD_DEVICE_SUITE.search(t["command"])),
+                               selection=(selections or {}).get((t.get("id"), t["command"])))
+            if info["cls"] not in ("unity", "light"):
+                return False
+    except Exception as exc:   # noqa: BLE001 - không phân lớp được: giữ hành vi cũ
+        log_warn(f"heavy_slot classify: {exc}")
+        return False
+    return True
+
+
 def default_gate_slots() -> int:
     """Số lượt post-fix-gate tối đa chạy suite cùng lúc trên máy (T0056, pool 'gate'): DEVKIT_GATE_SLOTS nếu là số nguyên ≥ 0
     (0 = tắt hàng đợi), không đặt / âm / rác thì bin/capacity.py gate_max (12 lõi: 3), lỗi nạp capacity thì mặc định 3."""
@@ -7498,6 +7521,13 @@ def main():
                 gate_slot_hs = _gate_hs
             except Exception as exc:   # noqa: BLE001 - thiếu heavy_slot thì chạy tiếp không khoá như take_slots()
                 log_warn(f"heavy_slot: {exc}")
+            # P5 (04/11): suite cần chạy toàn Unity hoặc nhẹ (ít nhất một Unity) ⇒ không xin slot gate. Khoá unity (1 Editor cả máy)
+            # đã giới hạn các lượt này; giữ slot gate trong lúc chờ khoá unity làm gate mọi repo khác xếp hàng vô ích (đo 04/11
+            # 08:48–08:57: hai lane Goods giữ cả 2 slot, chỉ một có khoá unity). Không ai giữ unity mà chờ gate: không sinh bế tắc.
+            if gate_slot_hs is not None and _unity_only_run(gate_slot_hs, to_run, project_dir,
+                                                            getattr(sc, "selections", None) if sc is not None else None):
+                print(f"    {CYAN}▶ {tr('chỉ suite Unity/nhẹ — không xin slot hàng đợi gate (khoá unity giới hạn)', 'Unity/light suites only — no gate queue slot (the unity lock bounds them)')}{RESET}")
+                gate_slot_hs = None
             if gate_slot_hs is not None:
                 gate_wait_s = _env_seconds("DEVKIT_GATE_SLOT_WAIT_S", 1800.0)
                 # ponytail: test_run.lock của dự án vẫn bị giữ trong lúc chờ slot, nên một Stop hook cùng checkout báo BUSY với
