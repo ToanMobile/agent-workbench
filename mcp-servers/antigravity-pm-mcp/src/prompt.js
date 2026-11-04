@@ -355,12 +355,16 @@ export function buildGrokAuditPrompt(cfg, task, { head, scope = '', range = {}, 
     independent ? '3. Moi test / script chay test da co bi sua: assertion co bi xoa, noi long, hay bo qua (skip) khong.' : '3. Doi chieu voi Definition of Done ben duoi.',
     scope ? `4. PM yeu cau soi ky them: ${scope}` : '',
     READ_ONLY_RUN_RULE,
+    // 04/11: audit that PR #977 dung giua chung khong co VERDICT — grok headless dinh ghi diff ra file, lenh can xin quyen ma khong hoi duoc.
+    '- Ban chay HEADLESS o plan mode: lenh can xin quyen (ghi file, redirect `>` / `>>`, tee, mktemp, script tao file) KHONG chay duoc va lam ban'
+      + ` dung giua chung. Chi doc truc tiep: \`git diff ${base || '<goc>'} ${head} -- <file>\` tung file, \`git show ${head}:<file>\`, sed -n / grep.`,
     '',
     independent ? '' : dodBlock(task, cfg),
     noFabricationBlock(),
     '## KET LUAN',
     '- Liet ke phat hien (file:dong + sai gi). Dong CUOI CUNG cua cau tra loi la dung MOT trong ba dong sau, dung nguyen van, dung rieng mot dong:',
     '  `VERDICT: PASS` (khong con loi chan) · `VERDICT: REVISE` (can sua) · `VERDICT: FAIL` (sai co ban).',
+    '- LUON ket thuc bang dong VERDICT. Neu chua doc het cac file da co bi sua (lenh bi chan, qua dai): ghi ro file nao chua doc roi `VERDICT: REVISE`.',
   ].filter(Boolean).join('\n');
 }
 
