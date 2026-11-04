@@ -17,7 +17,7 @@ For a deep audit of the whole repository, run `security-audit` (installed alongs
 
 ## Credits
 
-Ported from [anthropics/claude-code-security-review](https://github.com/anthropics/claude-code-security-review) (`.claude/commands/security-review.md`, commit `0c6a49f`). MIT © 2025 Anthropic, see [LICENSE](LICENSE). Only the diff target changed: the PR's base branch instead of `origin/HEAD`.
+Ported from [anthropics/claude-code-security-review](https://github.com/anthropics/claude-code-security-review) (file .claude/commands/security-review.md in that repository, commit `0c6a49f`). MIT © 2025 Anthropic, see [LICENSE](LICENSE). Only the diff target changed: the PR's base branch instead of `origin/HEAD`.
 
 ## Install
 
