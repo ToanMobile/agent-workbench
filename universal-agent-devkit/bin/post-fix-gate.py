@@ -46,6 +46,7 @@ import calendar
 import contextlib
 import fnmatch
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -4735,6 +4736,7 @@ EXTEND_MIN_TIMEOUT_S = 60   # #616 A: a --timeout below this is a test's own sho
 # #801 / owner 02/11: the workbench tests/gates shard passes at p95 860 s of the 900 s --timeout (12 TIMEOUTs since 31/10): it gets
 # this many times --timeout. ponytail: ids fixed in the kit; move to a per-test matrix key when a second suite needs its own ceiling.
 SUITE_TIMEOUT_FACTOR = {"REG-DK-ALL-GATES-01": 2}
+POOL_REFRESH_S = 5   # 04/11: how often the shard group's pool size (tests/lib/job_pool.py <dir>/size) follows capacity.test_jobs()
 
 
 def _extend_step_s() -> float:
@@ -4757,6 +4759,8 @@ def suite_timeout(t: dict, timeout, stop_like: bool = False):
     """--timeout of one suite: times SUITE_TIMEOUT_FACTOR of its id; a test's own short budget (below _extend_min_s()) is kept, and so is
     a Stop-like run (--session / GATE_TOTAL_BUDGET_S): the budget only stops NEW suites, so a doubled suite would outlive the hook's hard
     timeout (1800 s, 2026-10-02) and leave no record."""
+    if t.get("shard_timeout_s"):   # 04/11: a member of a shard group gets the SUM of the members' timeouts (it waits on its siblings' slots)
+        return t["shard_timeout_s"]
     factor = SUITE_TIMEOUT_FACTOR.get(str(t.get("id") or ""))
     return timeout * factor if factor and not stop_like and timeout >= _extend_min_s() else timeout
 
@@ -5817,6 +5821,8 @@ def suite_env():
             # #644: danh sách --scoped chỉ cho runner kit (run_in_group gắn lại): suite khác chép runner thật rồi hỏi --list thì thấy nó
             "DEVKIT_SCOPED_TESTS",
             "DEVKIT_IMPACTED_DIRS",   # #616: shard do tiền tố của lệnh ma trận đặt; biến có sẵn trong môi trường không được thu hẹp suite không tiền tố
+            # 04/11: bể test chung của nhóm shard (tests/lib/job_pool.py) là của MỘT lượt gate: nhóm tự đặt lại sau suite_env(), suite khác không vào bể
+            "DEVKIT_TEST_POOL_DIR", "DEVKIT_JOB_POOL",
             # #528: cờ của worker board không được lọt vào suite — gate lồng sẽ bỏ qua main
             "SB_BOARD_WORKER", "SB_MERGE_CALLER", "SB_MERGE_QUEUE", "SB_REPO_PATH",
             "SB_GITHUB_READ_STRICT"}
@@ -7914,6 +7920,58 @@ def main():
         parallel_cap = default_gate_parallel()
     slots = threading.BoundedSemaphore(max(parallel_cap, 1))
     group, group_ts, deferred = [], set(), []
+    # 04/11 (Việc 2): the #616 shards of the kit runner (a leading DEVKIT_IMPACTED_DIRS=, disjoint by directory) ran one after another, though
+    # WORKTREE and REST keep only 1–3 of their JOBS busy (one long test each). Consecutive shards now run side by side as a group of their own
+    # (never with the suites of may_join: that was the 19/10 timeout): one pool of JOBS test slots for all of them (tests/lib/job_pool.py, the
+    # runner reads DEVKIT_TEST_POOL_DIR), so they never run more tests at once than one shard did; one heavy slot, as heavy as the heaviest
+    # member, taken on this thread before the first member starts and kept until drain() (the members are classed light); every member
+    # gets the SUM of the members' timeouts (one after another they had that much; side by side each waits on its siblings' slots and
+    # alone tests); a red member does not skip its siblings (they already run). DEVKIT_GATE_PARALLEL=0/1 and a Stop-like run (its budget
+    # stops new suites, a summed timeout would outlive the hook) keep them sequential.
+    # ponytail: the group's heavy slot stays held while a keyed member waits on another gate's inflight marker (R1 drops only heavy_lease):
+    # bounded by DEVKIT_SLOT_HEAVY_WAIT_S / the marker's deadline, never a deadlock; release it around sc.inflight if merge gates report it.
+    # ponytail: a SIGKILLed gate leaves its dk-pool-* dir (a few empty lock files) in TMPDIR; sweep old ones if they ever pile up.
+    group_kind = [None]   # "suite" (may_join) or "shard" while a group runs
+    shard_group = {}      # dir, jobs, slots (the group's heavy slot), sem, ids
+
+    def shard_join(t):
+        c = t.get("command") or ""
+        return bool(parallel_cap > 1 and not _stop_like and t.get("parallel_safe") and _SHARD_PREFIX.match(c) and _KIT_RUNNER.search(c))
+
+    def shard_jobs(cmd):
+        """JOBS of one shard, as its runner computes it now (`run_impacted.sh --jobs`: DEVKIT_TEST_JOBS or capacity.test_jobs); None
+        when it cannot say (the shards then run one after another, as before)."""
+        m = _KIT_RUNNER.search(cmd or "")
+        if not m:
+            return None
+        try:
+            p = subprocess.run(["bash", f"{m.group(1)}tests/run_impacted.sh", "--jobs"], cwd=str(project_dir), env=suite_env(),
+                               capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log_warn(f"shard group: run_impacted.sh --jobs: {exc!r}; shards run one after another")
+            return None
+        out = (p.stdout or "").strip()
+        return int(out) if p.returncode == 0 and out.isdigit() and int(out) > 0 else None
+
+    def pool_size_writer(pool, jobs, jmax, stop):
+        """<pool>/size = the slots the shard group may use NOW (tests/lib/job_pool.py reads it): capacity.test_jobs() again every
+        POOL_REFRESH_S, so the pool grows when another gate ends and shrinks when one starts (04/11: fixed at its start, a group ran 26 min
+        at 6 slots). The first value is the runner's own --jobs; never above jmax (the runner's workers). capacity unreadable: keep the last."""
+        def write(n):
+            tmp = os.path.join(pool, f".size.{os.getpid()}")
+            try:
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    fh.write(f"{max(1, min(n, jmax))}\n")
+                os.replace(tmp, os.path.join(pool, "size"))
+            except OSError as exc:
+                log_warn(f"shard group: pool size: {exc!r}")
+        write(jobs)
+        while not stop.wait(POOL_REFRESH_S):
+            try:
+                import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+                write(_capacity.test_jobs())
+            except Exception as exc:   # noqa: BLE001 - capacity broken: the pool keeps its last size
+                log_warn(f"shard group: capacity.test_jobs: {exc!r}; pool size kept")
 
     def budget_spent():
         return budget_s > 0 and time.monotonic() - budget_start >= budget_s
@@ -7987,7 +8045,7 @@ def main():
             slot_mod[0].release_pool(heavy_lease.pop())
         heavy_lease.clear()
 
-    def take_slots(t, cmd, sequential=False):
+    def take_slots(t, cmd, sequential=False, group=None):
         """P1 (20/10): quyền chạy của CHÍNH suite này (heavy_slot.classify), giữ trong lúc nó chạy — kể cả lần chạy lại flaky và
         vacuity revert. --full không còn giữ slot cả lượt (đo 20/10: một lượt --full chỉ suite bash/python chờ 30+ phút mà không chạy
         suite nào); P1b (người dùng 20/10): không còn 2 slot — tải máy dưới DEVKIT_SLOT_LOAD_MAX (mặc định capacity hold_load,
@@ -8008,6 +8066,16 @@ def main():
         # 25/10); lệnh khác (thu hẹp) hay chưa có khoá thì classify tự hỏi. Lần kiểm lại trước khi ghi PASS (R3) vẫn hỏi mới.
         sel = sc.selections.get((t.get("id"), cmd)) if sc is not None else None
         info = hs.classify(cmd, str(project_dir), rec, device=bool(HARD_DEVICE_SUITE.search(cmd or "")), selection=sel)
+        if id(t) in shard_group.get("ids", ()):   # the shard group's one heavy slot is held on the gate thread until drain()
+            info = dict(info, cls="light")
+        for m in group or ():   # the shard group's slot: as heavy as its heaviest member (review 04/11: a light GATES selection beside a cpu REST)
+            if info["cls"] in hs.HEAVY_CLASSES:
+                break
+            mc = m.get("command") or ""
+            mi = hs.classify(mc, str(project_dir), slot_rec.get(m.get("id")), device=bool(HARD_DEVICE_SUITE.search(mc)),
+                             selection=sc.selections.get((m.get("id"), mc)) if sc is not None else None)
+            if mi["cls"] in hs.HEAVY_CLASSES:
+                info = dict(info, cls=mi["cls"])
         lease = heavy_lease[0] if (sequential and heavy_lease and info["cls"] in hs.HEAVY_CLASSES) else None
         if heavy_lease and lease is None:
             drop_lease()   # suite này không dùng slot nặng đang giữ (không nặng, hay chạy trong nhóm song song): không giữ chỗ của người khác
@@ -8279,12 +8347,13 @@ def main():
                 f"{t.get('id')}: revert không ra assertion failure (có thể chỉ lỗi biên dịch) — chưa chứng minh test bắt được lỗi",
                 f"{t.get('id')}: revert did not show an assertion failure (possibly a compile error) — the test has not proved it catches the bug"))
 
-    def start_job(t, cmd, mode, env):
+    def start_job(t, cmd, mode, env, kind="suite", sem=None):
         box = {}
+        group_kind[0] = kind
 
         def work():
             try:
-                with slots:
+                with sem or slots:
                     if budget_spent():   # it waited for a slot past the budget: not started, as in the sequential loop
                         mark_budget(t)
                         return
@@ -8307,6 +8376,15 @@ def main():
                 errors.append(box["err"])
         group.clear()
         group_ts.clear()
+        group_kind[0] = None
+        if shard_group:
+            if shard_group.get("slots") is not None and slot_mod and slot_mod[0] is not None:
+                slot_mod[0].release_suite(shard_group["slots"])
+            if shard_group.get("sizer") is not None:
+                shard_group["stop"].set()
+                shard_group["sizer"].join(timeout=5)
+            shutil.rmtree(shard_group.get("dir") or "", ignore_errors=True)
+            shard_group.clear()
         if errors:   # before sharing: a worker that died left its suite without a status
             raise errors[0]
         for t, c in late_notes:
@@ -8351,7 +8429,8 @@ def main():
         return _cover_failed_still_runs(suite) or _runner_after_soft_red(suite)
 
     for idx, t in enumerate(to_run):
-        if group and not may_join(t):
+        kind = "suite" if may_join(t) else ("shard" if shard_join(t) else None)
+        if group and kind != group_kind[0]:
             drain()
         # #647: mặc định dừng khi một suite đã FAIL hoặc TIMEOUT. Nhóm đang chạy được drain() xong.
         # Suite NOT_RUN phía sau thành UNTESTED — covered_by và skip-compile không kịp biến chúng thành PASS.
@@ -8360,7 +8439,7 @@ def main():
                 # #678: suite FAIL vì bị kill từ ngoài / thiếu môi trường (env_blocked) không có kết luận test, nên không dừng cả lượt:
                 # nếu dừng, suite lỗi thật đứng sau thành UNTESTED và regression_gate.sh cho Stop qua như lỗi môi trường (che lỗi thật).
                 and any(x.get("status") in ("FAIL", "TIMEOUT") and not x.get("env_blocked") for x in regression_tests)
-                and not _keep_after_red(t)):
+                and not _keep_after_red(t) and not (group_kind[0] == "shard" and kind == "shard")):
             if group:
                 drain()
             _stopped = tr(
@@ -8468,6 +8547,45 @@ def main():
                 start_job(t, cmd, mode, env)
                 ran_cmds[key] = t
                 if t.get("keyed_full") or t.get("stale_rerun"):   # kết quả chưa có: may_note quyết sau khi nhóm xong (drain)
+                    late_notes.append((t, cmd))
+                else:
+                    note_ran(cmd)
+                continue
+            jobs = shard_jobs(cmd) if kind == "shard" and mode == "full" and not group else None
+            if kind == "shard" and mode == "full" and (group or jobs):
+                if not group:   # first member: the pool, the heavy slot and the timeout of every shard right after it
+                    members = list(itertools.takewhile(shard_join, to_run[idx:]))
+                    drop_lease()
+                    shard_group.update(dir=tempfile.mkdtemp(prefix="dk-pool-"), jobs=jobs, ids=set(),
+                                       sem=threading.BoundedSemaphore(len(members)),
+                                       tmo=sum(suite_timeout(m, args.timeout, _stop_like) for m in members))
+                    shard_group["slots"] = take_slots(t, cmd, group=members[1:])
+                    # DEVKIT_TEST_JOBS set by the user is a fixed count; otherwise the runners get the workers of a machine with no other
+                    # gate (capacity.test_jobs(busy=1)) and the pool's size file says how many may run now
+                    pinned = (os.environ.get("DEVKIT_TEST_JOBS") or "").strip()
+                    jmax = jobs
+                    if not (pinned.isdigit() and int(pinned) > 0):
+                        try:
+                            import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+                            jmax = max(jobs, _capacity.test_jobs(busy=1))
+                        except Exception as exc:   # noqa: BLE001 - capacity broken: a fixed pool of the runner's --jobs
+                            log_warn(f"shard group: capacity.test_jobs: {exc!r}; pool fixed at {jobs}")
+                    with open(os.path.join(shard_group["dir"], "size"), "w", encoding="utf-8") as fh:   # before any member starts
+                        fh.write(f"{jobs}\n")
+                    shard_group["jmax"], shard_group["stop"] = jmax, threading.Event()
+                    if not (pinned.isdigit() and int(pinned) > 0):   # a user pin stays a fixed pool: no sizer lowers it
+                        shard_group["sizer"] = threading.Thread(target=pool_size_writer, name="shard-pool-size", daemon=True,
+                                                                args=(shard_group["dir"], jobs, jmax, shard_group["stop"]))
+                        shard_group["sizer"].start()
+                shard_group["ids"].add(id(t))
+                t["shard_timeout_s"] = shard_group["tmo"]
+                env = suite_env()
+                if done_scripts:
+                    env["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
+                env.update(DEVKIT_TEST_POOL_DIR=shard_group["dir"], DEVKIT_TEST_JOBS=str(shard_group["jmax"]))
+                start_job(t, cmd, mode, env, kind="shard", sem=shard_group["sem"])
+                ran_cmds[key] = t
+                if t.get("keyed_full") or t.get("stale_rerun"):
                     late_notes.append((t, cmd))
                 else:
                     note_ran(cmd)

@@ -3637,6 +3637,62 @@
       ]
     },
     {
+      "component": "devkit-shard-group-job-pool",
+      "watch_files": [
+        "universal-agent-devkit/tests/lib/job_pool.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_job_pool.sh",
+        "universal-agent-devkit/tests/gates/test_run_impacted_shared_pool.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-JOB-POOL-01",
+          "name": "04/11 Việc 2: tests/lib/job_pool.py — tối đa <size> việc cùng lúc giữa nhiều tiến trình, --alone không chạy cạnh ai, holder chết nhả slot, không có bể thì chạy ngay, dòng · start chỉ in khi đã giữ slot",
+          "command": "bash universal-agent-devkit/tests/gates/test_job_pool.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-RUNNER-SHARED-POOL-01",
+          "name": "04/11 Việc 2: hai run_impacted.sh chung DEVKIT_TEST_POOL_DIR không vượt DEVKIT_TEST_JOBS test cùng lúc, test alone chạy một mình, biến bể/JOBS không rò vào test",
+          "command": "bash universal-agent-devkit/tests/gates/test_run_impacted_shared_pool.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-shard-group",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_shard_group.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-SHARD-GROUP-01",
+          "name": "04/11 Việc 2: shard REG-DK-ALL-* của runner chạy cạnh nhau một nhóm, chung một bể và JOBS, giữ đúng một slot nặng, shard đỏ không bỏ shard cùng nhóm, DEVKIT_GATE_PARALLEL=0 giữ tuần tự",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_shard_group.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-hook-cached-python",
+      "watch_files": [
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/hardware_safety_gate_main.py",
+        "universal-agent-devkit/hooks/block_dangerous_git_main.py",
+        "universal-agent-devkit/tests/gates/test_hook_cached_python.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-HOOK-CACHED-PY-01",
+          "name": "04/11 (#967): python của hardware_safety_gate.sh / block-dangerous-git.sh là module cạnh hook, bytecode chỉ ở thư mục riêng $TMPDIR/devkit-pycache-$UID (thư mục nhóm ghi được / symlink thì không dùng, không bao giờ __pycache__ cạnh hook); thiếu hoặc hỏng module thì chặn rc 2 nêu tên module; phán quyết giữ nguyên",
+          "command": "bash universal-agent-devkit/tests/gates/test_hook_cached_python.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-gate-pm-direct-approval",
       "watch_files": [
         "universal-agent-devkit/bin/post-fix-gate.py",

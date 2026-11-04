@@ -641,8 +641,10 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   done
   if [ -n "$bridge_platforms" ]; then
     mkdir -p "$TARGET_DIR/.agents/hooks"
-    # shell_norm.py: the command reading the two guards load from their own directory (a copy-mode install needs it beside them)
-    for h in agent_bridge.sh block-dangerous-git.sh hardware_safety_gate.sh shell_norm.py session_context.sh \
+    # shell_norm.py: the command reading the two guards load from their own directory (a copy-mode install needs it beside them);
+    # *_main.py: the python of each guard, also loaded from its own directory (#967)
+    for h in agent_bridge.sh block-dangerous-git.sh block_dangerous_git_main.py hardware_safety_gate.sh hardware_safety_gate_main.py \
+             shell_norm.py session_context.sh \
              prompt_context.sh regression_gate.sh; do
       devkit_place "$DEVKIT_ROOT/hooks/$h" "$TARGET_DIR/.agents/hooks/$h" "$MODE"
     done
