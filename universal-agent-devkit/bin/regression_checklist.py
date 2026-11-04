@@ -1585,12 +1585,12 @@ def _overlay_path(project_dir):
 
 def _overlay_fresh(ts) -> bool:
     """A time stamp the overlay may believe: a number, not in the future (+60 s of clock skew) and not older than
-    DEVKIT_GATE_CACHE_MAX_S (default 6 h: the limit post-fix-gate.py gives a reused full PASS). The file is writable by
-    whoever runs in the worktree, so it is trusted no further than the gate's own receipt."""
+    DEVKIT_GATE_CACHE_MAX_S (default 3 days: the limit post-fix-gate.py gives a reused full PASS, 05/11 #995/#992). The file is
+    writable by whoever runs in the worktree, so it is trusted no further than the gate's own receipt."""
     try:
-        max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
+        max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "259200"))
     except ValueError:
-        max_s = 21600.0
+        max_s = 259200.0
     return isinstance(ts, (int, float)) and not isinstance(ts, bool) and time.time() - max_s <= ts <= time.time() + 60
 
 
