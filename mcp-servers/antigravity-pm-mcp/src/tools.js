@@ -831,10 +831,25 @@ export const TOOLS = [
           let changeSet = null;
           const base = task.implementBaseCommit || task.baseCommit;
           if (base) {
-            const dp = await run('git', ['diff', '--name-only', '-z', base, head], { cwd: cfg.projectRoot, timeoutMs: 60000, maxBytes: 16_000_000 });
+            // --no-renames: duong nguon cua mot lan doi ten cung nam trong change set (nhu trackedChanges)
+            const dp = await run('git', ['diff', '--name-only', '--no-renames', '-z', base, head], { cwd: cfg.projectRoot, timeoutMs: 60000, maxBytes: 16_000_000 });
             if (!dp.spawnFailed && !dp.timedOut && dp.code === 0 && !dp.truncated) changeSet = new Set(String(dp.stdout).split('\0').filter(Boolean));
           }
           stAfter = await trackedChanges(cfg, auditDir, { ignoreGenerated: changeSet !== null, changeSet });
+          // Commit XOA / DOI TEN file DevKit roi hook sinh lai no: file thanh untracked nen status --untracked-files=no khong thay, ma grok da
+          // doc bytes ma commit noi la khong ton tai => doi chieu file thuoc change set + dang co tren dia voi cay cua head (review #988 vong 3)
+          if (!stAfter.error && changeSet !== null) {
+            const regen = [...changeSet].filter((p) => laFileDevkitSinh(p) && fs.existsSync(path.join(auditDir, p)));
+            if (regen.length) {
+              const lt = await run('git', ['--literal-pathspecs', 'ls-tree', '-z', '--name-only', head, '--', ...regen], { cwd: auditDir, timeoutMs: 60000, maxBytes: 16_000_000 });
+              if (lt.spawnFailed || lt.timedOut || lt.code !== 0 || lt.truncated) {
+                stAfter = { error: `git ls-tree exit ${lt.code}` };
+              } else {
+                const inHead = new Set(String(lt.stdout).split('\0').filter(Boolean));
+                for (const p of regen) if (!inHead.has(p)) stAfter.dirty.push(`?? ${p} (co tren dia nhung commit da xoa/doi ten, bi sinh lai)`);
+              }
+            }
+          }
           headAfter = headCommitOf(auditDir);
         } finally {
           if (wtTam) await goWorktree(cfg, wtTam);

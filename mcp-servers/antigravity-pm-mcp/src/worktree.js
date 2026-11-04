@@ -203,8 +203,9 @@ export async function auditWorktree(cfg, commit) {
 
 export async function goWorktree(cfg, dir) {
   await run('git', ['worktree', 'remove', '--force', dir], { cwd: cfg.projectRoot, timeoutMs: 60000 });
-  await run('git', ['worktree', 'prune'], { cwd: cfg.projectRoot, timeoutMs: 60000 });
+  // xoa thu muc TRUOC prune: neu `remove` loi giua chung thi prune moi go duoc dang ky cua thu muc da mat (review #988)
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* da don */ }
+  await run('git', ['worktree', 'prune'], { cwd: cfg.projectRoot, timeoutMs: 60000 });
 }
 
 /** File trong cay lam viec thuoc ve task: agent khai trong files_changed, hoac la file test (luat "kem file test" dem chung). */
