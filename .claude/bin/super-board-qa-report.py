@@ -1,6 +1,6 @@
 """Đối chiếu report QA mới nhất và AC trong thân PR trước khi merge (#364). Không mạng, không tác dụng phụ.
 
-    super-board-qa-report.py --meta <pr.json>
+    super-board-qa-report.py --meta <pr.json> [--head <sha40> --repo <path> --base <ref>]
 
 `--meta` là `gh pr view --json body,comments,author`. Thoát 0 khi sạch; thoát 1 và in từng dòng `qa-report: <lý do>` khi:
   - comment `[qa] [report]` MỚI NHẤT của người đáng tin còn mục `❌ Not done:` NÊU TÊN một AC của PR: mã AC (`AC1`, `AC 7`) hoặc
@@ -8,7 +8,9 @@
     không nêu AC nên không bị từ chối. Mục có thể nhiều dòng: các dòng thụt lề / gạch đầu dòng ngay dưới nó thuộc cùng mục;
   - mục AC `- [x]` trong "## Acceptance criteria" của thân PR không có dòng bằng chứng `↳ <nội dung>` ở các dòng liền sau nó
     (dừng ở dòng trống, mục AC kế hay tiêu đề). Khối "## AC + proof" (agents-md-block.md) chỉ dùng để nhận diện AC cho mục Not done:
-    bằng chứng của nó nằm ngay trên dòng mục, các PR #345/#374 đã merge không có `↳`.
+    bằng chứng của nó nằm ngay trên dòng mục, các PR #345/#374 đã merge không có `↳`;
+  - (T0255, khi có `--head` và `--base`) report QA mới nhất nêu sha một commit của nhánh PR mà head còn commit code sau sha đó
+    (không tính commit merge và commit chỉ chạm docs/super-board/runs): QA chưa chạy lại trên code cuối.
 Người đáng tin = tác giả PR hoặc authorAssociation OWNER/MEMBER/COLLABORATOR. Dòng trích dẫn `> ` và khối ``` bị bỏ qua.
 Không có comment QA hay không có mục AC thì không có gì để từ chối (cổng khác lo việc QA vắng mặt).
 Thoát 2 khi metadata không đọc được hay lỗi bất ngờ: cổng merge coi là "không quyết định được", không phải lỗi build.
@@ -20,6 +22,7 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 import sys
 
@@ -35,6 +38,8 @@ BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S")
 TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
 _CONFIG = os.environ.get("SB_CONFIG") or None  # decision_policy.enabled=false của config tắt luật này
 MIN_AC_TEXT = 12  # AC ngắn hơn thế quá dễ trùng chữ thường trong ghi chú phạm vi
+SHA_TOKEN = re.compile(r"\b[0-9a-f]{7,40}\b")
+EVIDENCE_DIR = "docs/super-board/runs"  # commit bằng chứng QA (bin/tree_fp.py cũng bỏ thư mục này khỏi dấu vân tay cây)
 
 
 def visible_lines(body):
@@ -81,7 +86,8 @@ _DEC = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_DEC)
 
 
-def latest_qa_unfinished(comments, pr_author=None, body=""):
+def latest_qa(comments, pr_author=None):
+    """(các dòng hiển thị, chỉ số) của report `[qa] [report]` mới nhất của người đáng tin; (None, -1) khi không có."""
     latest, latest_at = None, -1
     for i, c in enumerate(comments or []):
         if not isinstance(c, dict) or not isinstance(c.get("body"), str) or not trusted(c, pr_author):
@@ -89,6 +95,58 @@ def latest_qa_unfinished(comments, pr_author=None, body=""):
         lines = visible_lines(c["body"])
         if any(QA_HEADER.match(l) for l in lines):
             latest, latest_at = lines, i    # thứ tự API = thứ tự thời gian: comment đáng tin cuối thắng
+    return latest, latest_at
+
+
+def _git(repo, *args):
+    """stdout của git (đã strip), None khi git lỗi / quá 10 s."""
+    try:
+        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def stale_qa(comments, pr_author, head, repo, base):
+    """T0255: report QA mới nhất nêu commit của nhánh PR mà head còn commit code sau đó ⇒ mô tả lỗi; còn lại None.
+    Commit của nhánh = tổ tiên của head, không là tổ tiên của base (sha của main mà QA nêu để so ĐỎ thì bỏ qua). Commit merge và
+    commit chỉ chạm EVIDENCE_DIR không tính là code. Report không nêu commit nào của nhánh, hay git/base không đọc được: không chặn
+    (giữ hành vi cũ). ponytail: commit merge có sửa tay khi giải conflict không bị tính; so cây của phần nhánh khi gặp ca lọt như vậy."""
+    lines, _ = latest_qa(comments, pr_author)
+    if lines is None or not head:
+        return None
+    tokens = set(SHA_TOKEN.findall("\n".join(lines)))
+    if any(head.startswith(t) for t in tokens):
+        return None
+    if _git(repo, "rev-parse", "--verify", "-q", f"{base}^{{commit}}") is None:
+        print(f"qa-report: bỏ qua ghim sha QA — không đọc được base {base}", file=sys.stderr)
+        return None
+    own = []
+    for t in sorted(tokens):
+        sha = _git(repo, "rev-parse", "--verify", "-q", f"{t}^{{commit}}")
+        if not sha or _git(repo, "merge-base", "--is-ancestor", sha, head) is None:
+            continue
+        if _git(repo, "merge-base", "--is-ancestor", sha, base) is not None:
+            continue
+        own.append(sha)
+    if not own:
+        return None
+    after = []
+    for sha in own:
+        out = _git(repo, "log", "--no-merges", "--format=%h %s", head, f"^{sha}", f"^{base}", "--", ".", f":(exclude){EVIDENCE_DIR}")
+        if out is None:
+            print(f"qa-report: bỏ qua ghim sha QA — git log lỗi trên {sha[:12]}", file=sys.stderr)
+            return None
+        if not out:
+            return None
+        after.append((sha, out.splitlines()))
+    sha, commits = min(after, key=lambda a: len(a[1]))
+    return (f"report QA mới nhất kiểm {sha[:12]}, head {head[:12]} còn {len(commits)} commit code sau đó "
+            f"({'; '.join(c[:80] for c in commits[:3])}): QA phải chạy lại trên head")
+
+
+def latest_qa_unfinished(comments, pr_author=None, body=""):
+    latest, latest_at = latest_qa(comments, pr_author)
     if latest is None:
         return []
     # #516: [decision] hợp lệ mới hơn report QA đã xử lý các mục còn mở của nó (luật 1–5 của chủ), nên không chặn merge.
@@ -137,7 +195,7 @@ def ac_without_proof(body):
     return bad
 
 
-def run(meta_path):
+def run(meta_path, head=None, repo=".", base=None):
     try:
         with open(meta_path, encoding="utf-8") as fh:
             meta = json.load(fh)
@@ -153,6 +211,9 @@ def run(meta_path):
     problems = [f"qa-report: report QA mới nhất còn việc chưa xong: {t[:200]}"
                 for t in latest_qa_unfinished(meta.get("comments"), pr_author, body)]
     problems += [f"qa-report: AC đã tích [x] nhưng không có dòng bằng chứng '↳': {t[:200]}" for t in ac_without_proof(body)]
+    stale = stale_qa(meta.get("comments"), pr_author, head, repo, base) if head and base else None
+    if stale:
+        problems.append(f"qa-report: {stale}")
     for p in problems:
         print(p)
     return 1 if problems else 0
@@ -161,9 +222,12 @@ def run(meta_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--meta", required=True)
+    ap.add_argument("--head", help="sha40 head PR: bật ghim sha QA (T0255); thiếu thì bỏ qua")
+    ap.add_argument("--repo", default=".", help="repo git chứa head và base")
+    ap.add_argument("--base", help="ref base, ví dụ origin/main")
     args = ap.parse_args()
     try:
-        return run(args.meta)
+        return run(args.meta, args.head, args.repo, args.base)
     except Exception as exc:  # noqa: BLE001 — lỗi bất ngờ phải thành "không quyết định được" (2), không thành lỗi build
         print(f"qa-report: lỗi bất ngờ khi đối chiếu ({type(exc).__name__}: {exc})", file=sys.stderr)
         return 2
