@@ -3,12 +3,21 @@ name: super-collect
 description: Find problems in one project and file them as tickets into its super-board Backlog — the board fixes them. Use when the user says "super-collect", "/super-collect", "/super-collect sentry", "collect tickets", "triage errors onto the board", "what keeps breaking", or "find refactors".
 ---
 
-# super-collect — find problems, file them into Backlog
+# super-collect — find problems, hand them to the planning chain
 
-One job: find problems and file tickets into the board's **Backlog**. The board fixes them.
-super-collect never builds, never edits app code, and never moves a card to `Ready` —
-`super-board lint` decides that. Per project only: it reads the active project's super-board
-config and files onto that project's board. Source plug-ins: sentry (app errors), posthog
+One job: find problems and turn them into tickets. The flow:
+
+1. Collect candidates from the sources.
+2. One fresh verifier checks each candidate.
+3. Write ONE findings doc that groups what survived: `docs/super-board/findings/collect-<YYYY-MM-DD>.md`.
+4. `/to-spec` turns the findings doc into a spec, `/to-tickets` turns the spec into tickets.
+5. Build fork: **1–5 tickets → `/implement-spec`** (one session, no QA lane). **6+ tickets → super-board**:
+   each ticket goes to **Backlog**, then `/super-board lint` and `run`.
+
+No `/to-spec` or `/to-tickets` in this project (or `--direct`) → file each finding straight into
+Backlog (the "Filing" path below) and print why. super-collect never edits app code and never moves a
+card to `Ready` — `super-board lint` decides that. Per project only: it reads the active project's
+super-board config and files onto that project's board. Source plug-ins: sentry (app errors), posthog
 (exceptions, rage/dead clicks, failure events, web vitals, tracking gaps), github (issues not on
 the board), prs (recurring problems in merged PRs and their review comments), architecture
 (refactor findings), plus any custom source added in onboard (an MCP server, HTTP API, CLI command
@@ -21,9 +30,10 @@ or app). Each candidate is checked by one fresh verifier before filing. Dry-run 
 | `/super-collect` | every source enabled in `collect.sources` |
 | `/super-collect <source> [<source>…]` | just those: `sentry`, `posthog`, `github`, `prs`, `architecture`, or a custom source's `name` |
 | `--since 30d` / `--since 2026-09-01` | window; default `collect.window_days`, else 14 days |
-| `--yes` | file without the confirm step (never skips verify or dedupe) |
+| `--yes` | write and file without the confirm step (never skips verify or dedupe) |
+| `--direct` | skip the planning chain: file each finding straight into Backlog |
 
-Default is **dry-run**: show the plan table, file on confirm.
+Default is **dry-run**: show the findings doc and the route, write nothing, go on only on confirm.
 
 ## Scheduler integration
 
@@ -145,9 +155,45 @@ evidence: [links], note}`. `duplicate` names the card; the filer then comments o
 not a drop**: `needs-triage` files the card with `--label needs-triage`. Report every drop with its
 evidence.
 
+## Hand-off — findings doc, /to-spec, /to-tickets
+
+After Verify, pick the route:
+
+```bash
+python3 $S/collect_handoff.py route --root .     # {"route": "planning" | "backlog", "missing": [...], "reason": ...}
+```
+
+It resolves `to-spec`, `to-tickets` and `implement-spec` with the pack's skills-ready resolver.
+`route: backlog` (either of the first two missing) or `--direct` → skip to **Filing** below and print
+the `reason` line in the report.
+
+`route: planning`:
+
+1. Write the verifier's results as one JSON array (`title`, `type`, `source`, `group`, `fingerprint`,
+   `verdict`, `evidence`, `note`). `group` is the shared root cause or area; same cause, same group.
+2. `python3 $S/collect_handoff.py doc --findings <verified.json> --since <w>` prints the doc (dry run).
+   On confirm add `--yes`: it writes `docs/super-board/findings/collect-<YYYY-MM-DD>.md` (never
+   overwrites; `-2`, `-3`, …) and prints the path. Only `file` and `needs-triage` findings go in; drops
+   and duplicates are listed under "Not in this doc". A `duplicate` still gets its "Seen again" comment
+   through the filer (`--yes`, same fingerprint), and a `github` candidate is still adopted with
+   `--adopt <n>`: it is already a ticket.
+3. Run `/to-spec` on the findings doc; answer its seam question from the doc.
+4. Run `/to-tickets` on that spec. Count the tickets it publishes.
+5. `python3 $S/collect_handoff.py fork --tickets <n>` (add `--no-implement-spec` when route said
+   `implement_spec: null`):
+   - **1–5 tickets → `/implement-spec <spec>`**: one session, its own review, no QA lane.
+     super-collect does not build: it prints the command; on confirm it starts it.
+   - **6+ tickets → super-board**: add each ticket to Backlog with
+     `$S/super-collect-file.sh --config <cfg> --adopt <n> --type bug|feature|refactor --yes`, then
+     `/super-board lint`. Build → QA (with the security pass) → Review → merge gate.
+   - Tickets in a local tracker (files, not GitHub issues) cannot go on the board: report their paths and stop.
+
+With `--yes` and no one to answer `/to-spec` or `/to-tickets` (a scheduler), use `--direct`.
+
 ## Filing
 
-Every card goes through one script, which routes to the pack's filers:
+The direct path (no planning chain, `--direct`, adopting a `github` issue, a duplicate's "Seen again"
+comment) and the 6+ adoption go through one script, which routes to the pack's filers:
 
 ```bash
 $S/super-collect-file.sh --config <cfg> --type bug|feature|refactor|fix \
@@ -173,23 +219,27 @@ $S/super-collect-file.sh --config <cfg> --adopt <n> --type <t> [--yes]
 - The same-host repository lock serializes collector calls; digest receipts skip identical repeat comments. See [state and recovery](references/scheduled-intake.md).
 - Labels: `source:collect`, `collect:<source>`, every `--label`, plus the filer's own.
 
-Dry-run: run each verified item without `--yes`, show one table (`would-file` / `duplicate` /
+Dry-run (direct path): run each verified item without `--yes`, show one table (`would-file` / `duplicate` /
 `recurrence` / `would-adopt`, plus the verifier's drops), wait for confirm, rerun with `--yes`.
 
 ## Report
 
 ```
-## super-collect: <filed n | dry-run n> · since 2026-09-18 (14d)
+## super-collect: <planned n | filed n | dry-run n> · since 2026-09-18 (14d)
 Coverage   sentry: read 42 | posthog: read 9 (silent: rageclick) | github: read 7 | prs: 23 PRs, 6 reports | architecture: 4 | linear: read 12
-Filed      #412 bug       Checkout 500 on empty cart              (err|sentry|4411)
-Filed      #413 bug       Dead clicks on /pricing  [needs-triage]  (posthog|dead_click|1a2b3c4d5e6f)
+Findings   docs/super-board/findings/collect-2026-10-02.md  (7 findings, 3 groups)
+Spec       #430  ← /to-spec
+Tickets    #431–#438 (8)  ← /to-tickets
+Build      6+ tickets → super-board: #431–#438 adopted into Backlog
 Duplicate  #301 ← Sentry 4502 (comment added)
-Recurrence #418 fix       Merge gate rebases on lockfile drift     (was #88)
 Dropped    Sentry 4490 drop-fixed — resolved in web@1.4.0, not seen since (PR #377)
-Gaps       #420 analytics Receipt upload: no failure event         (gap|receipt-upload)
 Report     docs/super-board/runs/collect-funnel-2026-10-02.md
 Next       /super-board lint  — nothing here is in Ready
 ```
+
+1–5 tickets: `Build 3 tickets → /implement-spec #430` and `Next /implement-spec #430`. Direct path: a
+`Route backlog — /to-tickets not installed in <root> …` line, then the `Filed` / `Recurrence` / `Gaps` lines
+(`Filed #412 bug Checkout 500 on empty cart (err|sentry|4411)`).
 
 ## Common pitfalls
 
@@ -198,4 +248,5 @@ Next       /super-board lint  — nothing here is in Ready
 - Dropping an unclear candidate. File it `needs-triage`.
 - Copying a user's issue into a new one. Adopt it.
 - Treating a reviewer's `fixed` as proof. Recurrence is decided by the next report.
-- Editing app code, adding instrumentation, or moving anything to `Ready`. Collect files; lint and run do the rest.
+- Editing app code, adding instrumentation, or moving anything to `Ready`. Collect plans and files; lint and run do the rest.
+- Writing one spec per finding. One findings doc per run; `/to-spec` makes one spec from it.

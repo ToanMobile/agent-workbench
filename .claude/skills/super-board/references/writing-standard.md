@@ -161,14 +161,19 @@ and the proof line says why in one line.
 **Iteration history** — local time from config `timezone` (onboard sets it to the machine's
 zone). Get the stamp with `super-board-pr-body.sh --time --config <cfg>`.
 
+The block is folded; new rows go inside the fold, above `</details>` (`--append-file` keeps them there).
+
 ```
-## Iteration history
+<details><summary>Iteration history</summary>
+
 | Lane | Done | Time | Details |
 |---|---|---|---|
 | 🔨 builder | ✅ | Oct 2, 10:02 EDT | draft · `3f9c2a1` |
 | 🔍 qa | ❌ v1 | Oct 2, 10:40 EDT | mobile hidden · `runs/issue-790-qa-v1/` |
 | 🔍 qa | ✅ v2 | Oct 2, 11:55 EDT | `runs/issue-790-qa-v2/` |
 | 🧐 reviewer | ✅ merged | Oct 2, 12:20 EDT | squash `9c41e07` |
+
+</details>
 ```
 
 **Before | After** — two columns, one row per viewport, both shas in the header. Images are
