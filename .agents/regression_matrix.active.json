@@ -3753,6 +3753,70 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "gate-scoped-no-fail-fast",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/lane_lock.py",
+        "universal-agent-devkit/tests/gates/test_gate_scoped_no_fail_fast.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-SCOPED-NO-FAIL-FAST-01",
+          "name": "04/11: lượt --scoped chạy hết suite và lộ mọi suite đỏ trong một lượt; --fail-fast bật lại; lượt không --scoped giữ fail-fast; lane_lock coi --fail-fast là việc nhẹ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_scoped_no_fail_fast.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-autosync-pm-approval",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_merge_gate_autosync_pm_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AUTOSYNC-PM-01",
+          "name": "04/11: merge gate tự gộp base (driver ma trận) cho PR có duyệt test sửa từ biên bản PM khi verify chạy post-fix-gate; comment edited-tests và pm không gate vẫn exit 14",
+          "command": "bash tests/super-board/test_merge_gate_autosync_pm_approval.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "pm-grok-timeout-by-diff",
+      "watch_files": [
+        "mcp-servers/antigravity-pm-mcp/src/agentapi.js",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/tests/grok-timeout.test.js"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-PM-GROK-TIMEOUT-01",
+          "name": "04/11: hạn grok audit theo kích thước diff (sàn 20 phút, +1 phút/100 dòng, trần 60), env ghi đè vẫn thắng",
+          "command": "cd mcp-servers/antigravity-pm-mcp && node --test tests/grok-timeout.test.js",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "review-gate-handover",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/hooks/devkit_harness.py",
+        "universal-agent-devkit/tests/gates/test_review_gate_handover.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-HANDOVER-01",
+          "name": "04/11: review gate coi gh pr create / agent-kit worktree finish|integrate / merge gate là bàn giao như git push; thông điệp chặn: P0/P1 sửa ngay, P2/P3 thành thẻ Backlog, OCR delegate không cần agent thứ hai, không cắt output bằng tail",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_handover.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
