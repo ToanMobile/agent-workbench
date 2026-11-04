@@ -2494,5 +2494,18 @@ run_case "a Read matching no glob exits 0" instincts_file_context.sh 0 \
   '{"session_id":"IFC1","tool_name":"Read","tool_input":{"file_path":"/nonexistent/none.txt"}}'
 echo
 
+# ── session_card.sh — UserPromptSubmit + PreToolUse Edit|Write (never blocks; card creation: tests/gates/test_session_card_hook.sh) ──
+echo "session_card.sh"
+run_case "malformed payload never blocks" session_card.sh 0 "not json at all"
+run_case "an edit with no session id is skipped" session_card.sh 0 \
+  '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/nonexistent/a.txt"}}'
+run_case "a subagent edit is skipped" session_card.sh 0 \
+  '{"session_id":"SC1","agent_id":"sub1","hook_event_name":"PreToolUse","tool_name":"Edit","cwd":"/nonexistent","tool_input":{"file_path":"/nonexistent/a.txt"}}'
+run_case "SESSION_CARD=0 switches it off" session_card.sh 0 \
+  '{"session_id":"SC2","hook_event_name":"UserPromptSubmit","prompt":"x","cwd":"/nonexistent"}' SESSION_CARD=0
+run_case "a headless claude -p run is skipped" session_card.sh 0 \
+  '{"session_id":"SC3","hook_event_name":"UserPromptSubmit","prompt":"x","cwd":"/nonexistent"}' CLAUDE_CODE_ENTRYPOINT=sdk-cli
+echo
+
 # ── report ──────────────────────────────────────────────────────────────────
 hc_summary
