@@ -870,12 +870,19 @@ export const TOOLS = [
           }
           // File thuoc change set base..head khong bao gio duoc bo qua; khong do duoc change set (khong co goc / git loi) => khong bo qua gi.
           // Do TRUOC khi grok chay (khong phu thuoc grok): cung la nen de biet file DevKit nao da co san tren dia truoc audit.
+          // Hop cua CA hai goc: merge-base voi nhanh dich (range.base, phan PR sua — pham vi grok duoc yeu cau soi) va goc task. Task chi-audit
+          // tao tren worktree PR co baseCommit = head => rieng goc task cho tap RONG, khong bao ve file nao (review ghep voi #977, P1).
+          // Mot trong cac diff loi => khong do duoc => khong bo qua gi.
           let changeSet = null;
-          const base = task.implementBaseCommit || task.baseCommit;
-          if (base) {
+          // range.base trung head (head nam ngay tren nhanh dich) cho khoang RONG khong noi len dieu gi => khong tinh la da do. Con goc cua TASK
+          // trung head la thong tin that ("task tao dung tai head, chua doi gi"): giu, tap rong do duoc.
+          const bases = [...new Set([range.base !== head ? range.base : null, task.implementBaseCommit || task.baseCommit].filter(Boolean))];
+          for (const b of bases) {
             // --no-renames: duong nguon cua mot lan doi ten cung nam trong change set (nhu trackedChanges)
-            const dp = await run('git', ['diff', '--name-only', '--no-renames', '-z', base, head], { cwd: cfg.projectRoot, timeoutMs: 60000, maxBytes: 16_000_000 });
-            if (!dp.spawnFailed && !dp.timedOut && dp.code === 0 && !dp.truncated) changeSet = new Set(String(dp.stdout).split('\0').filter(Boolean));
+            const dp = await run('git', ['diff', '--name-only', '--no-renames', '-z', b, head], { cwd: cfg.projectRoot, timeoutMs: 60000, maxBytes: 16_000_000 });
+            if (dp.spawnFailed || dp.timedOut || dp.code !== 0 || dp.truncated) { changeSet = null; break; }
+            changeSet = changeSet || new Set();
+            for (const p of String(dp.stdout).split('\0').filter(Boolean)) changeSet.add(p);
           }
           // Khong do duoc change set: doi chieu 3 file DevKit co dinh thay cho change set (khong liet ke duoc archive/memory)
           const cand = changeSet !== null ? [...changeSet].filter(laFileDevkitSinh) : [...DEVKIT_SINH_TU_DONG];

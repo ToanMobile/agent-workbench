@@ -198,8 +198,23 @@ export async function auditWorktree(cfg, commit) {
     await goWorktree(cfg, dir);
     return { error: (add.stderr || add.stdout).trim().slice(0, 400) };
   }
+  // Hook cua phien grok (.claude/hooks/guard-secrets.py, guard-worktree-path.py ...) thuong KHONG duoc git track: worktree tam khong co thi
+  // grok khong mo duoc hook cua chinh no, shell + read_file bi chan, khong doc duoc diff => REVISE (audit that Goods 04/11). Chep tu project
+  // that nhung CHI file chua co o do (force:false): file da track o commit giu nguyen ban cua commit.
+  try {
+    for (const rel of HOOK_DIRS_UNTRACKED) {
+      const src = path.join(cfg.projectRoot, rel);
+      if (fs.existsSync(src)) fs.cpSync(src, path.join(dir, rel), { recursive: true, force: false, errorOnExist: false });
+    }
+  } catch (err) {
+    await goWorktree(cfg, dir);
+    return { error: `khong chep duoc hook vao worktree tam: ${String(err.message || err).slice(0, 300)}` };
+  }
   return { dir };
 }
+
+/** Thu muc hook cua project chep vao worktree audit tam khi chua co o do (xem auditWorktree). */
+const HOOK_DIRS_UNTRACKED = ['.claude/hooks', '.agents/local/hooks'];
 
 export async function goWorktree(cfg, dir) {
   await run('git', ['worktree', 'remove', '--force', dir], { cwd: cfg.projectRoot, timeoutMs: 60000 });
