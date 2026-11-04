@@ -91,6 +91,7 @@ The worker (per `references/iteration-preamble.md`) must load and follow:
   anti-patterns; does not change with the kind of test)
 - `mattpocock-skills:diagnosing-bugs`
 - `verification-before-completion` (no Matt Pocock equivalent — kept as-is)
+- `pr-security-review` — the security pass on every PR with code (bundled with the pack; [security-pass.md](security-pass.md))
 - `testing-strategy` — coverage judgment per component type, and what to skip.
   Consult it for *what is worth testing*; it does not pick the layer. The
   localisation ladder in `references/iteration-preamble.md` picks the layer.
