@@ -3858,6 +3858,37 @@
       ]
     },
     {
+      "component": "gate-slot-holder-log",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/governance/gate_speed_report.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_holder_log.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-SLOT-HOLDER-984-01",
+          "name": "05/11 (#984 a): lượt xin slot pool gate ghi gate_slot vào runs.jsonl (giữ được / hết giờ), gate_speed_report in giây giữ theo loại lượt, repo và lúc merge gate chờ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_holder_log.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "essentials-pr-repo-no-local-gate",
+      "watch_files": [
+        "universal-agent-devkit/rules/essentials.md",
+        "universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_gate.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ESSENTIALS-PR-NO-LOCAL-GATE-984-01",
+          "name": "05/11 (#984): repo đi PR không chạy gate scoped ở local, push rồi merge gate --dry-run nền; repo push trunk giữ gate local",
+          "command": "bash universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_gate.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "shard-key-failclosed-994",
       "watch_files": [
         "universal-agent-devkit/bin/suite_cache.py",

@@ -70,8 +70,8 @@ calibration, the paired oracle and the gate (core-rules §4).
   (main still held → finish once the holder idles). A task that session dispatched to you (`/giao`)
   is done in its checkout. Exit 5 = trunk mode (default): main is merge-only, every session works
   in its own worktree (Claude Code: EnterWorktree; others: `agent-kit worktree add`) and only `agent-kit worktree finish` moves main.
-- **Done means verified**: step 3 at exit 0 on the current code and, when step 4 applies, this
-  turn's proof PNG before XONG; Stop hooks enforce it where they exist, but no hook takes the screenshot.
+- **Done means verified**: step 3 on the current code and the step 4 PNG of this turn, if due, before XONG;
+  no hook takes the screenshot.
 
 ## Every prompt (standing law)
 Applies to Claude Code, Gemini CLI, Antigravity, Codex, Cursor and Grok, to every turn that changes
@@ -86,6 +86,7 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 3. Once per handover, on the final tree after review fixes (large task: gate, audit, fix, gate), from the repo
    root: `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`. Exit 0 is required; it writes
    the task receipt. PR repo: the merge gate is that gate (no pre-push gate); XONG waits for its merge receipt.
+   PR repo (`.claude/super-board/configs/`): no local scoped run; push, merge gate `--dry-run` in background.
    Mid-task: only the step 2 oracle and changed tests (`bash <test>`), reply CHƯA XONG. Nobody runs `--full` by hand for a task.
    Other exit: paste the last 30 log lines, fix, repeat.
 4. A proof image blocks like exit 0, unless the change surely cannot show on a screen: a backend
