@@ -51,13 +51,12 @@ calibration, the paired oracle and the gate (core-rules §4).
 - **Protect working code**: touch it only for a real error, a real necessity or an explicit
   instruction. Surgical diffs; no drive-by refactors, formatting sweeps or placeholder code
   (`// ... existing code ...`); keep public signatures backward compatible.
-- **Git — commit and push yourself** (a project or user rule that forbids it wins: stop and wait
-  for the order). A finished task
+- **Git — commit and push yourself** (a project or user rule that forbids it wins: stop and wait for the order). A finished task
   is committed and pushed without asking, only your own paths (`git commit -m … -- <paths>`, never
   `git add -A`/`commit -a`). Before a push: `git fetch`, then alone `git pull --ff-only` (or
   `--no-rebase --no-edit` when both moved; check exit code; a conflict → skill conflict, ask only for a
-  business decision), re-run the step 3 gate after any pull, merge or conflict fix (not a clean PR base merge),
-  then `git push origin <branch>`, never `<sha>:<branch>`. Every commit and push needs the latest gate on that content at exit 0, or
+  business decision), re-run the step 3 gate after any pull, merge or conflict fix,
+  then `git push origin <branch>`, never `<sha>:<branch>`. A trunk push and every XONG need the latest gate on that content at exit 0, or
   exit 2 whose only reason is an edited test an Antigravity audit passed; a trunk-push repo moves
   main only through `agent-kit integrate`. Never commit secrets (`.env`, keystores,
   `local.properties`, `google-services.json`, tokens); mask them in proof. Details: core-rules §19.
@@ -84,11 +83,11 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
    `.agents/local/rules/` file the index names.
 2. A code or bug prompt: run the failing oracle and see RED before editing production, then the
    same oracle GREEN after. Keep the command log and the exit code.
-3. From the repo root, once: `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`.
-   Exit 0 is required; this scoped run writes the task receipt, the proof for step 5 (build, QA, review,
-   merge queue and `agent-kit integrate` run the same). Nobody runs `--full` by hand for a task: the
-   `gate-full` skill runs it nightly. Any other exit: paste the last 30 log lines, fix, repeat; a
-   dry-run, `--help` or a single Gradle test does not replace it. Details: core-rules §19.
+3. Once per handover, on the final tree after review fixes (large task: gate, audit, fix, gate), from the repo
+   root: `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`. Exit 0 is required; it writes
+   the task receipt. PR repo: the merge gate is that gate (no pre-push gate); XONG waits for its merge receipt.
+   Mid-task: only the step 2 oracle and changed tests (`bash <test>`), reply CHƯA XONG. Nobody runs `--full` by hand for a task.
+   Other exit: paste the last 30 log lines, fix, repeat.
 4. A proof image blocks like exit 0, unless the change surely cannot show on a screen: a backend
    profile, or every changed file is tooling, tests, docs or logs (exact list: core-rules §19;
    `hooks/proof_gate.sh` applies it). Then write "ảnh: không cần — <reason>" in line 3 and skip this

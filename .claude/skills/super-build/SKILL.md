@@ -129,6 +129,9 @@ Triggered when card returns to Ready/Building with `loop:rebuild-N` label.
    gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{isResolved}}}' -f threadId="<thread-id>"
    ```
 3. Address any new failure feedback from Tester's latest ❌ comment.
+   Then run the card's target tests and each changed file's own tests (`bash <test>`), with no gate of its own:
+   the fixes changed the tree, so the QA lane re-runs `post-fix-gate.py --run-tests --scoped --brief` once on the
+   post-fix tree, and that receipt for the new head is the one Review and the merge gate read.
 4. Commit + push to same branch. Verify ALL `[builder]` threads are resolved before exit.
 5. Refresh [PR author notes](../super-board/references/pr-author-notes.md), rewrite your PR body blocks (`super-board-pr-body.sh`), post `[builder] [report]` PR + issue comments. Move card Ready/Building → QA.
 
