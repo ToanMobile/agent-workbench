@@ -187,10 +187,57 @@ async function dongBangCayVao(cfg, dir) {
   return { dir, applied, untracked };
 }
 
+/**
+ * Worktree tam o dung `commit` (sha40) de grok audit mot commit chi dinh (#987): cay chinh khong can sach, hook DevKit cua phien grok
+ * sinh lai AGENTS.md o day chu khong o cay chinh. Tra { dir } hoac { error }; nguoi goi PHAI goWorktree(cfg, dir) khi xong.
+ */
+export async function auditWorktree(cfg, commit) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-grok-'));
+  const add = await run('git', ['worktree', 'add', '--detach', dir, commit], { cwd: cfg.projectRoot, timeoutMs: 120000 });
+  if (add.code !== 0) {
+    await goWorktree(cfg, dir);
+    return { error: (add.stderr || add.stdout).trim().slice(0, 400) };
+  }
+  // Hook cua phien grok (.claude/hooks/guard-secrets.py, guard-worktree-path.py ...) thuong KHONG duoc git track: worktree tam khong co thi
+  // grok khong mo duoc hook cua chinh no, shell + read_file bi chan, khong doc duoc diff => REVISE (audit that Goods 04/11). Chep tu project
+  // that nhung CHI file chua co o do (force:false): file da track o commit giu nguyen ban cua commit.
+  try {
+    for (const rel of HOOK_DIRS_UNTRACKED) {
+      const src = path.join(cfg.projectRoot, rel);
+      if (fs.existsSync(src)) chepNeuThieu(src, path.join(dir, rel));
+    }
+  } catch (err) {
+    await goWorktree(cfg, dir);
+    return { error: `khong chep duoc hook vao worktree tam: ${String(err.message || err).slice(0, 300)}` };
+  }
+  return { dir };
+}
+
+/** Thu muc hook cua project chep vao worktree audit tam khi chua co o do (xem auditWorktree). */
+const HOOK_DIRS_UNTRACKED = ['.claude/hooks', '.agents/local/hooks'];
+
+/**
+ * Chep `src` vao `dest` cho file chua co o dich; dich da co (file hay symlink, kiem bang lstat) thi giu nguyen. Do 04/11 tren worktree Goods
+ * o commit 94ef023e: fs.cpSync({force:false}) lam 5 file .claude/hooks/*.sh da track thanh `M` (git status), vong lstat nay thi sach.
+ * Symlink nguon duoc doc theo noi dung that; symlink treo bi bo qua.
+ */
+function chepNeuThieu(src, dest) {
+  const st = fs.lstatSync(src);
+  if (st.isDirectory()) {
+    fs.mkdirSync(dest, { recursive: true });
+    for (const name of fs.readdirSync(src)) chepNeuThieu(path.join(src, name), path.join(dest, name));
+    return;
+  }
+  try { fs.lstatSync(dest); return; } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  if (st.isSymbolicLink() && !fs.existsSync(src)) return;
+  fs.copyFileSync(src, dest);
+}
+
 export async function goWorktree(cfg, dir) {
   await run('git', ['worktree', 'remove', '--force', dir], { cwd: cfg.projectRoot, timeoutMs: 60000 });
-  await run('git', ['worktree', 'prune'], { cwd: cfg.projectRoot, timeoutMs: 60000 });
+  // xoa thu muc TRUOC prune: neu `remove` loi giua chung thi prune moi go duoc dang ky cua thu muc da mat (review #988)
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* da don */ }
+  await run('git', ['worktree', 'prune'], { cwd: cfg.projectRoot, timeoutMs: 60000 });
 }
 
 /** File trong cay lam viec thuoc ve task: agent khai trong files_changed, hoac la file test (luat "kem file test" dem chung). */
