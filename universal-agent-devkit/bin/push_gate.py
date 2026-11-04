@@ -11,7 +11,7 @@ gọi trước khi push, CLI): luật biên nhận bên dưới, như cũ — ch
 
 Rule (rules/essentials.md, Git): every push needs the latest `post-fix-gate --run-tests --full`
 at exit 0 on the content pushed, or an edited test an Antigravity audit passed: a pushed commit
-whose trailer is `Test-approved-by: antigravity <task-id>` AND an antigravity-pm record of that
+whose trailer is `Test-approved-by: antigravity|grok <task-id>` AND an antigravity-pm record of that
 task of this repository with an audit pass (approved(); audit 2026-10-09: any line holding
 "Test-approved-by:" used to pass). Audit 2026-09-28: nothing enforced it.
 
@@ -70,7 +70,8 @@ INTEGRATE = ("push lên trunk / release/* chỉ qua `agent-kit integrate` (đi�
              "đúng commit đó). Đang ở worktree: `agent-kit worktree finish <đường dẫn>` trước, rồi `agent-kit integrate` (không --if-due). "
              "Repo đi PR: push nhánh PR bằng tên (`git push origin <nhánh>`), merge gate lo phần còn lại")
 APPROVED = "Test-approved-by:"
-APPROVED_VALUE = re.compile(r"antigravity\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
+# Đợt 2 lane A: reviewer `grok` (PM tự chạy grok audit) được nhận như antigravity; chữ trong trailer phải khớp audit_reviewer().
+APPROVED_VALUE = re.compile(r"(antigravity|grok)\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
 HEX_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
@@ -463,19 +464,139 @@ def audited_head(top, task_id):
     if pm_home_overridden() and not pm_home_test_fixture():
         return None
     for audit in _task_audits(top, task_id):
-        if not isinstance(audit, dict) or audit.get("verdict") != "pass":
-            continue
-        # Audit T0066 vòng 2: trường cấu trúc verdicts.audit.auditedHead (pm_verdict ghi) trước, rồi `auditedHead: <sha>` trong notes.
-        cands = [audit.get("auditedHead")] if isinstance(audit.get("auditedHead"), str) and SHA40.fullmatch(audit["auditedHead"]) else []
-        m = AUDITED_HEAD.search(audit["notes"]) if isinstance(audit.get("notes"), str) else None
-        cands += [m.group(1)] if m else []
-        for sha in cands:
-            try:
-                rc, out = git(top, "rev-parse", "--verify", "-q", sha + "^{commit}")
-            except (OSError, subprocess.SubprocessError):
-                continue
-            if rc == 0 and out.strip() == sha:
+        sha = _audit_head_of(top, audit)
+        if sha:
+            return sha
+    return None
+
+
+def _audit_head_of(top, audit, cache=None):
+    """sha40 auditedHead của MỘT verdicts.audit pass (trường cấu trúc trước, rồi notes) khi sha đó là commit của repo `top`; None khác.
+    cache (dict sha → bool, tuỳ chọn): kết quả rev-parse đã có trong cùng một lượt gọi (audited_heads, H6: history lặp lại head)."""
+    if not isinstance(audit, dict) or audit.get("verdict") != "pass":
+        return None
+    # Audit T0066 vòng 2: trường cấu trúc verdicts.audit.auditedHead (pm_verdict ghi) trước, rồi `auditedHead: <sha>` trong notes.
+    cands = [audit.get("auditedHead")] if isinstance(audit.get("auditedHead"), str) and SHA40.fullmatch(audit["auditedHead"]) else []
+    m = AUDITED_HEAD.search(audit["notes"]) if isinstance(audit.get("notes"), str) else None
+    cands += [m.group(1)] if m else []
+    for sha in cands:
+        if cache is not None and sha in cache:
+            if cache[sha]:
                 return sha
+            continue
+        try:
+            rc, out = git(top, "rev-parse", "--verify", "-q", sha + "^{commit}")
+        except (OSError, subprocess.SubprocessError):
+            continue   # lỗi git không ghi vào cache: lần sau thử lại như trước
+        ok = rc == 0 and out.strip() == sha
+        if cache is not None:
+            cache[sha] = ok
+        if ok:
+            return sha
+    return None
+
+
+def audited_heads(top):
+    """[(task_id, auditedHead)] của MỌI task antigravity-pm của repo này có audit pass kèm auditedHead. Đợt 2 lane A: post-fix-gate chỉ
+    dùng audit mới nhất trên chuỗi first-parent của PR, audit cũ hơn có nội dung khác thì không duyệt (chặn replay về bản yếu).
+    Cùng điều kiện pm home với audited_head (pm home lạ không phải fixture test → [])."""
+    if pm_home_overridden() and not pm_home_test_fixture():
+        return []
+    out, checked = [], {}   # H6: một rev-parse cho mỗi sha trong cả lượt (history thường lặp lại head của verdicts.audit)
+    for task in _repo_tasks(top):
+        verdicts = task.get("verdicts") if isinstance(task.get("verdicts"), dict) else {}
+        audits = [verdicts.get("audit")]
+        # Đợt 2 F1: verdicts.auditHistory [{auditedHead, reviewer, at}] — PM nối thêm mỗi audit pass, không xoá. Một verdict fail ghi
+        # đè verdicts.audit sau đó không gỡ head pass cũ khỏi tập (audit cũ hơn của task khác không thành "mới nhất"). Thêm head chỉ
+        # làm luật chặt hơn. Biên bản cũ không có history: như trước.
+        history = verdicts.get("auditHistory")
+        for h in history if isinstance(history, list) else []:
+            if isinstance(h, dict):
+                audits.append({"verdict": "pass", "auditedHead": h.get("auditedHead")})
+        seen = set()
+        for audit in audits:
+            sha = _audit_head_of(top, audit, checked)
+            if sha and sha not in seen:
+                seen.add(sha)
+                out.append((task["id"], sha))
+    return out
+
+
+def session_agent():
+    """Danh tính agent của phiên đang chạy (đợt 2 F2), chuẩn hoá như normalize_reviewer: DEVKIT_AGENT_ID khi có; không thì "grok" khi
+    có GROK_SESSION_ID / GROK_WORKSPACE_ROOT / GROK_HOOK_EVENT; không thì "claude" khi CLAUDECODE=1 hoặc CLAUDE_CODE_SESSION_ID; không
+    thì "" (không biết). `agent-kit approve-tests` dùng làm author (rỗng → từ chối); post-fix-gate coi reviewer PM trùng nó là tự duyệt."""
+    explicit = normalize_reviewer(os.environ.get("DEVKIT_AGENT_ID") or "")
+    if explicit:
+        return explicit
+    if any(os.environ.get(k) for k in ("GROK_SESSION_ID", "GROK_WORKSPACE_ROOT", "GROK_HOOK_EVENT")):
+        return "grok"
+    if os.environ.get("CLAUDECODE") == "1" or os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        return "claude"
+    return ""
+
+
+def session_agents():
+    """TẬP danh tính của phiên đang chạy (vòng kiểm lại H4; JS: callerAgents của PM): {normalize(DEVKIT_AGENT_ID)} ∪ {"grok" khi có
+    GROK_SESSION_ID / GROK_WORKSPACE_ROOT / GROK_HOOK_EVENT} ∪ {"claude" khi CLAUDECODE=1 hoặc CLAUDE_CODE_SESSION_ID}, bỏ rỗng.
+    Reviewer thuộc tập = tự duyệt (mục duyệt, trailer, approve-tests): DEVKIT_AGENT_ID=codex trong phiên Grok vẫn là grok. session_agent()
+    (một giá trị) vẫn là author ghi vào mục duyệt."""
+    out = {normalize_reviewer(os.environ.get("DEVKIT_AGENT_ID") or "")}
+    if any(os.environ.get(k) for k in ("GROK_SESSION_ID", "GROK_WORKSPACE_ROOT", "GROK_HOOK_EVENT")):
+        out.add("grok")
+    if os.environ.get("CLAUDECODE") == "1" or os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        out.add("claude")
+    out.discard("")
+    return out
+
+
+# Vòng kiểm lại H3: tập ký tự strip CHUNG với normalizeAgent của PM (mcp-servers/antigravity-pm-mcp/src/tools.js AGENT_WS) = hợp của
+# str.strip() Python (có \x1c-\x1f, \x85) và trim() JS (có \ufeff), viết tường minh như #629.
+_AGENT_WS = "\t\n\v\f\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+_AGENT_TRIM = re.compile(f"^[{_AGENT_WS}]+|[{_AGENT_WS}]+$")
+_GROK_NAME = re.compile(r"grok(?![a-z0-9])")
+_ANTIGRAVITY_NAME = re.compile(r"antigravity(?:$|[-_.])")
+
+
+def normalize_reviewer(value):
+    """Tên reviewer chuẩn hoá: grok, grok-build, grok-4.x, "grok build" → "grok"; antigravity, antigravity-/_/.* → "antigravity"; còn lại
+    chữ thường đã strip. Vòng kiểm lại H3: khớp normalizeAgent / laGrok của PM (tools.js): cùng tập strip (_AGENT_WS), grok = `^grok(?![a-z0-9])`,
+    antigravity = tên rồi hết chuỗi hoặc - _ . . Tên khác chỉ so trong cùng một bên (casefold ở đây, toLowerCase ở PM)."""
+    v = _AGENT_TRIM.sub("", value).casefold() if isinstance(value, str) else ""
+    if _GROK_NAME.match(v):
+        return "grok"
+    if _ANTIGRAVITY_NAME.match(v):
+        return "antigravity"
+    return v
+
+
+def audit_reviewer(top, task_id, legacy=False):
+    """Reviewer đã chuẩn hoá ("antigravity" | "grok") của audit pass của task `task_id`, chỉ từ biên bản PM ngoài repo; None khi không
+    xác định được. Một hàm cho post-fix-gate (mục duyệt + trailer), approved() và `agent-kit approve-tests` (đợt 2 lane A).
+    - verdicts.audit.reviewer = grok / antigravity: chỉ tính khi lượt kind=audit GẦN NHẤT trong task.dispatches là của đúng agent đó
+      (PM tự chạy reviewer; dispatch không ghi agent là antigravity, như mọi biên bản trước khi PM chạy được grok).
+    - reviewer thiếu hoặc "pm" (recordVerdict mặc định cũ): antigravity khi lượt audit gần nhất là antigravity.
+    - legacy=True (gate, approved()): biên bản không có lượt audit nào trong dispatches vẫn là antigravity như trước (giữ hành vi gate);
+      grok không bao giờ được suy ra. approve-tests gọi legacy=False: thiếu bằng chứng → None (từ chối)."""
+    if pm_home_overridden() and not pm_home_test_fixture():
+        return None
+    for task in _repo_tasks(top, task_id):
+        audit = (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
+        if not _audit_head_of(top, audit):
+            continue
+        dispatches = task.get("dispatches") if isinstance(task.get("dispatches"), list) else []
+        audits = [d for d in dispatches if isinstance(d, dict) and d.get("kind") == "audit"]
+        # Lượt audit GẦN NHẤT (theo `at` ISO, rồi thứ tự ghi) quyết định: PM server ghi verdicts.audit.reviewer theo đúng lượt đó.
+        last = max(enumerate(audits), key=lambda iv: (str(iv[1].get("at") or ""), iv[0]))[1] if audits else None
+        last_agent = normalize_reviewer(last["agent"] if isinstance(last.get("agent"), str) and last["agent"].strip()
+                                        else "antigravity") if last else ""
+        named = normalize_reviewer(audit.get("reviewer"))
+        if named in ("", "pm"):
+            named = "antigravity"
+        # Review cuối P3-1: biên bản đầu tiên có head hợp lệ là biên bản audited_head trả về; reviewer chỉ lấy từ chính nó, không mượn
+        # reviewer của một biên bản cùng task id khác (dự án PM khác cùng repo) khi biên bản này không xác định được.
+        ok = named in ("antigravity", "grok") and (named == last_agent or (legacy and named == "antigravity" and not audits))
+        return named if ok else None
     return None
 
 
@@ -544,6 +665,13 @@ def _task_pattern(task_id):
 def _task_audits(top, task_id):
     """verdicts.audit (có thể None) của từng task.json `task_id` mà `project` thuộc repo này (top, hoặc checkout chính khi top là
     linked worktree của cùng repo). Dùng chung cho audit_record và audited_head."""
+    for task in _repo_tasks(top, task_id):
+        yield (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
+
+
+def _repo_tasks(top, task_id=None):
+    """task.json (dict) của task `task_id`, hoặc của MỌI task khi None, mà `project` thuộc repo này (top, hoặc checkout chính khi top
+    là linked worktree của cùng repo)."""
     roots = [top]
     try:
         rc, common = git(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -554,7 +682,7 @@ def _task_audits(top, task_id):
         main_root = os.path.dirname(common)
         if not _inside(main_root, top):
             roots.append(main_root)
-    for path in sorted(glob.glob(_task_pattern(task_id))):
+    for path in sorted(glob.glob(_task_pattern(task_id or "*"))):
         try:
             if not stat.S_ISREG(os.stat(path).st_mode) or os.path.getsize(path) > 8_000_000:
                 continue
@@ -562,9 +690,10 @@ def _task_audits(top, task_id):
                 task = json.load(f)
         except (OSError, ValueError, RecursionError):
             continue
-        if not isinstance(task, dict) or task.get("id") != task_id or not any(_inside(task.get("project"), r) for r in roots):
+        if not isinstance(task, dict) or not isinstance(task.get("id"), str) or (task_id is not None and task["id"] != task_id) \
+                or not any(_inside(task.get("project"), r) for r in roots):
             continue
-        yield (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
+        yield task
 
 
 def approved(top, rng):
@@ -587,23 +716,33 @@ def approved(top, rng):
     for sha, value in values:
         m = APPROVED_VALUE.fullmatch(value)
         if not m:
-            whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task`)")
+            whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task` hoặc `{APPROVED} grok T0001-ten-task`)")
             continue
+        word, task_id = m.group(1), m.group(2)
         # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
         # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
         if pm_home_overridden() and not pm_home_test_fixture():
             whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
             continue
-        ok, why = audit_record(top, m.group(1))
+        ok, why = audit_record(top, task_id)
         if not ok:
             whys.append(why)
+            continue
+        # Đợt 2 lane A: chữ reviewer của trailer phải đúng reviewer PM đã ghi (audit_reviewer: grok chỉ khi PM tự chạy grok audit).
+        reviewer = audit_reviewer(top, task_id, legacy=True)
+        if reviewer != word:
+            whys.append(f"{APPROVED} {word} {task_id}: biên bản PM ghi reviewer {reviewer or 'không xác định'}, khác `{word}`")
+            continue
+        # Review cuối F-1: luật H4 cho mọi đường gọi (fallback push, _covered, since_test_weakened), không chỉ _trailer_cross_review.
+        if reviewer in session_agents():
+            whys.append(f"{APPROVED} {word} {task_id}: reviewer {reviewer} thuộc danh tính phiên (tự duyệt)")
             continue
         # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
         # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
         # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.
         # ponytail: merge main vào nhánh sau audit đổi cây đầu range → push cần audit lại; merge gate (scratch) không bị ảnh hưởng
         # vì nó duyệt theo blob từng file ở auditedHead (post-fix-gate _trailer_cross_review). Nới khi việc audit lại thành phiền.
-        head = audited_head(top, m.group(1))
+        head = audited_head(top, task_id)
         if tip is None:
             rc_tip, tip_out = git(top, "rev-list", "-1", rng)
             tip = tip_out.strip() if rc_tip == 0 else ""
@@ -613,15 +752,15 @@ def approved(top, rng):
         lows = range_lower_bounds(top, rng) if head else None
         after = bool(lows) and all(head_after(top, low, head) for low in lows)
         if len(got) == 3 and len(set(got)) == 1 and after:
-            return True, f"{APPROVED} antigravity {m.group(1)} (antigravity-pm audit pass)"
-        whys.append(f"{APPROVED} antigravity {m.group(1)}: " + (
+            return True, f"{APPROVED} {word} {task_id} (antigravity-pm audit pass)"
+        whys.append(f"{APPROVED} {word} {task_id}: " + (
             "biên bản audit không ghi `auditedHead: <sha>` (hoặc sha không có trong repo)" if not head else
             f"auditedHead {head[:10]} không nằm sau mốc dưới của range (audit một cây cũ trước base): cần audit lại" if not after else
             f"cây đã đổi so với auditedHead {head[:10]} (commit trailer {sha[:10]} / đầu range): cần audit lại"))
     if not whys:
         rc, body = git(top, "log", "--format=%B", rng)
         if rc == 0 and APPROVED in body:
-            whys.append(f"`{APPROVED}` chỉ tính khi là trailer cuối commit (`{APPROVED} antigravity <task-id>`)")
+            whys.append(f"`{APPROVED}` chỉ tính khi là trailer cuối commit (`{APPROVED} antigravity|grok <task-id>`)")
     return False, "; ".join(dict.fromkeys(whys[:3])) or None
 
 

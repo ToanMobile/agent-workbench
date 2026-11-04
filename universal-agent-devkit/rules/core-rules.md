@@ -217,8 +217,13 @@ lệnh và số dòng vào PROGRESS và file duyệt.
   reviewer; tối thiểu 1 bên PASS thật; ghi bên bị bỏ, lý do và log lỗi.
 - **Leo bậc, không hạ**: reviewer bậc S/M ra P0/P1 ⇒ sửa xong review lại ở bậc kế (S→M→L); không bao giờ hạ bậc giữa chừng.
 - **Mọi bậc giữ nguyên**: test cặp ĐỎ→XANH, gate exit 0, P0/P1 trong code PR đưa vào vẫn chặn (bên FAIL nội dung là finding, không
-  phải lý do bỏ bên đó); test cũ bị sửa vẫn bắt buộc Antigravity `audit` (auditedHead) để duyệt chéo: Antigravity lỗi thì chờ/thử
-  lại, không thay bằng bên khác.
+  phải lý do bỏ bên đó); test cũ bị sửa vẫn bắt buộc một `audit` (auditedHead) do PM tự chạy để duyệt chéo: Antigravity, hoặc
+  grok khi lượt `pm_dispatch kind=audit` gần nhất là agent grok (PM ghi `verdicts.audit.reviewer`; biên bản cũ ghi `pm` chỉ tính
+  là Antigravity khi dispatches có lượt audit Antigravity). Không bên nào khác thay được. `agent-kit approve-tests <task-id>` ghi
+  mục duyệt từ biên bản đó (reviewer, auditedHead chỉ từ PM; author = DEVKIT_AGENT_ID, rỗng hay trùng reviewer thì từ chối); gate
+  kiểm lại mọi mục. Mục duyệt và trailer còn hiệu lực sau khi gộp main mới vào nhánh khi auditedHead là audit MỚI NHẤT trên chuỗi
+  first-parent của đầu PR (không qua parent thứ hai, không đã nằm trên trunk), nội dung test hiện tại đúng blob ở đó và main
+  không đổi chính file đó kể từ merge-base(auditedHead, trunk); khác đi thì audit lại.
 
 ## 19. Gate, proof and Git mechanics (moved from the essentials, 2026-11-02)
 The essentials keep the obligation; this section keeps how the tools carry it out.
@@ -254,7 +259,8 @@ The essentials keep the obligation; this section keeps how the tools carry it ou
   PR branch only to clear GitHub CONFLICTING (owner 02/11): push it plainly with no new gate, the merge gate verifies base + PR
   in its own scratch (a merge with a conflict fix still re-gates). A trunk-push repo pushes main only
   through `agent-kit integrate` (one `--scoped` run in a scratch worktree, then the push); never a `--full` in the main checkout.
-  The edited-test exception needs `Test-approved-by: antigravity <task-id>` in `git log origin/<branch>..HEAD`. Session start
+  The edited-test exception needs `Test-approved-by: antigravity|grok <task-id>` (the word matching the PM record's reviewer) in
+  `git log origin/<branch>..HEAD`. Session start
   names branch drift and leftover worktrees (AGENTS.md §7.1).
 - **Worktree finish**: `agent-kit worktree finish <path>` fast-forwards the trunk and removes the worktree; the Stop hook
   finishes it too. Main still held → wait for the holder to idle (about a minute after its turn). `agent-kit worktree trunk off`

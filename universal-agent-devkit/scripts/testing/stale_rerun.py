@@ -131,14 +131,17 @@ TEST_RUN_LOCK = "test_run.lock"
 def test_run_lock(project: Path, deadline: float):
     """The per-project test-run flock (.claude/audit-gate/test_run.lock), waited for until
     `deadline` (time.monotonic()). Yields held: False = another run kept it past the deadline
-    (BUSY — do not run)."""
+    (BUSY — do not run).
+    Opened for append, never "w" (wave 2 C, 03/11): "w" emptied the record of the gate that holds the lock while this waited, and the
+    next Stop then took that live gate for an unknown holder (the long wait). Held: the record {pid, pid_start, sid, who=stale_rerun}
+    is written under the flock, the way bin/post-fix-gate.py writes its own, and emptied before the lock is let go."""
     import fcntl
     state = project / ".claude" / "audit-gate"
     try:
         state.mkdir(parents=True, exist_ok=True)
         if not (state / ".gitignore").exists():
             (state / ".gitignore").write_text("*\n", encoding="utf-8")
-        fh = open(state / TEST_RUN_LOCK, "w")
+        fh = open(state / TEST_RUN_LOCK, "a")
     except OSError:
         yield True  # cannot make the lock file: never worse than no lock
         return
@@ -152,7 +155,27 @@ def test_run_lock(project: Path, deadline: float):
                     yield False
                     return
                 time.sleep(0.2)
-        yield True
+        _write_holder(fh)
+        try:
+            yield True
+        finally:
+            _write_holder(fh, clear=True)
+
+
+def _write_holder(fh, clear=False):
+    """The test_run.lock record of this re-run (clear=True: empty it), under the flock. Data only: a failure leaves the record empty or
+    stale, which a waiter reads as an unknown holder (the long wait), as before."""
+    try:
+        fh.seek(0)
+        fh.truncate(0)
+        if not clear:
+            import session_lock  # noqa: PLC0415 - bin/ is on sys.path (heavy_slot is imported the same way)
+            sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()[:80]
+            fh.write(json.dumps({"pid": os.getpid(), "pid_start": session_lock.pid_start(os.getpid()),
+                                 "sid": "" if sid == "default" else sid, "who": "stale_rerun"}) + "\n")
+        fh.flush()
+    except (OSError, ImportError, AttributeError, ValueError) as e:
+        print(f"[stale-rerun] test_run.lock holder record not written ({e!r}): a waiter sees an unknown holder", file=sys.stderr)
 
 
 @contextlib.contextmanager
