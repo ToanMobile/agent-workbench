@@ -2,7 +2,7 @@
 # Cài .claude/audit-gate/approved_tests.json vào scratch từ comment edited-tests thắng cuộc (#643).
 # --has-edited-tests <meta.json> <sha40> [--top DIR --base REF]: in true / pm / pm-unknown (thoát 0) hoặc false (thoát 1). 04/11: không có comment
 # edited-tests thì --top/--base hỏi thẳng biên bản antigravity-pm (super-board-audit-check.py --chain-audit): PR sửa test đã có và audit
-# pass có auditedHead trong <base>..<sha40> = pm — giữ khoá và không autosync như comment, nhưng base dời KHÔNG làm
+# pass có auditedHead trong <base>..<sha40> = pm — giữ khoá như comment (merge gate chỉ tự đồng bộ nhánh PR khi verify chạy post-fix-gate), nhưng base dời KHÔNG làm
 # duyệt cũ (post-fix-gate audit_covers kiểm main không đổi file test, verify chạy trong khoá trên base hiện tại). Không kiểm được biên
 # bản (lỗi nạp kit / git) = pm-unknown: vẫn khoá, không autosync, không dùng biên nhận cây; không phải duyệt gắn head nên không exit 2.
 # Chế độ cài luôn thoát 0, kể cả khi không ghi gì.
