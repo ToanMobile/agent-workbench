@@ -125,7 +125,7 @@ export function callerAgents(env = process.env) {
 
 /**
  * File DevKit TU SINH khi mot phien agent khoi dong trong project (#987): hook sinh lai chung ke ca khi grok chi doc. Danh sach co dinh,
- * khop {AGENTS.md, .agents/CHECKLIST.md, .agents/regression_status.json, .agents/archive/*, .agents/local/memory/**}; moi file khac van tinh.
+ * khop {AGENTS.md, .agents/CHECKLIST.md, .agents/regression_status.json, .agents/archive/**, .agents/local/memory/**}; moi file khac van tinh; file thuoc change set dang audit cung van tinh.
  * CHI dung cho kiem tra SAU khi grok chay (ignoreGenerated): truoc khi chay cay phai sach that su, vi AGENTS.md goc la rule that chu khong chi
  * la file sinh — ban sua tay chua commit khong duoc audit roi gan vao sha cua HEAD (review #988). Cay ban thi dung commit=<sha>.
  */
@@ -133,15 +133,17 @@ const DEVKIT_SINH_TU_DONG = new Set(['AGENTS.md', '.agents/CHECKLIST.md', '.agen
 const laFileDevkitSinh = (p) => DEVKIT_SINH_TU_DONG.has(p) || p.startsWith('.agents/archive/') || p.startsWith('.agents/local/memory/');
 
 /** Dong `git status --porcelain --untracked-files=no` cua `root` (mac dinh projectRoot), bo thu muc trang thai PM (F5) va file DevKit tu sinh: { error } hoac { dirty: [...] }. */
-async function trackedChanges(cfg, root = cfg.projectRoot, { ignoreGenerated = false } = {}) {
+async function trackedChanges(cfg, root = cfg.projectRoot, { ignoreGenerated = false, changeSet = null } = {}) {
   const st = await run('git', ['status', '--porcelain', '-z', '--no-renames', '--untracked-files=no'], { cwd: root, timeoutMs: 60000, maxBytes: 16_000_000 });
   if (st.spawnFailed || st.timedOut || st.code !== 0 || st.truncated) {
     return { error: `exit ${st.code}${st.timedOut ? ', qua han' : ''}${st.truncated ? ', output bi cat' : ''}` };
   }
   const stateDir = thuMucTrangThai(cfg);
   const all = String(st.stdout).split('\0').filter((e) => e.length > 3 && !e.slice(3).startsWith(stateDir));
-  const ignored = ignoreGenerated ? all.filter((e) => laFileDevkitSinh(e.slice(3))) : [];
-  return { dirty: all.filter((e) => !ignored.includes(e)), ignored: ignored.map((e) => e.slice(3)) };
+  // changeSet = file cua chinh commit dang audit: hook ghi de file trong do thi grok doc bytes khac commit => khong duoc bo qua (review #988)
+  const ignored = []; const dirty = [];
+  for (const e of all) (ignoreGenerated && laFileDevkitSinh(e.slice(3)) && !changeSet?.has(e.slice(3)) ? ignored : dirty).push(e);
+  return { dirty, ignored: ignored.map((e) => e.slice(3)) };
 }
 
 /** Cong chan kem bang chung do duoc tu git ngay luc goi. */
@@ -824,8 +826,15 @@ export const TOOLS = [
           at = nowIso();
           r = await runGrokAudit({ grok, cwd: auditDir, prompt });
           // H5 (TOCTOU cua F5): cung lenh git status ngay sau grok; cay doi trong luc audit (hoac khong doc duoc) -> bao cao fail kem ly do.
-          // chi SAU khi chay moi bo qua file DevKit tu sinh (hook cua phien grok sinh lai chung); TRUOC khi chay cay phai sach that su
-          stAfter = await trackedChanges(cfg, auditDir, { ignoreGenerated: true });
+          // chi SAU khi chay moi bo qua file DevKit tu sinh (hook cua phien grok sinh lai chung); TRUOC khi chay cay phai sach that su.
+          // File thuoc change set base..head khong bao gio duoc bo qua; khong do duoc change set (khong co goc / git loi) => khong bo qua gi.
+          let changeSet = null;
+          const base = task.implementBaseCommit || task.baseCommit;
+          if (base) {
+            const dp = await run('git', ['diff', '--name-only', '-z', base, head], { cwd: cfg.projectRoot, timeoutMs: 60000, maxBytes: 16_000_000 });
+            if (!dp.spawnFailed && !dp.timedOut && dp.code === 0 && !dp.truncated) changeSet = new Set(String(dp.stdout).split('\0').filter(Boolean));
+          }
+          stAfter = await trackedChanges(cfg, auditDir, { ignoreGenerated: changeSet !== null, changeSet });
           headAfter = headCommitOf(auditDir);
         } finally {
           if (wtTam) await goWorktree(cfg, wtTam);
