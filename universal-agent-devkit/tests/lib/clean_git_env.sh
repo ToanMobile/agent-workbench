@@ -38,6 +38,8 @@ unset CI
 unset DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_LOAD_WAIT_S
 # #528: cùng năm biến suite_env bỏ — test không kế thừa cờ worker của board.
 unset SB_BOARD_WORKER SB_MERGE_CALLER SB_MERGE_QUEUE SB_REPO_PATH SB_GITHUB_READ_STRICT
+# 04/11 (INSTINCT-046): the shared test pool of ONE gate run (post-fix-gate.py shard group, tests/lib/job_pool.py): a test never joins it.
+unset DEVKIT_TEST_POOL_DIR DEVKIT_JOB_POOL
 # The machine's two heavy-verify slots (~/.claude/super-board/locks) belong to real merge gates and --full runs: a test's fake verify
 # (echo) queued behind them for up to 3600 s whenever no gate holding a slot started it (2026-10-20, test_merge_gate_ff.sh).
 # A test runs as if its caller held the slot; test_heavy_slot.sh unsets this to test the slots themselves.

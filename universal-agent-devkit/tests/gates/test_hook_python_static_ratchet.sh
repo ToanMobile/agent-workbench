@@ -3,7 +3,8 @@
 #
 # `python3 -c '…'`, `python3 - <<'PY'`, `python3 <<'PY'`, `python3 -m mod` put the cwd FIRST on sys.path, and the cwd of a hook is the project:
 # a json.py / shlex.py / re.py in the project root replaces the stdlib module and can switch a gate off. `python3 -I` (isolated mode) removes
-# the cwd (and PYTHON* env and the user site) from sys.path. Rules, for hooks/*.sh, profiles/*/hooks/*.sh, the git pre-commit body and the
+# the cwd (and PYTHON* env and the user site) from sys.path. Rules, for hooks/*.sh, hooks/*_main.py (the python of the two guards, #967),
+# profiles/*/hooks/*.sh, the git pre-commit body and the
 # adb-safe-exec wrapper that feeds hardware_safety_gate:
 #   1. every INLINE python start (-c, -m, a lone -, a heredoc, `< file`; python / python3 / python3.NN / ${PY:-…} / "$PYTHON"; any flags before
 #      it, -X/-W values, a launch continued with a trailing backslash) carries -I — except an ALLOW entry, each with its reason. A python SCRIPT
@@ -25,7 +26,8 @@ import glob, os, re, sys
 
 KIT = sys.argv[1]
 EXTRA = ["scripts/git/git-pre-commit.sh", "profiles/android/scripts/qa/adb-safe-exec.sh"]
-FILES = sorted(glob.glob(os.path.join(KIT, "hooks", "*.sh")) + glob.glob(os.path.join(KIT, "profiles", "*", "hooks", "*.sh"))) \
+FILES = sorted(glob.glob(os.path.join(KIT, "hooks", "*.sh")) + glob.glob(os.path.join(KIT, "hooks", "*_main.py"))
+               + glob.glob(os.path.join(KIT, "profiles", "*", "hooks", "*.sh"))) \
     + [os.path.join(KIT, e) for e in EXTRA]
 
 # (file, text of the line, kind, reason): lines a rule matches that are NOT a hole. kind: "launch" | "path"
