@@ -129,10 +129,13 @@
 #      with the new --expect-head (for a board card: a rebase pass)
 #      — EXCEPT (narrow exception to #570): a real run (no --dry-run / --preflight / train receipt) where every file changed on
 #      BOTH sides since the merge base has a named merge driver in origin/<base>'s .gitattributes (merge=devkit-matrix,
-#      merge=union…) and the PR carries no edited-test approval: the gate merges the base into the scratch tree, pushes that
+#      merge=union…) and the PR carries no edited-test approval — or only one read from the antigravity-pm record (`pm`) while a
+#      verify command runs post-fix-gate.py (it re-checks that approval on the merged tree, inside the merge lock): the gate merges
+#      the base into the scratch tree, pushes that
 #      merge commit to the PR branch as a plain fast-forward (never --force; the branch must still be at the pinned head), pins
 #      the new head and verifies/merges it. Every refusal to sync (as opposed to a lock lost, exit 4) is this same exit 14;
-#      a PR that edits .gitattributes is never synced (its own attributes could swap the named driver)
+#      a PR that edits .gitattributes is never synced (its own attributes could swap the named driver), nor one with an
+#      edited-tests comment approval (#643, bound to the head) or an approval that could not be read (pm-unknown)
 #   1  could not read the PR head, resolve origin/<base>, or create the scratch
 #      worktree. Not a conflict and not a rebase pass (the lane treats only 2, 5 and 14
 #      as a rebase pass).
@@ -713,7 +716,8 @@ wait_for_load() {
 # Ngoại lệ hẹp của #570 (02/11, PR #916 đụng #911: gần như PR nào cũng nối đuôi ma trận, hai PR merge sát nhau là PR sau CONFLICTING
 # trên GitHub, mỗi lần một vòng gộp-push-chạy-lại bằng tay; test_durations.txt không còn track từ #920, ma trận là lý do chính): CONFLICTING ở lượt thật (không --dry-run, --preflight,
 # biên nhận train hay SB_MERGE_CALLER=train — các lối đó thoát 14 như cũ) mà mọi file hai phía cùng đổi từ merge-base đều có driver gộp đặt
-# tên trong .gitattributes của origin/<base> (sync_candidate), và PR không có test sửa đã duyệt ⇒ AUTOSYNC=1, đi tiếp; khối "đồng bộ nhánh
+# tên trong .gitattributes của origin/<base> (sync_candidate), và PR không có test sửa đã duyệt (04/11: hoặc duyệt tra thẳng biên bản
+# antigravity-pm — `pm` — khi verify chạy post-fix-gate) ⇒ AUTOSYNC=1, đi tiếp; khối "đồng bộ nhánh
 # PR" sau merge scratch kiểm lại rồi đẩy merge commit đó lên nhánh PR. Mọi trường hợp khác: thoát 14 ngay tại đây, đúng câu báo cũ.
 mergeable_now() { gh pr view "$PR" ${REPO:+--repo "$REPO"} --json mergeable -q .mergeable 2>/dev/null | head -1 | tr -d '[:space:]' || true; }
 MG_POLL=${SB_MERGEABLE_POLL_S:-10}; [[ "$MG_POLL" =~ ^[0-9]{1,3}$ ]] || MG_POLL=10
@@ -766,14 +770,23 @@ driver_only_overlap() {
   done <<<"$shared"
   SYNC_FILES=$(printf '%s\n' "$shared" | tr '\n' ' ' | sed 's/ $//')
 }
-# sync_candidate: chỉ lượt thật; PR có test sửa đã duyệt thì không (#643: duyệt gắn head X, base phải là tổ tiên của X — thoát 14 như cũ).
+# sync_candidate: chỉ lượt thật. PR có test sửa: comment edited-tests (true, #643: duyệt gắn head X, base phải là tổ tiên của X) và
+# pm-unknown (không kiểm được biên bản) thoát 14 như cũ. 04/11: duyệt tra thẳng biên bản antigravity-pm (pm) thì đồng bộ được NẾU verify
+# chạy post-fix-gate: prove_tree lấy khoá trước khối đẩy (verify và đẩy trong khoá), post-fix-gate audit_covers nhận Y = merge(X, base)
+# vì auditedHead X nằm trên chuỗi first-parent của Y và kiểm base không đổi file test; prove_tree không exit 2 cho pm khi verify có gate.
+# sb_verify_runs_gate gọi thẳng: verify_runs_gate định nghĩa phía dưới (VERIFY đã dựng ở trên).
 sync_candidate() {
-  local et_rc=0 base_pre
+  local et_rc=0 et_src base_pre
   [ "$DRY" -eq 0 ] && [ "$PREFLIGHT" -eq 0 ] && [ "$REQUIRE_RECEIPT" -eq 0 ] && [ -z "$TRAIN_RECEIPT" ] \
     && [ "${SB_MERGE_CALLER-}" != train ] || return 1
-  bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$HEAD_SHA" \
-    --top "$REPO_PATH" --base "origin/${BASE}" >/dev/null 2>&1 || et_rc=$?
-  [ "$et_rc" -eq 1 ] || { SYNC_WHY="the PR carries edited-test approval for ${HEAD_SHA:0:12} (or it could not be read)"; return 1; }
+  et_src=$(bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$HEAD_SHA" \
+    --top "$REPO_PATH" --base "origin/${BASE}" 2>/dev/null) || et_rc=$?
+  if [ "$et_rc" -eq 0 ] && [ "$et_src" = pm ]; then
+    sb_verify_runs_gate "${VERIFY[@]}" \
+      || { SYNC_WHY="the PR carries edited-test approval for ${HEAD_SHA:0:12} from the antigravity-pm record, but no verify command runs post-fix-gate.py to re-check it on the merged tree"; return 1; }
+  elif [ "$et_rc" -ne 1 ]; then
+    SYNC_WHY="the PR carries edited-test approval for ${HEAD_SHA:0:12} (or it could not be read)"; return 1
+  fi
   git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || { SYNC_WHY="git fetch origin ${HEAD_REF} ${BASE} failed"; return 1; }
   base_pre=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { SYNC_WHY="cannot resolve origin/${BASE}"; return 1; }
   driver_only_overlap "$HEAD_SHA" "$base_pre"
@@ -1013,7 +1026,8 @@ MERGED_SHA=""
 merge_scratch_onto "$BASE_SHA"
 prove_tree
 # ---- đồng bộ nhánh PR (ngoại lệ hẹp của #570, chỉ khi AUTOSYNC=1 ở khối CONFLICTING) ---------------------------------------------------
-# Chạy ngoài khoá merge (PR3: verify cũng ngoài khoá; đẩy lên nhánh PR không đụng main), trên base đã chốt (BASE_SHA có thể mới hơn lúc
+# Chạy ngoài khoá merge (PR3: verify cũng ngoài khoá; đẩy lên nhánh PR không đụng main) — trừ PR có test sửa duyệt từ biên bản PM
+# (04/11: prove_tree đã lấy khoá, đẩy và verify đều trong khoá) — trên base đã chốt (BASE_SHA có thể mới hơn lúc
 # kiểm ở khối CONFLICTING). Đẩy merge commit của scratch Y (cha 1 = head đã review X, cha 2 = BASE_SHA, không gì khác) lên nhánh PR:
 # push thường, không bao giờ --force / --force-with-lease, và chỉ khi GitHub lẫn origin vẫn trỏ nhánh về X (nhánh đã dời: thoát 14,
 # không ghi đè). Biên nhận approved-merge-heads/Y = X ghi TRƯỚC khi đẩy: head guard của lượt gate sau (--expect-head X) và approval.py
@@ -1026,7 +1040,8 @@ if [ "$AUTOSYNC" -eq 1 ]; then
   driver_only_overlap "$HEAD_SHA" "$BASE_SHA" || { say "not syncing ${HEAD_REF} itself after pinning ${BASE} at ${BASE_SHA:0:12}: ${SYNC_WHY}"; conflicting_exit; }
   [ "$(git -C "$SCRATCH" rev-list --parents -n 1 "$MERGED_SHA" 2>/dev/null)" = "$MERGED_SHA $HEAD_SHA $BASE_SHA" ] \
     || { say "not syncing ${HEAD_REF} itself: the scratch commit ${MERGED_SHA:0:12} is not exactly merge(${HEAD_SHA:0:12}, ${BASE_SHA:0:12})"; conflicting_exit; }
-  # Gate đang giữ khoá (chế độ bi quan SB_MERGE_OPTIMISTIC=0): khoá đã bị gate khác chiếm thì không ghi gì lên nhánh PR.
+  # Gate đang giữ khoá (chế độ bi quan SB_MERGE_OPTIMISTIC=0, hay PR có test sửa duyệt từ biên bản PM): khoá đã bị gate khác chiếm thì
+  # không ghi gì lên nhánh PR.
   # (Viết thẳng như own_lock_or_stop: hàm đó định nghĩa phía dưới.)
   [ "$LOCK_HELD" -eq 0 ] || [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$$" ] || { say "the merge lock is no longer this gate's; stopping without pushing or merging"; exit 4; }
   SYNC_NOW=$(pr_head) || exit $?
