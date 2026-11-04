@@ -223,7 +223,7 @@ async function capture(cfg, provider, outFile, extra = {}) {
   if (type === 'shell') {
     if (!provider.command) throw new Error(`provider shell thieu "command"`);
     const cmd = renderShellCommand(provider.command, outFile, cfg.projectRoot);
-    const r = await runShell(cmd, { timeoutMs: provider.timeoutMs || 180000, cwd: cfg.projectRoot });
+    const r = await runShell(cmd, { timeoutMs: provider.timeoutMs || 180000, cwd: cfg.configRoot || cfg.projectRoot });
     return { cmd, r };
   }
   if (type === 'browser') {
