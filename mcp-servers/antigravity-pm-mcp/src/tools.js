@@ -25,7 +25,7 @@ import { collectTestEvidence, evidenceLine } from './evidence.js';
 import { replayOracle, oracleLine } from './oracle.js';
 import { kiemBaoCao, dongTomTat } from './cite-check.js';
 import { soiThayDoi } from './lint-diff.js';
-import { gitSnapshot, changedFilesOf, baseCommitOf, gateCtx, dongBangCay, goWorktree, thuMucTrangThai } from './worktree.js';
+import { gitSnapshot, changedFilesOf, baseCommitOf, gateCtx, dongBangCay, goWorktree, auditWorktree, thuMucTrangThai } from './worktree.js';
 import { hashOf, deltaKeHoach, tinhTrangPhanBien, projectIdFor } from './plan-review.js';
 import { cacTaskDangChayKhac, canhBaoTruocKhiGiao } from './dispatch-guard.js';
 import { run, runShell, writeFileAtomic, ensureDir, exists, tail, truncate, nowIso, readJsonIfExists, killGroup } from './util.js';
@@ -123,14 +123,22 @@ export function callerAgents(env = process.env) {
   return out;
 }
 
-/** Dong `git status --porcelain --untracked-files=no` cua projectRoot, bo thu muc trang thai PM (F5): { error } hoac { dirty: [...] }. */
-async function trackedChanges(cfg) {
-  const st = await run('git', ['status', '--porcelain', '-z', '--no-renames', '--untracked-files=no'], { cwd: cfg.projectRoot, timeoutMs: 60000, maxBytes: 16_000_000 });
+/**
+ * File DevKit TU SINH khi mot phien agent khoi dong trong project (#987): hook sinh lai chung ke ca khi grok chi doc. Danh sach co dinh,
+ * khop {AGENTS.md, .agents/CHECKLIST.md, .agents/regression_status.json, .agents/archive/*, .agents/local/memory/**}; moi file khac van tinh.
+ * ponytail: cay chinh co AGENTS.md sua tay chua commit van duoc audit; audit bang commit=<sha> (worktree tam) thi bytes la cua commit.
+ */
+const DEVKIT_SINH_TU_DONG = new Set(['AGENTS.md', '.agents/CHECKLIST.md', '.agents/regression_status.json']);
+const laFileDevkitSinh = (p) => DEVKIT_SINH_TU_DONG.has(p) || p.startsWith('.agents/archive/') || p.startsWith('.agents/local/memory/');
+
+/** Dong `git status --porcelain --untracked-files=no` cua `root` (mac dinh projectRoot), bo thu muc trang thai PM (F5) va file DevKit tu sinh: { error } hoac { dirty: [...] }. */
+async function trackedChanges(cfg, root = cfg.projectRoot) {
+  const st = await run('git', ['status', '--porcelain', '-z', '--no-renames', '--untracked-files=no'], { cwd: root, timeoutMs: 60000, maxBytes: 16_000_000 });
   if (st.spawnFailed || st.timedOut || st.code !== 0 || st.truncated) {
     return { error: `exit ${st.code}${st.timedOut ? ', qua han' : ''}${st.truncated ? ', output bi cat' : ''}` };
   }
   const stateDir = thuMucTrangThai(cfg);
-  return { dirty: String(st.stdout).split('\0').filter((e) => e.length > 3 && !e.slice(3).startsWith(stateDir)) };
+  return { dirty: String(st.stdout).split('\0').filter((e) => e.length > 3 && !e.slice(3).startsWith(stateDir) && !laFileDevkitSinh(e.slice(3))) };
 }
 
 /** Cong chan kem bang chung do duoc tu git ngay luc goi. */
@@ -648,6 +656,7 @@ export const TOOLS = [
         message: { type: 'string', description: 'custom: noi dung · proof: can chung minh gi · audit: trong tam' },
         model: { type: 'string', enum: MODELS },
         agent: { type: 'string', enum: ['antigravity', 'grok'], description: 'audit: grok = PM tu chay grok (thay Antigravity khi agy bi gioi han)' },
+        commit: { type: 'string', description: 'audit agent=grok: sha/tag/nhanh can audit (worktree tam, cay chinh khong can sach); bo trong = HEAD cay chinh' },
         force: { type: 'boolean', description: 'Bo qua kiem tra giai doan' },
       },
       required: ['taskId', 'kind'],
@@ -774,27 +783,53 @@ export const TOOLS = [
         // F5: audit phai dung bytes cua HEAD: cay lam viec co thay doi da theo doi (ke ca da stage) thi tu choi; loi git / output bi
         // cat = tu choi. Bo thu muc trang thai cua PM (nhu gitSnapshot): audit-agent.json PM tu ghi, neu repo track thu muc do thi
         // lan audit lai khong bi chan boi chinh bao cao cu.
-        const st = await trackedChanges(cfg);
-        if (st.error) fail(`Khong doc duoc git status cua project (${st.error}) — khong chay grok.`);
-        if (st.dirty.length) {
-          fail(`git status --porcelain --untracked-files=no khong rong — cay lam viec khac HEAD, grok se audit bytes chua commit:\n${st.dirty.slice(0, 20).join('\n')}\nCommit hoac bo thay doi roi giao lai.`);
+        // #987: commit=<sha|tag|nhanh> = audit dung commit do trong worktree tam (cay chinh khong can sach, khong bi hook cua phien grok
+        // lam ban); khong co thi audit cay chinh nhu cu (HEAD, cay phai sach tru file DevKit tu sinh).
+        const wantCommit = args.commit;
+        let head;
+        if (wantCommit !== undefined) {
+          if (typeof wantCommit !== 'string' || !/^[0-9A-Za-z][0-9A-Za-z._/-]{0,199}$/.test(wantCommit)) {
+            fail('commit phai la sha40 / ten tag / ten nhanh (chu, so, . _ / -, khong bat dau bang dau gach) — khong chay grok.');
+          }
+          const rp = await run('git', ['rev-parse', '--verify', '--quiet', `${wantCommit}^{commit}`], { cwd: cfg.projectRoot, timeoutMs: 60000 });
+          head = String(rp.stdout).trim();
+          if (rp.code !== 0 || !/^[0-9a-f]{40}$/.test(head)) fail(`commit "${wantCommit}" khong phai mot commit cua project — khong chay grok.`);
+        } else {
+          const st = await trackedChanges(cfg);
+          if (st.error) fail(`Khong doc duoc git status cua project (${st.error}) — khong chay grok.`);
+          if (st.dirty.length) {
+            fail(`git status --porcelain --untracked-files=no khong rong — cay lam viec khac HEAD, grok se audit bytes chua commit:\n${st.dirty.slice(0, 20).join('\n')}\nCommit hoac bo thay doi roi giao lai (hoac truyen commit=<sha> de audit commit do trong worktree tam).`);
+          }
         }
         const grok = grokPath();
         if (!grok) fail(`Khong tim thay grok chay duoc (${process.env.ANTIGRAVITY_PM_GROK || '~/.grok/bin/grok'}). Cai grok hoac tro ANTIGRAVITY_PM_GROK vao dung file.`);
-        const head = headCommitOf(cfg.projectRoot);
+        if (wantCommit === undefined) head = headCommitOf(cfg.projectRoot);
         if (!head) fail('Khong doc duoc HEAD cua project (git) — khong biet audit cay nao, khong chay grok.');
-        const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '' });
-        const promptFile = saveOutgoing(cfg, task, `prompt-audit-grok-r${task.round}`, prompt);
-        // Moc giao chot TRUOC khi chay: bao cao PM ghi sau moc nay (pm_verdict tu choi bao cao cu hon lan giao audit gan nhat).
-        const at = nowIso();
-        const r = await runGrokAudit({ grok, cwd: cfg.projectRoot, prompt });
-        // H5 (TOCTOU cua F5): cung lenh git status ngay sau grok; cay doi trong luc audit (hoac khong doc duoc) -> bao cao fail kem ly do.
-        const stAfter = await trackedChanges(cfg);
+        let auditDir = cfg.projectRoot;
+        let wtTam = null;
+        let promptFile; let at; let r; let stAfter; let headAfter;
+        try {
+          if (wantCommit !== undefined) {
+            const w = await auditWorktree(cfg, head);
+            if (w.error) fail(`Khong tao duoc worktree tam o ${head}: ${w.error}`);
+            wtTam = w.dir;
+            auditDir = wtTam;
+          }
+          const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '', workdir: auditDir });
+          promptFile = saveOutgoing(cfg, task, `prompt-audit-grok-r${task.round}`, prompt);
+          // Moc giao chot TRUOC khi chay: bao cao PM ghi sau moc nay (pm_verdict tu choi bao cao cu hon lan giao audit gan nhat).
+          at = nowIso();
+          r = await runGrokAudit({ grok, cwd: auditDir, prompt });
+          // H5 (TOCTOU cua F5): cung lenh git status ngay sau grok; cay doi trong luc audit (hoac khong doc duoc) -> bao cao fail kem ly do.
+          stAfter = await trackedChanges(cfg, auditDir);
+          headAfter = headCommitOf(auditDir);
+        } finally {
+          if (wtTam) await goWorktree(cfg, wtTam);
+        }
         const pd = contractPaths(cfg, task);
         const logFile = path.join(ensureDir(pd.logsDir), `audit-grok-r${task.round}-${Date.now()}.log`);
         writeFileAtomic(logFile, `${r.stdout}\n--- stderr ---\n${r.stderr}`);
         const v = grokVerdictOf(r.stdout);
-        const headAfter = headCommitOf(cfg.projectRoot);
         const why = [];
         if (r.spawnFailed) why.push('khong chay duoc grok');
         if (r.timedOut) why.push('qua han');

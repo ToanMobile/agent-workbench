@@ -187,6 +187,20 @@ async function dongBangCayVao(cfg, dir) {
   return { dir, applied, untracked };
 }
 
+/**
+ * Worktree tam o dung `commit` (sha40) de grok audit mot commit chi dinh (#987): cay chinh khong can sach, hook DevKit cua phien grok
+ * sinh lai AGENTS.md o day chu khong o cay chinh. Tra { dir } hoac { error }; nguoi goi PHAI goWorktree(cfg, dir) khi xong.
+ */
+export async function auditWorktree(cfg, commit) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agpm-grok-'));
+  const add = await run('git', ['worktree', 'add', '--detach', dir, commit], { cwd: cfg.projectRoot, timeoutMs: 120000 });
+  if (add.code !== 0) {
+    await goWorktree(cfg, dir);
+    return { error: (add.stderr || add.stdout).trim().slice(0, 400) };
+  }
+  return { dir };
+}
+
 export async function goWorktree(cfg, dir) {
   await run('git', ['worktree', 'remove', '--force', dir], { cwd: cfg.projectRoot, timeoutMs: 60000 });
   await run('git', ['worktree', 'prune'], { cwd: cfg.projectRoot, timeoutMs: 60000 });

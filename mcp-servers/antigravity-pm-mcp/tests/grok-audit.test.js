@@ -449,3 +449,94 @@ test('H5 cay lam viec doi TRONG luc grok audit (file da theo doi sua, HEAD giu n
     cleanup(dir);
   }
 });
+
+// ---- #987: Grok trong repo app + audit mot commit chi dinh ---------------------------------------------------------------------
+// Phien grok khoi dong lam hook DevKit sinh lai AGENTS.md / .agents/CHECKLIST.md ... trong cay dang audit: cay "doi" nhung khong phai
+// thay doi cua nguoi. Chi cac file sinh tu dong NAY duoc bo qua; moi file khac doi van fail (H5).
+
+test('H6 #987 grok in VERDICT: PASS va hook DevKit sinh lai AGENTS.md trong luc audit: bao cao van pass; file code doi van fail', async () => {
+  {
+    const { dir, cfg, task } = repo();
+    try {
+      commitFile(dir, 'AGENTS.md', 'goc\n');
+      commitFile(dir, path.join('.agents', 'CHECKLIST.md'), 'goc\n');
+      await withGrok(fakeGrok({ sh: 'echo sinh-lai >> AGENTS.md; echo sinh-lai >> .agents/CHECKLIST.md' }),
+        () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+      const rep = JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8'));
+      assert.equal(rep.verdict, 'pass', rep.notes);
+      assert.equal(disk(cfg, task).dispatches.at(-1).verdict, 'pass');
+    } finally {
+      cleanup(dir);
+    }
+  }
+  // AGENTS.md da bi sinh lai TRUOC khi giao (cay "ban" tu lan truoc): van giao duoc; cung luc do a.txt doi thi van fail
+  const { dir, cfg, task } = repo();
+  const fake = fakeGrok({ sh: 'echo doi >> a.txt' });
+  try {
+    commitFile(dir, 'AGENTS.md', 'goc\n');
+    writeFile(path.join(dir, 'AGENTS.md'), 'da sinh lai truoc khi giao\n');
+    await withGrok(fake, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    assert.equal(grokRan(fake), true, 'AGENTS.md sinh tu dong khong duoc chan viec giao');
+    assert.equal(JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8')).verdict, 'fail');
+    // file code doi truoc khi giao van bi chan, ke ca khi AGENTS.md cung doi
+    execFileSync('git', ['checkout', '-q', '--', 'a.txt'], { cwd: dir });
+    writeFile(path.join(dir, 'a.txt'), 'doi tay\n');
+    await withGrok(fakeGrok(), () => assert.rejects(call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }), /a\.txt/));
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('H7 #987 commit=<sha>: grok audit commit do trong worktree tam (khong can cay chinh sach), auditedHead = sha, worktree tam bi go', async () => {
+  const { dir, cfg, task, head } = repo();
+  try {
+    commitFile(dir, 'AGENTS.md', 'goc\n');
+    const head2 = commitFile(dir, 'b.txt', 'b\n');
+    assert.notEqual(head2, head);
+    writeFile(path.join(dir, 'a.txt'), 'cay chinh dang ban\n');   // cay chinh khac HEAD: voi commit=<sha> khong duoc chan
+    const fake = fakeGrok({ sh: 'pwd -P > "$D/pwd.txt"; git rev-parse HEAD > "$D/head.txt"; echo sinh-lai >> AGENTS.md' });
+    await withGrok(fake, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', commit: head }));
+    const argv = fake.argv();
+    const wt = fs.readFileSync(path.join(fake.d, 'pwd.txt'), 'utf8').trim();
+    // worktree tam da bi go (khong realpath duoc): so ten thu muc, pwd -P va --cwd co the khac tien to /var vs /private/var
+    assert.match(path.basename(wt), /^agpm-grok-/, 'grok phai chay trong worktree tam, khong phai cay chinh');
+    assert.equal(path.basename(argv[argv.indexOf('--cwd') + 1]), path.basename(wt), '--cwd phai la worktree tam');
+    assert.equal(fs.readFileSync(path.join(fake.d, 'head.txt'), 'utf8').trim(), head, 'worktree tam o dung commit chi dinh');
+    assert.match(argv.slice(7).join('\n'), new RegExp(head));
+    assert.equal(fs.existsSync(wt), false, 'worktree tam phai bi go sau audit');
+    assert.doesNotMatch(execFileSync('git', ['worktree', 'list'], { cwd: dir, encoding: 'utf8' }), /agpm-grok/);
+    const rep = JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8'));
+    assert.equal(rep.verdict, 'pass', rep.notes);
+    assert.equal(rep.auditedHead, head);
+    assert.equal(disk(cfg, task).dispatches.at(-1).auditedHead, head);
+    assert.equal(fs.readFileSync(path.join(dir, 'a.txt'), 'utf8'), 'cay chinh dang ban\n', 'cay chinh khong bi dong');
+    await call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head, notes: 'ok' });
+    assert.equal(disk(cfg, task).verdicts.audit.auditedHead, head);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('H8 #987 commit=<sha>: sha khong phai commit / khong ton tai / khong phai sha: tu choi, grok khong chay; file code doi trong worktree tam van fail', async () => {
+  const { dir, cfg, task, head } = repo();
+  const fake = fakeGrok();
+  try {
+    for (const bad of ['0'.repeat(40), 'khong-co-nhanh-nay', '--help', `${head}; touch pwned`, 42]) {
+      await withGrok(fake, () => assert.rejects(call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', commit: bad }), /commit/, String(bad)));
+    }
+    assert.equal(grokRan(fake), false);
+    assert.equal((disk(cfg, task).dispatches || []).length, 0);
+    assert.equal(fs.existsSync(repOf(dir, task)), false);
+    // tag/nhanh chi cho phep khi phan giai ra DUNG mot commit; auditedHead luon la sha40 da phan giai
+    execFileSync('git', ['tag', 'diem-audit'], { cwd: dir });
+    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', commit: 'diem-audit' }));
+    assert.equal(JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8')).auditedHead, head);
+    // grok sua file code trong worktree tam => van fail (khong chi bo qua file sinh tu dong)
+    await withGrok(fakeGrok({ sh: 'echo doi >> a.txt' }), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', commit: head }));
+    const rep = JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8'));
+    assert.equal(rep.verdict, 'fail');
+    assert.match(rep.notes, /cay lam viec doi trong luc audit/);
+  } finally {
+    cleanup(dir);
+  }
+});

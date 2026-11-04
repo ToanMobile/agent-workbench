@@ -329,14 +329,15 @@ export function buildAuditPrompt(cfg, task, scope = '') {
  * Brief AUDIT cho grok (PM tu chay `grok -p` o che do plan, chi doc). Grok KHONG ghi file: PM doc dong VERDICT cuoi cua no roi tu
  * ghi audit-agent.json (reviewer grok, auditedHead = head duoi day).
  */
-export function buildGrokAuditPrompt(cfg, task, { head, scope = '' }) {
+export function buildGrokAuditPrompt(cfg, task, { head, scope = '', workdir = '' }) {
   const paths = contractPaths(cfg, task);
   const base = task.implementBaseCommit || task.baseCommit;
   return [
     `# AUDIT doc lap cho task ${task.id}: ${task.title}`,
     '',
     'Ban la Auditor doc lap (thay Antigravity). Ban KHONG phai nguoi viet code nay va KHONG duoc sua bat ky file nao.',
-    `Project: ${cfg.projectRoot}`,
+    // #987: audit commit chi dinh chay trong worktree tam o dung commit do (cwd cua grok); ho so task van o project that
+    `Project: ${workdir && workdir !== cfg.projectRoot ? `${workdir} (worktree tam o ${head}; project that: ${cfg.projectRoot})` : cfg.projectRoot}`,
     `Commit can audit: ${head}${base && base !== head ? ` (so voi goc: git diff ${base} ${head})` : ''}`,
     `Ho so task: ${paths.dir} (doc brief.md, plan.md, result.json neu co)`,
     '',
