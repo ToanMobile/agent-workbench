@@ -965,7 +965,10 @@ test('H17 #987 commit=<sha>: worktree tam co hook chua-track cua project; file h
     commitFile(dir, path.join('.claude', 'hooks', 'tracked.py'), 'trong-commit\n');
     const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
     writeFile(path.join(dir, '.claude', 'hooks', 'guard-x.py'), 'chua-track\n');           // khong duoc git track
-    writeFile(path.join(dir, '.claude', 'hooks', 'tracked.py'), 'ban-sua-o-cay-chinh\n');   // cay chinh bi sua: khong duoc lot vao worktree tam
+    // cay chinh bi sua THANH SYMLINK (hook cai boi DevKit o app repo thuong la symlink): khong duoc lot vao worktree tam, ke ca khi la symlink
+    writeFile(path.join(dir, 'khac.txt'), 'ban-sua-o-cay-chinh\n');
+    fs.rmSync(path.join(dir, '.claude', 'hooks', 'tracked.py'));
+    fs.symlinkSync(path.join(dir, 'khac.txt'), path.join(dir, '.claude', 'hooks', 'tracked.py'));
     const fake = fakeGrok({ sh: 'cp .claude/hooks/guard-x.py "$D/guard.txt" 2>/dev/null; cp .claude/hooks/tracked.py "$D/tracked.txt"' });
     await withGrok(fake, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', commit: head }));
     assert.equal(fs.readFileSync(path.join(fake.d, 'guard.txt'), 'utf8'), 'chua-track\n', 'hook chua track phai co trong worktree tam');

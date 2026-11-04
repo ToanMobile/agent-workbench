@@ -204,7 +204,7 @@ export async function auditWorktree(cfg, commit) {
   try {
     for (const rel of HOOK_DIRS_UNTRACKED) {
       const src = path.join(cfg.projectRoot, rel);
-      if (fs.existsSync(src)) fs.cpSync(src, path.join(dir, rel), { recursive: true, force: false, errorOnExist: false });
+      if (fs.existsSync(src)) chepNeuThieu(src, path.join(dir, rel));
     }
   } catch (err) {
     await goWorktree(cfg, dir);
@@ -215,6 +215,23 @@ export async function auditWorktree(cfg, commit) {
 
 /** Thu muc hook cua project chep vao worktree audit tam khi chua co o do (xem auditWorktree). */
 const HOOK_DIRS_UNTRACKED = ['.claude/hooks', '.agents/local/hooks'];
+
+/**
+ * Chep `src` vao `dest` cho file chua co o dich; dich da co (file hay symlink, kiem bang lstat) thi giu nguyen. Do 04/11 tren worktree Goods
+ * o commit 94ef023e: fs.cpSync({force:false}) lam 5 file .claude/hooks/*.sh da track thanh `M` (git status), vong lstat nay thi sach.
+ * Symlink nguon duoc doc theo noi dung that; symlink treo bi bo qua.
+ */
+function chepNeuThieu(src, dest) {
+  const st = fs.lstatSync(src);
+  if (st.isDirectory()) {
+    fs.mkdirSync(dest, { recursive: true });
+    for (const name of fs.readdirSync(src)) chepNeuThieu(path.join(src, name), path.join(dest, name));
+    return;
+  }
+  try { fs.lstatSync(dest); return; } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  if (st.isSymbolicLink() && !fs.existsSync(src)) return;
+  fs.copyFileSync(src, dest);
+}
 
 export async function goWorktree(cfg, dir) {
   await run('git', ['worktree', 'remove', '--force', dir], { cwd: cfg.projectRoot, timeoutMs: 60000 });
