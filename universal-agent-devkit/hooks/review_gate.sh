@@ -25,7 +25,7 @@
 # `ocr-review` call before the Agent call — calls are indexed in the order listed).
 # A progress reply (CHƯA XONG, no status line) is reviewed at the handover: a turn that ran
 # git push, `gh pr create`, `agent-kit worktree finish|integrate` or super-board-merge-gate.sh
-# is one unless what it handed over was reviewed.
+# (also under `timeout N`; not its --dry-run / --preflight) is one unless what it handed over was reviewed.
 #
 # Loop-guard: per-session attempts file, MAX_ATTEMPTS — release with a logged
 # warning if the environment genuinely can't run reviews (avoid infinite block).
@@ -165,6 +165,11 @@ def _handover_cmd(cmd):
         return True
     for seg in devkit_harness._CMD_SPLIT.split(devkit_harness._shell_code(cmd)[0]):
         w = devkit_harness._command_words(seg)
+        if w and os.path.basename(w[0]) == "timeout":   # #992: `timeout [-k N|-s SIG|--opt=…] DURATION <cmd>` (merge gate có trần giờ)
+            w = w[1:]
+            while w and w[0].startswith("-"):
+                w = w[2:] if w[0] in ("-k", "-s", "--kill-after", "--signal") else w[1:]
+            w = w[1:]   # DURATION
         if w and os.path.basename(w[0]) in _INTERP:   # python3 …/agent-kit, bash …/super-board-merge-gate.sh
             w = w[1:]
             while w and w[0].startswith("-"):
@@ -172,7 +177,10 @@ def _handover_cmd(cmd):
         if not w:
             continue
         c, rest = os.path.basename(w[0]), [x for x in w[1:] if not x.startswith("-")]
-        if c == "super-board-merge-gate.sh" or (c == "agent-kit" and (rest[:2] == ["worktree", "finish"] or rest[:1] == ["integrate"])) \
+        if c == "super-board-merge-gate.sh":
+            if not {"--dry-run", "--preflight"} & set(w[1:]):   # #992: --dry-run / --preflight chỉ kiểm, không merge: không bàn giao
+                return True
+        elif (c == "agent-kit" and (rest[:2] == ["worktree", "finish"] or rest[:1] == ["integrate"])) \
                 or (c == "gh" and any(w[k] == "pr" and w[k + 1] == "create" for k in range(1, len(w) - 1))):
             return True
     return False
