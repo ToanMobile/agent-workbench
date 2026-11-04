@@ -6,6 +6,7 @@
 #  E4 base không resolve -> pm (không kiểm được: bi quan). E5 pm home lạ không phải fixture -> false (biên bản không tính).
 #  E6 PR có audit nhưng không sửa test đã có (chỉ code) -> false: audit lớn không làm PR thường bi quan. E7 sửa script ma trận nhắc tên
 #  (script suite) -> pm.
+#  E8 sửa script tầng hai không có tên trong ma trận -> pm. E9 ma trận không đọc được -> pm (bi quan).
 set -u
 export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -64,5 +65,18 @@ U="$(git rev-parse HEAD)"; pm T2004-runner "$U"
 mkdir -p .agents && echo '{"rules":[{"mandatory_regression_tests":[{"command":"bash bin/suite-runner"}]}]}' > .agents/regression_matrix.active.json
 got="$(has_et "$U" --top "$R" --base main)"
 [ "$got" = "0 pm" ] && ok "E7: PR sửa script ma trận nhắc tên, có audit -> pm" || fail "E7: script suite: '$got' (muốn '0 pm')"
+
+# E8 (Grok review 04/11): script tầng hai (gate theo suite_runner_paths) không có tên trong ma trận, không phải đường dẫn test -> pm
+git checkout -q -b helper main && mkdir -p tools && echo 'print(1)' > tools/helper.py && git add tools/helper.py && git commit -qm "thêm helper" \
+  && git push -q . helper:main 2>/dev/null; git checkout -q -b helper2 main && echo 'print(2)' > tools/helper.py && git commit -qam "PR sửa helper"
+V="$(git rev-parse HEAD)"; pm T2005-helper "$V"
+got="$(has_et "$V" --top "$R" --base main)"
+[ "$got" = "0 pm" ] && ok "E8: PR sửa script tầng hai (.py không tên trong ma trận), có audit -> pm" || fail "E8: script tầng hai: '$got' (muốn '0 pm')"
+
+# E9: ma trận không đọc được (đường dẫn là thư mục) -> lỗi -> pm (bi quan), PR chỉ sửa code có audit
+rm -f .agents/regression_matrix.active.json && mkdir -p .agents/regression_matrix.active.json
+got="$(has_et "$C" --top "$R" --base main)"
+[ "$got" = "0 pm" ] && ok "E9: ma trận không đọc được -> pm (bi quan)" || fail "E9: ma trận hỏng: '$got' (muốn '0 pm')"
+rmdir .agents/regression_matrix.active.json
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

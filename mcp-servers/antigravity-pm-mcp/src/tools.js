@@ -148,7 +148,7 @@ async function auditRange(cfg, head) {
     if (!ok(await git(['rev-parse', '--verify', '-q', `${trunk}^{commit}`]))) continue;
     const mb = await git(['merge-base', trunk, head]);
     const base = ok(mb) ? String(mb.stdout).trim() : '';
-    if (!/^[0-9a-f]{40}$/.test(base)) return { base: null };
+    if (!/^[0-9a-f]{40}$/.test(base)) continue;   // Grok P3: nhanh nay khong co merge-base voi head -> thu nhanh dich ke tiep
     const ns = await git(['diff', '--name-status', '--no-renames', '-z', base, head]);
     if (!ok(ns)) return { base: null };
     const parts = String(ns.stdout).split('\0');

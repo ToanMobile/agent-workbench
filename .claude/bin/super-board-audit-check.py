@@ -108,11 +108,16 @@ def matches(task_id, sha, top=None):
     return isinstance(sha, str) and bool(SHA.fullmatch(sha)) and audited(task_id, top) == sha
 
 
+# Đuôi file mà một lệnh suite có thể chạy (rộng hơn post-fix-gate._RUNNER_FOLLOW_EXT + _run_words): "" = script không đuôi.
+RUNNABLE_EXT = ("", ".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl")
+
+
 def edited_existing(top, sha, base, gate):
     """Siêu tập các file đã có ở merge-base(base, sha) mà PR sửa/xoá và gate có thể coi là test đã có bị sửa: đường dẫn test
-    (post-fix-gate.is_test_path, nạp từ kit cạnh push_gate) hoặc file mà ma trận hồi quy nhắc tên (script suite như bin/agent-kit).
-    ponytail: chỉ khớp tên trong văn bản ma trận (một tầng), không đi theo script suite gọi script như suite_runner_paths; nâng khi
-    thấy PR chỉ sửa script tầng hai lọt đường lạc quan. Lỗi git/nạp → raise (người gọi coi là có)."""
+    (post-fix-gate.is_test_path, nạp từ kit cạnh push_gate), file mà ma trận hồi quy nhắc tên (script suite như bin/agent-kit), hoặc
+    bất kỳ file chạy được (script không đuôi hay đuôi script): post-fix-gate.suite_runner_paths đi theo script suite gọi script tới hai
+    tầng, nên mọi script đã có bị sửa đều có thể là "test đã có bị sửa" (Grok review 04/11). Lỗi git/nạp/đọc ma trận → raise (người gọi
+    coi là có)."""
     run = subprocess.run(["git", "-C", top, "diff", "--name-status", "--no-renames", "-z", f"{base}...{sha}"],
                          capture_output=True, text=True, timeout=60)
     if run.returncode != 0:
@@ -126,10 +131,10 @@ def edited_existing(top, sha, base, gate):
     spec.loader.exec_module(pfg)
     try:
         matrix = (Path(top) / gate.MATRIX).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        matrix = ""
+    except FileNotFoundError:
+        matrix = ""                                 # repo không có ma trận: gate không có script suite nào để theo
     # Tên file khớp nguyên token (không phải chuỗi con: "a" không khớp mọi chữ a của ma trận).
-    return [p for p in paths if pfg.is_test_path(p) or p in matrix
+    return [p for p in paths if pfg.is_test_path(p) or p in matrix or Path(p).suffix in RUNNABLE_EXT
             or re.search(r"(?<![\w.-])" + re.escape(os.path.basename(p)) + r"(?![\w.-])", matrix)]
 
 
