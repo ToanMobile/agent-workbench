@@ -160,9 +160,30 @@ function readConfigFile(file, warnings) {
   }
 }
 
+/**
+ * File cau hinh cua checkout chinh khi `root` la linked worktree (`.git` la FILE `gitdir: <common>/worktrees/<ten>`) va chinh no khong co
+ * .antigravity-pm.json: worktree PR van la goc project (audit dung cay PR) nhung ke thua testCommand / proof cua checkout chinh. null khac.
+ */
+function linkedWorktreeConfig(root) {
+  try {
+    const dotgit = path.join(root, '.git');
+    if (!fs.statSync(dotgit).isFile()) return null;
+    const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotgit, 'utf8'));
+    if (!m) return null;
+    const gitdir = path.resolve(root, m[1].trim());
+    const common = path.resolve(gitdir, fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').trim());
+    if (path.basename(common) !== '.git') return null;
+    const file = path.join(path.dirname(common), CONFIG_NAME);
+    return fs.existsSync(file) ? file : null;
+  } catch {
+    return null;   // khong doc duoc (khong phai worktree, gitdir hong): dung mac dinh nhu truoc
+  }
+}
+
 export function loadConfig(projectInput) {
   const root = resolveProjectRoot(projectInput);
-  const file = path.join(root, CONFIG_NAME);
+  const own = path.join(root, CONFIG_NAME);
+  const file = fs.existsSync(own) ? own : (linkedWorktreeConfig(root) || own);
   const globalFile = globalConfigPath();
   const warnings = [];
   const raw = readConfigFile(file, warnings);
