@@ -3887,6 +3887,38 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "shard-key-failclosed-994",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_gate_shard_key_enum_failclosed.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SHARD-KEY-FAILCLOSED-994-01",
+          "name": "#994: shard run_impacted.sh chỉ khoá cả cây (fail-closed) — file test chỉ glob lúc chạy đổi thì shard chạy lại và ĐỎ, không dùng lại PASS cũ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_shard_key_enum_failclosed.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-cache-ttl-3d",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_cache_ttl_3d.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-CACHE-TTL-3D-01",
+          "name": "05/11: hạn tuổi mặc định của PASS dùng lại là 3 ngày (khoá nội dung, biên nhận --full, biên nhận scoped): 2 ngày dùng lại, 4 ngày không; DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_cache_ttl_3d.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
