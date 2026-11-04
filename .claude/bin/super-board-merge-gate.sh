@@ -915,6 +915,7 @@ OPT_LEFT=${SB_MERGE_OPTIMISTIC_RETRIES:-2}
 OPT_LEFT=$((10#$OPT_LEFT))
 [ "$PESSIMISTIC" -eq 0 ] || OPT_LEFT=0
 EDITED=""   # rỗng = chưa hỏi; 1 = PR có test bị sửa (#643)
+EDITED_SRC=""   # true = duyệt từ comment edited-tests; pm = từ biên bản antigravity-pm (04/11)
 # #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA.
 REVIEWED_HEAD=$HEAD_SHA
 # prove_tree: mọi thứ phụ thuộc base, tính lại cho cây scratch HIỆN TẠI (BASE_SHA của vòng này): biên nhận train / cây (#226), exit 12
@@ -945,8 +946,8 @@ prove_tree() {
   # base..head — duyệt tra thẳng biên bản), và base không còn là tổ tiên của head đó.
   if [ "$TRAIN_PROVED" -eq 0 ]; then
     if [ -z "$EDITED" ]; then
-      if bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" \
-          --top "$REPO_PATH" --base "$BASE_SHA" >/dev/null 2>&1; then
+      if EDITED_SRC=$(bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" \
+          --top "$REPO_PATH" --base "$BASE_SHA" 2>/dev/null); then
         EDITED=1
       else
         et_rc=$?
@@ -954,7 +955,9 @@ prove_tree() {
         EDITED=0
       fi
     fi
-    if [ "$EDITED" -eq 1 ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
+    # 04/11: duyệt tra thẳng biên bản PM (EDITED_SRC=pm) không cũ khi base dời: verify trong khoá trên base hiện tại, audit_covers kiểm
+    # main không đổi file test. Chỉ duyệt gắn head của comment (#643) mới cần base là tổ tiên head.
+    if [ "$EDITED" -eq 1 ] && [ "$EDITED_SRC" != pm ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
       say "edited-test review is stale before fast-forward (origin/${BASE} is not an ancestor of ${REVIEWED_HEAD})"
       exit 2
     fi

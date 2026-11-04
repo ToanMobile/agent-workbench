@@ -159,6 +159,14 @@ async function auditRange(cfg, head) {
   return { base: null };
 }
 
+/** Dong cuoi ket qua pm_dispatch audit grok: da tu ghi verdict, hay vi sao khong. */
+function verdictLine(autoVerdict, verdict, head, message) {
+  if (autoVerdict) return `Da tu ghi verdict audit=pass, auditedHead = ${head} (gate DevKit tra thang bien ban nay).`;
+  if (verdict !== 'pass') return 'Audit khong pass: khong ghi verdict. Sua theo log roi giao lai pm_dispatch kind=audit agent=grok.';
+  const why = message ? 'co message cua nguoi goi trong prompt' : 'khong tinh duoc merge-base hoac qua 200 file';
+  return `Khong tu ghi verdict (${why}): PM doc log roi pm_verdict kind=audit auditedHead=${head}; gate chi duyet test sua qua muc duyet / trailer.`;
+}
+
 /** Cong chan kem bang chung do duoc tu git ngay luc goi. */
 async function gateNow(cfg, task) {
   return gate(cfg, task, await gateCtx(cfg, task));
@@ -839,15 +847,20 @@ export const TOOLS = [
         }, null, 2)}\n`);
         const reportSha256 = hashFile(repFile);
         if (task.phase === 'IMPLEMENT') setPhase(cfg, task, 'AUDIT', 'pm', 'da giao audit grok');
+        // 04/11: pham vi grok da xem (auditBase = merge-base, edited = moi file da co bi sua/xoa) ghi vao lan giao — gate DevKit tra thang
+        // bien ban chi nhan test nam trong pham vi do (push_gate.audit_scope). Khong ghi khi: khong tinh duoc merge-base; `message` cua nguoi
+        // goi (tac gia) lai nhet vao prompt (Grok phan bien: chu tac gia khong duoc dan PASS thanh duyet); danh sach > 200 file (prompt cat bot).
+        const fullScope = Boolean(range.base) && !args.message && range.edited.length <= 200;
         recordDispatch(cfg, task, {
           kind: 'audit', agent: 'grok', model: GROK_MODEL, promptFile, at,
-          extra: { conversationId: null, auditedHead: head, verdict, grokVerdicts: v.lines, exitCode: r.code, timedOut: r.timedOut, reportSha256, logFile },
+          extra: {
+            conversationId: null, auditedHead: head, verdict, grokVerdicts: v.lines, exitCode: r.code, timedOut: r.timedOut, reportSha256, logFile,
+            ...(fullScope && { auditBase: range.base, edited: range.edited }),
+          },
         });
-        // 04/11 (khong buoc nguoi): grok PASS va khong loi nao -> PM tu ghi ket luan audit, SAU recordDispatch (push_gate.audit_reviewer
-        // chi nhan reviewer grok khi lan audit gan nhat trong dispatches la grok). Nguoi goi la grok da bi tu choi o tren (tu duyet).
-        // Grok phan bien 04/11: `message` la chu cua nguoi goi (tac gia) nhet vao prompt — PASS khi do khong tu thanh duyet; khong tinh
-        // duoc merge-base thi prompt khong phu pham vi gate duyet — cung khong tu ghi (PM doc log roi pm_verdict nhu cu).
-        const autoVerdict = verdict === 'pass' && !args.message && Boolean(range.base);
+        // Grok PASS, khong loi, pham vi day du -> PM tu ghi ket luan audit, SAU recordDispatch (push_gate.audit_reviewer chi nhan reviewer
+        // grok khi lan audit gan nhat trong dispatches la grok). Nguoi goi la grok da bi tu choi o tren (tu duyet).
+        const autoVerdict = verdict === 'pass' && fullScope;
         if (autoVerdict) {
           recordVerdict(cfg, task, {
             kind: 'audit', verdict: 'pass', reviewer: 'grok', actor: 'pm', auditedHead: head,
@@ -860,9 +873,7 @@ export const TOOLS = [
           ...(range.base ? [] : ['CANH BAO: khong tinh duoc merge-base voi nhanh dich — prompt so voi commit goc cua task.']),
           `Bao cao: ${repFile} (sha256 ${reportSha256})`,
           `Log grok: ${logFile}`,
-          autoVerdict ? `Da tu ghi verdict audit=pass, auditedHead = ${head} (gate DevKit tra thang bien ban nay).`
-            : verdict === 'pass' ? `Khong tu ghi verdict (${args.message ? 'co message cua nguoi goi trong prompt' : 'khong tinh duoc merge-base'}): PM doc log roi pm_verdict kind=audit auditedHead=${head}.`
-              : 'Audit khong pass: khong ghi verdict. Sua theo log roi giao lai pm_dispatch kind=audit agent=grok.',
+          verdictLine(autoVerdict, verdict, head, args.message),
         ].join('\n');
       }
 

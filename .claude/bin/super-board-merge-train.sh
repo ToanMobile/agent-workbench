@@ -264,13 +264,15 @@ head_of() { local i; for i in "${!LIST[@]}"; do [ "${LIST[$i]}" = "$1" ] && { ec
 # edited_review_stale <PR>: #643 — PR có test sửa đã duyệt mà origin/<base> (BASE_SHA hiện tại) không còn là tổ tiên head ⇒ duyệt cũ: 0.
 # 1 = còn đúng (hoặc không có test sửa). Lỗi khác của bộ kiểm: thoát train với mã đó (như trước #676).
 edited_review_stale() {
-  local emeta et_rc=0
+  local emeta et_rc=0 src
   emeta=$(mktemp)
   gh pr view "$1" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
-  bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$emeta" "$(head_of "$1")" \
-    --top "$REPO_PATH" --base "$BASE_SHA" >/dev/null 2>&1 || et_rc=$?
+  src=$(bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$emeta" "$(head_of "$1")" \
+    --top "$REPO_PATH" --base "$BASE_SHA" 2>/dev/null) || et_rc=$?
   rm -f "$emeta"
   case "$et_rc" in 0) ;; 1) return 1 ;; *) exit "$et_rc" ;; esac
+  # 04/11: duyệt tra thẳng biên bản PM không cũ khi base dời (merge gate verify trong khoá, audit_covers kiểm file test trên main).
+  [ "$src" != pm ] || return 1
   ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$(head_of "$1")"
 }
 # #643: duyệt test sửa mà base đã đi trước head thì rời đợt trước khi dựng scratch. Không làm đỏ cả chuỗi.

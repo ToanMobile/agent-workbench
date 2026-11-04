@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Cài .claude/audit-gate/approved_tests.json vào scratch từ comment edited-tests thắng cuộc (#643).
-# --has-edited-tests <meta.json> <sha40> [--top DIR --base REF]: in true hoặc false, thoát 0 hoặc 1. 04/11: không có comment edited-tests
-# thì --top/--base hỏi thẳng biên bản antigravity-pm (super-board-audit-check.py --chain-audit): audit pass có auditedHead trong
-# <base>..<sha40> (hoặc không kiểm được) = true — duyệt test sửa tra thẳng biên bản cũng giữ khoá và không autosync như comment.
+# --has-edited-tests <meta.json> <sha40> [--top DIR --base REF]: in true / pm (thoát 0) hoặc false (thoát 1). 04/11: không có comment
+# edited-tests thì --top/--base hỏi thẳng biên bản antigravity-pm (super-board-audit-check.py --chain-audit): PR sửa test đã có và audit
+# pass có auditedHead trong <base>..<sha40> (hoặc không kiểm được) = pm — giữ khoá và không autosync như comment, nhưng base dời KHÔNG làm
+# duyệt cũ (post-fix-gate audit_covers kiểm main không đổi file test, verify chạy trong khoá trên base hiện tại).
 # Chế độ cài luôn thoát 0, kể cả khi không ghi gì.
 HERE=$(cd "$(dirname "$0")" && pwd)
 JQ_FILTER="$HERE/super-board-approved-head.jq"
@@ -43,16 +44,19 @@ winning() {
   [ -n "$TASK_ID" ]
 }
 
-# pm_chain: 0 khi biên bản PM có audit pass trên <base>..<sha> (hoặc không kiểm được); 1 khi không, hoặc người gọi cũ không truyền --top.
+# pm_chain: 0 khi biên bản PM có audit pass trên <base>..<sha>, hoặc kiểm lỗi (mọi mã khác 0 và 1: bi quan); 1 khi không, hoặc người gọi
+# cũ không truyền --top/--base.
 pm_chain() {
+  local rc=0
   [ -n "$TOP" ] && [ -n "$BASE_REF" ] || return 1
-  python3 "$AUDIT" --chain-audit "$SHA" --base "$BASE_REF" --top "$TOP"
+  python3 "$AUDIT" --chain-audit "$SHA" --base "$BASE_REF" --top "$TOP" || rc=$?
+  [ "$rc" -ne 1 ]
 }
 
 if [ "$has_mode" -eq 1 ]; then
   if ! winning; then
     if pm_chain; then
-      printf '%s\n' true
+      printf '%s\n' pm
       exit 0
     fi
     printf '%s\n' false
@@ -92,7 +96,7 @@ PY
     exit 0
   fi
   if pm_chain; then
-    printf '%s\n' true
+    printf '%s\n' pm
     exit 0
   fi
   printf '%s\n' false

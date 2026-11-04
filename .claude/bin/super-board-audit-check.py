@@ -12,7 +12,8 @@ CLI: super-board-audit-check.py <task_id> <sha40> [--top DIR] [--pr N]   exit 0 
 CLI: super-board-audit-check.py --chain-audit <sha40> --base <ref> [--top DIR]   (04/11, merge gate / train --has-edited-tests)
      exit 0 = PR sửa/xoá file đã có mà gate có thể coi là test (edited_existing) VÀ có biên bản audit pass của antigravity-pm với
      auditedHead thuộc <base>..<sha40> (duyệt test sửa tra thẳng biên bản, post-fix-gate _pm_audit_cross_review), HOẶC không kiểm được
-     (giữ đường bi quan: khoá, không autosync); exit 1 = không có (PR chỉ có audit lớn mà không sửa test thì không bi quan).
+     (giữ đường bi quan: khoá, không autosync); exit 1 = không có (PR chỉ có audit lớn mà không sửa test thì không bi quan); mã khác
+     (lỗi nạp, sai tham số) = bi quan.
 """
 from __future__ import annotations
 
@@ -127,7 +128,9 @@ def edited_existing(top, sha, base, gate):
         matrix = (Path(top) / gate.MATRIX).read_text(encoding="utf-8", errors="replace")
     except OSError:
         matrix = ""
-    return [p for p in paths if pfg.is_test_path(p) or p in matrix or os.path.basename(p) in matrix]
+    # Tên file khớp nguyên token (không phải chuỗi con: "a" không khớp mọi chữ a của ma trận).
+    return [p for p in paths if pfg.is_test_path(p) or p in matrix
+            or re.search(r"(?<![\w.-])" + re.escape(os.path.basename(p)) + r"(?![\w.-])", matrix)]
 
 
 def chain_audit(sha, base, top=None):
@@ -159,7 +162,11 @@ def main():
         cp.add_argument("--base", required=True)
         cp.add_argument("--top")
         cargs = cp.parse_args(sys.argv[2:])
-        return 0 if chain_audit(cargs.sha, cargs.base, cargs.top) else 1
+        try:
+            return 0 if chain_audit(cargs.sha, cargs.base, cargs.top) else 1
+        except Exception as error:   # noqa: BLE001 - lỗi nạp push_gate / repo: bi quan, không bao giờ là "không có"
+            print(f"audit-check: --chain-audit failed: {error.__class__.__name__}", file=sys.stderr)
+            return 3
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("task_id")
     ap.add_argument("sha")

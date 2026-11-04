@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # 04/11 (duyệt test sửa không bước người): merge gate / train hỏi `--has-edited-tests` để giữ đường bi quan (verify trong khoá, không
 # autosync, exit 2 khi base đi trước head). Duyệt nay tra thẳng biên bản antigravity-pm (post-fix-gate _pm_audit_cross_review), không
-# còn comment edited-tests, nên --has-edited-tests ... --top --base cũng hỏi biên bản: audit pass có auditedHead trong <base>..<head> = true.
-#  E1 audit trên nhánh PR -> true (code cũ: false). E2 audit chỉ trên main -> false. E3 người gọi cũ (không --top) -> false như cũ.
-#  E4 base không resolve -> true (không kiểm được: bi quan). E5 pm home lạ không phải fixture -> false (biên bản không tính).
+# còn comment edited-tests, nên --has-edited-tests ... --top --base cũng hỏi biên bản: audit pass có auditedHead trong <base>..<head> = pm (không phải true của comment).
+#  E1 audit trên nhánh PR -> pm (code cũ: false). E2 audit chỉ trên main -> false. E3 người gọi cũ (không --top) -> false như cũ.
+#  E4 base không resolve -> pm (không kiểm được: bi quan). E5 pm home lạ không phải fixture -> false (biên bản không tính).
 #  E6 PR có audit nhưng không sửa test đã có (chỉ code) -> false: audit lớn không làm PR thường bi quan. E7 sửa script ma trận nhắc tên
-#  (script suite) -> true.
+#  (script suite) -> pm.
 set -u
 export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -43,13 +43,13 @@ got="$(has_et "$H" --top "$R" --base main)"
 
 pm T2002-pr "$X"
 got="$(has_et "$H" --top "$R" --base main)"
-[ "$got" = "0 true" ] && ok "E1: audit pass trên nhánh PR, không comment -> true (giữ khoá, không autosync)" || fail "E1: audit trên PR: '$got' (muốn '0 true')"
+[ "$got" = "0 pm" ] && ok "E1: audit pass trên nhánh PR, không comment -> pm (giữ khoá, không autosync)" || fail "E1: audit trên PR: '$got' (muốn '0 pm')"
 
 got="$(has_et "$H")"
 [ "$got" = "1 false" ] && ok "E3: người gọi cũ không --top/--base -> false như cũ" || fail "E3: CLI cũ: '$got' (muốn '1 false')"
 
 got="$(has_et "$H" --top "$R" --base no-such-ref)"
-[ "$got" = "0 true" ] && ok "E4: base không resolve -> true (bi quan)" || fail "E4: base hỏng: '$got' (muốn '0 true')"
+[ "$got" = "0 pm" ] && ok "E4: base không resolve -> pm (bi quan)" || fail "E4: base hỏng: '$got' (muốn '0 pm')"
 
 got="$(DEVKIT_PM_HOME_TEST=0 has_et "$H" --top "$R" --base main)"
 [ "$got" = "1 false" ] && ok "E5: pm home lạ không phải fixture -> false" || fail "E5: pm home lạ: '$got' (muốn '1 false')"
@@ -63,6 +63,6 @@ git checkout -q -b runner main && echo 'exit 0' > bin/suite-runner && git commit
 U="$(git rev-parse HEAD)"; pm T2004-runner "$U"
 mkdir -p .agents && echo '{"rules":[{"mandatory_regression_tests":[{"command":"bash bin/suite-runner"}]}]}' > .agents/regression_matrix.active.json
 got="$(has_et "$U" --top "$R" --base main)"
-[ "$got" = "0 true" ] && ok "E7: PR sửa script ma trận nhắc tên, có audit -> true" || fail "E7: script suite: '$got' (muốn '0 true')"
+[ "$got" = "0 pm" ] && ok "E7: PR sửa script ma trận nhắc tên, có audit -> pm" || fail "E7: script suite: '$got' (muốn '0 pm')"
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

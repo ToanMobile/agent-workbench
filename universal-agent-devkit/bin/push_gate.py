@@ -600,6 +600,32 @@ def audit_reviewer(top, task_id, legacy=False):
     return None
 
 
+def audit_scope(top, task_id):
+    """(auditBase, edited) của lượt audit grok PM tự chạy cho CÙNG biên bản mà audited_head / audit_reviewer đọc (04/11, nguồn duyệt tra
+    thẳng của post-fix-gate): lượt kind=audit gần nhất trong dispatches là grok, auditedHead của nó == head của verdicts.audit, và nó ghi
+    phạm vi đã đưa grok xem — auditBase (sha40, merge-base nhánh đích với head) và edited (mọi file đã có bị sửa/xoá trong auditBase..head).
+    Audit khác (Antigravity /giao phạm vi task, grok bản PM cũ chưa ghi phạm vi) → None: chỉ duyệt được qua mục duyệt / trailer."""
+    if pm_home_overridden() and not pm_home_test_fixture():
+        return None
+    for task in _repo_tasks(top, task_id):
+        audit = (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
+        head = _audit_head_of(top, audit)
+        if not head:
+            continue
+        dispatches = task.get("dispatches") if isinstance(task.get("dispatches"), list) else []
+        audits = [d for d in dispatches if isinstance(d, dict) and d.get("kind") == "audit"]
+        last = max(enumerate(audits), key=lambda iv: (str(iv[1].get("at") or ""), iv[0]))[1] if audits else None
+        if not last or normalize_reviewer(last.get("agent") if isinstance(last.get("agent"), str) else "") != "grok" \
+                or last.get("auditedHead") != head:
+            return None
+        base, edited = last.get("auditBase"), last.get("edited")
+        if not isinstance(base, str) or not SHA40.fullmatch(base) or not isinstance(edited, list) \
+                or not all(isinstance(e, str) for e in edited):
+            return None
+        return base, edited
+    return None
+
+
 def head_after(top, base, head):
     """True khi `base` là tổ tiên của (hoặc chính là) `head` — auditedHead nằm SAU base, không phải một cây cũ hơn base mà task cũ đã
     audit (audit T0066 vòng 2, #605: chặn chép lùi test về bản yếu trước base rồi khai task cũ). Lỗi git, thiếu đối số → False."""

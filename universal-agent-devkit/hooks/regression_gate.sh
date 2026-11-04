@@ -1053,7 +1053,7 @@ for f in summary.get("findings", [])[:10]:
     lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))
 for f in touched[:10]:
     lines.append("  - TEST ĐÃ CÓ BỊ SỬA/XOÁ: %s — đối chiếu diff (`git diff HEAD -- %s`): cần duyệt chéo bởi agent khác "
-                 "(commit, rồi antigravity-pm `pm_dispatch kind=audit agent=grok` hoặc audit Antigravity trên head PR: PM tự ghi biên bản, gate "
+                 "(commit, rồi antigravity-pm `pm_dispatch kind=audit agent=grok` trên head PR: PM tự ghi biên bản kèm phạm vi, gate "
                  "tra thẳng, không json / comment / trailer cho %s); agent sửa test "
                  "KHÔNG tự duyệt (--auto-approve-tests / AUTO-APPROVE: bị từ chối), KHÔNG hỏi người dùng. Không sửa test cũ để lách" % (f, f, f))
 for f in uncovered[:10]:
