@@ -111,6 +111,7 @@
 #      quotes its last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
 #      — also when the newest `[qa] [report]` comment still has a non-empty `❌ Not done:` line, or a `- [x]` AC of the PR body has
 #      no `↳ <proof>` line (super-board-qa-report.py, #364); stdout lists each `qa-report: <reason>`
+#      — also when that newest QA report names a PR-branch sha with code commits after it (T0255: QA must re-run on the head)
 #      — also when a CI check of the PR head is red (`gh pr checks`: a bucket other than pass / skipping / pending, an empty or
 #      unknown one included): stdout and stderr list each `ci-check: <name> — <state>`; nothing migrated, nothing merged
 #   3  PR is closed without a merge; no merge attempted
@@ -499,7 +500,7 @@ QA_PIN=(--head "$HEAD_SHA" --repo "$REPO_PATH" --base "origin/$BASE")
 git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || {
   say "WARNING: git fetch origin ${HEAD_REF} ${BASE} failed — QA head pin skipped"; QA_PIN=(); }
 QA_REPORT_RC=0
-QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"} 2>/dev/null) \
+QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"}) \
   || QA_REPORT_RC=$?
 if [ "$QA_REPORT_RC" -ne 0 ]; then
   if [ "$QA_REPORT_RC" -eq 1 ] && printf '%s\n' "$QA_REPORT_OUT" | grep -q '^qa-report: '; then

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # T0255: merge gate từ chối PR khi report QA mới nhất nêu sha của nhánh PR mà head còn commit code sau sha đó
-# (QA chưa chạy lại trên code cuối). Đo 21/10–04/11: 9/174 PR board merge với commit code sau sha QA cuối.
+# (QA chưa chạy lại trên code cuối). Đo 21/10–04/11: chạy lại luật trên 169 PR board đã merge thì 8 PR bị từ chối.
 # Cùng harness với test_merge_gate_qa_report.sh: gate thật, gh giả, git thật; verify in VERIFY-RAN rồi đỏ, nên
 # "qua cổng QA" = log có VERIFY-RAN. Từ chối = exit 11 + dòng "qa-report:" + KHÔNG có VERIFY-RAN. Offline.
 set -u
