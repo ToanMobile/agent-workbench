@@ -3856,6 +3856,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "shard-key-failclosed-994",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_gate_shard_key_enum_failclosed.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SHARD-KEY-FAILCLOSED-994-01",
+          "name": "#994: shard run_impacted.sh chỉ khoá cả cây (fail-closed) — file test chỉ glob lúc chạy đổi thì shard chạy lại và ĐỎ, không dùng lại PASS cũ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_shard_key_enum_failclosed.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
