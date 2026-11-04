@@ -820,14 +820,8 @@ export const TOOLS = [
             wtTam = w.dir;
             auditDir = wtTam;
           }
-          const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '', workdir: auditDir });
-          promptFile = saveOutgoing(cfg, task, `prompt-audit-grok-r${task.round}`, prompt);
-          // Moc giao chot TRUOC khi chay: bao cao PM ghi sau moc nay (pm_verdict tu choi bao cao cu hon lan giao audit gan nhat).
-          at = nowIso();
-          r = await runGrokAudit({ grok, cwd: auditDir, prompt });
-          // H5 (TOCTOU cua F5): cung lenh git status ngay sau grok; cay doi trong luc audit (hoac khong doc duoc) -> bao cao fail kem ly do.
-          // chi SAU khi chay moi bo qua file DevKit tu sinh (hook cua phien grok sinh lai chung); TRUOC khi chay cay phai sach that su.
           // File thuoc change set base..head khong bao gio duoc bo qua; khong do duoc change set (khong co goc / git loi) => khong bo qua gi.
+          // Do TRUOC khi grok chay (khong phu thuoc grok): cung la nen de biet file DevKit nao da co san tren dia truoc audit.
           let changeSet = null;
           const base = task.implementBaseCommit || task.baseCommit;
           if (base) {
@@ -835,13 +829,23 @@ export const TOOLS = [
             const dp = await run('git', ['diff', '--name-only', '--no-renames', '-z', base, head], { cwd: cfg.projectRoot, timeoutMs: 60000, maxBytes: 16_000_000 });
             if (!dp.spawnFailed && !dp.timedOut && dp.code === 0 && !dp.truncated) changeSet = new Set(String(dp.stdout).split('\0').filter(Boolean));
           }
+          // Khong do duoc change set: doi chieu 3 file DevKit co dinh thay cho change set (khong liet ke duoc archive/memory)
+          const cand = changeSet !== null ? [...changeSet].filter(laFileDevkitSinh) : [...DEVKIT_SINH_TU_DONG];
+          // Cay chinh: file untracked da co san truoc audit khong phai do hook vua sinh (F5 cho untracked qua) => khong tinh; worktree tam
+          // bat dau tu checkout sach nen khong co file nao "co san".
+          const coSan = new Set(wtTam ? [] : cand.filter((p) => fs.existsSync(path.join(auditDir, p))));
+          const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '', workdir: auditDir });
+          promptFile = saveOutgoing(cfg, task, `prompt-audit-grok-r${task.round}`, prompt);
+          // Moc giao chot TRUOC khi chay: bao cao PM ghi sau moc nay (pm_verdict tu choi bao cao cu hon lan giao audit gan nhat).
+          at = nowIso();
+          r = await runGrokAudit({ grok, cwd: auditDir, prompt });
+          // H5 (TOCTOU cua F5): cung lenh git status ngay sau grok; cay doi trong luc audit (hoac khong doc duoc) -> bao cao fail kem ly do.
+          // chi SAU khi chay moi bo qua file DevKit tu sinh (hook cua phien grok sinh lai chung); TRUOC khi chay cay phai sach that su.
           stAfter = await trackedChanges(cfg, auditDir, { ignoreGenerated: changeSet !== null, changeSet });
           // Commit XOA / DOI TEN file DevKit roi hook sinh lai no: file thanh untracked nen status --untracked-files=no khong thay, ma grok da
           // doc bytes ma commit noi la khong ton tai => doi chieu file thuoc change set + dang co tren dia voi cay cua head (review #988 vong 3)
-          // Khong do duoc change set (OCR vong 3): doi chieu 3 file DevKit co dinh thay cho change set (khong liet ke duoc archive/memory)
           if (!stAfter.error) {
-            const cand = changeSet !== null ? [...changeSet].filter(laFileDevkitSinh) : [...DEVKIT_SINH_TU_DONG];
-            const regen = cand.filter((p) => fs.existsSync(path.join(auditDir, p)));
+            const regen = cand.filter((p) => !coSan.has(p) && fs.existsSync(path.join(auditDir, p)));
             if (regen.length) {
               const lt = await run('git', ['--literal-pathspecs', 'ls-tree', '-z', '--name-only', head, '--', ...regen], { cwd: auditDir, timeoutMs: 60000, maxBytes: 16_000_000 });
               if (lt.spawnFailed || lt.timedOut || lt.code !== 0 || lt.truncated) {
