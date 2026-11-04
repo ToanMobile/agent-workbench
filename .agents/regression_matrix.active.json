@@ -3619,6 +3619,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-qa-head-pin",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_qa_head_pin.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-QA-HEAD-PIN-01",
+          "name": "merge gate từ chối khi report QA mới nhất nêu sha nhánh PR mà head còn commit code sau đó (T0255)",
+          "command": "bash tests/super-board/test_merge_gate_qa_head_pin.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
