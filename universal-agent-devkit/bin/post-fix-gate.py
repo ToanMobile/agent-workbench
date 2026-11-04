@@ -6723,7 +6723,11 @@ def main():
     parser.add_argument("--force", action="store_true",
                         help="#648: bỏ qua rerun_skip.json và chạy suite. Không bật --full và không bật --force-full")
     parser.add_argument("--no-fail-fast", action="store_true",
-                        help="#647: suite FAIL hoặc TIMEOUT vẫn chạy các suite sau. Mặc định là dừng")
+                        help="#647: suite FAIL hoặc TIMEOUT vẫn chạy các suite sau. Mặc định là dừng, trừ lượt --scoped "
+                             "(không bao giờ dừng sớm); thắng --fail-fast khi có cả hai (merge-train luôn gắn cờ này)")
+    parser.add_argument("--fail-fast", action="store_true",
+                        help="Lượt --scoped dừng ở suite FAIL hoặc TIMEOUT đầu tiên như #647 (mặc định của --scoped là chạy hết mọi suite "
+                             "đã chọn để lộ mọi suite đỏ trong một lượt). Lượt khác vốn đã fail-fast; --no-fail-fast thắng cờ này")
     parser.add_argument("--timeout", type=int, default=900, help="Timeout (seconds) per regression command")
     parser.add_argument("--json", action="store_true", help="Also print the result as JSON (last stdout line)")
     parser.add_argument("--auto-approve-tests", action="store_true",
@@ -8428,14 +8432,18 @@ def main():
     def _keep_after_red(suite):
         return _cover_failed_still_runs(suite) or _runner_after_soft_red(suite)
 
+    # Lượt --scoped thật (scoped_run: không --full / --force-full / --tree / --since) không fail-fast: mọi suite đã chọn chạy, mọi
+    # suite đỏ lộ ra trong MỘT lượt (PR #977: fail-fast lộ một suite đỏ mỗi lượt 25–30 phút ⇒ 4 lượt). --fail-fast bật lại; --no-fail-fast thắng.
+    fail_fast = not getattr(args, "no_fail_fast", False) and (
+        getattr(args, "fail_fast", False) or not getattr(args, "scoped_run", False))
     for idx, t in enumerate(to_run):
         kind = "suite" if may_join(t) else ("shard" if shard_join(t) else None)
         if group and kind != group_kind[0]:
             drain()
-        # #647: mặc định dừng khi một suite đã FAIL hoặc TIMEOUT. Nhóm đang chạy được drain() xong.
+        # #647: mặc định dừng khi một suite đã FAIL hoặc TIMEOUT (trừ lượt --scoped, xem fail_fast). Nhóm đang chạy được drain() xong.
         # Suite NOT_RUN phía sau thành UNTESTED — covered_by và skip-compile không kịp biến chúng thành PASS.
         # Ngoại lệ: cover FAIL trên lượt không --full (ca 2), và run_impacted.sh sau STALE / cached-full đỏ.
-        if (run_tests and not getattr(args, "no_fail_fast", False)
+        if (run_tests and fail_fast
                 # #678: suite FAIL vì bị kill từ ngoài / thiếu môi trường (env_blocked) không có kết luận test, nên không dừng cả lượt:
                 # nếu dừng, suite lỗi thật đứng sau thành UNTESTED và regression_gate.sh cho Stop qua như lỗi môi trường (che lỗi thật).
                 and any(x.get("status") in ("FAIL", "TIMEOUT") and not x.get("env_blocked") for x in regression_tests)

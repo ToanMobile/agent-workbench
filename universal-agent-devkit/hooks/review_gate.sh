@@ -21,7 +21,11 @@
 # With `ocr` installed (REVIEW_GATE_REQUIRE_OCR=0: off) an OCR review after the last
 # edit is REQUIRED (user, 13/10: OCR always runs again after principal-code-reviewer;
 # the two find different defects); with no LLM endpoint, `ocr-review` falling back to
-# its delegation spec plus an agent review after the edit stands in for it.
+# its delegation spec plus an agent review after it stands in for it (in one message: the
+# `ocr-review` call before the Agent call — calls are indexed in the order listed).
+# A progress reply (CHƯA XONG, no status line) is reviewed at the handover: a turn that ran
+# git push, `gh pr create`, `agent-kit worktree finish|integrate` or super-board-merge-gate.sh
+# is one unless what it handed over was reviewed.
 #
 # Loop-guard: per-session attempts file, MAX_ATTEMPTS — release with a logged
 # warning if the environment genuinely can't run reviews (avoid infinite block).
@@ -147,6 +151,57 @@ except Exception as e:
 # Audit 2026-10-25 A3: a push this turn that more edits followed is no handover (devkit_harness.push_after_last_edit), but the code it
 # carried must have been reviewed: such a Stop skips only after the scan below finds no push of code edited since the last review.
 wip_push_start = None
+_HANDOVER_KEYS = ("push", "pr create", "agent-kit", "super-board-merge-gate")   # cheap prefilter: a line with none is no handover
+_INTERP = {"python", "python3", "bash", "sh", "zsh"}
+
+
+def _handover_cmd(cmd):
+    """The Bash command line hands the work over (04/11): a git push (devkit_harness.git_writes), `gh pr create`, `agent-kit worktree
+    finish`, `agent-kit integrate`, super-board-merge-gate.sh — as a command word, read like git_writes (devkit_harness._shell_code: quoted
+    text, comments and heredoc bodies are data). ponytail: `bash -c '…'`, eval and aliases are not seen, as in git_writes."""
+    if not isinstance(cmd, str) or not any(k in cmd for k in _HANDOVER_KEYS):
+        return False
+    if "push" in devkit_harness.git_writes(cmd):
+        return True
+    for seg in devkit_harness._CMD_SPLIT.split(devkit_harness._shell_code(cmd)[0]):
+        w = devkit_harness._command_words(seg)
+        if w and os.path.basename(w[0]) in _INTERP:   # python3 …/agent-kit, bash …/super-board-merge-gate.sh
+            w = w[1:]
+            while w and w[0].startswith("-"):
+                w = w[1:]
+        if not w:
+            continue
+        c, rest = os.path.basename(w[0]), [x for x in w[1:] if not x.startswith("-")]
+        if c == "super-board-merge-gate.sh" or (c == "agent-kit" and (rest[:2] == ["worktree", "finish"] or rest[:1] == ["integrate"])) \
+                or (c == "gh" and any(w[k] == "pr" and w[k + 1] == "create" for k in range(1, len(w) - 1))):
+            return True
+    return False
+
+
+def _handover_in_turn(tp, start):
+    """A tool call of the turn (after `start`, epoch) ran a _handover_cmd — devkit_harness.git_writes_in_turn's turn filter. Unreadable:
+    True (fail closed: the gate then looks for the handover itself and holds when it cannot find it)."""
+    import datetime
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                if '"command"' not in raw or not any(k in raw for k in _HANDOVER_KEYS):
+                    continue
+                try:
+                    e = json.loads(raw)
+                    t = datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp()
+                except (ValueError, AttributeError):
+                    continue
+                if t < start or e.get("type") != "assistant":
+                    continue
+                for c in (e.get("message") or {}).get("content") or []:
+                    if isinstance(c, dict) and c.get("type") == "tool_use" and _handover_cmd((c.get("input") or {}).get("command", "")):
+                        return True
+    except OSError:
+        return True
+    return False
+
+
 for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             os.path.dirname(os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "review_gate.sh"))),
             os.path.join(repo, ".agents", "devkit", "hooks")):
@@ -158,7 +213,7 @@ for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             if devkit_harness.work_in_progress(d, status_optional=True, repo=repo):
                 _tp0 = d.get("transcript_path")
                 _st0 = devkit_harness.turn_start(_tp0)
-                if _st0 is None or "push" not in devkit_harness.git_writes_in_turn(_tp0, _st0):
+                if _st0 is None or not _handover_in_turn(_tp0, _st0):   # no push, PR, finish, integrate or merge gate this turn
                     logline(f"[{ts}] skip: work in progress — review at the handover turn")
                     sys.exit(0)
                 wip_push_start = _st0
@@ -344,7 +399,7 @@ def in_diff(fp):
 tp = d.get("transcript_path")
 last_edit_idx = -1
 last_review_idx = -1
-edit_marks, review_marks, push_marks = [], [], []   # every edit / review index, and this turn's pushes (wip_push_start only)
+edit_marks, review_marks, push_marks = [], [], []   # every edit / review index, and this turn's handovers (wip_push_start only)
 session_unreviewed = set()   # diff paths edited by me this session
 idx = 0
 # OpenCodeReview (2026-10-13): a FULL review that succeeded counts as the fresh review. The command must START a command segment
@@ -531,7 +586,7 @@ if tp and os.path.exists(tp):
                 elif name == "Bash":
                     _bts = _tt
                     if wip_push_start is not None and _tt is not None and _tt >= wip_push_start \
-                            and "push" in devkit_harness.git_writes(str(inp.get("command") or "")):
+                            and _handover_cmd(str(inp.get("command") or "")):
                         push_marks.append(idx)
                     if _bts is not None:
                         bash_runs.append([idx, _bts, None, str(inp.get("command") or "")])
@@ -824,9 +879,10 @@ if wip_push_start is not None:
             _unreviewed_push = _p
             break
     if _unreviewed_push is None:
-        logline(f"[{ts}] skip: work in progress — this turn pushed reviewed code, then went on editing; review at the handover turn")
+        logline(f"[{ts}] skip: work in progress — this turn's handover (push / PR / finish / integrate / merge gate) carried reviewed code; "
+                "review at the handover turn")
         sys.exit(0)
-    logline(f"[{ts}] work in progress, but push #{_unreviewed_push} of this turn carried code edited after the last review — gated")
+    logline(f"[{ts}] work in progress, but handover #{_unreviewed_push} of this turn carried code edited after the last review — gated")
 
 # No .kt edited by me this session (the dirty files are pre-existing /
 # someone else's) → nothing of mine to gate.
@@ -997,7 +1053,11 @@ lines += [
     "  B) Hoặc Skill code-review / open-code-review trên diff.",
     "  C) Nếu đổi test/CI: thêm test-architect-seti; Android đổi kiến trúc/API: android-principal-architect.",
     "  D) Hoặc Workflow 'multi-lens-audit' nếu môi trường hỗ trợ workflow.",
-    "Gom finding → fix theo CLASS (không chỉ instance) → rồi mới stop.",
+    "Finding P0/P1: sửa ngay trong PR này (theo CLASS, không chỉ instance) rồi review lại.",
+    "Finding P2/P3: KHÔNG sửa trong PR (mỗi lần sửa là lần sửa mới, gate đòi review lại) — tạo thẻ Backlog (skill createTask)",
+    "  rồi ghi số thẻ vào báo cáo.",
+    "`ocr-review` ra mode delegate (không có LLM endpoint): không cần giao spec cho agent thứ hai — gọi `ocr-review` TRƯỚC",
+    "  lời gọi Agent review (cùng một tin nhắn được, lệnh OCR đứng trước); một agent review sau nó là đủ.",
 ]
 if ocr_missing:   # the agent review is done: say exactly what is left
     lines = [
@@ -1007,8 +1067,12 @@ if ocr_missing:   # the agent review is done: say exactly what is left
         *(['  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm>'] if need_ws else []),
         *([f'  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm khác> --from {since_base[:12]}'
            "   (phần đã commit sau lần xác minh cuối: lệnh không --from chỉ xem phần chưa commit)"] if since else []),
-        "rồi xử lý từng phát hiện (sửa, hoặc nói vì sao không); sửa code thì review lại. Máy chưa có LLM endpoint thì lệnh tự rơi về",
-        "spec delegation: giao spec đó cho một reviewer agent SAU lần chạy đó. Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
+        "rồi xử lý phát hiện: P0/P1 sửa ngay trong PR (sửa code thì review lại); P2/P3 không sửa trong PR, tạo thẻ Backlog (skill",
+        "createTask) và ghi số thẻ vào báo cáo. Máy chưa có LLM endpoint thì lệnh tự rơi về spec delegation (mode delegate): không cần",
+        "giao spec cho agent thứ hai — gọi `ocr-review` đúng phạm vi trên TRƯỚC lời gọi Agent review (cùng một tin nhắn được, lệnh OCR",
+        "đứng trước), một agent review sau nó là đủ. Đừng cắt output của lệnh (| tail, | head): gate nhận fallback qua dòng đầu",
+        "'no valid LLM endpoint' / 'LLM endpoint unusable'.",
+        "Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
         *([f"OCR theo nội dung đã phủ {len(ws_mapped) + len(range_mapped)} file; còn lệch: {', '.join(ocr_delta[:10])}"]
           if (ws_mapped or range_mapped) and ocr_delta else []),
         "",

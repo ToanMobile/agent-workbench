@@ -121,7 +121,7 @@ _GATE = "post-fix-gate.py"
 _PYTHON = re.compile(r"python(?:\d+(?:\.\d+)*)?")
 _ASSIGN = re.compile(r"[A-Za-z_]\w*=")
 # cờ post-fix-gate được phép ở việc nhẹ; cờ khác (--full, --force-full, --since, --tree, --staged, --matrix, viết tắt argparse…) ⇒ nặng
-_LIGHT_FLAGS = {"--run-tests", "--scoped", "--brief", "--json", "--no-cache", "--no-fail-fast", "--no-checklist"}
+_LIGHT_FLAGS = {"--run-tests", "--scoped", "--brief", "--json", "--no-cache", "--no-fail-fast", "--fail-fast", "--no-checklist"}
 _LIGHT_VALUE_FLAGS = {"--diff", "--task", "--lang", "-l", "--timeout"}   # --session/--transcript đổi base của gate ⇒ nặng
 
 
