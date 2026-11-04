@@ -408,9 +408,12 @@ dk_fail_lines() { # <log>
     END { if (k > cap) printf "… còn %d dòng hỏng nữa\n", k - cap; if (k) print "… (20 dòng cuối)" }' "$1" "$1" </dev/null 2>/dev/null
 }   # </dev/null: awk giả đọc stdin (test_run_impacted_order.sh) không treo khi chạy tay ở terminal (T0183)
 rc=0; n_reuse=0; n_ran=0
+# 03/11 (merge gate #940): cây bị xoá giữa lượt (scratch merge gate) ⇒ mọi file "biến mất"; bỏ qua chúng là PASS ran=0 — xanh sai.
+# Kit mất ⇒ FAIL; test đã khởi chạy (có .log/.rc) thì luôn lấy rc thật dù file không còn; tên chưa từng chạy (test bị xoá trong PR) mới bỏ qua.
+[ -d "$DK/tests" ] || { echo "✖ run_impacted.sh: thư mục kit $DK biến mất giữa lượt — không có kết quả, không bao giờ PASS"; rc=1; }
 for t in $selected; do
-  [ -f "$t" ] || continue
   o="$out/$(printf '%s' "$t" | tr '/' '_')"
+  [ -f "$t" ] || [ -e "$o.rc" ] || [ -e "$o.log" ] || continue
   if is_reused "$t"; then
     age="$(awk -F'\t' -v t="$t" '$1 == "reuse" && $2 == t { print $3; exit }' "$out/ptc.plan")"
     echo "↺ $t (PASS dùng lại trên cùng cây, chạy thật $((${age:-0} / 60)) phút trước)"
