@@ -94,4 +94,38 @@ if [ "$r6a $RC" = "0 0" ] && [ "$(echo "$d" | cut -d' ' -f2)" = 1 ] && ! grep -q
   ok "K6. lượt --all: khoá cả cây, đổi F thì b chạy lại"
 else fail "K6. exit $r6a $RC (mong 0 0), chạy thêm a b c d = $d (mong b = 1)"; grep -E "^[↺✔✖]" "$TMP/out6b"; fi
 
+# K7. selection_inputs không được phụ thuộc thứ tự duyệt set (PYTHONHASHSEED): hub lõi hub.sh nhắc n1.sh (lõi) và n2.sh (không lõi), n2.sh
+#     nhắc n1.sh, n1.sh chạy test_x.sh. Vòng mở hub từng bỏ qua n1 khi n2 đã chạm tới nó trước (n1 chỉ được VÀO, không mở) ⇒ test_x.sh có
+#     hay không tuỳ seed (đo 04/11 trên bản sao agent-workbench, 117 test cùng cây: lượt plan thứ hai chỉ dùng lại 2/117) và một lượt rút
+#     tập nhỏ có thể trùng khoá cũ sau khi test_x.sh đổi (PASS sai). Mọi seed phải cho cùng một tập, có test_x.sh.
+R2="$TMP/repo2"; K2="$R2/universal-agent-devkit"
+mkdir -p "$K2/tests/gates" "$K2/bin" "$R2/.agents"
+git -C "$R2" init -q -b main . && git -C "$R2" config user.email t@t && git -C "$R2" config user.name t
+cp "$DEVKIT_DIR/tests/run_impacted.sh" "$K2/tests/run_impacted.sh"; echo '# trống' > "$K2/tests/impact_map.txt"
+printf '[core]\nuniversal-agent-devkit/bin/hub.sh\nuniversal-agent-devkit/bin/n1.sh\n' > "$R2/.agents/gate-core.txt"
+printf 'DK="$(cd "$(dirname "$0")/../.." && pwd)"\nbash "$DK/bin/hub.sh"\n' > "$K2/tests/gates/test_t.sh"
+printf 'DK="$(cd "$(dirname "$0")/.." && pwd)"\nbash "$DK/bin/n1.sh"\nbash "$DK/bin/n2.sh"\n' > "$K2/bin/hub.sh"
+printf 'DK="$(cd "$(dirname "$0")/.." && pwd)"\nbash "$DK/bin/n1.sh"\n' > "$K2/bin/n2.sh"
+printf 'DK="$(cd "$(dirname "$0")/.." && pwd)"\nbash "$DK/tests/gates/test_x.sh"\n' > "$K2/bin/n1.sh"
+printf 'echo x\n' > "$K2/tests/gates/test_x.sh"
+git -C "$R2" add -A && git -C "$R2" commit -qm init
+sets=""; miss=0
+for seed in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  s="$(cd "$R2" && PYTHONHASHSEED=$seed python3 - "$DEVKIT_DIR/bin" "$R2" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import suite_cache
+sc = suite_cache.SuiteCache(sys.argv[2], [], None, {}, "x", 0, {})
+got = sc.selection_inputs("universal-agent-devkit/tests/run_impacted.sh", ["tests/gates/test_t.sh"])
+print(",".join(sorted(got)) if got is not None else "NONE")
+PY
+)"
+  case ",$s," in *,universal-agent-devkit/tests/gates/test_x.sh,*) ;; *) miss=$((miss + 1)) ;; esac
+  sets="$sets$s
+"
+done
+nd="$(printf '%s' "$sets" | sort -u | grep -c .)"
+if [ "$nd" = 1 ] && [ "$miss" = 0 ]; then ok "K7. selection_inputs như nhau ở 16 seed, có test_x.sh (n1 lõi luôn được mở)"
+else fail "K7. selection_inputs: $nd tập khác nhau qua 16 seed, $miss seed thiếu test_x.sh (mong 1 tập, 0 thiếu)"; fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_per_test_input_key: all passed" || { echo "❌ test_gate_per_test_input_key: $FAILS failed"; exit 1; }
