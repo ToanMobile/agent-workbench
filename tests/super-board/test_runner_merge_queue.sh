@@ -234,9 +234,14 @@ mv "$TMP/mq.off" "$TMP/bin/super-board-merge-queue.sh"
 reset; export SB_MERGE_QUEUE=1 MQ_SLEEP=3 MQ_RC=79
 t0=$(date +%s); ( merge_queue_due ); r=$?; t1=$(date +%s)
 { [ "$r" = 0 ] && [ $((t1 - t0)) -lt 2 ]; } && ok "#537: a running batch does not hold the tick (merge_queue_due returned in $((t1 - t0)) s while the gatherer runs 3 s)" || fail "#537: merge_queue_due blocked the tick: rc=$r took $((t1 - t0)) s"
+# #799: dưới tải bộ gom nền có thể chưa kịp ghi mq-calls khi tick 2 chạy và khi đếm. Chờ sự kiện thay cho giờ cứng (mỗi vòng tối đa 30 s):
+# bộ gom 1 đã ghi dòng gọi trước tick 2; đếm sau khi bộ gom 1 ghi .mq.rc, để bộ gom thứ hai (nếu tick 2 lỡ khởi) cũng đã kịp ghi dòng của nó.
+mq_rcf="$TMP/repo/.claude/super-board/runner/$CONFIG_SLUG.mq.rc"
+i=0; while [ ! -s "$TMP/mq-calls" ] && [ "$i" -lt 150 ]; do sleep 0.2; i=$((i + 1)); done
 ( merge_queue_due ); r=$?
+i=0; while [ ! -f "$mq_rcf" ] && [ "$i" -lt 150 ]; do sleep 0.2; i=$((i + 1)); done
 { [ "$r" = 0 ] && [ "$(wc -l < "$TMP/mq-calls" | tr -d ' ')" = 1 ]; } && ok "  … a second tick while the batch runs starts no second gatherer" || fail "second tick restarted the gatherer: rc=$r calls=$(cat "$TMP/mq-calls" 2>/dev/null)"
-sleep 4; ( merge_queue_due ); r=$?
+( merge_queue_due ); r=$?
 [ "$r" = 79 ] && ok "  … the next tick after it ends collects its exit code (79 halts the runner)" || fail "background exit 79 not collected: rc=$r"
 reset; export SB_MERGE_QUEUE=1 MQ_RC=79; ( SB_MQ_TICK_WAIT=10 merge_queue_due ); r=$?
 [ "$r" = 79 ] && ok "  … a gatherer that ends inside the tick wait is collected in the same tick (halt 79 not delayed)" || fail "fast gatherer not collected in the same tick: rc=$r"

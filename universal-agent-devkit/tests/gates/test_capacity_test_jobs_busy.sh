@@ -270,7 +270,9 @@ try:
         f"sim_py={sim_py} sim_c={out_sim_c!r} sim_l={out_sim_l!r}(want {want_b1})",
     )
 
-    # Khi 3 slot trống và rank >= 1 thăm cả 3 slot: chỉ giữ got[0] -> đúng 1 file .held (got[1:] nhả ra không có marker)
+    # Khi 3 slot trống và rank >= 1 thăm cả 3 slot: chỉ giữ got[0] -> đúng 1 file .held (got[1:] nhả ra không có marker).
+    # #938 (#914 mục 2): vé đứng trước giữ chỗ chỉ số trống NHỎ nhất (gate-1), nên lượt interactive này nhận gate-2
+    # (trước #938 vé đứng trước giữ chỉ số lớn nhất và lượt này nhận gate-1; ca 2c đỏ trên main từ 67e83b3c).
     rank_dir = os.path.join(TMP, "rank_slots")
     qdir = os.path.join(rank_dir, "queue", "gate")
     os.makedirs(qdir, exist_ok=True)
@@ -297,7 +299,7 @@ try:
         chk(
             not leased.timed_out
             and probed_locks == ["gate-1.lock", "gate-2.lock", "gate-3.lock"]
-            and held_only_one == ["gate-1.lock.held"]
+            and held_only_one == ["gate-2.lock.held"]
             and held_body == str(os.getpid())
             and during_two == 2
             and held_gone

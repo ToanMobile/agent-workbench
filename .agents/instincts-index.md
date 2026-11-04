@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (824 dòng, 91.8 KB) · 99 mục
+> **Tệp gốc:** `.agents/instincts.md` (832 dòng, 93.1 KB) · 100 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -101,4 +101,4 @@
 - [INSTINCT-102] Phân loại rủi ro theo diff chỉ xét đường dẫn mới của rename — `sed -n '803,810p' .agents/instincts.md`
 - [INSTINCT-103] Test miễn trừ (exemption) dùng câu không chạm luật nào nên không phân biệt được — `sed -n '811,818p' .agents/instincts.md`
 - [INSTINCT-104] Cho qua đích redirect có $BIẾN không biết bằng 'tiền tố đã biết' là lớp lỗ không đóng được: 4 vòng… — `sed -n '819,824p' .agents/instincts.md`
-
+- [INSTINCT-105] run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main — `sed -n '828,832p' .agents/instincts.md`
