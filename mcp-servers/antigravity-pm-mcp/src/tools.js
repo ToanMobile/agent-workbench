@@ -860,12 +860,14 @@ export const TOOLS = [
         const scoped = Boolean(range.base) && !args.message && range.edited.length <= 200;
         let auditDir = cfg.projectRoot;
         let wtTam = null;
+        let hookDaChep = [];
         let promptFile; let at; let r; let stAfter; let headAfter;
         try {
           if (wantCommit !== undefined) {
             const w = await auditWorktree(cfg, head);
             if (w.error) fail(`Khong tao duoc worktree tam o ${head}: ${w.error}`);
             wtTam = w.dir;
+            hookDaChep = w.copied || [];
             auditDir = wtTam;
           }
           // File thuoc change set base..head khong bao gio duoc bo qua; khong do duoc change set (khong co goc / git loi) => khong bo qua gi.
@@ -933,6 +935,7 @@ export const TOOLS = [
           phase: 'AUDIT', verdict, reviewer: 'grok', model: GROK_MODEL, auditedHead: head, findings: [],
           notes: `Grok thay Antigravity (agy bi gioi han): PM tu chay grok ${GROK_MODEL} --permission-mode plan; VERDICT: ${v.lines.join(', ') || '(khong co)'}`
             + `${stAfter.ignored?.length ? `; file DevKit tu sinh da bo qua: ${stAfter.ignored.join(', ')}` : ''}`
+            + `${hookDaChep.length ? `; hook chua track chep vao worktree tam (khong thuoc commit): ${hookDaChep.slice(0, 12).join(', ')}${hookDaChep.length > 12 ? ` va ${hookDaChep.length - 12} file nua` : ''}` : ''}`
             + `${why.length ? `; loi: ${why.join('; ')}` : ''}; log: ${logFile}`,
         }, null, 2)}\n`);
         const reportSha256 = hashFile(repFile);

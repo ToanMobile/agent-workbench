@@ -980,6 +980,27 @@ test('H17 #987 commit=<sha>: worktree tam co hook chua-track cua project; file h
   }
 });
 
+// Review (P2 an ninh): commit duoc audit track `.claude` la SYMLINK ra ngoai => buoc chep hook khong duoc ghi ra ngoai worktree tam
+// (noi dung PR khong duoc chon cho PM ghi vao dau), va viec do khong lam hong lan audit.
+test('H18 #987 commit=<sha> track .claude la symlink ra ngoai: khong ghi gi ra ngoai worktree tam; audit van chay', async () => {
+  const { dir, cfg, task } = repo();
+  const outside = tmpDir('agpm-outside-');
+  try {
+    fs.symlinkSync(outside, path.join(dir, '.claude'));                                    // commit track .claude -> ngoai
+    execFileSync('git', ['add', '.claude'], { cwd: dir });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'claude symlink'], { cwd: dir });
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+    fs.rmSync(path.join(dir, '.claude'));                                                  // cay chinh: lai la thu muc that co hook
+    writeFile(path.join(dir, '.claude', 'hooks', 'guard-x.py'), 'chua-track\n');
+    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', commit: head }));
+    assert.deepEqual(fs.readdirSync(outside), [], 'khong duoc ghi gi vao thu muc ngoai worktree tam');
+    assert.equal(disk(cfg, task).dispatches.at(-1).auditedHead, head);
+  } finally {
+    cleanup(outside);
+    cleanup(dir);
+  }
+});
+
 test('H7 #987 commit=<sha>: grok audit commit do trong worktree tam (khong can cay chinh sach), auditedHead = sha, worktree tam bi go', async () => {
   const { dir, cfg, task, head } = repo();
   try {
