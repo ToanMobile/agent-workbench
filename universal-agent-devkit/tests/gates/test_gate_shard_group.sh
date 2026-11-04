@@ -6,7 +6,8 @@
 #   3. the group holds ONE heavy slot while its members run (each shard is a cpu suite: three would fill heavy_max)
 #   4. a red shard does not skip a sibling of its group (fail-fast #647 spares the group), the gate still fails
 #   5. DEVKIT_GATE_PARALLEL=0: one after another, no pool
-#   6. a run_impacted.sh suite without the DEVKIT_IMPACTED_DIRS= prefix (not a shard) never joins: no pool
+#   6. a run_impacted.sh suite without the DEVKIT_IMPACTED_DIRS= prefix (not a shard) never joins: no pool; a DEVKIT_TEST_POOL_DIR /
+#      DEVKIT_JOB_POOL in the caller's env never reaches a suite (suite_env drops them, INSTINCT-046)
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 export VACUITY_REVERT=0
@@ -96,8 +97,8 @@ else bad "5: exit $RC, env: $(tr '\n' ' ' < "$MARK/env")"; fi
 
 # 6. not a shard (no DEVKIT_IMPACTED_DIRS= prefix): never grouped
 make_repo "$(printf '{"id":"REG-P-1","name":"p","command":"bash tests/run_impacted.sh","parallel_safe":true}'),$(printf '{"id":"REG-P-2","name":"p","command":"bash tests/run_impacted.sh --all","parallel_safe":true}')"
-WANT=1 run_gate
-if [ "$RC" = 0 ] && ! grep -q 'pool=/' "$MARK/env"; then ok "6: a run_impacted.sh suite that is not a shard does not join a group"
+WANT=1 DEVKIT_TEST_POOL_DIR="$TMP" DEVKIT_JOB_POOL=x run_gate   # 6b (INSTINCT-046): a pool variable of the caller never reaches a suite
+if [ "$RC" = 0 ] && ! grep -q 'pool=/' "$MARK/env"; then ok "6: a run_impacted.sh suite that is not a shard does not join a group, nor the caller's pool"
 else bad "6: exit $RC, env: $(tr '\n' ' ' < "$MARK/env")"; fi
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS ($FAILS)"; exit 1; }

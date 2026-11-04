@@ -5520,6 +5520,8 @@ def suite_env():
             # #644: danh sách --scoped chỉ cho runner kit (run_in_group gắn lại): suite khác chép runner thật rồi hỏi --list thì thấy nó
             "DEVKIT_SCOPED_TESTS",
             "DEVKIT_IMPACTED_DIRS",   # #616: shard do tiền tố của lệnh ma trận đặt; biến có sẵn trong môi trường không được thu hẹp suite không tiền tố
+            # 04/11: bể test chung của nhóm shard (tests/lib/job_pool.py) là của MỘT lượt gate: nhóm tự đặt lại sau suite_env(), suite khác không vào bể
+            "DEVKIT_TEST_POOL_DIR", "DEVKIT_JOB_POOL",
             # #528: cờ của worker board không được lọt vào suite — gate lồng sẽ bỏ qua main
             "SB_BOARD_WORKER", "SB_MERGE_CALLER", "SB_MERGE_QUEUE", "SB_REPO_PATH",
             "SB_GITHUB_READ_STRICT"}

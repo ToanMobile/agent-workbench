@@ -7,6 +7,7 @@
 #      the pool its parent holds, nor run the pinned count of tests inside one slot.
 #   d. a red test of one runner stays red (rc 1, ✖ line), the other runner is not touched.
 #   e. a pool dir that does not exist: the runner runs as before (no wait, every test ran).
+#   f. tests/lib/clean_git_env.sh unsets the pool variables (INSTINCT-046).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -85,5 +86,9 @@ export RUN_LOG="$TMP/e.run" ENV_LOG="$TMP/e.env" CONC_DIR="$TMP/e.conc"; mkdir -
 OUT="$(cd "$K" && DEVKIT_IMPACTED_DIRS=gates DEVKIT_TEST_JOBS=5 DEVKIT_TEST_POOL_DIR="$TMP/nowhere" bash tests/run_impacted.sh --all 2>&1)"; RC=$?
 [ "$RC" = 0 ] && [ "$(peak "$TMP/e.run")" -gt 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c '^✔')" = 5 ] \
   && ok "e: a missing pool dir runs the tests as before (5 passed, $(peak "$TMP/e.run") at once)" || fail "e: rc $RC, peak $(peak "$TMP/e.run")"
+
+# f. tests/lib/clean_git_env.sh unsets the pool variables (INSTINCT-046): a test that sources it never joins a pool it inherited
+f="$(DEVKIT_TEST_POOL_DIR=/x DEVKIT_JOB_POOL=/y bash -c '. "$1"; echo "${DEVKIT_TEST_POOL_DIR:-}${DEVKIT_JOB_POOL:-}"' _ "$DEVKIT_DIR/tests/lib/clean_git_env.sh")"
+[ -z "$f" ] && ok "f: clean_git_env.sh unsets DEVKIT_TEST_POOL_DIR / DEVKIT_JOB_POOL" || fail "f: after clean_git_env.sh: '$f'"
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS ($FAILS)"; exit 1; }
