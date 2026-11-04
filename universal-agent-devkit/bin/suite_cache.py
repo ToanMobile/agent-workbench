@@ -635,7 +635,10 @@ class SuiteCache:
             ran |= sg._reach(p, graph, core)
         # P1 review 02/11: _reach chỉ VÀO file lõi (chống nổ tập CHỌN); với khoá, hub lõi không phải test mà tập chạm tới chạy script theo
         # tên (install.sh → adapters/setup_claude.sh) nên mở hàng xóm không phải test của nó, lặp tới điểm bất động (hub → script → hub2)
-        opened = set()
+        # 04/11: _reach từ MỌI hàng xóm không phải test (mỗi nút một lần), kể cả nút đã trong `ran`: trước đây bỏ qua nút đã có, nên hàng xóm
+        # lõi được mở (cả test nó chạy) hay chỉ được VÀO tuỳ thứ tự duyệt set (PYTHONHASHSEED) — tập input khác nhau giữa hai tiến trình
+        # cùng cây (tests/gates/test_gate_per_test_input_key.sh K7). Nay là hợp của mọi thứ tự: không phụ thuộc thứ tự, không nhỏ hơn bản nào.
+        opened, started = set(), set()
         while True:
             hubs = {c for c in ran & core if c not in opened and not sg.is_test(c)}
             if not hubs:
@@ -643,7 +646,8 @@ class SuiteCache:
             opened |= hubs
             for c in hubs:
                 for n in graph.get(c, ()):
-                    if n not in ran and not sg.is_test(n):
+                    if n not in started and not sg.is_test(n):
+                        started.add(n)
                         ran |= sg._reach(n, graph, core)
         files |= ran
         stack = list(files)

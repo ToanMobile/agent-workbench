@@ -9047,6 +9047,23 @@ def main():
     print(f"  • {tr('Test hồi quy đạt', 'Regression tests passed')}: {tests_passed}/{len(regression_tests)}" + (tr(" (chưa chạy)", " (not run)") if unverified else "")
           + (tr(f" — {len(impacted_run)} lệnh chỉ chạy test bị ảnh hưởng ({impacted_n} test), lệnh đầy đủ CHƯA chạy",
                 f" — {len(impacted_run)} commands ran impacted tests only ({impacted_n} tests), the full commands were NOT run") if impacted_run else ""))
+    # Chủ repo 05/11 ("lỗi 1 chỗ thì chạy lại 1 chỗ thôi"): REJECT in đúng lệnh chạy lại RIÊNG từng chỗ đỏ — shard run_impacted.sh in
+    # `bash <kit>/tests/<test đỏ>` từ dòng "✖ tests/x.sh", suite khác in lệnh của nó. Sổ PASS từng test khoá cả cây (khoá theo input bị rút,
+    # PR #993: đồ thị không thấy file liệt kê lúc chạy ⇒ PASS sai), nên chạy lại cả gate local sau một sửa nhỏ là chạy lại mọi test.
+    if verdict_color == RED:
+        rerun = []
+        for t in regression_tests:
+            if t.get("status") not in ("FAIL", "TIMEOUT"):
+                continue
+            cmd = t.get("command") or ""
+            m = re.search(r"(\S*)tests/run_impacted\.sh\b", cmd)
+            reds = [l[2:].strip() for l in t.get("fail_lines") or [] if RED_TEST_LINE.match(l)] if m else []
+            rerun += [f"bash {m.group(1)}{r}" for r in reds] or [cmd]
+        if rerun:
+            print(f"  • {tr('Chạy lại riêng các chỗ đỏ (không chạy lại cả gate local):', 'Re-run only the red parts (not the whole local gate):')}")
+            for c in list(dict.fromkeys(rerun))[:20]:
+                print(f"      `{c}`")
+            print(f"    {tr('Repo đi PR: sửa, chạy lại đúng các lệnh trên, commit + push; merge gate verify cả bộ một lần.', 'PR repo: fix, re-run exactly these commands, commit + push; the merge gate verifies the whole set once.')}")
     if getattr(args, "core_touched", None):   # #741: lượt --scoped chạm lõi không leo full — dòng này nằm trong --brief cho review 2/2
         print(f"  • {YELLOW}core-touched{RESET}: {', '.join(args.core_touched[:10])}" + (" …" if len(args.core_touched) > 10 else ""))
     if getattr(args, "scoped_not_run", None):   # #741: test chạm diff mà không suite nào của ma trận chạy đúng môi trường
