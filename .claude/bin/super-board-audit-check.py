@@ -11,9 +11,9 @@ pm_home_test_fixture, audit T0066 vòng 3). `--pr N`: head chưa có object tron
 CLI: super-board-audit-check.py <task_id> <sha40> [--top DIR] [--pr N]   exit 0 = khớp, 1 = không khớp / không kiểm được.
 CLI: super-board-audit-check.py --chain-audit <sha40> --base <ref> [--top DIR]   (04/11, merge gate / train --has-edited-tests)
      exit 0 = PR sửa/xoá file đã có mà gate có thể coi là test (edited_existing) VÀ có biên bản audit pass của antigravity-pm với
-     auditedHead thuộc <base>..<sha40> (duyệt test sửa tra thẳng biên bản, post-fix-gate _pm_audit_cross_review), HOẶC không kiểm được
-     (giữ đường bi quan: khoá, không autosync); exit 1 = không có (PR chỉ có audit lớn mà không sửa test thì không bi quan); mã khác
-     (lỗi nạp, sai tham số) = bi quan.
+     auditedHead thuộc <base>..<sha40> (duyệt test sửa tra thẳng biên bản, post-fix-gate _pm_audit_cross_review);
+     exit 1 = không có (PR chỉ có audit lớn mà không sửa test thì không bi quan); exit 3 = không kiểm được (lỗi nạp kit / git): người
+     gọi giữ đường bi quan (khoá, không autosync) nhưng không coi là có duyệt gắn head.
 """
 from __future__ import annotations
 
@@ -137,10 +137,14 @@ def edited_existing(top, sha, base, gate):
     spec = importlib.util.spec_from_file_location("sb_post_fix_gate", Path(gate.__file__).with_name("post-fix-gate.py"))
     pfg = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pfg)
-    # Ma trận đọc ở `base` như gate (Grok review 04/11), không ở cây làm việc. Không có ở base = gate không có script suite để theo.
-    have = subprocess.run(["git", "-C", top, "cat-file", "-e", f"{base}:{gate.MATRIX}"], capture_output=True, timeout=60)
-    matrix = git("cat-file", "-p", f"{base}:{gate.MATRIX}") if have.returncode == 0 else ""
-    toks, names = _tokens(matrix)
+    # Ma trận đọc ở `base` như gate (Grok review 04/11), không ở cây làm việc; và ở head PR (review P2-1: gate tin rule PR nối thêm,
+    # post-fix-gate trust_additive_matrix). Không có ở một commit = commit đó không có script suite để theo.
+    toks, names = set(), set()
+    for ref in (base, sha):
+        have = subprocess.run(["git", "-C", top, "cat-file", "-e", f"{ref}:{gate.MATRIX}"], capture_output=True, timeout=60)
+        t, n = _tokens(git("cat-file", "-p", f"{ref}:{gate.MATRIX}") if have.returncode == 0 else "")
+        toks |= t
+        names |= n
     files = [f for f in git("ls-tree", "-r", "--name-only", "-z", base).split("\0") if f]
     followed = set()
     for _depth in range(2):                         # script ma trận nhắc, rồi script mà chúng nhắc
@@ -157,22 +161,22 @@ def edited_existing(top, sha, base, gate):
 
 def chain_audit(sha, base, top=None):
     """True khi PR (head sha) có thể đang dựa vào duyệt test sửa tra thẳng từ biên bản PM: PR sửa file test đã có (edited_existing) và
-    một audit pass của repo có auditedHead trong `git rev-list sha --not base` (tổ tiên-hoặc-chính head PR, không thuộc base). Lỗi /
-    không kiểm được → True (fail về phía bi quan)."""
+    một audit pass của repo có auditedHead trong `git rev-list sha --not base` (tổ tiên-hoặc-chính head PR, không thuộc base); False khi
+    không. Không kiểm được (không tìm thấy kit, lỗi git) → None: người gọi giữ đường bi quan, không coi là có duyệt."""
     top = top or repo_top()
     gate = push_gate()
     if not top or gate is None or not isinstance(sha, str) or not SHA.fullmatch(sha) or not base:
-        return True
+        return None
     try:
         if not edited_existing(top, sha, base, gate):
             return False
         heads = gate.audited_heads(top)
         run = subprocess.run(["git", "-C", top, "rev-list", sha, "--not", base], capture_output=True, text=True, timeout=60)
-    except Exception as error:   # noqa: BLE001 - biên bản / git hỏng: giữ đường bi quan
+    except Exception as error:   # noqa: BLE001 - biên bản / git hỏng: không kiểm được
         print(f"audit-check: cannot read the audit records: {error.__class__.__name__}", file=sys.stderr)
-        return True
+        return None
     if run.returncode != 0:
-        return True
+        return None
     pr_commits = set(run.stdout.split())
     return any(h in pr_commits for _tid, h in heads)
 
@@ -185,10 +189,11 @@ def main():
         cp.add_argument("--top")
         cargs = cp.parse_args(sys.argv[2:])
         try:
-            return 0 if chain_audit(cargs.sha, cargs.base, cargs.top) else 1
-        except Exception as error:   # noqa: BLE001 - lỗi nạp push_gate / repo: bi quan, không bao giờ là "không có"
+            got = chain_audit(cargs.sha, cargs.base, cargs.top)
+        except Exception as error:   # noqa: BLE001 - lỗi nạp push_gate / repo: không kiểm được, không bao giờ là "không có"
             print(f"audit-check: --chain-audit failed: {error.__class__.__name__}", file=sys.stderr)
-            return 3
+            got = None
+        return 3 if got is None else 0 if got else 1
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("task_id")
     ap.add_argument("sha")

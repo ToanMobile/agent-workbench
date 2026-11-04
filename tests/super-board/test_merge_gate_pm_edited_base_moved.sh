@@ -6,6 +6,8 @@
 #  G2 merge train: như G1 -> không gate-exit-2 trước chuỗi, merge (code cũ: exit 2).
 #  G3 đối chứng: duyệt bằng comment edited-tests (đường cũ) + main tiến -> vẫn exit 2 stale như #643.
 #  G4 duyệt từ biên bản PM nhưng verify_commands không chạy post-fix-gate -> vẫn exit 2 (không ai kiểm lại trên base mới).
+#  G5 như G4 qua train.  G6 duyệt từ biên bản PM: biên nhận cây không bỏ verify (lượt grok sau có thể REVISE).
+#  G7 verify có gate = token post-fix-gate.py nguyên.
 # Chạy offline với gh giả. Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -135,5 +137,32 @@ card 4 0; advance_main; reset_run
 rc=$?
 if [ "$rc" -eq 2 ] && grep -q "edited-test review is stale before fast-forward" "$TMP/g4.log"; then ok "G4: verify không chạy gate -> vẫn exit 2"
 else fail "G4: exit $rc: $(tail -6 "$TMP/g4.log" | tr '\n' ' ')"; fi
+
+# G5. train, biên bản PM, main tiến, verify KHÔNG chạy post-fix-gate -> vẫn gate-exit-2 trước chuỗi (đối xứng G4)
+card 5 0; advance_main; reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg-nogate.json" --prs 5 --lock-timeout 20 ) >"$TMP/g5.log" 2>&1
+rc=$?
+if [ "$rc" -eq 2 ] && grep -q "^train-result: 5 gate-exit-2$" "$TMP/g5.log"; then ok "G5: train, verify không chạy gate -> vẫn exit 2"
+else fail "G5: exit $rc: $(grep -E 'train-|stale' "$TMP/g5.log" | tail -3 | tr '\n' ' ')"; fi
+
+# G6 (review vòng cuối P2-2). duyệt từ biên bản PM: biên nhận cây đã lưu KHÔNG được bỏ verify — lượt grok sau (cùng head) có thể đã
+#     REVISE, chỉ post-fix-gate trong verify đọc lại được biên bản. Hai lượt dry-run liên tiếp -> verify chạy cả hai lần.
+card 6 0; reset_run
+for i in 1 2; do
+  ( cd "$W/review" && bash "$GATE" --config "$TMP/cfg.json" --pr 6 --expect-head "$(cat "$TMP/pr6.head")" --subject card --lock-timeout 20 --dry-run ) >"$TMP/g6-$i.log" 2>&1
+done
+runs6=$( [ -f "$TMP/verify.count" ] && wc -l < "$TMP/verify.count" | tr -d ' ' || echo 0)
+if [ "$runs6" = 2 ]; then ok "G6: duyệt từ biên bản PM -> không tin biên nhận cây, verify chạy lại (2 lần)"
+else fail "G6: verify chạy $runs6 lần (muốn 2): $(grep -iE 'receipt|verif' "$TMP/g6-2.log" | tail -3 | tr '\n' ' ')"; fi
+
+# G7 (review vòng cuối P3-1): "verify chạy post-fix-gate" là token post-fix-gate.py nguyên (cùng luật chèn cờ), không phải chuỗi con
+. "$ROOT/.claude/bin/super-board-verify-flags.sh"
+g7=""
+sb_verify_runs_gate "python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --brief" || g7="$g7 thật"
+sb_verify_runs_gate "npm test" "cd x && python3 bin/post-fix-gate.py" || g7="$g7 lệnh-sau"
+sb_verify_runs_gate "bash scripts/post-fix-gate-lite.sh" && g7="$g7 lite"
+sb_verify_runs_gate "echo post-fix-gate; npm test" && g7="$g7 echo"
+sb_verify_runs_gate "npm test" && g7="$g7 npm"
+[ -z "$g7" ] && ok "G7: chỉ token post-fix-gate.py nguyên là verify có gate" || fail "G7: sai ở:$g7"
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

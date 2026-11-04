@@ -915,16 +915,29 @@ OPT_LEFT=${SB_MERGE_OPTIMISTIC_RETRIES:-2}
 OPT_LEFT=$((10#$OPT_LEFT))
 [ "$PESSIMISTIC" -eq 0 ] || OPT_LEFT=0
 EDITED=""   # rỗng = chưa hỏi; 1 = PR có test bị sửa (#643)
-EDITED_SRC=""   # true = duyệt từ comment edited-tests; pm = từ biên bản antigravity-pm (04/11)
-# verify_runs_gate: 0 khi một lệnh verify chạy post-fix-gate (kiểm lại duyệt test sửa trên cây gộp với base hiện tại).
-verify_runs_gate() { local c; for c in "${VERIFY[@]}"; do case "$c" in *post-fix-gate*) return 0 ;; esac; done; return 1; }
+EDITED_SRC=""   # true = duyệt từ comment edited-tests; pm = từ biên bản antigravity-pm; pm-unknown = không kiểm được biên bản (04/11)
+# verify_runs_gate: 0 khi một lệnh verify chạy post-fix-gate.py (kiểm lại duyệt test sửa trên cây gộp với base hiện tại).
+verify_runs_gate() { sb_verify_runs_gate "${VERIFY[@]}"; }
+# edited_query: EDITED / EDITED_SRC một lần mỗi lượt (#643; 04/11: pm = duyệt tra thẳng biên bản antigravity-pm). Lỗi bộ kiểm: thoát mã đó.
+edited_query() {
+  local et_rc
+  [ -z "$EDITED" ] || return 0
+  if EDITED_SRC=$(bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" \
+      --top "$REPO_PATH" --base "$BASE_SHA" 2>/dev/null); then
+    EDITED=1
+  else
+    et_rc=$?
+    [ "$et_rc" -eq 1 ] || exit "$et_rc"
+    EDITED=0
+  fi
+}
 # #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA.
 REVIEWED_HEAD=$HEAD_SHA
 # prove_tree: mọi thứ phụ thuộc base, tính lại cho cây scratch HIỆN TẠI (BASE_SHA của vòng này): biên nhận train / cây (#226), exit 12
 # (--require-receipt), ancestry của duyệt test sửa (exit 2), số commit chậm hơn base. PR có test bị sửa lấy khoá ngay sau kiểm ancestry,
 # TRƯỚC verify (như trước PR3): base dời sau đó là exit 2 chắc chắn nên verify ngoài khoá vô ích. Gọi như câu lệnh thường.
 prove_tree() {
-  local tree et_rc
+  local tree
   tree=$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')
   # Nhánh chậm hơn base nhưng merge scratch sạch: verify trên cây đã gộp. Timeout phía dưới vẫn thử lại một lần.
   TRAIN_PROVED=0; TREE_PROVED=0
@@ -936,7 +949,16 @@ prove_tree() {
   # sau (vd. lượt trước thoát exit 4 sau verify) trên đúng cây gộp và đúng bộ lệnh bỏ verify. Base đổi, head đổi hay lệnh đổi: khoá khác.
   TREE_RECEIPT=$(sb_verified_tree_receipt "$tree" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
   TREE_KEY=${TREE_RECEIPT##*/}
-  if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
+  if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then
+    # 04/11 (review P2-2): duyệt test sửa tra thẳng biên bản PM không nằm trong khoá biên nhận (cây + lệnh): lượt grok sau trên cùng head
+    # có thể đã REVISE. Verify (post-fix-gate) phải đọc lại biên bản — không dùng biên nhận cây cho PR đó.
+    edited_query
+    if [ "$EDITED_SRC" = pm ] || [ "$EDITED_SRC" = pm-unknown ]; then
+      say "tree receipt ${TREE_KEY:0:12} not used: the edited-test approval comes from the antigravity-pm record ($EDITED_SRC), which verify must re-read"
+    else
+      TRAIN_PROVED=1; TREE_PROVED=1
+    fi
+  fi
   # #676: --require-receipt (train): cây gộp với base HIỆN TẠI chưa được chứng minh (base dời sau verify của train) ⇒ không verify ở
   # gate; thoát 12 (lần đầu: chưa lấy khoá; trong khoá ngắn: trap EXIT thả khoá) TRƯỚC khối #643 và bước cài DevKit, để train verify
   # lại ngoài khoá rồi gọi lại.
@@ -947,19 +969,11 @@ prove_tree() {
   # #643: exit 2 chỉ khi train chưa chứng minh cây này, comment edited-tests còn đúng head (04/11: hoặc biên bản PM có audit pass trên
   # base..head — duyệt tra thẳng biên bản), và base không còn là tổ tiên của head đó.
   if [ "$TRAIN_PROVED" -eq 0 ]; then
-    if [ -z "$EDITED" ]; then
-      if EDITED_SRC=$(bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" \
-          --top "$REPO_PATH" --base "$BASE_SHA" 2>/dev/null); then
-        EDITED=1
-      else
-        et_rc=$?
-        [ "$et_rc" -eq 1 ] || exit "$et_rc"
-        EDITED=0
-      fi
-    fi
+    edited_query
     # 04/11: duyệt tra thẳng biên bản PM (EDITED_SRC=pm) không cũ khi base dời NẾU verify chạy post-fix-gate (trong khoá, trên base hiện
-    # tại, audit_covers kiểm main không đổi file test — Grok review). Comment #643 và verify không có gate: base phải là tổ tiên head.
-    if [ "$EDITED" -eq 1 ] && { [ "$EDITED_SRC" != pm ] || ! verify_runs_gate; } \
+    # tại, audit_covers kiểm main không đổi file test — Grok review). Comment #643 (true), và pm khi verify không có gate: base phải là tổ
+    # tiên head. pm-unknown (không kiểm được biên bản) không phải duyệt gắn head: chỉ khoá, không exit 2.
+    if [ "$EDITED" -eq 1 ] && { [ "$EDITED_SRC" = true ] || { [ "$EDITED_SRC" = pm ] && ! verify_runs_gate; }; } \
         && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
       say "edited-test review is stale before fast-forward (origin/${BASE} is not an ancestor of ${REVIEWED_HEAD})"
       exit 2

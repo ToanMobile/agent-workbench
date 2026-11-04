@@ -3,6 +3,14 @@
 # QA và merge gate phải chọn CÙNG tập suite cho cùng cây; nguồn duy nhất của luật chèn cờ là hàm này, gate và
 # super-board-verify-cmd.sh cùng gọi). Đối số thứ ba `json` (chỉ merge gate): thêm cả ` --json` để đọc điều kiện CHƯA XÁC MINH mà REJECT che
 # (#251 R1); --json chỉ đổi định dạng đầu ra, không đổi tập suite. Lệnh không có token đó: in nguyên. Không tách được token: in nguyên, cảnh báo ra stderr.
+# sb_verify_runs_gate <cmd>...: 0 khi một lệnh chạy post-fix-gate.py (token nguyên, như pfg_re dưới đây; không phải chuỗi con
+# `post-fix-gate-lite.sh` hay `echo post-fix-gate`). Merge gate / train: duyệt test sửa tra thẳng biên bản PM chỉ được kiểm lại khi đó.
+sb_verify_runs_gate() {
+  local c re="(^|[[:space:]\"'\`(){};&|=<>])[^[:space:]\"'\`(){};&|=<>]*post-fix-gate[.]py(\$|[[:space:]\"'\`(){};&|<>])"
+  for c in "$@"; do [[ "$c" =~ $re ]] && return 0; done
+  return 1
+}
+
 sb_verify_inject_flags() {
   local cmd="$1" base="$2" want_json="${3:-}" flags="" pfg_re pfg_after pfg_end pfg_rest pfg_args nl=$'\n'
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then

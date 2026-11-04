@@ -6,7 +6,8 @@
 #      (PR + main) -> nhận. P3: thông điệp CHƯA XÁC MINH chỉ cách PM audit, không bảo ghi json.
 #  N1-N8: phiên là grok; audit mới hơn khác blob; pm home lạ không phải fixture; reviewer pm không dispatch (biên bản cũ); auditedHead đã
 #      nằm trên main; mục json tự khai author grok-build; head chỉ còn trong auditHistory; hai biên bản cùng task id (reviewer khác biên bản).
-#  N9-N11: lượt grok không ghi phạm vi; test ngoài danh sách edited; auditBase muộn hơn merge-base.
+#  N9-N11: lượt grok không ghi phạm vi; test ngoài danh sách edited; auditBase muộn hơn merge-base. N12 PASS rồi fail cùng head.
+#  N13 auditBase muộn hơn merge-base dù edited có test.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 unset DEVKIT_AUTO_APPROVE_TESTS DEVKIT_TRANSCRIPTS_DIR TARGET_DIR DEVKIT_AGENT_ID CLAUDE_CODE_SESSION_ID DEVKIT_SESSION_ID CLAUDE_SESSION_ID
@@ -36,8 +37,11 @@ dest, tid, proj, head, scope = sys.argv[1:6]
 g = lambda *a: subprocess.run(["git", "-C", proj, *a], capture_output=True, text=True).stdout.strip()
 disp = {"kind": "audit", "agent": "grok", "at": "2026-11-04T00:00:00Z", "auditedHead": head, "verdict": "pass"}
 if scope != "none":
-    base = g("rev-parse", head + "^") if scope == "late" else g("merge-base", "main", head)
-    ns = g("diff", "--name-status", "--no-renames", base, head).splitlines()
+    mb = g("merge-base", "main", head)
+    base = g("rev-parse", head + "^") if scope in ("late", "latefull") else mb
+    # latefull: auditBase muộn (head^) nhưng edited vẫn liệt kê đủ file như phạm vi merge-base — chỉ luật "auditBase là tổ tiên
+    # merge-base" chặn được (OCR vòng cuối M5)
+    ns = g("diff", "--name-status", "--no-renames", mb if scope == "latefull" else base, head).splitlines()
     edited = [l.split("\t", 1)[1] for l in ns if l[:1] in "MDT"]
     disp.update(auditBase=base, edited=[e for e in edited if e != "tests/t.sh"] if scope == "other" else edited)
 disps = [disp]
@@ -175,5 +179,11 @@ if refused; then ok "N11: auditBase muộn hơn merge-base (không phủ commit 
 mk "$TMP/n12"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1121-n12 "$TMP/n12" "$X" p-n12 refail
 run_gate "$TMP/n12"
 if refused; then ok "N12: lượt grok cuối cùng head là fail -> không duyệt"; else bad "N12: pass rồi fail: rc=$RC, $(tailout)"; fi
+
+# N13 (OCR vòng cuối M5): auditBase muộn hơn merge-base, edited vẫn có tests/t.sh -> không duyệt (luật tổ tiên merge-base)
+mk "$TMP/n13"; pr_commit "$V1" "PR sửa test" >/dev/null; echo 'fun other()=13' > src/Other.kt && git commit -qam "PR tiếp"
+X="$(git rev-parse HEAD)"; pm_grok T1131-n13 "$TMP/n13" "$X" p-n13 latefull
+run_gate "$TMP/n13"
+if refused; then ok "N13: auditBase muộn hơn merge-base dù edited có test -> không duyệt"; else bad "N13: phạm vi muộn: rc=$RC, $(tailout)"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

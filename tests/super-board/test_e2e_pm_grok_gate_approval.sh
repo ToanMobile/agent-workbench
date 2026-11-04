@@ -71,7 +71,7 @@ try {
 run_gate() { local d="$1"; shift; OUT="$(cd "$d" && env "$@" CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --matrix "$d/matrix.json" --lang vi --run-tests --diff main 2>&1)"; RC=$?; }
 approved() { [ "$RC" = 0 ] && has "duyệt chéo bởi grok (thay Antigravity)" && [ ! -e "$1/.claude/audit-gate/approved_tests.json" ] \
              && [ -z "$(git -C "$1" log --format=%B main..HEAD | grep -i 'Test-approved-by')" ]; }
-refused()  { [ "$RC" = 2 ] && ! has "duyệt chéo bởi"; }
+refused()  { [ "$RC" = 2 ] && ! has "duyệt chéo bởi" && has "file test đã có bị sửa"; }   # exit 2 đúng vì test sửa chưa duyệt
 tailout()  { printf '%s' "$OUT" | grep -E "duyệt chéo|Test đã có|CHƯA XÁC MINH|PM-ERROR|TASK|exit" | tail -4 | cut -c1-240; }
 
 # E2E1. luồng thật: PM tạo task + chạy grok (PASS) -> PM tự ghi biên bản -> gate duyệt; merge gate thấy duyệt từ biên bản PM
@@ -129,15 +129,13 @@ if refused; then ok "E2E8: main sửa chính test sau audit -> không duyệt"; 
 
 # E2E9. grok PASS rồi chạy lại cùng head trả REVISE -> lượt cuối fail -> không duyệt
 mk "$TMP/e9"; pm "$TMP/e9" "$TMP/gpass" ""
+T9="$(printf '%s' "$OUT" | sed -n 's/^TASK //p' | head -1)"   # đúng task vừa tạo cho e9 (id lặp giữa các project PM)
 OUT="$(cd "$TMP/e9" && ANTIGRAVITY_PM_GROK="$TMP/grev/grok" node --input-type=module -e '
-const [tools, project] = process.argv.slice(1);
+const [tools, project, id] = process.argv.slice(1);
 const { TOOLS_BY_NAME } = await import(tools);
-const fs = await import("node:fs");
-const path = await import("node:path");
-const id = fs.readdirSync(path.join(process.env.ANTIGRAVITY_PM_STATE_HOME, "projects")).flatMap((d) =>
-  fs.readdirSync(path.join(process.env.ANTIGRAVITY_PM_STATE_HOME, "projects", d, "tasks")))[0];
 console.log(await TOOLS_BY_NAME.get("pm_dispatch").handler({ project, taskId: id, kind: "audit", agent: "grok" }));
-' "$TOOLS" "$TMP/e9" 2>&1)"
+' "$TOOLS" "$TMP/e9" "$T9" 2>&1)"
+printf '%s' "$OUT" | grep -q "VERDICT REVISE" || bad "E2E9: lượt grok REVISE không chạy trên task $T9: $(printf '%s' "$OUT" | tail -2)"
 run_gate "$TMP/e9" CLAUDECODE=1
 if refused; then ok "E2E9: PASS rồi REVISE cùng head -> không duyệt"; else bad "E2E9: rc=$RC, $(tailout)"; fi
 

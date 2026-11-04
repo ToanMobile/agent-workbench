@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Cài .claude/audit-gate/approved_tests.json vào scratch từ comment edited-tests thắng cuộc (#643).
-# --has-edited-tests <meta.json> <sha40> [--top DIR --base REF]: in true / pm (thoát 0) hoặc false (thoát 1). 04/11: không có comment
+# --has-edited-tests <meta.json> <sha40> [--top DIR --base REF]: in true / pm / pm-unknown (thoát 0) hoặc false (thoát 1). 04/11: không có comment
 # edited-tests thì --top/--base hỏi thẳng biên bản antigravity-pm (super-board-audit-check.py --chain-audit): PR sửa test đã có và audit
 # pass có auditedHead trong <base>..<sha40> (hoặc không kiểm được) = pm — giữ khoá và không autosync như comment, nhưng base dời KHÔNG làm
-# duyệt cũ (post-fix-gate audit_covers kiểm main không đổi file test, verify chạy trong khoá trên base hiện tại).
+# duyệt cũ (post-fix-gate audit_covers kiểm main không đổi file test, verify chạy trong khoá trên base hiện tại). Không kiểm được biên
+# bản (lỗi nạp kit / git) = pm-unknown: vẫn khoá, không autosync, không dùng biên nhận cây; không phải duyệt gắn head nên không exit 2.
 # Chế độ cài luôn thoát 0, kể cả khi không ghi gì.
 HERE=$(cd "$(dirname "$0")" && pwd)
 JQ_FILTER="$HERE/super-board-approved-head.jq"
@@ -44,19 +45,21 @@ winning() {
   [ -n "$TASK_ID" ]
 }
 
-# pm_chain: 0 khi biên bản PM có audit pass trên <base>..<sha>, hoặc kiểm lỗi (mọi mã khác 0 và 1: bi quan); 1 khi không, hoặc người gọi
-# cũ không truyền --top/--base.
+# pm_chain: 0 và PM_WORD=pm khi biên bản PM có audit pass trên <base>..<sha>; 0 và PM_WORD=pm-unknown khi không kiểm được (mọi mã khác 0
+# và 1); 1 khi không có, hoặc người gọi cũ không truyền --top/--base.
+PM_WORD=pm
 pm_chain() {
   local rc=0
   [ -n "$TOP" ] && [ -n "$BASE_REF" ] || return 1
   python3 "$AUDIT" --chain-audit "$SHA" --base "$BASE_REF" --top "$TOP" || rc=$?
-  [ "$rc" -ne 1 ]
+  [ "$rc" -ne 1 ] || return 1
+  [ "$rc" -eq 0 ] || PM_WORD=pm-unknown
 }
 
 if [ "$has_mode" -eq 1 ]; then
   if ! winning; then
     if pm_chain; then
-      printf '%s\n' pm
+      printf '%s\n' "$PM_WORD"
       exit 0
     fi
     printf '%s\n' false
@@ -96,7 +99,7 @@ PY
     exit 0
   fi
   if pm_chain; then
-    printf '%s\n' pm
+    printf '%s\n' "$PM_WORD"
     exit 0
   fi
   printf '%s\n' false

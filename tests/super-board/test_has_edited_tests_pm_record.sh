@@ -6,7 +6,7 @@
 #  E4 base không resolve -> pm (không kiểm được: bi quan). E5 pm home lạ không phải fixture -> false (biên bản không tính).
 #  E6 PR có audit nhưng không sửa test đã có (chỉ code) -> false: audit lớn không làm PR thường bi quan. E7 sửa script ma trận nhắc tên
 #  (script suite) -> pm.
-#  E8 sửa script tầng hai không có tên trong ma trận -> pm. E9 ma trận chỉ ở cây làm việc (không ở base) -> false.
+#  E8 sửa script tầng hai không có tên trong ma trận -> pm. E9 ma trận chỉ ở cây làm việc (không ở base) -> false. E11 rule ma trận PR nối thêm -> pm.
 set -u
 export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -50,7 +50,7 @@ got="$(has_et "$H")"
 [ "$got" = "1 false" ] && ok "E3: người gọi cũ không --top/--base -> false như cũ" || fail "E3: CLI cũ: '$got' (muốn '1 false')"
 
 got="$(has_et "$H" --top "$R" --base no-such-ref)"
-[ "$got" = "0 pm" ] && ok "E4: base không resolve -> pm (bi quan)" || fail "E4: base hỏng: '$got' (muốn '0 pm')"
+[ "$got" = "0 pm-unknown" ] && ok "E4: base không resolve -> pm-unknown (bi quan, không phải duyệt)" || fail "E4: base hỏng: '$got' (muốn '0 pm-unknown')"
 
 got="$(DEVKIT_PM_HOME_TEST=0 has_et "$H" --top "$R" --base main)"
 [ "$got" = "1 false" ] && ok "E5: pm home lạ không phải fixture -> false" || fail "E5: pm home lạ: '$got' (muốn '1 false')"
@@ -84,5 +84,20 @@ git checkout -q other && printf '{"rules":[{"mandatory_regression_tests":[{"comm
 got="$(has_et "$Q" --top "$R" --base main)"
 [ "$got" = "1 false" ] && ok "E9: ma trận chỉ ở cây làm việc -> không tính (đọc ở base) -> false" || fail "E9: ma trận cây làm việc: '$got' (muốn '1 false')"
 git checkout -q -- .agents/regression_matrix.active.json
+
+# E11 (review vòng cuối P2-1): PR nối thêm rule ma trận gọi tools/third.py (đã có, không ai nhắc ở base) và sửa chính script đó -> pm
+#     (gate tin ma trận nối thêm của PR: trust_additive_matrix)
+git checkout -q main && echo 'print(4)' > tools/third.py && git add tools/third.py && git commit -qm "thêm third"
+git checkout -q -b addrule main && python3 - <<'PY'
+import json
+p = ".agents/regression_matrix.active.json"
+m = json.load(open(p))
+m["rules"].append({"mandatory_regression_tests": [{"command": "python3 tools/third.py"}]})
+json.dump(m, open(p, "w"))
+PY
+echo 'print(5)' > tools/third.py && git commit -qam "PR nối rule + sửa third.py"
+A="$(git rev-parse HEAD)"; pm T2007-addrule "$A"
+got="$(has_et "$A" --top "$R" --base main)"
+[ "$got" = "0 pm" ] && ok "E11: PR nối rule ma trận và sửa script rule đó gọi, có audit -> pm" || fail "E11: rule nối thêm: '$got' (muốn '0 pm')"
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }
