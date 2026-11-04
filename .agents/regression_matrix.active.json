@@ -3691,6 +3691,68 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-gate-pm-direct-approval",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_pm_direct_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-PM-DIRECT-APPROVAL-01",
+          "name": "04/11: test sửa được duyệt bằng biên bản antigravity-pm tra thẳng (không comment / json / trailer); phiên cùng reviewer, audit mới hơn khác blob, pm home lạ, biên bản cũ, head trên main, author tự khai, head chỉ trong history, hai biên bản cùng id đều bị từ chối",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_pm_direct_approval.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-has-edited-tests-pm-record",
+      "watch_files": [
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_has_edited_tests_pm_record.sh",
+        "tests/super-board/test_merge_gate_pm_edited_base_moved.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-HAS-EDITED-PM-01",
+          "name": "04/11: merge gate / train --has-edited-tests nhận duyệt test sửa từ biên bản PM (audit pass trên base..head) để giữ khoá và không autosync; base hỏng = bi quan",
+          "command": "bash tests/super-board/test_has_edited_tests_pm_record.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-PM-EDITED-BASE-MOVED-01",
+          "name": "04/11: merge gate / train không exit 2 'stale' khi duyệt test sửa đến từ biên bản PM và main tiến không chạm test (verify trong khoá); comment edited-tests vẫn exit 2 như #643",
+          "command": "bash tests/super-board/test_merge_gate_pm_edited_base_moved.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "pm-grok-gate-approval-e2e",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/src/prompt.js",
+        "mcp-servers/antigravity-pm-mcp/src/tasks.js",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-audit-check.py",
+        "tests/super-board/test_e2e_pm_grok_gate_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-E2E-PM-GROK-GATE-01",
+          "name": "04/11 đầu-cuối: code PM thật ghi biên bản audit grok, post-fix-gate thật đọc và duyệt test sửa không bước người; sửa sau audit, REVISE, message, phiên grok, người gọi grok đều không duyệt",
+          "command": "bash tests/super-board/test_e2e_pm_grok_gate_approval.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

@@ -392,7 +392,11 @@ export function recordVerdict(cfg, task, { kind, verdict, findings = [], notes =
     };
     // Dot 2 F1: moi audit pass co auditedHead noi vao lich su CHI-THEM (verdict fail sau, rework khong xoa) — push_gate.audited_heads
     // doc auditHistory + verdicts.audit de mot verdict fail moi hon khong lam audit cu hon thanh "moi nhat".
-    if (head) t.verdicts.auditHistory = [...(hist || []), { auditedHead: head, reviewer, at }];
+    // 04/11: grok PASS da tu ghi (tools.js) roi PM pm_verdict lai dung head do -> khong noi ban trung lien tiep (cung head + reviewer).
+    const last = (hist || []).at(-1);
+    if (head && !(last && last.auditedHead === head && last.reviewer === reviewer)) {
+      t.verdicts.auditHistory = [...(hist || []), { auditedHead: head, reviewer, at }];
+    }
     // Review dat cua vong nay => danh sach finding chua dong coi nhu da xu ly.
     if (kind === 'review' && verdict === 'pass' && t.round === round) t.openFindings = [];
     addHistory(t, actor, `verdict_${kind}`, `${verdict}${findings.length ? ` (${findings.length} phat hien)` : ''}`);

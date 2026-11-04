@@ -146,6 +146,50 @@ async function trackedChanges(cfg, root = cfg.projectRoot, { ignoreGenerated = f
   return { dirty, ignored: ignored.map((e) => e.slice(3)) };
 }
 
+/**
+ * Pham vi grok audit (04/11): merge-base(nhanh dich, head) — dung pham vi gate DevKit duyet test sua (post-fix-gate _approval_chain), vi
+ * gate nhan MOI test da co bi sua ma blob o head khop. Nhanh dich theo thu tu post-fix-gate task_trunk: origin/HEAD -> origin/{main,master,
+ * trunk} -> {main,master,trunk}. { base, trunk, edited: file da co o base bi sua/xoa } hoac { base: null } khi khong tinh duoc.
+ */
+async function auditRange(cfg, head) {
+  const git = (args) => run('git', args, { cwd: cfg.projectRoot, timeoutMs: 30000, maxBytes: 4_000_000 });
+  const ok = (r) => !r.spawnFailed && !r.timedOut && r.code === 0 && !r.truncated;
+  const sym = await git(['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']);
+  const cands = [...(ok(sym) && String(sym.stdout).trim().startsWith('refs/remotes/origin/') ? [String(sym.stdout).trim()] : []),
+    ...['refs/remotes/origin/', 'refs/heads/'].flatMap((p) => ['main', 'master', 'trunk'].map((n) => p + n))];
+  for (const trunk of cands) {
+    if (!ok(await git(['rev-parse', '--verify', '-q', `${trunk}^{commit}`]))) continue;
+    const mb = await git(['merge-base', trunk, head]);
+    const base = ok(mb) ? String(mb.stdout).trim() : '';
+    if (!/^[0-9a-f]{40}$/.test(base)) continue;   // Grok P3: nhanh nay khong co merge-base voi head -> thu nhanh dich ke tiep
+    // OCR vong 6: doi ten roi sua (R) -> ghi ca duong cu va duong MOI (gate bao test sua theo duong moi); R/C co 2 duong sau trang thai.
+    const ns = await git(['diff', '--name-status', '-M', '-z', base, head]);
+    if (!ok(ns)) return { base: null };
+    const parts = String(ns.stdout).split('\0');
+    const edited = [];
+    for (let i = 0; i + 1 < parts.length;) {
+      const st = parts[i];
+      if (/^[RC]/.test(st)) {
+        if (st[0] === 'R') edited.push(parts[i + 1], parts[i + 2]);
+        i += 3;
+      } else {
+        if (/^[MDT]/.test(st)) edited.push(parts[i + 1]);
+        i += 2;
+      }
+    }
+    return { base, trunk, edited };
+  }
+  return { base: null };
+}
+
+/** Dong cuoi ket qua pm_dispatch audit grok: da tu ghi verdict, hay vi sao khong. */
+function verdictLine(autoVerdict, verdict, head, message) {
+  if (autoVerdict) return `Da tu ghi verdict audit=pass, auditedHead = ${head} (gate DevKit tra thang bien ban nay).`;
+  if (verdict !== 'pass') return 'Audit khong pass: khong ghi verdict. Sua theo log roi giao lai pm_dispatch kind=audit agent=grok.';
+  const why = message ? 'co message cua nguoi goi trong prompt' : 'khong tinh duoc merge-base hoac qua 200 file';
+  return `Khong tu ghi verdict (${why}): PM doc log roi pm_verdict kind=audit auditedHead=${head}; gate chi duyet test sua qua muc duyet / trailer.`;
+}
+
 /** Cong chan kem bang chung do duoc tu git ngay luc goi. */
 async function gateNow(cfg, task) {
   return gate(cfg, task, await gateCtx(cfg, task));
@@ -810,6 +854,10 @@ export const TOOLS = [
         if (!grok) fail(`Khong tim thay grok chay duoc (${process.env.ANTIGRAVITY_PM_GROK || '~/.grok/bin/grok'}). Cai grok hoac tro ANTIGRAVITY_PM_GROK vao dung file.`);
         if (wantCommit === undefined) head = headCommitOf(cfg.projectRoot);
         if (!head) fail('Khong doc duoc HEAD cua project (git) — khong biet audit cay nao, khong chay grok.');
+        // #977: pham vi audit (merge-base voi nhanh dich + moi file da co bi sua/xoa); audit pham vi day du thi prompt doc lap va PM tu ghi verdict.
+        // Tinh bang git theo sha nen dung cho ca commit= (khong can worktree tam).
+        const range = await auditRange(cfg, head);
+        const scoped = Boolean(range.base) && !args.message && range.edited.length <= 200;
         let auditDir = cfg.projectRoot;
         let wtTam = null;
         let promptFile; let at; let r; let stAfter; let headAfter;
@@ -834,7 +882,7 @@ export const TOOLS = [
           // Cay chinh: file untracked da co san truoc audit khong phai do hook vua sinh (F5 cho untracked qua) => khong tinh; worktree tam
           // bat dau tu checkout sach nen khong co file nao "co san".
           const coSan = new Set(wtTam ? [] : cand.filter((p) => fs.existsSync(path.join(auditDir, p))));
-          const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '', workdir: auditDir });
+          const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '', range, independent: scoped, workdir: auditDir });
           promptFile = saveOutgoing(cfg, task, `prompt-audit-grok-r${task.round}`, prompt);
           // Moc giao chot TRUOC khi chay: bao cao PM ghi sau moc nay (pm_verdict tu choi bao cao cu hon lan giao audit gan nhat).
           at = nowIso();
@@ -882,16 +930,34 @@ export const TOOLS = [
         }, null, 2)}\n`);
         const reportSha256 = hashFile(repFile);
         if (task.phase === 'IMPLEMENT') setPhase(cfg, task, 'AUDIT', 'pm', 'da giao audit grok');
+        // 04/11: pham vi grok da xem (auditBase = merge-base, edited = moi file da co bi sua/xoa) ghi vao lan giao — gate DevKit tra thang
+        // bien ban chi nhan test nam trong pham vi do (push_gate.audit_scope). Chi ghi khi audit pham vi day du (scoped) VA pass (OCR vong 3:
+        // lan chay lai cung head tra REVISE khong mang pham vi, va audit_scope doi lan cuoi pass).
+        const fullScope = scoped && verdict === 'pass';
         recordDispatch(cfg, task, {
           kind: 'audit', agent: 'grok', model: GROK_MODEL, promptFile, at,
-          extra: { conversationId: null, auditedHead: head, verdict, grokVerdicts: v.lines, exitCode: r.code, timedOut: r.timedOut, reportSha256, logFile },
+          extra: {
+            conversationId: null, auditedHead: head, verdict, grokVerdicts: v.lines, exitCode: r.code, timedOut: r.timedOut, reportSha256, logFile,
+            finishedAt: nowIso(),   // gate DevKit xep cac lan grok theo luc chay XONG (hai lan chay chong nhau)
+            ...(fullScope && { auditBase: range.base, edited: range.edited }),
+          },
         });
+        // Grok PASS, khong loi, pham vi day du -> PM tu ghi ket luan audit, SAU recordDispatch (push_gate.audit_reviewer chi nhan reviewer
+        // grok khi lan audit gan nhat trong dispatches la grok). Nguoi goi la grok da bi tu choi o tren (tu duyet).
+        const autoVerdict = verdict === 'pass' && fullScope;
+        if (autoVerdict) {
+          recordVerdict(cfg, task, {
+            kind: 'audit', verdict: 'pass', reviewer: 'grok', actor: 'pm', auditedHead: head,
+            notes: `PM tu ghi tu grok ${GROK_MODEL} VERDICT: PASS (lan giao ${at}); auditedHead: ${head}; log: ${logFile}`,
+          });
+        }
         return [
           `Da chay AUDIT grok (${GROK_MODEL}, plan mode) tren ${head}: VERDICT ${v.lines.at(-1) || '(khong co)'} -> audit-agent.json verdict=${verdict}.`,
           ...(why.length ? [`CANH BAO: ${why.join('; ')} — bao cao ghi fail.`] : []),
+          ...(range.base ? [] : ['CANH BAO: khong tinh duoc merge-base voi nhanh dich — prompt so voi commit goc cua task.']),
           `Bao cao: ${repFile} (sha256 ${reportSha256})`,
           `Log grok: ${logFile}`,
-          'PM van la nguoi chot: doc log + tu kiem tra, roi pm_verdict kind=audit (pass can auditedHead dung head tren).',
+          verdictLine(autoVerdict, verdict, head, args.message),
         ].join('\n');
       }
 
