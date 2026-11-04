@@ -107,32 +107,50 @@ def _git(repo, *args):
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def _is_ancestor(repo, a, b):
+    """True/False theo `merge-base --is-ancestor` (exit 0/1); None khi git lỗi (exit khác, quá 10 s) — không đoán là 'không'."""
+    try:
+        r = subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", a, b], capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return {0: True, 1: False}.get(r.returncode)
+
+
 def stale_qa(comments, pr_author, head, repo, base):
     """T0255: report QA mới nhất nêu commit của nhánh PR mà head còn commit code sau đó ⇒ mô tả lỗi; còn lại None.
-    Commit của nhánh = commit trên đường first-parent của head, trừ phần base đã có (sha của main mà QA nêu để so ĐỎ thì bỏ qua).
-    Đi theo first-parent nên commit của main nhập bằng merge (cha thứ hai) không bị đếm, kể cả khi base cục bộ cũ (Grok T0255 P1).
-    Commit merge và commit chỉ chạm EVIDENCE_DIR không tính là code. Report không nêu commit nào của nhánh, hay git/base không đọc
-    được: không chặn (giữ hành vi cũ). ponytail: commit merge có sửa tay khi giải conflict không bị tính; so cây của phần nhánh khi
-    gặp ca lọt như vậy."""
+    Commit của nhánh = tổ tiên của head, không là tổ tiên của base (sha của main mà QA nêu để so ĐỎ thì bỏ qua). Base phải vừa
+    fetch (merge gate lo): base cũ làm commit main đã gộp trông như commit của nhánh (Grok T0255 P1). Không đi theo first-parent:
+    builder commit tại chỗ rồi `pull --no-rebase` đẩy commit QA sang cha thứ hai (review T0255 P2). Commit merge và commit chỉ chạm
+    EVIDENCE_DIR không tính là code. Report không nêu commit nào của nhánh, hay git/base không đọc được: không chặn (giữ hành vi
+    cũ). ponytail: commit merge có sửa tay khi giải conflict, và sha QA bị amend/force-push khỏi lịch sử head, không bị tính; so cây
+    của phần nhánh khi gặp ca lọt như vậy."""
     lines, _ = latest_qa(comments, pr_author)
     if lines is None or not head:
         return None
     tokens = set(SHA_TOKEN.findall("\n".join(lines)))
     if any(head.startswith(t) for t in tokens):
         return None
-    chain = _git(repo, "rev-list", "--first-parent", head, f"^{base}")
-    if chain is None:
-        print(f"qa-report: bỏ qua ghim sha QA — không đọc được head {head[:12]} hay base {base}", file=sys.stderr)
+    if _git(repo, "rev-parse", "--verify", "-q", f"{base}^{{commit}}") is None:
+        print(f"qa-report-note: bỏ qua ghim sha QA — không đọc được base {base}", file=sys.stderr)
         return None
-    chain = chain.split()
-    own = [c for c in chain if any(c.startswith(t) for t in tokens)]
+    own = []
+    for t in sorted(tokens):
+        sha = _git(repo, "rev-parse", "--verify", "-q", f"{t}^{{commit}}")
+        if not sha:
+            continue                      # hash file, sha chưa fetch: không phải lời khai về commit
+        in_head, in_base = _is_ancestor(repo, sha, head), _is_ancestor(repo, sha, base)
+        if in_head is None or in_base is None:
+            print(f"qa-report-note: bỏ qua ghim sha QA — git merge-base lỗi trên {sha[:12]}", file=sys.stderr)
+            return None
+        if in_head and not in_base:
+            own.append(sha)
     if not own:
         return None
     after = []
     for sha in own:
-        out = _git(repo, "log", "--first-parent", "--no-merges", "--format=%h %s", head, f"^{sha}", "--", ".", f":(exclude){EVIDENCE_DIR}")
+        out = _git(repo, "log", "--no-merges", "--format=%h %s", head, f"^{sha}", f"^{base}", "--", ".", f":(exclude){EVIDENCE_DIR}")
         if out is None:
-            print(f"qa-report: bỏ qua ghim sha QA — git log lỗi trên {sha[:12]}", file=sys.stderr)
+            print(f"qa-report-note: bỏ qua ghim sha QA — git log lỗi trên {sha[:12]}", file=sys.stderr)
             return None
         if not out:
             return None

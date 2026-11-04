@@ -102,6 +102,16 @@ H2=$(git -C "$WT" rev-parse HEAD)
 run_case "[$(qa "${Q1:0:8}" | sed 's/^\[//;s/\]$//'),$(qa "${H2:0:10}" | sed 's/^\[//;s/\]$//')]"; passed "a newer QA report names the new head"
 # g. Sha chỉ nằm trong dòng trích dẫn '> ' (không phải lời khai của QA) ⇒ coi như không nêu sha.
 run_case "[{\"body\":\"[qa] [report] ✅ pass\\n> earlier round @ ${Q1:0:8}\\n✅ Done: AC1\"}]"; passed "a sha only in a quoted line is ignored"
+# h. QA đẩy commit bằng chứng E; builder (worktree riêng, còn ở H2) commit sửa code rồi `pull --no-rebase` ⇒ head = merge(C, E),
+#    commit QA nằm ở cha thứ hai. Vẫn là code sau sha QA ⇒ từ chối (review T0255 P2: không đi theo first-parent).
+mkdir -p "$WT/docs/super-board/runs/issue-5-qa-v2"; echo ok > "$WT/docs/super-board/runs/issue-5-qa-v2/summary.md"
+git -C "$WT" add docs; git -C "$WT" commit -qm "qa evidence v2"; git -C "$WT" push -q -f origin issue-5-x
+E2=$(git -C "$WT" rev-parse HEAD)
+git -C "$R" worktree add -q --detach "$TMP/bw" "$H2"
+echo b3 > "$TMP/bw/b"; git -C "$TMP/bw" commit -qam "fix: builder change after QA"
+git -C "$TMP/bw" pull -q --no-rebase --no-edit origin issue-5-x
+git -C "$WT" reset -q --hard "$(git -C "$TMP/bw" rev-parse HEAD)"
+run_case "$(qa "${E2:0:10}")";               refused "a builder commit merged in by pull --no-rebase after the QA evidence push"
 
 [ "$FAILS" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "$FAILS FAILED"; exit 1
