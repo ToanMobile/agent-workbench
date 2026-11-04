@@ -331,6 +331,9 @@ if [ "$sn_rc" != 0 ]; then   # each failed check once; a crash before any check 
 fi
 mkdir -p "$TMP/partial"
 cp "$HW" "$TMP/partial/hardware_safety_gate.sh" && cp "$GG" "$TMP/partial/block-dangerous-git.sh"
+for m in "${HW%/*}/hardware_safety_gate_main.py" "${GG%/*}/block_dangerous_git_main.py"; do   # #967: the python of each hook
+  [ ! -f "$m" ] || cp "$m" "$TMP/partial/"
+done
 for pair in "hardware_safety_gate.sh|rm -rf ~" "block-dangerous-git.sh|git reset --hard"; do
   h="${pair%%|*}" c="${pair#*|}"
   python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[2],"hook_event_name":"PreToolUse",

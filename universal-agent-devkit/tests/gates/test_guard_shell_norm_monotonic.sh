@@ -608,6 +608,18 @@ assert len(HARMLESS) >= 25, len(HARMLESS)
 CONTROLS = sorted({(h, ctl) for h, _c, ctl in DANGEROUS})
 jobs = ([("D", h, c) for h, c, _ctl in DANGEROUS] + [("H", h, c) for c in HARMLESS for h in ("git", "hw")]
         + [("C", h, ctl) for h, ctl in CONTROLS] + [("A", h, c) for h, c in ACCEPTED_FP])
+# GUARD_MONO_SAMPLE=<n> (tests only: the test_guard_shell_norm_load_retry*.sh files, which check the watchdog retry of run() and the CONTROL /
+# VACUOUS report, not the rows): the first n dangerous rows of each hook WITH their controls, the first n harmless rows and accepted false
+# positives of each hook. Read only beside the LOAD_MODE of those tests: a stray GUARD_MONO_SAMPLE in the gate's env never shrinks the net,
+# which always runs whole in the gate.
+_sample = os.environ.get("GUARD_MONO_SAMPLE", "") if os.environ.get("LOAD_MODE") else ""
+if _sample.isdigit() and int(_sample) > 0:
+    _n = int(_sample)
+    DANGEROUS = [r for hook in ("git", "hw") for r in [d for d in DANGEROUS if d[0] == hook][:_n]]
+    CONTROLS = sorted({(h, ctl) for h, _c, ctl in DANGEROUS})
+    jobs = ([("D", h, c) for h, c, _ctl in DANGEROUS] + [("H", h, c) for h in ("git", "hw") for c in HARMLESS[:_n]]
+            + [("C", h, ctl) for h, ctl in CONTROLS] + [("A", h, c) for hook in ("git", "hw") for h, c in [a for a in ACCEPTED_FP if a[0] == hook][:_n]])
+    print(f"GUARD_MONO_SAMPLE={_sample}: {len(jobs)} jobs of the net")
 with cf.ThreadPoolExecutor(8) as ex:
     results = list(ex.map(lambda j: run(j[1], j[2]), jobs))
 fails = 0
