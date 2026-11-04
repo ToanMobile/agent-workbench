@@ -4574,7 +4574,7 @@ def suite_timeout(t: dict, timeout, stop_like: bool = False):
     """--timeout of one suite: times SUITE_TIMEOUT_FACTOR of its id; a test's own short budget (below _extend_min_s()) is kept, and so is
     a Stop-like run (--session / GATE_TOTAL_BUDGET_S): the budget only stops NEW suites, so a doubled suite would outlive the hook's hard
     timeout (1800 s, 2026-10-02) and leave no record."""
-    if t.get("shard_timeout_s"):   # 04/11: a member of a shard group gets the group's largest timeout (it waits on its siblings' slots)
+    if t.get("shard_timeout_s"):   # 04/11: a member of a shard group gets the SUM of the members' timeouts (it waits on its siblings' slots)
         return t["shard_timeout_s"]
     factor = SUITE_TIMEOUT_FACTOR.get(str(t.get("id") or ""))
     return timeout * factor if factor and not stop_like and timeout >= _extend_min_s() else timeout
