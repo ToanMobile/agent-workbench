@@ -2262,7 +2262,7 @@ def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=(), 
 # commit of the same content) and the selection environment: a record without them, or of another HEAD, is never read. A FAIL still drops it.
 # ponytail: a run with a FAILED suite records nothing, so a repeat of such a run re-runs the suites that passed in it; upgrade when the
 # FAIL-then-same-content repeat is seen to cost more than the "a FAIL leaves nothing to re-use" rule is worth.
-# ponytail: a record is read for up to DEVKIT_GATE_CACHE_MAX_S (6 h, as the receipt), so a suite that starts to fail on UNCHANGED content (a flaky
+# ponytail: a record is read for up to DEVKIT_GATE_CACHE_MAX_S (3 days, as the receipt), so a suite that starts to fail on UNCHANGED content (a flaky
 # test, a service that went away) stays unseen that long after an exit-2 reminder, where the hook's 300 s recheck used to run it again; give the
 # record its own, shorter cap when such a miss is seen. An impacted-mode PASS (a suite run on the selected tests only) is never recorded, so a
 # repeat of an impacted run still runs those suites (OfficeReader's exit-2 repeats are impacted runs); record the command run and the vacuity
@@ -7451,7 +7451,7 @@ def main():
     # lại + ghi, "record" chỉ ghi (sentinel, --no-cache, DEVKIT_GATE_CACHE=0), "0" tắt (không có sc: DEVKIT_SUITE_CACHE=0, lượt không cưỡng bức
     # và không --scoped; hay người dùng đặt sẵn DEVKIT_PER_TEST_CACHE=0). run_in_group chỉ đưa nó cho lệnh run_impacted.sh chuẩn.
     # tests/gates/test_gate_per_test_cache.sh. P4 (02/11): lượt --scoped (PR, merge gate) cũng bật — một test đỏ / TIMEOUT không bắt lượt sau
-    # trên CÙNG cây chạy lại mọi test đã PASS (khoá per-test là cả cây, ≤ 6 h); tests/gates/test_gate_scoped_per_test_cache.sh.
+    # trên CÙNG cây chạy lại mọi test đã PASS (khoá per-test là cả cây, ≤ 3 ngày); tests/gates/test_gate_scoped_per_test_cache.sh.
     if os.environ.get("DEVKIT_PER_TEST_CACHE") != "0":
         PER_TEST_CACHE["mode"] = "0" if (sc is None or not (force_reason or scoped)) else ("1" if keyed_ok else "record")   # #645: lượt task giữ "0"
     if sentinel_run:
