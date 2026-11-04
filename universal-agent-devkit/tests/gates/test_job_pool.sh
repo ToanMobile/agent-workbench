@@ -92,7 +92,7 @@ read -r m _ <<< "$(peak "$TMP/log")"
 [ "$peak_before" -le 2 ] && ok "g: size file 2: at most $peak_before at once" || bad "g: size file 2 but $peak_before at once"
 [ "$m" -ge 3 ] && [ "$m" -le 4 ] && ok "g: size raised to 4 mid-run: the pool grew ($m at once, never more than 4)" || bad "g: peak $m after the size went to 4"
 echo junk > "$P5/size"; : > "$TMP/log"
-for i in 1 2 3 4; do job "$P5" 4 "u$i" 0.6 & done; wait
+for i in 1 2 3 4 5 6; do job "$P5" 4 "u$i" 0.6 & done; wait   # 6 jobs: an unlimited pool would reach 6
 [ "$(peak "$TMP/log" | cut -d' ' -f1)" = 4 ] && ok "g: a size file that is not a number means <size>" || bad "g: junk size file: peak $(peak "$TMP/log")"
 
 [ "$fails" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS ($fails)"; exit 1; }

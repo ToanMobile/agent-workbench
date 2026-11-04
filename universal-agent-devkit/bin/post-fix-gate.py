@@ -8068,7 +8068,7 @@ def main():
         if shard_group:
             if shard_group.get("slots") is not None and slot_mod and slot_mod[0] is not None:
                 slot_mod[0].release_suite(shard_group["slots"])
-            if shard_group.get("stop") is not None:
+            if shard_group.get("sizer") is not None:
                 shard_group["stop"].set()
                 shard_group["sizer"].join(timeout=5)
             shutil.rmtree(shard_group.get("dir") or "", ignore_errors=True)
@@ -8261,9 +8261,10 @@ def main():
                     with open(os.path.join(shard_group["dir"], "size"), "w", encoding="utf-8") as fh:   # before any member starts
                         fh.write(f"{jobs}\n")
                     shard_group["jmax"], shard_group["stop"] = jmax, threading.Event()
-                    shard_group["sizer"] = threading.Thread(target=pool_size_writer, name="shard-pool-size", daemon=True,
-                                                            args=(shard_group["dir"], jobs, jmax, shard_group["stop"]))
-                    shard_group["sizer"].start()
+                    if not (pinned.isdigit() and int(pinned) > 0):   # a user pin stays a fixed pool: no sizer lowers it
+                        shard_group["sizer"] = threading.Thread(target=pool_size_writer, name="shard-pool-size", daemon=True,
+                                                                args=(shard_group["dir"], jobs, jmax, shard_group["stop"]))
+                        shard_group["sizer"].start()
                 shard_group["ids"].add(id(t))
                 t["shard_timeout_s"] = shard_group["tmo"]
                 env = suite_env()

@@ -9,7 +9,7 @@
 #   7. the group's heavy slot follows its heaviest member: a first shard whose selection is light beside a cpu one still holds one slot
 #   8. a Stop-like run (GATE_TOTAL_BUDGET_S: its budget stops new suites) keeps the shards one after another, no pool
 #   9. every member gets the SUM of the members' timeouts: two shards of 7 s each pass under --timeout 5 (each waits on the other's slots)
-#  10. DEVKIT_TEST_JOBS set by the user: a fixed pool of that size, as many workers
+#  10. DEVKIT_TEST_JOBS set by the user: a fixed pool of that size, as many workers; no sizer lowers it to capacity
 #  11. the pool follows capacity: about every POOL_REFRESH_S (5 s) the gate rewrites its size; with no other gate it grows to the workers
 #   6. a run_impacted.sh suite without the DEVKIT_IMPACTED_DIRS= prefix (not a shard) never joins: no pool; a DEVKIT_TEST_POOL_DIR /
 #      DEVKIT_JOB_POOL in the caller's env never reaches a suite (suite_env drops them, INSTINCT-046)
@@ -114,9 +114,11 @@ else bad "6: exit $RC, env: $(tr '\n' ' ' < "$MARK/env")"; fi
 
 # 10. a user pin is a fixed pool
 make_repo "$(shard REG-S-A a),$(shard REG-S-B b)"
-WANT=2 DEVKIT_TEST_JOBS=2 run_gate
+WANT=2 DEVKIT_TEST_JOBS=40 SLEEP_S=6 run_gate   # long enough for a sizer (5 s) to rewrite the size: none must run for a pin
 pinned="$(sed -n 's/.* jobs=\([^ ]*\) size=\([^ ]*\) .*/\1:\2/p' "$MARK/env" | sort -u)"
-[ "$RC" = 0 ] && [ "$pinned" = "2:2" ] && ok "10: DEVKIT_TEST_JOBS=2 from the user: 2 workers, pool size 2" || bad "10: exit $RC, jobs:size '$pinned'"
+late10="$(sed -n 's/.* late=\([0-9]*\) .*/\1/p' "$MARK/late" 2>/dev/null | sort -u | tr '\n' ' ')"
+[ "$RC" = 0 ] && [ "$pinned" = "40:40" ] && [ "$late10" = "40 " ] && ok "10: DEVKIT_TEST_JOBS=40 from the user (above capacity): 40 workers, pool size 40, still 40 after 6 s" \
+  || bad "10: exit $RC, jobs:size '$pinned', size after 6 s '$late10'"
 
 # 11. the pool grows while the group runs
 make_repo "$(shard REG-S-A a),$(shard REG-S-B b)"
