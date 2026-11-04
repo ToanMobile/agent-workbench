@@ -464,26 +464,47 @@ test('H6 #987 grok in VERDICT: PASS va hook DevKit sinh lai AGENTS.md trong luc 
         () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
       const rep = JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8'));
       assert.equal(rep.verdict, 'pass', rep.notes);
+      assert.match(rep.notes, /file DevKit tu sinh da bo qua: (?=.*AGENTS\.md)(?=.*\.agents\/CHECKLIST\.md)/, 'notes phai ghi file da bo qua');
       assert.equal(disk(cfg, task).dispatches.at(-1).verdict, 'pass');
     } finally {
       cleanup(dir);
     }
   }
-  // AGENTS.md da bi sinh lai TRUOC khi giao (cay "ban" tu lan truoc): van giao duoc; cung luc do a.txt doi thi van fail
+  // AGENTS.md sua tay chua commit TRUOC khi giao (review #988): la rule that chu khong chi file sinh, nen bi chan nhu moi file da theo doi —
+  // audit se gan PASS vao sha cua HEAD cho bytes khac HEAD. Muon audit luc cay ban thi commit=<sha>.
   const { dir, cfg, task } = repo();
-  const fake = fakeGrok({ sh: 'echo doi >> a.txt' });
+  const fake = fakeGrok();
   try {
-    commitFile(dir, 'AGENTS.md', 'goc\n');
-    writeFile(path.join(dir, 'AGENTS.md'), 'da sinh lai truoc khi giao\n');
-    await withGrok(fake, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
-    assert.equal(grokRan(fake), true, 'AGENTS.md sinh tu dong khong duoc chan viec giao');
-    assert.equal(JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8')).verdict, 'fail');
-    // file code doi truoc khi giao van bi chan, ke ca khi AGENTS.md cung doi
-    execFileSync('git', ['checkout', '-q', '--', 'a.txt'], { cwd: dir });
-    writeFile(path.join(dir, 'a.txt'), 'doi tay\n');
-    await withGrok(fakeGrok(), () => assert.rejects(call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }), /a\.txt/));
+    const headNow = commitFile(dir, 'AGENTS.md', 'goc\n');
+    writeFile(path.join(dir, 'AGENTS.md'), 'sua tay chua commit\n');
+    await withGrok(fake, () => assert.rejects(
+      call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }), /AGENTS\.md[\s\S]*commit=<sha>/));
+    assert.equal(grokRan(fake), false);
+    assert.equal((disk(cfg, task).dispatches || []).length, 0);
+    // commit=<sha>: audit duoc du cay chinh ban, bytes la cua commit
+    await withGrok(fake, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', commit: headNow }));
+    assert.equal(grokRan(fake), true);
+    const rep = JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8'));
+    assert.equal(rep.verdict, 'pass', rep.notes);
+    assert.equal(rep.auditedHead, headNow);
+    assert.equal(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), 'sua tay chua commit\n', 'ban sua tay o cay chinh khong bi dong');
   } finally {
     cleanup(dir);
+  }
+});
+
+test('H9 #987 grok qua han / khong chay duoc voi commit=<sha>: bao cao fail va worktree tam van bi go (khong ro thu muc agpm-grok)', async () => {
+  for (const c of [{ env: { ANTIGRAVITY_PM_GROK_TIMEOUT_MS: '500' }, sh: 'sleep 5' }, { env: {}, sh: 'echo doi > moi.txt', code: 7 }]) {
+    const { dir, cfg, task, head } = repo();
+    try {
+      const fake = fakeGrok({ sh: c.sh, code: c.code || 0 });
+      await withEnv(c.env, () => withGrok(fake, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', commit: head })));
+      assert.equal(JSON.parse(fs.readFileSync(repOf(dir, task), 'utf8')).verdict, 'fail', JSON.stringify(c.env));
+      assert.doesNotMatch(execFileSync('git', ['worktree', 'list'], { cwd: dir, encoding: 'utf8' }), /agpm-grok/);
+      assert.equal(disk(cfg, task).dispatches.at(-1).auditedHead, head);
+    } finally {
+      cleanup(dir);
+    }
   }
 });
 

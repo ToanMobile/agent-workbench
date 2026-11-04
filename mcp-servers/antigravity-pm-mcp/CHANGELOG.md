@@ -11,7 +11,7 @@ phiên bản theo [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `pm_dispatch kind=audit agent=grok commit=<sha|tag|nhánh>` (#987): Grok audit đúng commit đó trong worktree tạm (gỡ sau khi xong), cây chính không cần sạch; `auditedHead` luôn là sha40 đã phân giải. Kiểm tra cây làm việc trước/sau audit bỏ qua file DevKit tự sinh (`AGENTS.md`, `.agents/CHECKLIST.md`, `.agents/regression_status.json`, `.agents/archive/*`, `.agents/local/memory/**`) vì phiên Grok khởi động làm hook sinh lại chúng; mọi file khác đổi vẫn ghi `fail`.
+- `pm_dispatch kind=audit agent=grok commit=<sha|tag|nhánh>` (#987): Grok audit đúng commit đó trong worktree tạm (gỡ sau khi xong), cây chính không cần sạch; `auditedHead` luôn là sha40 đã phân giải. Kiểm tra cây làm việc SAU audit bỏ qua file DevKit tự sinh, và ghi chúng vào `notes` (trước audit cây vẫn phải sạch thật, vì `AGENTS.md` gốc là rule thật; cây bẩn thì dùng `commit=`) (`AGENTS.md`, `.agents/CHECKLIST.md`, `.agents/regression_status.json`, `.agents/archive/*`, `.agents/local/memory/**`) vì phiên Grok khởi động làm hook sinh lại chúng; mọi file khác đổi vẫn ghi `fail`.
 - Khóa `giaoDefault` (cờ mặc định của `/giao`, hook DevKit đọc) được loader chấp nhận.
 - Model cụ thể qua CLI `agy --model` (mặc định `gemini-4-argon-high`): `agentapi` chỉ nhận bậc `flash_lite|flash|pro` và server tự chọn model (14/10/2026 cả `pro` lẫn `flash` ra `gemini-3.8-flash-tiered`). Tiến trình `agy` tách nhóm chạy hết lượt, `agy-conversations.json` giữ model + cwd + pid từng hội thoại, tin tiếp đi bằng `agy --conversation … --model …`, `pm_doctor ping=true` kiểm vòng đời đầy đủ. Không có `agy` thì báo lỗi, không rơi về flash.
 

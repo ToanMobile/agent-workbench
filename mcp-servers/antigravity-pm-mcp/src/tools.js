@@ -126,19 +126,22 @@ export function callerAgents(env = process.env) {
 /**
  * File DevKit TU SINH khi mot phien agent khoi dong trong project (#987): hook sinh lai chung ke ca khi grok chi doc. Danh sach co dinh,
  * khop {AGENTS.md, .agents/CHECKLIST.md, .agents/regression_status.json, .agents/archive/*, .agents/local/memory/**}; moi file khac van tinh.
- * ponytail: cay chinh co AGENTS.md sua tay chua commit van duoc audit; audit bang commit=<sha> (worktree tam) thi bytes la cua commit.
+ * CHI dung cho kiem tra SAU khi grok chay (ignoreGenerated): truoc khi chay cay phai sach that su, vi AGENTS.md goc la rule that chu khong chi
+ * la file sinh — ban sua tay chua commit khong duoc audit roi gan vao sha cua HEAD (review #988). Cay ban thi dung commit=<sha>.
  */
 const DEVKIT_SINH_TU_DONG = new Set(['AGENTS.md', '.agents/CHECKLIST.md', '.agents/regression_status.json']);
 const laFileDevkitSinh = (p) => DEVKIT_SINH_TU_DONG.has(p) || p.startsWith('.agents/archive/') || p.startsWith('.agents/local/memory/');
 
 /** Dong `git status --porcelain --untracked-files=no` cua `root` (mac dinh projectRoot), bo thu muc trang thai PM (F5) va file DevKit tu sinh: { error } hoac { dirty: [...] }. */
-async function trackedChanges(cfg, root = cfg.projectRoot) {
+async function trackedChanges(cfg, root = cfg.projectRoot, { ignoreGenerated = false } = {}) {
   const st = await run('git', ['status', '--porcelain', '-z', '--no-renames', '--untracked-files=no'], { cwd: root, timeoutMs: 60000, maxBytes: 16_000_000 });
   if (st.spawnFailed || st.timedOut || st.code !== 0 || st.truncated) {
     return { error: `exit ${st.code}${st.timedOut ? ', qua han' : ''}${st.truncated ? ', output bi cat' : ''}` };
   }
   const stateDir = thuMucTrangThai(cfg);
-  return { dirty: String(st.stdout).split('\0').filter((e) => e.length > 3 && !e.slice(3).startsWith(stateDir) && !laFileDevkitSinh(e.slice(3))) };
+  const all = String(st.stdout).split('\0').filter((e) => e.length > 3 && !e.slice(3).startsWith(stateDir));
+  const ignored = ignoreGenerated ? all.filter((e) => laFileDevkitSinh(e.slice(3))) : [];
+  return { dirty: all.filter((e) => !ignored.includes(e)), ignored: ignored.map((e) => e.slice(3)) };
 }
 
 /** Cong chan kem bang chung do duoc tu git ngay luc goi. */
@@ -821,7 +824,8 @@ export const TOOLS = [
           at = nowIso();
           r = await runGrokAudit({ grok, cwd: auditDir, prompt });
           // H5 (TOCTOU cua F5): cung lenh git status ngay sau grok; cay doi trong luc audit (hoac khong doc duoc) -> bao cao fail kem ly do.
-          stAfter = await trackedChanges(cfg, auditDir);
+          // chi SAU khi chay moi bo qua file DevKit tu sinh (hook cua phien grok sinh lai chung); TRUOC khi chay cay phai sach that su
+          stAfter = await trackedChanges(cfg, auditDir, { ignoreGenerated: true });
           headAfter = headCommitOf(auditDir);
         } finally {
           if (wtTam) await goWorktree(cfg, wtTam);
@@ -843,6 +847,7 @@ export const TOOLS = [
         writeFileAtomic(repFile, `${JSON.stringify({
           phase: 'AUDIT', verdict, reviewer: 'grok', model: GROK_MODEL, auditedHead: head, findings: [],
           notes: `Grok thay Antigravity (agy bi gioi han): PM tu chay grok ${GROK_MODEL} --permission-mode plan; VERDICT: ${v.lines.join(', ') || '(khong co)'}`
+            + `${stAfter.ignored?.length ? `; file DevKit tu sinh da bo qua: ${stAfter.ignored.join(', ')}` : ''}`
             + `${why.length ? `; loi: ${why.join('; ')}` : ''}; log: ${logFile}`,
         }, null, 2)}\n`);
         const reportSha256 = hashFile(repFile);

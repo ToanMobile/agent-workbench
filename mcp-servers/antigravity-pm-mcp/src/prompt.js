@@ -340,6 +340,9 @@ export function buildGrokAuditPrompt(cfg, task, { head, scope = '', workdir = ''
     `Project: ${workdir && workdir !== cfg.projectRoot ? `${workdir} (worktree tam o ${head}; project that: ${cfg.projectRoot})` : cfg.projectRoot}`,
     `Commit can audit: ${head}${base && base !== head ? ` (so voi goc: git diff ${base} ${head})` : ''}`,
     `Ho so task: ${paths.dir} (doc brief.md, plan.md, result.json neu co)`,
+    ...(workdir && workdir !== cfg.projectRoot
+      ? [`Doc code CHI trong ${workdir} hoac bang git show ${head}:<file>; project that chi de doc ho so task (cay do co the dang ban, khong thuoc commit nay).`]
+      : []),
     '',
     '## Viec can lam',
     '1. Doc THAT SU cac file da thay doi o commit tren (git show / git diff) va test di kem.',
