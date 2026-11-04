@@ -517,3 +517,7 @@
 12 tests/gates/test_gate_suite_timeout_gates_shard.sh
 # T4 #844 (2026-11-02): shell_writes đọc thêm đích $'…' / $"…" (worktree_guard, session_lock)
 3 tests/gates/test_shell_writes_dollar_quotes.sh
+# P5 (2026-11-04): lượt gate chỉ Unity/nhẹ không giữ slot gate; unity-batch dùng chung khoá unity-1.lock
+3 tests/gates/test_gate_slot_unity_only.sh
+8 tests/verification/test_unity_batch_shared_lock.sh
+3 tests/gates/test_unity_proof_shared_lock.sh

@@ -571,7 +571,7 @@ def _past(words: list, i: int) -> int:
 
 def _skip_wrapper(words: list, i: int) -> int:
     """words[i] là một trình bọc (_WRAPPERS): chỉ số từ chương trình thật — bỏ tuỳ chọn, đối số của chúng, `--` và thời lượng của
-    timeout. `$VAR` làm từ chương trình thì để nguyên (unity-batch.sh có khoá máy riêng)."""
+    timeout. `$VAR` làm từ chương trình thì để nguyên (unity-batch.sh tự xin khoá unity-1.lock khi cha không giữ hộ)."""
     arg_opts, has_duration = _WRAPPERS[os.path.basename(words[i])]
     i += 1
     while i < len(words) and words[i].startswith("-") and words[i] != "--":
