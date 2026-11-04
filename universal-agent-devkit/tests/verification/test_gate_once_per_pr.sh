@@ -34,8 +34,10 @@ has "XONG waits for its merge receipt" && ok "step 3: PR repo XONG waits for the
   || fail "step 3 does not say a PR repo's XONG waits for the merge receipt"
 grep -q "A trunk push and every XONG need the latest gate on that content at exit 0" "$ESS" \
   && ok "Git: trunk push and XONG keep the gate bar" || fail "Git: trunk push / XONG lost the gate bar"
-grep -q "a PR branch push in a PR repo needs no gate of its own (the merge gate gates it)" "$ESS" \
-  && ok "Git: a PR branch push needs no gate of its own" || fail "Git: still demands a gate before every PR branch push"
+has "PR repo: the merge gate is that gate (no pre-push gate)" && ok "step 3: a PR branch push needs no gate of its own" \
+  || fail "step 3: still demands a gate before every PR branch push"
+grep -q "Every commit and push needs the latest gate" "$ESS" && fail "Git: still demands a gate before every commit and push" \
+  || ok "Git: no longer demands a gate before every push (only trunk push and XONG)"
 # the Git rule still re-gates after a pull, merge or conflict fix: "once" must not have removed it
 grep -q "re-run the step 3 gate after any pull, merge or conflict fix" "$ESS" \
   && ok "Git: re-gate after a pull, merge or conflict fix is kept" || fail "Git: the re-gate after a pull/merge/conflict fix is gone"
