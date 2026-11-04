@@ -3872,6 +3872,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "gate-cache-ttl-3d",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_cache_ttl_3d.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-CACHE-TTL-3D-01",
+          "name": "05/11: hạn tuổi mặc định của PASS dùng lại là 3 ngày (khoá nội dung, biên nhận --full, biên nhận scoped): 2 ngày dùng lại, 4 ngày không; DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_cache_ttl_3d.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

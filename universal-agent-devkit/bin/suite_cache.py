@@ -40,7 +40,7 @@ import time
 
 SUITE_CACHE_FORMAT = 1
 MATRIX_KEY_FORMAT = 1            # cách phần ma trận vào khoá (B8 25/10: mục của chính suite, không digest cả file); đổi cách đó thì tăng số
-MAX_AGE_S = 6 * 3600             # DEVKIT_SUITE_CACHE_MAX_S: tuổi tối đa của một PASS được dùng lại (= DEVKIT_GATE_CACHE_MAX_S của biên nhận)
+MAX_AGE_S = 3 * 86400            # 05/11 chủ repo: 6 h ⇒ 3 ngày. DEVKIT_SUITE_CACHE_MAX_S: tuổi tối đa của một PASS được dùng lại (= DEVKIT_GATE_CACHE_MAX_S của biên nhận)
 PRUNE_EVERY_S = 3600             # dọn kho tối đa một lần mỗi giờ (mốc prune.stamp)
 STORE_MAX = 4000                 # bản ghi giữ lại tối đa; cũ hơn STORE_MAX_AGE_S thì xoá khi dọn
 STORE_MAX_AGE_S = 7 * 86400

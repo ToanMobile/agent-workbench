@@ -1459,7 +1459,7 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
     """The last full PASS when it still holds for this exact code (O1, 2026-09-28: GeelyEx2 ran
     16 full gates in one session, many on content that had already passed): same tree
     fingerprint, same RESULT_FORMAT, same matrix, tested within DEVKIT_GATE_CACHE_MAX_S (default
-    6 h — ignored files, devices and the network can drift). None otherwise. An UNTESTED full run
+    3 days, 05/11 owner order, was 6 h — ignored files, devices and the network can drift). None otherwise. An UNTESTED full run
     (exit 4, its "untested" ids ended with their matrix untested_exit) counts for its PASS suites
     only: reuse_full_pass runs the untested ones again (2026-09-29, GeelyEx2). An UNVERIFIED run (exit 2, no suite
     failed: an edited test waits for review, a code file nothing covers) is kept the same way (2026-10-07).
@@ -1478,7 +1478,7 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
         if name:
             path = os.path.join(os.path.dirname(path), name)
         r = _load_state_json(path)
-        max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
+        max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "259200"))
     except (ImportError, OSError, ValueError, TypeError, OverflowError, RecursionError):
         return None   # RecursionError: a forged file nested deeper than json.load can read (it is a RuntimeError, not a ValueError)
     if not isinstance(r, dict) or not isinstance(r.get("tests"), list) or not r["tests"]:
@@ -1722,9 +1722,9 @@ def scoped_store_receipt(project_dir, fp):
 
 
 def _scoped_reuse_max_s():
-    """#803: hạn tuổi (giây) của PASS mượn từ biên nhận scoped: DEVKIT_GATE_CACHE_MAX_S (mặc định 6 h); rác, nan, inf hay ≤ 0 ⇒ None (không mượn)."""
+    """#803: hạn tuổi (giây) của PASS mượn từ biên nhận scoped: DEVKIT_GATE_CACHE_MAX_S (mặc định 3 ngày, 05/11: trước là 6 h); rác, nan, inf hay ≤ 0 ⇒ None (không mượn)."""
     try:
-        v = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
+        v = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "259200"))
     except ValueError:
         return None
     return v if math.isfinite(v) and v > 0 else None
