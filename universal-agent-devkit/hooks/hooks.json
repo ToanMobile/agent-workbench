@@ -29,7 +29,7 @@
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session_card.sh\"",
+            "command": "bash -c 'if [ -f \"$1\" ]; then exec bash \"$1\"; fi' _ \"${CLAUDE_PLUGIN_ROOT}/hooks/session_card.sh\"",
             "timeout": 5
           }
         ]
@@ -95,7 +95,7 @@
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session_card.sh\"",
+            "command": "bash -c 'if [ -f \"$1\" ]; then exec bash \"$1\"; fi' _ \"${CLAUDE_PLUGIN_ROOT}/hooks/session_card.sh\"",
             "timeout": 5
           }
         ]
