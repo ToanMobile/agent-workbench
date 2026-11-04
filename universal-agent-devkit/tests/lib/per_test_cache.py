@@ -33,6 +33,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -85,6 +86,11 @@ def _stat_digest(project, rels):
 def _ext_sig(mod, project, tok):
     hit = mod._external(project, tok, "")
     return _stat_sig(hit[1], follow=True) if hit else "-"
+
+
+# Lệnh liệt kê file lúc chạy, hay đường ra repo thật ngoài kit (cha của kit, gốc git): input của test không nằm hết trong đồ thị.
+ENUM = re.compile(r"\bos\.walk\b|\bglob\b|\.r?glob\(|\blistdir\(|\bscandir\(|\biterdir\(|\bls-files\b|\bgit\b[^\n]*\bgrep\b"
+                  r"|\bfind\s|--show-toplevel|\$\{?(?:DK|D|DEVKIT_DIR|KIT|ROOT)\}?/\.\.|\bREPO_ROOT\b|\bPROJECT_ROOT\b")
 
 
 def _input_key(mod, sc, runner, test, entry):
@@ -168,7 +174,10 @@ def plan(kit, out, tests):
         # Không khoá theo bao đóng tĩnh của suite_cache: nó bỏ sót "$D/lib/x" ở kit lồng và `import` trong heredoc python của file .sh
         # (review 26/10, F1). Khoá theo input (đồ thị scoped_gate: import cả trong heredoc, `source`, nhắc basename, file dữ liệu theo chuỗi
         # con) khi tính được; còn lại KHOÁ CẢ CÂY (nội dung mọi file + đường dẫn test + môi trường): PASS chỉ dùng lại trên đúng cây đó.
-        key, inputs = (None, None) if tree_tests is None or test in tree_tests else _input_key(mod, sc, runner, test, entry)
+        # Review P1 (05/11): test liệt kê file lúc chạy (glob, os.walk, listdir, find, git ls-files / grep) hay trỏ ra repo thật ngoài kit:
+        # đồ thị không thấy các file đó ⇒ giữ KHOÁ CẢ CÂY (test_gate_per_test_input_key.sh K8).
+        whole_tree = tree_tests is None or test in tree_tests or ENUM.search(mod._read_text(full) or "")
+        key, inputs = (None, None) if whole_tree else _input_key(mod, sc, runner, test, entry)
         if key is None:
             key = sc.keys(entry)[1]
         if not key:

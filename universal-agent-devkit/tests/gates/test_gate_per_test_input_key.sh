@@ -128,4 +128,32 @@ nd="$(printf '%s' "$sets" | sort -u | grep -c .)"
 if [ "$nd" = 1 ] && [ "$miss" = 0 ]; then ok "K7. selection_inputs như nhau ở 16 seed, có test_x.sh (n1 lõi luôn được mở)"
 else fail "K7. selection_inputs: $nd tập khác nhau qua 16 seed, $miss seed thiếu test_x.sh (mong 1 tập, 0 thiếu)"; fi
 
+# K8 (review P1, 05/11). Ca: test glob .claude/skills/*/SKILL.md ngoài kit trong heredoc python (dạng của test_skill_size.sh).
+# Mong: SKILL.md đổi quá giới hạn thì lượt sau chạy lại test đó và ĐỎ (không có dòng reuse=1).
+R8="$TMP/k8"; K8="$R8/universal-agent-devkit"
+mkdir -p "$K8/tests/verification" "$K8/tests/lib" "$R8/.claude/skills/foo"
+git -C "$R8" init -q -b main . && git -C "$R8" config user.email t@t && git -C "$R8" config user.name t
+cp "$DEVKIT_DIR/tests/run_impacted.sh" "$K8/tests/run_impacted.sh"; echo '# trống' > "$K8/tests/impact_map.txt"
+cp "$DEVKIT_DIR/tests/lib/per_test_cache.py" "$DEVKIT_DIR/tests/lib/run_bounded.py" "$K8/tests/lib/"
+ln -s "$DEVKIT_DIR/bin" "$K8/bin"
+printf -- '---\nname: foo\n---\nshort\n' > "$R8/.claude/skills/foo/SKILL.md"
+cat > "$K8/tests/verification/test_size.sh" <<'T'
+DK="$(cd "$(dirname "$0")/../.." && pwd)"; ROOT="$(cd "$DK/.." && pwd)"
+python3 -I - "$ROOT/.claude/skills" <<'PY'
+import glob, os, sys
+bad = [p for p in glob.glob(os.path.join(sys.argv[1], "*", "SKILL.md")) if len(open(p).read()) > 50]
+sys.exit(1 if bad else 0)
+PY
+T
+printf '.claude/settings*\n' > "$R8/.gitignore"
+git -C "$R8" add -A && git -C "$R8" commit -qm init
+run8() { ( cd "$R8" && SB_HEAVY_SLOT_DIR="$TMP/k8slots" DEVKIT_PER_TEST_CACHE=1 DEVKIT_SCOPED_TESTS="tests/verification/test_size.sh" \
+  bash universal-agent-devkit/tests/run_impacted.sh > "$TMP/out8" 2>&1 ); }
+mkdir -p "$TMP/k8slots"
+run8; r8a=$?
+python3 -c "print('x'*200)" >> "$R8/.claude/skills/foo/SKILL.md"; git -C "$R8" commit -qam "foo SKILL.md quá giới hạn"
+run8; RC=$?
+if [ "$r8a" = 0 ] && [ "$RC" != 0 ] && ! grep -q "reuse=1" "$TMP/out8"; then ok "K8. test glob file ngoài đồ thị giữ khoá cả cây: SKILL.md đổi ⇒ chạy lại và ĐỎ"
+else fail "K8. exit $r8a rồi $RC (mong 0 rồi ≠0): test liệt kê file lúc chạy dùng lại PASS cũ"; grep -E "test_size|per_test" "$TMP/out8"; fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_per_test_input_key: all passed" || { echo "❌ test_gate_per_test_input_key: $FAILS failed"; exit 1; }
