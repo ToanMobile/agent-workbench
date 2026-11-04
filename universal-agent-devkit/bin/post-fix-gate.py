@@ -9106,10 +9106,17 @@ def main():
             m = re.search(r"(\S*)tests/run_impacted\.sh\b", cmd)
             reds = [l[2:].strip() for l in t.get("fail_lines") or [] if RED_TEST_LINE.match(l)] if m else []
             rerun += [f"bash {m.group(1)}{r}" for r in reds] or [cmd]
+            if reds and t.get("status") == "TIMEOUT":   # #992: test treo không có dòng ✖ — chỉ lệnh cả shard chạy lại được nó
+                rerun.append(cmd)
         if rerun:
-            print(f"  • {tr('Chạy lại riêng các chỗ đỏ (không chạy lại cả gate local):', 'Re-run only the red parts (not the whole local gate):')}")
-            for c in list(dict.fromkeys(rerun))[:20]:
+            # #992: vế "không chạy lại cả gate local" chỉ đúng ở repo đi PR (merge gate là gate); repo push thẳng trunk vẫn cần gate exit 0
+            pr_repo = any((Path(get_project_dir()) / ".claude" / "super-board" / "configs").glob("*.json"))
+            print(f"  • {tr('Chạy lại riêng các chỗ đỏ' + (' (không chạy lại cả gate local)' if pr_repo else '') + ':', 'Re-run only the red parts' + (' (not the whole local gate)' if pr_repo else '') + ':')}")
+            rerun = list(dict.fromkeys(rerun))
+            for c in rerun[:20]:
                 print(f"      `{c}`")
+            if len(rerun) > 20:
+                print(f"      … +{len(rerun) - 20}")
             print(f"    {tr('Repo đi PR: sửa, chạy lại đúng các lệnh trên, commit + push; merge gate verify cả bộ một lần.', 'PR repo: fix, re-run exactly these commands, commit + push; the merge gate verifies the whole set once.')}")
     if getattr(args, "core_touched", None):   # #741: lượt --scoped chạm lõi không leo full — dòng này nằm trong --brief cho review 2/2
         print(f"  • {YELLOW}core-touched{RESET}: {', '.join(args.core_touched[:10])}" + (" …" if len(args.core_touched) > 10 else ""))
