@@ -14,6 +14,7 @@ dùng). Input (bảo thủ — thừa thì chỉ giảm số lần dùng lại, 
   f. danger list: đổi một file trong đó là đổi mọi khoá.
 Suite run_impacted.sh có dấu SELECTION_INPUTS_MARK (#851): khoá chính xác thay a–c bằng input của TẬP CHỌN (SuiteCache.selection_inputs:
 đồ thị tham chiếu của bin/scoped_gate.py — cùng đồ thị merge gate scoped dùng để chọn test); khoá cả cây giữ nguyên.
+#994: TẮT (selection_inputs_marked luôn None) — đồ thị tĩnh không thấy file test liệt kê lúc chạy ⇒ shard chỉ khoá cả cây.
 Kho: <git common dir>/postfix-gate/suite_cache/<khoá>.json {pass_n, fail_n, …}. HIT ⇔ pass_n ≥ 1, fail_n = 0, chưa quá tuổi, đúng id
 và lệnh, id không bị cách ly. FAIL là vĩnh viễn với khoá đó (một PASS chạy đua không bao giờ xoá được nó). Chỉ một lượt chạy THẬT lệnh
 đầy đủ của suite mới được ghi. Thư viện chuẩn, không phụ thuộc gate (post-fix-gate.py và stale_rerun.py cùng dùng).
@@ -532,22 +533,14 @@ def selection_list(project_dir, command):
 
 def selection_inputs_marked(project_dir, command):
     """#851: runner của lệnh (SELECTION_CMD, file thường trong cây) có cả SELECTION_MARK lẫn SELECTION_INPUTS_MARK trong 4096 byte đầu ⇒
-    frozenset các test (tương đối kit) nêu sau SELECTION_TREE_MARK (có thể rỗng); không ⇒ None."""
-    m = SELECTION_CMD.match(command or "")
-    if not m or "--all" in command.split():   # OCR 02/11: `--all` chạy mọi test, `--list --all` vẫn in tập scoped ⇒ chỉ khoá cả cây
-        return None
-    root = os.path.realpath(str(project_dir))
-    real = os.path.realpath(os.path.join(str(project_dir), m.group("script")))
-    if not (real.startswith(root + os.sep) and os.path.isfile(real)):   # FIFO / socket: open() chặn mãi (#353)
-        return None
-    try:
-        with open(real, encoding="utf-8", errors="replace") as f:
-            head = f.read(4096)
-    except OSError:
-        return None
-    if not (SELECTION_MARK in head and SELECTION_INPUTS_MARK in head):
-        return None
-    return frozenset(t for g in SELECTION_TREE_MARK.findall(head) for t in g.split())
+    frozenset các test (tương đối kit) nêu sau SELECTION_TREE_MARK (có thể rỗng); không ⇒ None.
+    #994 (fail-closed): LUÔN trả None ⇒ shard run_impacted.sh chỉ khoá cả cây (keys(): sel_files None ⇒ cut). Đồ thị tĩnh của
+    selection_inputs chỉ thấy import / source / tên file được nhắc, không thấy file test liệt kê lúc chạy (glob, `for f in "$DK"/x/*`,
+    `ls`, os.walk, git ls-files / grep): đo 05/11 test_git_env_isolation.sh duyệt 549 file, chỉ 153 trong input ⇒ PASS cũ bị dùng lại
+    khi file được liệt kê đổi. Vá theo mẫu nhận dạng liệt kê (PR #993) bị review tìm ra dạng mới hai vòng (INSTINCT-104) nên bỏ.
+    Giữ hàm và chữ ký cho caller; thân cũ ở git 853a6566. Đường dài: vết input lúc chạy (fs trace) — macOS không làm được khi
+    không có quyền root."""
+    return None
 
 
 def store_dir(project_dir):
