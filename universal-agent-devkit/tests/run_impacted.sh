@@ -373,7 +373,7 @@ DEVKIT_RUN_BOUNDED=""
 DEVKIT_TEST_TIMEOUT_S="${DEVKIT_TEST_TIMEOUT_S:-1800}"
 case "$DEVKIT_TEST_TIMEOUT_S" in *[!0-9]*) echo "run_impacted.sh: DEVKIT_TEST_TIMEOUT_S must be whole seconds; using 1800" >&2; DEVKIT_TEST_TIMEOUT_S=1800 ;; esac
 export DEVKIT_RUN_BOUNDED DEVKIT_TEST_TIMEOUT_S
-# B2 (audit 25/10): sổ PASS theo từng test (tests/lib/per_test_cache.py, kho của bin/suite_cache.py, khoá = input riêng của test ngoài --all, cả cây + đường dẫn test khi --all). Chỉ khi
+# B2 (audit 25/10): sổ PASS theo từng test (tests/lib/per_test_cache.py, kho của bin/suite_cache.py, khoá = cả cây + đường dẫn test). Chỉ khi
 # gate bật (DEVKIT_PER_TEST_CACHE=1: dùng lại + ghi; record: chỉ ghi — lượt sentinel / --no-cache); `agent-kit test` không đặt biến: chạy hết.
 # `--list` ở trên không đổi (khoá của gate và lần kiểm lại R3 cần tập chọn đầy đủ). Helper vắng / lỗi: mọi test chạy như trước.
 DEVKIT_PTC=""; reused=""
@@ -383,10 +383,7 @@ esac
 export DEVKIT_PTC
 if [ -n "$DEVKIT_PTC" ] && [ -n "$(printf '%s' $selected)" ]; then
   # in "reuse<TAB><test><TAB><tuổi giây>" cho test có PASS trên đúng khoá; ghi ảnh khoá cho test phải chạy (bước record của run_one)
-  # 04/11: lượt không --all ⇒ DEVKIT_PTC_INPUT_KEY=1 (chỉ cho lệnh plan): test thường khoá theo input riêng (đồ thị scoped_gate), một
-  # input đổi chỉ chạy lại test đọc nó; --all (gate-full) giữ khoá cả cây.
-  ptc_input=1; [ "${1:-}" = "--all" ] && ptc_input=""
-  DEVKIT_PTC_INPUT_KEY="$ptc_input" python3 -I "$DEVKIT_PTC" plan "$DK" "$out" $selected >"$out/ptc.plan" 2>"$out/ptc.err" \
+  python3 -I "$DEVKIT_PTC" plan "$DK" "$out" $selected >"$out/ptc.plan" 2>"$out/ptc.err" \
     || echo "run_impacted.sh: per_test_cache plan exit $? — mọi test chạy" >&2
   [ -s "$out/ptc.err" ] && tail -n 5 "$out/ptc.err" | sed 's/^/run_impacted.sh: /' >&2
   reused="$(awk -F'\t' '$1 == "reuse" { print $2 }' "$out/ptc.plan" 2>/dev/null)"
@@ -435,7 +432,7 @@ for t in $selected; do
   [ -f "$t" ] || [ -e "$o.rc" ] || [ -e "$o.log" ] || continue
   if is_reused "$t"; then
     age="$(awk -F'\t' -v t="$t" '$1 == "reuse" && $2 == t { print $3; exit }' "$out/ptc.plan")"
-    echo "↺ $t (PASS dùng lại trên cùng input, chạy thật $((${age:-0} / 60)) phút trước)"
+    echo "↺ $t (PASS dùng lại trên cùng cây, chạy thật $((${age:-0} / 60)) phút trước)"
     n_reuse=$((n_reuse + 1))
     continue
   fi

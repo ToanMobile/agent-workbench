@@ -3835,18 +3835,24 @@
       ]
     },
     {
-      "component": "per-test-cache-input-key",
+      "component": "selection-inputs-order-and-reject-rerun",
       "watch_files": [
-        "universal-agent-devkit/tests/lib/per_test_cache.py",
-        "universal-agent-devkit/tests/run_impacted.sh",
         "universal-agent-devkit/bin/suite_cache.py",
-        "universal-agent-devkit/tests/gates/test_gate_per_test_input_key.sh"
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_selection_inputs_order.sh",
+        "universal-agent-devkit/tests/gates/test_gate_reject_rerun_cmds.sh"
       ],
       "mandatory_regression_tests": [
         {
-          "id": "REG-DK-PER-TEST-INPUT-KEY-01",
-          "name": "05/11: sổ PASS từng test khoá theo input riêng (lỗi 1 chỗ chỉ chạy lại 1 chỗ); $D/lib/x và import heredoc vẫn chạy lại; test quét cả kit và --all giữ khoá cả cây; FAIL void PASS cũ; selection_inputs không phụ thuộc PYTHONHASHSEED",
-          "command": "bash universal-agent-devkit/tests/gates/test_gate_per_test_input_key.sh",
+          "id": "REG-DK-SELECTION-INPUTS-ORDER-01",
+          "name": "05/11: selection_inputs (#851) không phụ thuộc PYTHONHASHSEED; sổ PASS từng test khoá cả cây nên test glob file ngoài đồ thị chạy lại khi file đổi",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_selection_inputs_order.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-REJECT-RERUN-CMDS-01",
+          "name": "05/11: gate REJECT in lệnh chạy lại riêng từng chỗ đỏ (test đỏ của shard run_impacted.sh, lệnh suite thường) + nhắc merge gate verify một lần",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_reject_rerun_cmds.sh",
           "parallel_safe": true
         }
       ]
