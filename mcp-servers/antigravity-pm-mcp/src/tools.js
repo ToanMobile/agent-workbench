@@ -838,8 +838,10 @@ export const TOOLS = [
           stAfter = await trackedChanges(cfg, auditDir, { ignoreGenerated: changeSet !== null, changeSet });
           // Commit XOA / DOI TEN file DevKit roi hook sinh lai no: file thanh untracked nen status --untracked-files=no khong thay, ma grok da
           // doc bytes ma commit noi la khong ton tai => doi chieu file thuoc change set + dang co tren dia voi cay cua head (review #988 vong 3)
-          if (!stAfter.error && changeSet !== null) {
-            const regen = [...changeSet].filter((p) => laFileDevkitSinh(p) && fs.existsSync(path.join(auditDir, p)));
+          // Khong do duoc change set (OCR vong 3): doi chieu 3 file DevKit co dinh thay cho change set (khong liet ke duoc archive/memory)
+          if (!stAfter.error) {
+            const cand = changeSet !== null ? [...changeSet].filter(laFileDevkitSinh) : [...DEVKIT_SINH_TU_DONG];
+            const regen = cand.filter((p) => fs.existsSync(path.join(auditDir, p)));
             if (regen.length) {
               const lt = await run('git', ['--literal-pathspecs', 'ls-tree', '-z', '--name-only', head, '--', ...regen], { cwd: auditDir, timeoutMs: 60000, maxBytes: 16_000_000 });
               if (lt.spawnFailed || lt.timedOut || lt.code !== 0 || lt.truncated) {
