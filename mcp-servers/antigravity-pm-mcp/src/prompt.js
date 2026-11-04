@@ -357,7 +357,7 @@ export function buildGrokAuditPrompt(cfg, task, { head, scope = '', range = {}, 
     READ_ONLY_RUN_RULE,
     // 04/11: audit that PR #977 dung giua chung khong co VERDICT — grok headless dinh ghi diff ra file, lenh can xin quyen ma khong hoi duoc.
     '- Ban chay HEADLESS o plan mode: lenh can xin quyen (ghi file, redirect `>` / `>>`, tee, mktemp, script tao file) KHONG chay duoc va lam ban'
-      + ` dung giua chung. Chi doc truc tiep: \`git diff ${base || '<goc>'} ${head} -- <file>\` tung file, \`git show ${head}:<file>\`, sed -n / grep.`,
+      + ` dung giua chung. Chi doc truc tiep: ${base && base !== head ? `\`git diff ${base} ${head} -- <file>\` tung file, ` : `\`git show ${head}\` (danh sach + diff commit), `}\`git show ${head}:<file>\`, sed -n / grep.`,
     '',
     independent ? '' : dodBlock(task, cfg),
     noFabricationBlock(),

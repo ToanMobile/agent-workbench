@@ -22,6 +22,11 @@ test('GH1 prompt grok (doc lap va thuong): cam lenh can xin quyen trong headless
       assert.match(p, /git diff b{40} a{40} -- <file>/, `independent=${independent}`);
       assert.match(p, /chua doc het.*VERDICT: REVISE/s, `independent=${independent}`);
     }
+    // OCR 7baaf7f7: khong co merge-base va baseCommit = head (task chi-audit tren worktree PR): khong duoc dan grok toi diff rong head..head
+    task.baseCommit = head;
+    const p2 = buildGrokAuditPrompt(cfg, task, { head, range: {}, independent: false });
+    assert.doesNotMatch(p2, new RegExp(`git diff ${head} ${head}`));
+    assert.match(p2, new RegExp(`git show ${head}`));
   } finally {
     cleanup(dir);
   }
