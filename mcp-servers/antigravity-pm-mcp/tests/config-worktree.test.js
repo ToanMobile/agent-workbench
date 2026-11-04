@@ -58,7 +58,10 @@ test('CW3 proof shell ke thua tu checkout chinh: script tuong doi nam o checkout
     // script render chi co o checkout chinh (ignore, khong vao worktree), nhu proof_render.py cua agent-workbench
     writeFile(path.join(main, '.antigravity-pm', 'b64.txt'), PNG_1PX.toString('base64'));
     writeFile(path.join(main, '.antigravity-pm.json'), JSON.stringify({
-      proof: { providers: { fake: { type: 'shell', command: 'base64 --decode < .antigravity-pm/b64.txt > {{out}}' } } },
+      // cwd phai la worktree (lenh proof chay test / render cay PR, khong phai cay main — review 75df5df3 P1); script cua checkout chinh
+      // tro bang {{configRoot}} (duong dan tuyet doi toi thu muc file cau hinh dang dung)
+      proof: { providers: { fake: { type: 'shell',
+        command: 'test "$(pwd -P)" = "$(cd {{project}} && pwd -P)" && base64 --decode < {{configRoot}}/.antigravity-pm/b64.txt > {{out}}' } } },
     }));
     const wt = path.join(main, '.claude', 'worktrees', 'z');
     g(main, 'worktree', 'add', '-q', '--detach', wt, 'HEAD');

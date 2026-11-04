@@ -208,8 +208,8 @@ export function loadConfig(projectInput) {
   const cfg = deepMerge(deepMerge(DEFAULT_CONFIG, rawGlobal || {}), raw || {});
   cfg.projectRoot = root;
   cfg.configFile = raw ? file : null;
-  // Thu muc cua file cau hinh dang dung: checkout chinh khi worktree ke thua (linkedWorktreeConfig). Lenh proof shell tu khai (vd script
-  // trong .antigravity-pm/ bi ignore, chi co o checkout chinh) chay tu day nhu truoc khi worktree thanh goc project rieng.
+  // Thu muc cua file cau hinh dang dung: checkout chinh khi worktree ke thua (linkedWorktreeConfig). Lenh proof shell tro script chi co o
+  // checkout chinh (vd .antigravity-pm/ bi ignore) qua {{configRoot}}; lenh van chay voi cwd = worktree.
   cfg.configRoot = raw ? path.dirname(file) : root;
   cfg.globalConfigFile = rawGlobal ? globalFile : null;
   cfg.projectName = cfg.projectName || path.basename(root);

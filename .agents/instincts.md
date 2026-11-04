@@ -830,3 +830,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main
 - **Nguyên nhân:** (1) vòng thu kết quả của tests/run_impacted.sh bỏ qua file test không còn trên đĩa ([ -f $t ] || continue): scratch merge gate bị xoá giữa lượt thì mọi test bị bỏ, suite PASS ran=0 dù đã chạy rc=1. (2) .agents/devkit của worktree trỏ về kit ở main checkout: hook sinh lại ngữ cảnh dựng AGENTS.md từ essentials.md CŨ của main, ghi đè phần sửa essentials của worktree, gate sau đó kiểm cây sai
 - **Quy tắc phòng ngừa & Cách fix:** (1) Runner tổng hợp lấy rc thật của test đã khởi chạy (.rc/.log) dù file đã mất; thư mục kit mất ⇒ FAIL; chỉ bỏ qua tên chưa từng chạy (nhánh fix/run-impacted-false-green). (2) Worktree sửa universal-agent-devkit/rules/essentials.md: trước mỗi lần gate chạy git status; AGENTS.md lệch bản commit thì chép lại bằng git show HEAD:AGENTS.md rồi mới gate; không commit bản AGENTS.md do hook sinh lại
+
+---
+
+### [INSTINCT-106] Luồng tự động qua agent ngoài (PM/grok) xanh trên fixture nhưng hỏng khi chạy thật
+- **Ngày phát hiện:** 2026-11-04
+- **Hiện tượng lỗi:** Luồng tự động qua agent ngoài (PM/grok) xanh trên fixture nhưng hỏng khi chạy thật
+- **Nguyên nhân:** Fixture tự tạo .antigravity-pm.json và grok giả; chạy thật trên worktree PR thì PM leo lên checkout chính (không có config) và grok headless dừng vì lệnh cần xin quyền, không có VERDICT
+- **Quy tắc phòng ngừa & Cách fix:** Luồng nhiều agent phải có một lượt chạy THẬT đầu-cuối trên chính PR (agent thật, worktree thật, pm home thật) trước khi nói xong; fixture chỉ chứng minh logic, không chứng minh môi trường
