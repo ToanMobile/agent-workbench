@@ -493,12 +493,14 @@ python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} 
 # #364: report QA mới nhất của người đáng tin còn "❌ Not done" nêu tên một AC, hay AC [x] không có dòng bằng chứng ↳: không merge,
 # thẻ về Build (exit 11). Checker thoát 2 (metadata không đọc được), crash, hay thoát 1 mà không in dòng "qa-report:" nào là
 # KHÔNG quyết định được: cùng đường với policy không đọc được (exit 7, người duyệt), không phải lỗi build của thẻ.
-# T0255: kèm head + base để checker từ chối report QA nêu sha cũ mà head còn commit code sau đó. Fetch best-effort: thiếu
-# head/base cục bộ thì checker tự bỏ qua phần ghim sha (không biến lỗi mạng thành cổng người).
-git -C "$REPO_PATH" cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null || git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || true
+# T0255: kèm head + base để checker từ chối report QA nêu sha cũ mà head còn commit code sau đó. Base phải vừa fetch (base cũ
+# làm sha main mới trông như commit của nhánh): fetch lỗi thì bỏ phần ghim sha, không biến lỗi mạng thành cổng người.
+QA_PIN=(--head "$HEAD_SHA" --repo "$REPO_PATH" --base "origin/$BASE")
+git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || {
+  say "WARNING: git fetch origin ${HEAD_REF} ${BASE} failed — QA head pin skipped"; QA_PIN=(); }
 QA_REPORT_RC=0
-QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" \
-  --head "$HEAD_SHA" --repo "$REPO_PATH" --base "origin/$BASE" 2>/dev/null) || QA_REPORT_RC=$?
+QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"} 2>/dev/null) \
+  || QA_REPORT_RC=$?
 if [ "$QA_REPORT_RC" -ne 0 ]; then
   if [ "$QA_REPORT_RC" -eq 1 ] && printf '%s\n' "$QA_REPORT_OUT" | grep -q '^qa-report: '; then
     printf '%s\n' "$QA_REPORT_OUT"

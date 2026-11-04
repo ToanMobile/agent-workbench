@@ -109,31 +109,28 @@ def _git(repo, *args):
 
 def stale_qa(comments, pr_author, head, repo, base):
     """T0255: report QA mới nhất nêu commit của nhánh PR mà head còn commit code sau đó ⇒ mô tả lỗi; còn lại None.
-    Commit của nhánh = tổ tiên của head, không là tổ tiên của base (sha của main mà QA nêu để so ĐỎ thì bỏ qua). Commit merge và
-    commit chỉ chạm EVIDENCE_DIR không tính là code. Report không nêu commit nào của nhánh, hay git/base không đọc được: không chặn
-    (giữ hành vi cũ). ponytail: commit merge có sửa tay khi giải conflict không bị tính; so cây của phần nhánh khi gặp ca lọt như vậy."""
+    Commit của nhánh = commit trên đường first-parent của head, trừ phần base đã có (sha của main mà QA nêu để so ĐỎ thì bỏ qua).
+    Đi theo first-parent nên commit của main nhập bằng merge (cha thứ hai) không bị đếm, kể cả khi base cục bộ cũ (Grok T0255 P1).
+    Commit merge và commit chỉ chạm EVIDENCE_DIR không tính là code. Report không nêu commit nào của nhánh, hay git/base không đọc
+    được: không chặn (giữ hành vi cũ). ponytail: commit merge có sửa tay khi giải conflict không bị tính; so cây của phần nhánh khi
+    gặp ca lọt như vậy."""
     lines, _ = latest_qa(comments, pr_author)
     if lines is None or not head:
         return None
     tokens = set(SHA_TOKEN.findall("\n".join(lines)))
     if any(head.startswith(t) for t in tokens):
         return None
-    if _git(repo, "rev-parse", "--verify", "-q", f"{base}^{{commit}}") is None:
-        print(f"qa-report: bỏ qua ghim sha QA — không đọc được base {base}", file=sys.stderr)
+    chain = _git(repo, "rev-list", "--first-parent", head, f"^{base}")
+    if chain is None:
+        print(f"qa-report: bỏ qua ghim sha QA — không đọc được head {head[:12]} hay base {base}", file=sys.stderr)
         return None
-    own = []
-    for t in sorted(tokens):
-        sha = _git(repo, "rev-parse", "--verify", "-q", f"{t}^{{commit}}")
-        if not sha or _git(repo, "merge-base", "--is-ancestor", sha, head) is None:
-            continue
-        if _git(repo, "merge-base", "--is-ancestor", sha, base) is not None:
-            continue
-        own.append(sha)
+    chain = chain.split()
+    own = [c for c in chain if any(c.startswith(t) for t in tokens)]
     if not own:
         return None
     after = []
     for sha in own:
-        out = _git(repo, "log", "--no-merges", "--format=%h %s", head, f"^{sha}", f"^{base}", "--", ".", f":(exclude){EVIDENCE_DIR}")
+        out = _git(repo, "log", "--first-parent", "--no-merges", "--format=%h %s", head, f"^{sha}", "--", ".", f":(exclude){EVIDENCE_DIR}")
         if out is None:
             print(f"qa-report: bỏ qua ghim sha QA — git log lỗi trên {sha[:12]}", file=sys.stderr)
             return None

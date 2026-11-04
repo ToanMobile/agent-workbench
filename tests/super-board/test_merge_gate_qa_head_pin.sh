@@ -53,7 +53,8 @@ run_case() {
   i=$((i + 1))
   git -C "$WT" push -q -f origin issue-5-x
   H=$(git -C "$WT" rev-parse HEAD); echo "$H" > "$TMP/pr5.head"
-  git -C "$R" fetch -q origin; git -C "$R" diff origin/main "$H" > "$TMP/pr5.diff"
+  OM=$(git --git-dir="$O" rev-parse main)   # main thật trên origin (ref origin/main cục bộ có thể bị làm cũ cố ý)
+  git -C "$R" diff "$OM" "$H" > "$TMP/pr5.diff"
   rm -f "$TMP/halt.json"   # một ca halt không được chặn các ca sau
   python3 -c 'import json,sys
 num=[l.split("\t") for l in sys.argv[3].splitlines() if l]
@@ -63,7 +64,7 @@ for c in cs:
     c.setdefault("authorAssociation","OWNER"); c.setdefault("author",{"login":"owner"})
 print(json.dumps({"files":files,"labels":[],"body":sys.argv[1],"comments":cs,"author":{"login":"owner"},
   "additions":sum(int(n[0]) for n in num),"deletions":sum(int(n[1]) for n in num),"changedFiles":len(files)}))' \
-    "$AC_OK" "$1" "$(git -C "$R" diff --numstat origin/main "$H")" > "$TMP/pr5.meta"
+    "$AC_OK" "$1" "$(git -C "$R" diff --numstat "$OM" "$H")" > "$TMP/pr5.meta"
   ( cd "$WT" && bash "$GATE" --config "$TMP/cfg.json" --pr 5 --expect-head "$H" ) >"$TMP/g$i.log" 2>&1; rc=$?
 }
 qa() { printf '[{"body":"[qa] [report] ✅ pass · PR #5 @ %s\\nDid: ran tests\\n✅ Done: AC1\\nNext: reviewer"}]' "$1"; }
@@ -88,6 +89,9 @@ run_case "$(qa "${Q1:0:8}")";                passed "only a QA evidence commit a
 echo m > "$R/m"; git -C "$R" add m; git -C "$R" commit -qm "main: other work"; git -C "$R" push -q origin main
 git -C "$WT" fetch -q origin main; git -C "$WT" merge -q --no-edit origin/main
 run_case "$(qa "${Q1:0:8}")";                passed "only a merge of main after the QA sha"
+# d2. Ref origin/main cục bộ cũ (trước commit main vừa gộp; head đã có cục bộ) ⇒ vẫn qua (Grok T0255 P1: không đếm commit main).
+git -C "$R" update-ref refs/remotes/origin/main "$BASE0"
+run_case "$(qa "${Q1:0:8}")";                passed "a stale local origin/main does not count merged main commits"
 # e. QA chỉ nêu sha của main (ví dụ 'đỏ y hệt trên origin/main <sha>') ⇒ không phải sha nhánh, qua.
 run_case "$(qa "${BASE0:0:8}")";             passed "QA names only a base-branch sha"
 # a. Builder đẩy commit sửa code sau sha QA ⇒ từ chối, QA phải chạy lại trên head.
