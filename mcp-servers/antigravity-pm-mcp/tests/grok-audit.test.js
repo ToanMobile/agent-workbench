@@ -683,3 +683,25 @@ test('AV11 test doi ten roi sua: pham vi grok ghi ca duong cu va duong MOI (gate
     cleanup(dir);
   }
 });
+
+test('AV12 worktree PR (git worktree add duoi checkout chinh co .antigravity-pm.json): PM lay chinh worktree lam goc, khong leo len checkout chinh', async () => {
+  const main = tmpProject({ projectName: 'grok-audit-main', testCommand: 'echo ok' });
+  const g = (cwd, ...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd, encoding: 'utf8' }).trim();
+  try {
+    g(main, 'init', '-q', '-b', 'main');
+    writeFile(path.join(main, '.gitignore'), '.antigravity-pm/\n.antigravity-pm.json\n.claude/\n');
+    writeFile(path.join(main, 'a.txt'), 'a\n');
+    g(main, 'add', '-A'); g(main, 'commit', '-qm', 'init');
+    const wt = path.join(main, '.claude', 'worktrees', 'audit-x');
+    g(main, 'worktree', 'add', '-q', '--detach', wt, 'HEAD');
+    writeFile(path.join(main, 'a.txt'), 'ban o checkout chinh\n');   // checkout chinh ban: worktree PR van sach
+    const cfg = loadConfig(wt);
+    assert.equal(fs.realpathSync(cfg.projectRoot), fs.realpathSync(wt), 'goc project phai la worktree PR, khong phai checkout chinh');
+    const task = createTask(cfg, sampleTaskArgs());
+    const fake = fakeGrok();
+    await withGrok(fake, () => call('pm_dispatch', { project: wt, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    assert.equal(fake.argv()[5], cfg.projectRoot, 'grok chay trong worktree PR');
+  } finally {
+    cleanup(main);
+  }
+});
