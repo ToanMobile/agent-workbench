@@ -155,6 +155,22 @@ _HANDOVER_KEYS = ("push", "pr create", "agent-kit", "super-board-merge-gate")   
 _INTERP = {"python", "python3", "bash", "sh", "zsh"}
 
 
+# options of .claude/bin/super-board-merge-gate.sh that take a value (its `case "$1"` loop: `shift 2`)
+_MG_VALUE_OPTS = {"--config", "--pr", "--expect-head", "--subject", "--body-file", "--lock-timeout", "--stale-after", "--train-receipt"}
+
+
+def _merge_gate_check_only(args):
+    """#992: the merge gate words carry its own --dry-run / --preflight FLAG, read as its arg loop reads them: the word after a value
+    option is that option's value (`--subject --dry-run` merges for real). ponytail: a new value option of the merge gate needs adding to
+    _MG_VALUE_OPTS; until then its value is read as a flag (the old reading)."""
+    i = 0
+    while i < len(args):
+        if args[i] in ("--dry-run", "--preflight"):
+            return True
+        i += 2 if args[i] in _MG_VALUE_OPTS else 1
+    return False
+
+
 def _handover_cmd(cmd):
     """The Bash command line hands the work over (04/11): a git push (devkit_harness.git_writes), `gh pr create`, `agent-kit worktree
     finish`, `agent-kit integrate`, super-board-merge-gate.sh — as a command word, read like git_writes (devkit_harness._shell_code: quoted
@@ -165,7 +181,7 @@ def _handover_cmd(cmd):
         return True
     for seg in devkit_harness._CMD_SPLIT.split(devkit_harness._shell_code(cmd)[0]):
         w = devkit_harness._command_words(seg)
-        if w and os.path.basename(w[0]) == "timeout":   # #992: `timeout [-k N|-s SIG|--opt=…] DURATION <cmd>` (merge gate có trần giờ)
+        if w and os.path.basename(w[0]) in ("timeout", "gtimeout"):   # #992: `[g]timeout [-k N|-s SIG|--opt=…] DURATION <cmd>` (merge gate có trần giờ; gtimeout: coreutils macOS)
             w = w[1:]
             while w and w[0].startswith("-"):
                 w = w[2:] if w[0] in ("-k", "-s", "--kill-after", "--signal") else w[1:]
@@ -178,7 +194,7 @@ def _handover_cmd(cmd):
             continue
         c, rest = os.path.basename(w[0]), [x for x in w[1:] if not x.startswith("-")]
         if c == "super-board-merge-gate.sh":
-            if not {"--dry-run", "--preflight"} & set(w[1:]):   # #992: --dry-run / --preflight chỉ kiểm, không merge: không bàn giao
+            if not _merge_gate_check_only(w[1:]):   # #992: --dry-run / --preflight chỉ kiểm, không merge: không bàn giao
                 return True
         elif (c == "agent-kit" and (rest[:2] == ["worktree", "finish"] or rest[:1] == ["integrate"])) \
                 or (c == "gh" and any(w[k] == "pr" and w[k + 1] == "create" for k in range(1, len(w) - 1))):
