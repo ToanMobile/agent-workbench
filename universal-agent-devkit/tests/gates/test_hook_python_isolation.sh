@@ -462,12 +462,18 @@ for idx, (name, build, want, mods) in enumerate(INPROJECT):
 for hook, marker, cmd, hint, proof in (("block-dangerous-git.sh", "reason = analyse(cmd)", 'git log "$PWD"', 'prefix "!"', "prefix `!`"),
                                        ("hardware_safety_gate.sh", "rm_why = None if (label or MCP) else rm_problem(cmd, [CWD])", 'ls "$HOME"',
                                         "HARDWARE_OVERRIDE", "HARDWARE_OVERRIDE:-0")):
-    src = open(os.path.join(HOOKS, hook), encoding="utf-8").read()
+    mod = hook[:-3].replace("-", "_") + "_main.py"   # #967: the python of the hook is the module beside it
+    src = open(os.path.join(HOOKS, mod), encoding="utf-8").read()
     if src.count(marker) != 1:
-        fails.append("crash injection point not found exactly once in %s: %r (the hook changed; update this test)" % (hook, marker))
+        fails.append("crash injection point not found exactly once in %s: %r (the hook changed; update this test)" % (mod, marker))
         continue
-    copy = os.path.join(TMP, "crash_" + hook)
-    open(copy, "w", encoding="utf-8").write(src.replace(marker, marker.split("=")[0] + "= 1 / 0"))
+    cdir = os.path.join(TMP, "crash_" + hook[:-3])
+    os.makedirs(cdir)
+    for f in (hook, "shell_norm.py"):
+        shutil.copy(os.path.join(HOOKS, f), cdir)
+    copy = os.path.join(cdir, hook)
+    open(os.path.join(cdir, mod), "w", encoding="utf-8").write(src.replace(marker, marker.split("=")[0] + "= 1 / 0"))
+    src += open(os.path.join(HOOKS, hook), encoding="utf-8").read()   # the escape hatch it names may be read by the bash part
     env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "PYTHON"))}
     env.update(CLAUDE_PROJECT_DIR=TMP, PYTHONDONTWRITEBYTECODE="1")
     r = subprocess.run(["bash", copy], input=json.dumps(bash_payload(TMP, cmd)), capture_output=True, text=True, timeout=60,
