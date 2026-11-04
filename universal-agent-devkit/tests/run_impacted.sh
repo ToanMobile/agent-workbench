@@ -215,8 +215,9 @@ run_one() { # <test> <out dir> [alone]
   # that ended. Same line rules as `· done` below. A reader that is already gone: SIGPIPE here, the test is not started (nobody wants it).
   # 04/11: in a shared pool (job_pool.py) the line is printed by job_pool.py once the test holds its slot (fd 3 = this stderr): a test that
   # waits for another shard's tests is not running, and the gate's HANG report must not name it.
-  local fd3=/dev/null   # job_pool.py's `· start` line: this stderr in a pool, nothing otherwise (the test never inherits fd 3)
-  if [ -n "${DEVKIT_JOB_POOL:-}" ]; then fd3=/dev/stderr; else printf '· start %s\n' "$1" >&2; fi
+  local fd3=-   # job_pool.py's `· start` line: fd 3 = a dup of this stderr in a pool (never reopened: /dev/stderr truncates a file on
+  # Linux), closed otherwise; job_pool.py closes it before the test, so no test ever inherits fd 3
+  if [ -n "${DEVKIT_JOB_POOL:-}" ]; then fd3=2; else printf '· start %s\n' "$1" >&2; fi
   # Stop của Grok export GROK_HOOK_*; detect() coi mọi hook con là Grok và nhả phiên sau 3 lần chặn (exit 0).
   # Bài thử nào cần Grok thì tự gán các biến đó. #660: DEVKIT_GATE_DONE (đã dùng ở trên để lọc pool này) cũng bị gỡ khỏi bài con: bài chạy
   # `run_impacted.sh --list` bên trong sẽ bị lọc mất test của chính nó (impeccable/SKILL.md). Bài nào cần danh sách thì tự gán.
@@ -265,7 +266,7 @@ run_one() { # <test> <out dir> [alone]
        SB_HEAVY_SLOT_DIR="$o.slots" \
        ${DEVKIT_JOB_POOL:+python3 -I "$DEVKIT_JOB_POOL" "$DEVKIT_TEST_POOL_DIR" "$JOBS" ${3:+--alone} --wait-file "$o.wait" --start-fd 3 --start-line "· start $1" --} \
        ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
-       bash "$1" 3>"$fd3" >"$o.log" 2>&1 || rc=$?
+       bash "$1" 3>&"$fd3" >"$o.log" 2>&1 || rc=$?
   # 04/11: the seconds this test waited for a slot of the gate's shared pool (job_pool.py) are not its own duration
   [ -s "$o.wait" ] && w="$(cat "$o.wait" 2>/dev/null)" && case "$w" in ''|*[!0-9]*) ;; *) t0=$((t0 + w)) ;; esac
   _dk_clean_tdir

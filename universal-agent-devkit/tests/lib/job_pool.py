@@ -115,7 +115,6 @@ def main(argv: list) -> int:
     except OSError as exc:
         print(f"job_pool.py: cannot run {cmd[0]}: {exc}", file=sys.stderr)
         return 127
-    return 0   # not reached
 
 
 if __name__ == "__main__":

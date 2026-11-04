@@ -57,13 +57,13 @@ python3 -I "$JP" "$P" 3 echo ran > "$TMP/u.out" 2>/dev/null; rc=$?
 
 # e: wait file + exit code
 P3="$TMP/pool3"; mkdir -p "$P3"
-python3 -I "$JP" "$P3" 1 -- sleep 2 & h=$!
-sleep 0.3
+python3 -I "$JP" "$P3" 1 -- sh -c ': > "$1"; sleep 2' _ "$TMP/held3" & h=$!
+i=0; while [ ! -e "$TMP/held3" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done   # the holder has its slot (a slow start cannot win)
 python3 -I "$JP" "$P3" 1 --wait-file "$TMP/w" -- sh -c 'exit 7'; rc=$?
 wait "$h"
 w="$(cat "$TMP/w" 2>/dev/null)"
 [ "$rc" = 7 ] && ok "e: exit code passed through" || bad "e: rc $rc (want 7)"
-case "$w" in 1|2) ok "e: wait file says ${w}s" ;; *) bad "e: wait file '$w' (want 1 or 2)" ;; esac
+case "$w" in 1|2|3) ok "e: wait file says ${w}s" ;; *) bad "e: wait file '$w' (want 1–3: the holder's 2 s, whole seconds)" ;; esac
 
 # f: start line only after the slot is held; the command does not get fd 3
 P4="$TMP/pool4"; mkdir -p "$P4"; : > "$TMP/start"

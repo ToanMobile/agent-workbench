@@ -7580,15 +7580,20 @@ def main():
     # 04/11 (Việc 2): the #616 shards of the kit runner (a leading DEVKIT_IMPACTED_DIRS=, disjoint by directory) ran one after another, though
     # WORKTREE and REST keep only 1–3 of their JOBS busy (one long test each). Consecutive shards now run side by side as a group of their own
     # (never with the suites of may_join: that was the 19/10 timeout): one pool of JOBS test slots for all of them (tests/lib/job_pool.py, the
-    # runner reads DEVKIT_TEST_POOL_DIR), so they never run more tests at once than one shard did; one heavy slot, taken on this thread
-    # before the first member starts and kept until drain() (the members are classed light); every member gets the group's largest
-    # timeout; a red member does not skip its siblings (they already run). DEVKIT_GATE_PARALLEL=0/1 keeps them sequential.
+    # runner reads DEVKIT_TEST_POOL_DIR), so they never run more tests at once than one shard did; one heavy slot, as heavy as the heaviest
+    # member, taken on this thread before the first member starts and kept until drain() (the members are classed light); every member
+    # gets the SUM of the members' timeouts (one after another they had that much; side by side each waits on its siblings' slots and
+    # alone tests); a red member does not skip its siblings (they already run). DEVKIT_GATE_PARALLEL=0/1 and a Stop-like run (its budget
+    # stops new suites, a summed timeout would outlive the hook) keep them sequential.
+    # ponytail: the group's heavy slot stays held while a keyed member waits on another gate's inflight marker (R1 drops only heavy_lease):
+    # bounded by DEVKIT_SLOT_HEAVY_WAIT_S / the marker's deadline, never a deadlock; release it around sc.inflight if merge gates report it.
+    # ponytail: a SIGKILLed gate leaves its dk-pool-* dir (a few empty lock files) in TMPDIR; sweep old ones if they ever pile up.
     group_kind = [None]   # "suite" (may_join) or "shard" while a group runs
     shard_group = {}      # dir, jobs, slots (the group's heavy slot), sem, ids
 
     def shard_join(t):
         c = t.get("command") or ""
-        return bool(parallel_cap > 1 and t.get("parallel_safe") and _SHARD_PREFIX.match(c) and _KIT_RUNNER.search(c))
+        return bool(parallel_cap > 1 and not _stop_like and t.get("parallel_safe") and _SHARD_PREFIX.match(c) and _KIT_RUNNER.search(c))
 
     def shard_jobs(cmd):
         """JOBS of one shard, as its runner computes it now (`run_impacted.sh --jobs`: DEVKIT_TEST_JOBS or capacity.test_jobs); None
@@ -7677,7 +7682,7 @@ def main():
             slot_mod[0].release_pool(heavy_lease.pop())
         heavy_lease.clear()
 
-    def take_slots(t, cmd, sequential=False):
+    def take_slots(t, cmd, sequential=False, group=None):
         """P1 (20/10): quyền chạy của CHÍNH suite này (heavy_slot.classify), giữ trong lúc nó chạy — kể cả lần chạy lại flaky và
         vacuity revert. --full không còn giữ slot cả lượt (đo 20/10: một lượt --full chỉ suite bash/python chờ 30+ phút mà không chạy
         suite nào); P1b (người dùng 20/10): không còn 2 slot — tải máy dưới DEVKIT_SLOT_LOAD_MAX (mặc định capacity hold_load,
@@ -7700,6 +7705,14 @@ def main():
         info = hs.classify(cmd, str(project_dir), rec, device=bool(HARD_DEVICE_SUITE.search(cmd or "")), selection=sel)
         if id(t) in shard_group.get("ids", ()):   # the shard group's one heavy slot is held on the gate thread until drain()
             info = dict(info, cls="light")
+        for m in group or ():   # the shard group's slot: as heavy as its heaviest member (review 04/11: a light GATES selection beside a cpu REST)
+            if info["cls"] in hs.HEAVY_CLASSES:
+                break
+            mc = m.get("command") or ""
+            mi = hs.classify(mc, str(project_dir), slot_rec.get(m.get("id")), device=bool(HARD_DEVICE_SUITE.search(mc)),
+                             selection=sc.selections.get((m.get("id"), mc)) if sc is not None else None)
+            if mi["cls"] in hs.HEAVY_CLASSES:
+                info = dict(info, cls=mi["cls"])
         lease = heavy_lease[0] if (sequential and heavy_lease and info["cls"] in hs.HEAVY_CLASSES) else None
         if heavy_lease and lease is None:
             drop_lease()   # suite này không dùng slot nặng đang giữ (không nặng, hay chạy trong nhóm song song): không giữ chỗ của người khác
@@ -8176,14 +8189,13 @@ def main():
             if kind == "shard" and mode == "full" and (group or jobs):
                 if not group:   # first member: the pool, the heavy slot and the timeout of every shard right after it
                     members = list(itertools.takewhile(shard_join, to_run[idx:]))
-                    tmo = max(suite_timeout(m, args.timeout, _stop_like) for m in members)
                     drop_lease()
                     shard_group.update(dir=tempfile.mkdtemp(prefix="dk-pool-"), jobs=jobs, ids=set(),
-                                       sem=threading.BoundedSemaphore(len(members)))
-                    shard_group["slots"] = take_slots(t, cmd)
-                    for m in members:
-                        m["shard_timeout_s"] = tmo
+                                       sem=threading.BoundedSemaphore(len(members)),
+                                       tmo=sum(suite_timeout(m, args.timeout, _stop_like) for m in members))
+                    shard_group["slots"] = take_slots(t, cmd, group=members[1:])
                 shard_group["ids"].add(id(t))
+                t["shard_timeout_s"] = shard_group["tmo"]
                 env = suite_env()
                 if done_scripts:
                     env["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)

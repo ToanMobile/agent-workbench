@@ -610,8 +610,9 @@ jobs = ([("D", h, c) for h, c, _ctl in DANGEROUS] + [("H", h, c) for c in HARMLE
         + [("C", h, ctl) for h, ctl in CONTROLS] + [("A", h, c) for h, c in ACCEPTED_FP])
 # GUARD_MONO_SAMPLE=<n> (tests only: the test_guard_shell_norm_load_retry*.sh files, which check the watchdog retry of run() and the CONTROL /
 # VACUOUS report, not the rows): the first n dangerous rows of each hook WITH their controls, the first n harmless rows and accepted false
-# positives of each hook. The net itself always runs whole (the gate runs this test without the variable).
-_sample = os.environ.get("GUARD_MONO_SAMPLE", "")
+# positives of each hook. Read only beside the LOAD_MODE of those tests: a stray GUARD_MONO_SAMPLE in the gate's env never shrinks the net,
+# which always runs whole in the gate.
+_sample = os.environ.get("GUARD_MONO_SAMPLE", "") if os.environ.get("LOAD_MODE") else ""
 if _sample.isdigit() and int(_sample) > 0:
     _n = int(_sample)
     DANGEROUS = [r for hook in ("git", "hw") for r in [d for d in DANGEROUS if d[0] == hook][:_n]]
