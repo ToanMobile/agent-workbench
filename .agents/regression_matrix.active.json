@@ -3434,6 +3434,193 @@
       ]
     },
     {
+      "component": "super-review-receipt-before-rerun",
+      "watch_files": [
+        ".claude/skills/super-review/SKILL.md",
+        ".claude/bin/super-board-gate-receipt.sh",
+        "tests/super-board/test_reviewer_receipt_before_rerun.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEW-RECEIPT-RERUN-01",
+          "name": "Đợt 2 gate mục 5 (04/11): sau khi duyệt test sửa, lane Review chỉ bỏ lần chạy lại gate khi có biên nhận exit 0 đúng head + fingerprint; chưa có thì chạy gate scoped một lần",
+          "command": "bash tests/super-board/test_reviewer_receipt_before_rerun.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-agent-kit-approve-tests",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-kit",
+        "universal-agent-devkit/scripts/governance/approve_tests.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_agent_kit_approve_tests.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-APPROVE-TESTS-CMD-01",
+          "name": "Đợt 2 gate mục 2 (04/11): agent-kit approve-tests <task> ghi mục duyệt chéo từ biên bản antigravity-pm (reviewer antigravity hoặc grok, nhãn rõ); tác giả không tự duyệt",
+          "command": "bash universal-agent-devkit/tests/gates/test_agent_kit_approve_tests.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-evidence-gate-block-reason-log",
+      "watch_files": [
+        "universal-agent-devkit/hooks/test_evidence_gate.sh",
+        "universal-agent-devkit/tests/gates/test_evidence_gate_block_reason_log.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-EVIDENCE-GATE-REASON-LOG-01",
+          "name": "Đợt 2 gate mục 8 (04/11): test_evidence_gate ghi lý do giữ Stop (nhắc nào) vào log để chẩn đoán được",
+          "command": "bash universal-agent-devkit/tests/gates/test_evidence_gate_block_reason_log.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-approval-after-main-merge",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_approval_after_main_merge.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-APPROVAL-AFTER-MAIN-MERGE-01",
+          "name": "Đợt 2 gate mục 1 (04/11): duyệt test sửa (ledger + trailer Test-approved-by) còn hiệu lực sau khi gộp main vào nhánh PR; reviewer thuộc danh tính phiên bị từ chối; reviewer và auditedHead cùng một biên bản PM",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_approval_after_main_merge.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-pool-live-holder-busy",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_gate_pool_live_holder_busy.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-POOL-LIVE-HOLDER-01",
+          "name": "Đợt 2 gate lane C2 (04/11): Stop run gặp slot hàng đợi gate máy bị gate dự án khác giữ thì trả BUSY sớm theo luật B5 thay vì chờ hết 45 s",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_pool_live_holder_busy.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-regression-gate-reminder-approval-key",
+      "watch_files": [
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/bin/approval_digest.py",
+        "universal-agent-devkit/tests/gates/test_regression_gate_reminder_approval_key.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REMINDER-APPROVAL-KEY-01",
+          "name": "Đợt 2 gate mục 3 (04/11): nhắc 'test sửa chờ duyệt' khoá theo cây + digest sổ duyệt, bỏ TTL 300 s; sổ duyệt đổi thì chạy lại",
+          "command": "bash universal-agent-devkit/tests/gates/test_regression_gate_reminder_approval_key.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-review-gate-ocr-content",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/bin/ocr-review",
+        "universal-agent-devkit/tests/gates/test_review_gate_ocr_content.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-OCR-CONTENT-01",
+          "name": "Đợt 2 gate mục 6 (04/11): review_gate công nhận báo cáo OCR theo hash nội dung file thay vì mtime",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_ocr_content.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-test-run-lock-holder-session",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_test_run_lock_holder_session.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-TEST-RUN-LOCK-SESSION-01",
+          "name": "Đợt 2 gate mục 4 (04/11): khoá test_run.lock do chính phiên giữ thì trả BUSY ngay; holder cùng phiên không đọc được giờ khởi động vẫn BUSY (không thành exit 0 chỉ đọc)",
+          "command": "bash universal-agent-devkit/tests/gates/test_test_run_lock_holder_session.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-worktree-merge-gate-block-reason-log",
+      "watch_files": [
+        "universal-agent-devkit/hooks/worktree_merge_gate.sh",
+        "universal-agent-devkit/tests/gates/test_worktree_merge_gate_block_reason_log.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-WT-MERGE-GATE-REASON-LOG-01",
+          "name": "Đợt 2 gate mục 8 (04/11): worktree_merge_gate ghi một dòng log cho mỗi lần giữ và nhả Stop; state quá 1 MiB coi như không có",
+          "command": "bash universal-agent-devkit/tests/gates/test_worktree_merge_gate_block_reason_log.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-ocr-review-content-map",
+      "watch_files": [
+        "universal-agent-devkit/bin/ocr-review",
+        "universal-agent-devkit/tests/installer/test_ocr_review_content.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-OCR-REVIEW-CONTENT-01",
+          "name": "Đợt 2 gate mục 6 (04/11): ocr-review ghi content_sha256 + content_base của file đã review, hash trước khi review chạy",
+          "command": "bash universal-agent-devkit/tests/installer/test_ocr_review_content.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-approved-tests-same-second",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_approved_tests_same_second.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-APPROVED-SAME-SECOND-01",
+          "name": "#485 + đợt 2 lane A: duyệt test sửa không lệch theo giây; test sửa sau khi duyệt không còn được duyệt; fixture nằm trên nhánh feat như PR thật",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_approved_tests_same_second.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-regression-gate-reminder-throttle",
+      "watch_files": [
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/tests/gates/test_regression_gate_reminder_throttle.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REMINDER-THROTTLE-01",
+          "name": "Nhắc 'test sửa chờ duyệt' không chạy lại cả gate mỗi lần Stop khi cây và sổ duyệt không đổi (ca 4 cập nhật đợt 2: khoá theo digest, không TTL)",
+          "command": "bash universal-agent-devkit/tests/gates/test_regression_gate_reminder_throttle.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-shard-group-job-pool",
       "watch_files": [
         "universal-agent-devkit/tests/lib/job_pool.py",

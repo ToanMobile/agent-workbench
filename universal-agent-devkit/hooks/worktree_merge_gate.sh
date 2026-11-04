@@ -224,12 +224,55 @@ except (Exception, SystemExit) as e:
     session_lock, lock_error = None, e   # without it a lock held by another live session is not seen: more worktrees count as ours (held, capped), and the hold text says so
 
 state_path = os.path.join(repo, ".claude", "audit-gate", "worktree_merge_gate.state")
-try:
-    with open(state_path, encoding="utf-8") as sf:
-        state = json.load(sf)
-    state = state if isinstance(state, dict) else {}
-except (OSError, ValueError):
-    state = {}
+log_path = os.path.join(repo, ".claude", "audit-gate", "worktree_merge_gate.log")
+
+def logline(text):
+    """One line per hold / release (#wave2-8): append only, never creates the folder, never changes the exit. The folder is one an
+    agent can write: opened without waiting and never through a link, a regular file only (a FIFO waited for a reader until the
+    13 s alarm, whose fail-open exit 0 dropped the hold; review 03/11 G5, as post-fix-gate _state_fd)."""
+    try:
+        fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_CLOEXEC", 0), 0o666)
+        try:
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                os.write(fd, f"[{datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] {text}\n".encode("utf-8", "replace"))   # a lone surrogate in a path / sid must not raise past the hold
+        finally:
+            os.close(fd)
+    except OSError:
+        return   # no log folder / not writable: the diagnostic line is lost, the Stop's exit and text stay as they are
+
+STATE_MAX_BYTES = 1 << 20   # the state holds at most 50 sessions (a few KB): anything bigger is not ours
+
+def read_state():
+    """The saved state, {} when it cannot be read. Same folder as the log (agent-writable): opened without waiting and never through a
+    link, a regular file only (a FIFO waited until the 13 s alarm, whose fail-open exit 0 dropped the hold), and deep JSON's RecursionError
+    caught (its traceback became exit 0 in the shell), and a file over STATE_MAX_BYTES not read at all (a GB file outran the alarm or raised
+    MemoryError). Unreadable = no state: the ordinary hold, never a release (recheck 03/11 H1)."""
+    try:
+        fd = os.open(state_path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        return {}
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > STATE_MAX_BYTES:
+            return {}
+        chunks, size = [], 0
+        while size <= STATE_MAX_BYTES:   # the file may grow after fstat: read one byte past the cap at most
+            chunk = os.read(fd, 1 << 16)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        if size > STATE_MAX_BYTES:
+            return {}
+        loaded = json.loads(b"".join(chunks).decode("utf-8"))
+        return loaded if isinstance(loaded, dict) else {}
+    except (OSError, ValueError, RecursionError, MemoryError):
+        return {}
+    finally:
+        os.close(fd)
+
+state = read_state()
 sessions = state.get("sessions") if isinstance(state.get("sessions"), dict) else {}
 owners = {p: o for p, o in state["owners"].items() if isinstance(p, str) and isinstance(o, str)} if isinstance(state.get("owners"), dict) else {}
 listed = git("worktree", "list", "--porcelain")
@@ -795,16 +838,34 @@ def line(r):
     return f"  - {r['path']} [{where}] ahead={'?' if r['ahead'] is None else r['ahead']} dirty={'?' if r['dirty'] is None else r['dirty']}{lost}"
 
 listing = "\n".join(line(r) for r in pending)
+
+def why(r):   # one short cause per pending worktree for the log line (the full text goes to stderr)
+    if r.get("am_status") == "conflict":
+        return "conflict"
+    if r.get("kind") == "gone":
+        return "gone"
+    if r.get("reason"):
+        return "unchecked"
+    if r.get("am"):
+        return "automerge: " + str(r["am"])[:80]
+    if not r.get("unintegrated"):
+        return "merged-not-removed"
+    return f"ahead={r.get('ahead')} dirty={r.get('dirty')}"
+
+log_ctx = (f"sid={sid[:36]} pending={len(pending)} "
+           + ", ".join(f"{r.get('path')} ({why(r)})" for r in pending[:5]) + (" …" if len(pending) > 5 else ""))[:600]
 could_not_run = any(r.get("reason") and r.get("kind") != "gone" for r in pending)   # "gone": checked, a commit is missing
 lock_note = ("⚠ session_lock.py không import được (" + type(lock_error).__name__ + "): khóa của phiên khác không thấy được, nên worktree của phiên khác có thể bị tính nhầm là của phiên này.\n"
              if session_lock is None else "")
 if d.get("stop_hook_active"):   # #708: Stop này đến ngay sau một lần chặn: không chặn vòng nữa, nói một dòng; việc còn nợ vẫn nhớ, không tính vào "Lần giữ N/3"
     save()
+    logline(f"release: stop_hook_active (no second hold right after a hold) {log_ctx}")
     print(json.dumps({"systemMessage": f"⚠ WORKTREE-MERGE GATE: stop_hook_active (Stop ngay sau một lần chặn) nên không chặn nữa; còn {len(pending)} worktree chưa về trunk "
                       "(`agent-kit worktree status`), lần dừng sau sẽ nhắc lại"}, ensure_ascii=False))
     sys.exit(0)
 if held >= 3:
     save()   # the debt survives the cap: the next session is held on it
+    logline(f"release: cap {held}/3 holds on this pending set{' (gate could not run)' if could_not_run else ''} {log_ctx}")
     head = ("⚠ WORKTREE-MERGE GATE: cổng KHÔNG chạy được (lỗi nội bộ / không đọc được git dir) nên không biết worktree còn việc CHƯA về trunk hay không:\n"
             if could_not_run else "⚠ WORKTREE-MERGE GATE: phiên dừng khi worktree vẫn còn việc CHƯA về trunk:\n")
     advice = "`git worktree list` (kiểm tra bằng tay)" if could_not_run else "`agent-kit worktree finish <path>` (tự gộp + gỡ) hoặc `agent-kit worktree status`"
@@ -813,6 +874,7 @@ if held >= 3:
     sys.exit(0)
 sessions[sid] = {"fp": fp, "n": held + 1}
 if not save():
+    logline(f"release: state not saved (cannot count holds) {log_ctx}")
     sys.exit(0)   # cannot count the holds: never risk blocking every stop
 
 # What to do now: a CONFLICT is resolved in the worktree (its own folder: safe), then the next Stop finishes the merge by itself.
@@ -846,6 +908,7 @@ if could_not_run:
                        "SAU KHI kiểm tra thư mục đó đã mất hoặc không còn cần.")
     error_note += (" WORKTREE_MERGE_GATE=0 phải đặt trong môi trường TRƯỚC khi khởi động phiên (không đặt được cho một lần dừng của phiên đang chạy); "
                    "sau 3 lần giữ cổng vẫn cho qua.\n")
+logline(f"BLOCK hold {held + 1}/3 {log_ctx}")
 sys.stderr.write(
     "⛔ WORKTREE-MERGE GATE: worktree phải được GỘP vào nhánh chính rồi XOÁ trước khi dừng — để lại là trunk thiếu code:\n"
     + listing + "\n" + error_note + (own_note + "\n" if own_note else "") + "".join(n + "\n" for n in pr_notes) +

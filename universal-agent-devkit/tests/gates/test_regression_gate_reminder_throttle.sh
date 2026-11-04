@@ -112,9 +112,9 @@ before=$(runs); stop REGRESSION_GATE_TOUCHED_RECHECK_S=0; rc=$?
 
 # 4. after the window the gate runs again
 age_reminder 400
-before=$(runs); stop X=1; rc=$?
+before=$(runs); stop REGRESSION_GATE_TOUCHED_RECHECK_S=300; rc=$?
 [ "$rc" = 0 ] && [ "$(runs)" -gt "$before" ] && ok "reminder older than the window: the gate runs again" || fail "aged reminder: rc=$rc runs $before -> $(runs)"
-before=$(runs); stop X=1; [ "$(runs)" = "$before" ] && ok "and the window restarts from that run" || fail "window did not restart (runs $before -> $(runs))"
+before=$(runs); stop REGRESSION_GATE_TOUCHED_RECHECK_S=300; [ "$(runs)" = "$before" ] && ok "and the window restarts from that run" || fail "window did not restart (runs $before -> $(runs))"
 
 # 5. the user's answer still clears the reminder once the window is over
 python3 - "$X" "$TMP/s.jsonl" <<'PY'
