@@ -369,26 +369,33 @@ export function freshness(cfg, task) {
   };
 }
 
-export function recordVerdict(cfg, task, { kind, verdict, findings = [], notes = '', reviewer = 'pm', auditedHead }) {
+export function recordVerdict(cfg, task, { kind, verdict, findings = [], notes = '', reviewer = 'pm', actor = reviewer, auditedHead }) {
   if (!VERDICT_KINDS.includes(kind)) throw new Error(`kind phai thuoc ${VERDICT_KINDS.join('|')}`);
   if (!['pass', 'fail'].includes(verdict)) throw new Error('verdict phai la pass hoac fail');
   // Vong cua ket luan = vong PM DA XEM (ban nguoi goi dang cam), khong phai vong moi hon neu co rework chen giua.
   const round = task.round;
+  // sha40 cua cay da audit (chi kind=audit pass): push_gate.audited_head cua DevKit doc truong nay truoc notes
+  const head = kind === 'audit' && verdict === 'pass' && typeof auditedHead === 'string' && /^[0-9a-f]{40}$/.test(auditedHead) ? auditedHead : null;
   return updateTask(cfg, task, (t) => {
+    const hist = t.verdicts?.auditHistory;
+    if (head && hist !== undefined && !Array.isArray(hist)) throw new Error('verdicts.auditHistory hong (khong phai mang) — khong ghi de lich su audit.');
     t.verdicts = t.verdicts || {};
+    const at = nowIso();
     t.verdicts[kind] = {
       verdict,
       round,
       findings: findings.map((f) => String(f)).slice(0, 200),
       notes: String(notes || '').slice(0, 8000),
       reviewer,
-      at: nowIso(),
-      // sha40 cua cay da audit (chi kind=audit pass): push_gate.audited_head cua DevKit doc truong nay truoc notes
-      ...(kind === 'audit' && verdict === 'pass' && typeof auditedHead === 'string' && /^[0-9a-f]{40}$/.test(auditedHead) && { auditedHead }),
+      at,
+      ...(head && { auditedHead: head }),
     };
+    // Dot 2 F1: moi audit pass co auditedHead noi vao lich su CHI-THEM (verdict fail sau, rework khong xoa) — push_gate.audited_heads
+    // doc auditHistory + verdicts.audit de mot verdict fail moi hon khong lam audit cu hon thanh "moi nhat".
+    if (head) t.verdicts.auditHistory = [...(hist || []), { auditedHead: head, reviewer, at }];
     // Review dat cua vong nay => danh sach finding chua dong coi nhu da xu ly.
     if (kind === 'review' && verdict === 'pass' && t.round === round) t.openFindings = [];
-    addHistory(t, reviewer, `verdict_${kind}`, `${verdict}${findings.length ? ` (${findings.length} phat hien)` : ''}`);
+    addHistory(t, actor, `verdict_${kind}`, `${verdict}${findings.length ? ` (${findings.length} phat hien)` : ''}`);
   });
 }
 
@@ -607,7 +614,11 @@ export function recordDispatch(cfg, task, rec) {
       model: rec.model || t.model,
       round,
       promptFile: rec.promptFile || null,
-      at: nowIso(),
+      // rec.at: moc PM chot TRUOC khi chay reviewer (grok) — bao cao ghi sau moc nay moi qua kiem mtime cua pm_verdict.
+      at: rec.at || nowIso(),
+      // agent cua lan giao audit: 'antigravity' | 'grok'; ban ghi cu khong co truong nay = antigravity (chi co duong agy).
+      ...(rec.agent && { agent: rec.agent }),
+      ...(rec.extra || {}),
     });
     addHistory(t, 'pm', `dispatch_${rec.kind}`, rec.conversationId || '');
   });
