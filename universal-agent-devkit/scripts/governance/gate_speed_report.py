@@ -183,6 +183,16 @@ def metrics(recs):
     m["shadow_runs"] = len(sh)
     m["shadow_skipped"] = sum(len(r["shadow_skip"]) for r in sh)
     m["shadow_miss"] = sum(len(r["shadow_miss"]) for r in sh if isinstance(r.get("shadow_miss"), list))
+    # #983: mode=scoped (mặc định từ #661) và chỉ số nghiệm thu duy nhất của việc tối ưu gate: p90 total_wall_s (gồm steps.lock =
+    # chờ khoá) của lượt merge gate thật (project .merge-scratch-*), mọi verdict — người chờ trả cả lượt BUSY lẫn lượt chạy lại.
+    walls = [w for w in (wall_or_none(r) for r in recs if r["mode"] == "scoped" and not skipped(r)) if w is not None]
+    m["scoped_n"] = sum(1 for r in recs if r["mode"] == "scoped")
+    m["scoped_p50_s"], m["scoped_p90_s"] = pct_stats(walls)
+    mg = [r for r in recs if str(r.get("project", "")).startswith(".merge-scratch-") and wall_or_none(r) is not None]
+    m["merge_gate_n"] = len(mg)
+    m["merge_gate_p50_s"], m["merge_gate_p90_s"] = pct_stats([wall_or_none(r) for r in mg])
+    locks = [grr.num((r.get("steps") or {}).get("lock")) for r in mg if isinstance(r.get("steps"), dict)]
+    m["merge_gate_lock_p90_s"] = pct_stats([x for x in locks if x is not None])[1]
     return m
 
 
@@ -232,12 +242,16 @@ def print_report(label, m, ignored, out):
     w("impacted_command used (impacted_run): %d/%d\n" % (m["impacted_command_used"], m["impacted_command_of"]))
     if m["shadow_runs"]:
         w("shadow map (#476): runs=%d suites_skipped_by_map=%d missed_FAIL=%d\n" % (m["shadow_runs"], m["shadow_skipped"], m["shadow_miss"]))
+    w("scoped: n=%d p50=%s p90=%s (p50/p90: not BUSY/REUSED/deferred)\n" % (m["scoped_n"], fmt_s(m["scoped_p50_s"]), fmt_s(m["scoped_p90_s"])))
+    w("merge gate (.merge-scratch-*): n=%d p50=%s p90=%s lock_p90=%s — chỉ số nghiệm thu tối ưu gate (#983, ngưỡng p90 <= 900s #686)\n" % (
+        m["merge_gate_n"], fmt_s(m["merge_gate_p50_s"]), fmt_s(m["merge_gate_p90_s"]), fmt_s(m["merge_gate_lock_p90_s"])))
     w("ignored lines: %d\n" % ignored)
 
 
 TABLE_KEYS = ("impacted_cli_n", "impacted_cli_p50_s", "impacted_cli_p90_s", "impacted_hook_n", "impacted_hook_p50_s",
               "impacted_hook_p90_s", "suites_impacted_listed", "suites_impacted_ran", "first_green_pct", "full_merge_point",
-              "full_outside", "all01_n", "all01_p50_s", "all01_p90_s")
+              "full_outside", "all01_n", "all01_p50_s", "all01_p90_s", "scoped_n", "scoped_p90_s", "merge_gate_n", "merge_gate_p90_s",
+              "merge_gate_lock_p90_s")
 
 
 def print_table(b, c, out):

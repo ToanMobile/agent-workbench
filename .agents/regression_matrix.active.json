@@ -3817,6 +3817,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "gate-speed-report-merge-p90",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/gate_speed_report.py",
+        "universal-agent-devkit/scripts/governance/gate_runs_report.py",
+        "universal-agent-devkit/tests/gates/test_gate_speed_report_merge_p90.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-SPEED-MERGE-P90-01",
+          "name": "04/11 (#983): gate_speed_report đếm mode=scoped và in p90 merge gate thật (.merge-scratch-*, gồm chờ khoá) + lock_p90, có trong bảng --baseline",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_speed_report_merge_p90.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
