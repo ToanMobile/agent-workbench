@@ -80,6 +80,12 @@ gate; rc=$?; st="$(statuses)"
 [ "$rc" = 1 ] && [ "$st" = "REG-A=FAIL REG-B=UNTESTED REG-C=UNTESTED" ] \
   && ok "c: lượt không --scoped vẫn fail-fast ($st)" || fail "c: rc $rc statuses '$st' ran='$(ran)' $(show)"
 
+# d. lane_lock (#849): --fail-fast chỉ làm lượt ngắn hơn, nên `--scoped --fail-fast` vẫn là việc nhẹ (không chờ ngưỡng tải)
+python3 -I - "$DEVKIT_DIR/bin" <<'PY' && ok "d: lane_lock nhận --scoped --fail-fast là việc nhẹ" || fail "d: lane_lock coi --fail-fast là việc nặng"
+import sys; sys.path.insert(0, sys.argv[1]); import lane_lock as m
+sys.exit(0 if m.gate_call(["python3", sys.argv[1] + "/post-fix-gate.py", "--run-tests", "--scoped", "--fail-fast"]) else 1)
+PY
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_gate_scoped_no_fail_fast: PASS"; exit 0; }
 echo "test_gate_scoped_no_fail_fast: FAIL ($FAILS)"
