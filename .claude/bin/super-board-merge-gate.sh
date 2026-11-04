@@ -916,6 +916,8 @@ OPT_LEFT=$((10#$OPT_LEFT))
 [ "$PESSIMISTIC" -eq 0 ] || OPT_LEFT=0
 EDITED=""   # rỗng = chưa hỏi; 1 = PR có test bị sửa (#643)
 EDITED_SRC=""   # true = duyệt từ comment edited-tests; pm = từ biên bản antigravity-pm (04/11)
+# verify_runs_gate: 0 khi một lệnh verify chạy post-fix-gate (kiểm lại duyệt test sửa trên cây gộp với base hiện tại).
+verify_runs_gate() { local c; for c in "${VERIFY[@]}"; do case "$c" in *post-fix-gate*) return 0 ;; esac; done; return 1; }
 # #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA.
 REVIEWED_HEAD=$HEAD_SHA
 # prove_tree: mọi thứ phụ thuộc base, tính lại cho cây scratch HIỆN TẠI (BASE_SHA của vòng này): biên nhận train / cây (#226), exit 12
@@ -955,9 +957,10 @@ prove_tree() {
         EDITED=0
       fi
     fi
-    # 04/11: duyệt tra thẳng biên bản PM (EDITED_SRC=pm) không cũ khi base dời: verify trong khoá trên base hiện tại, audit_covers kiểm
-    # main không đổi file test. Chỉ duyệt gắn head của comment (#643) mới cần base là tổ tiên head.
-    if [ "$EDITED" -eq 1 ] && [ "$EDITED_SRC" != pm ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
+    # 04/11: duyệt tra thẳng biên bản PM (EDITED_SRC=pm) không cũ khi base dời NẾU verify chạy post-fix-gate (trong khoá, trên base hiện
+    # tại, audit_covers kiểm main không đổi file test — Grok review). Comment #643 và verify không có gate: base phải là tổ tiên head.
+    if [ "$EDITED" -eq 1 ] && { [ "$EDITED_SRC" != pm ] || ! verify_runs_gate; } \
+        && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
       say "edited-test review is stale before fast-forward (origin/${BASE} is not an ancestor of ${REVIEWED_HEAD})"
       exit 2
     fi

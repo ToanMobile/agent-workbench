@@ -602,7 +602,7 @@ def audit_reviewer(top, task_id, legacy=False):
 
 def audit_scope(top, task_id):
     """(auditBase, edited) của lượt audit grok PM tự chạy cho CÙNG biên bản mà audited_head / audit_reviewer đọc (04/11, nguồn duyệt tra
-    thẳng của post-fix-gate): lượt kind=audit gần nhất trong dispatches là grok, auditedHead của nó == head của verdicts.audit, và nó ghi
+    thẳng của post-fix-gate): lượt kind=audit gần nhất trong dispatches là grok, pass, auditedHead của nó == head của verdicts.audit, và nó ghi
     phạm vi đã đưa grok xem — auditBase (sha40, merge-base nhánh đích với head) và edited (mọi file đã có bị sửa/xoá trong auditBase..head).
     Audit khác (Antigravity /giao phạm vi task, grok bản PM cũ chưa ghi phạm vi) → None: chỉ duyệt được qua mục duyệt / trailer."""
     if pm_home_overridden() and not pm_home_test_fixture():
@@ -615,8 +615,9 @@ def audit_scope(top, task_id):
         dispatches = task.get("dispatches") if isinstance(task.get("dispatches"), list) else []
         audits = [d for d in dispatches if isinstance(d, dict) and d.get("kind") == "audit"]
         last = max(enumerate(audits), key=lambda iv: (str(iv[1].get("at") or ""), iv[0]))[1] if audits else None
+        # OCR vòng 3: lượt grok cuối phải là pass — PASS rồi chạy lại cùng head trả REVISE thì verdicts.audit còn pass cũ, không duyệt.
         if not last or normalize_reviewer(last.get("agent") if isinstance(last.get("agent"), str) else "") != "grok" \
-                or last.get("auditedHead") != head:
+                or last.get("auditedHead") != head or last.get("verdict") != "pass":
             return None
         base, edited = last.get("auditBase"), last.get("edited")
         if not isinstance(base, str) or not SHA40.fullmatch(base) or not isinstance(edited, list) \

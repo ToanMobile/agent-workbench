@@ -922,8 +922,8 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             if isinstance(e.get("author"), str) and e["author"].strip():
                 try:
                     declared.setdefault(f, set()).add(_push_gate().normalize_reviewer(e["author"]))
-                except ImportError:
-                    pass                          # push_gate không nạp được: nguồn tra thẳng cũng không duyệt gì
+                except ImportError as err:      # push_gate không nạp được: nguồn tra thẳng cũng không duyệt gì
+                    print(f"post-fix-gate: push_gate không nạp được ({err}); mục json của {f} không đổi được author", file=sys.stderr)
             if not all(isinstance(e.get(k), str) and e[k].strip() for k in CROSS_REVIEW_FIELDS):
                 APPROVAL_REJECTS.append((f, _cur_sha(f), "mục duyệt thiếu trường (" + ", ".join(CROSS_REVIEW_FIELDS) + ")"))
                 continue

@@ -818,7 +818,10 @@ export const TOOLS = [
         const head = headCommitOf(cfg.projectRoot);
         if (!head) fail('Khong doc duoc HEAD cua project (git) — khong biet audit cay nao, khong chay grok.');
         const range = await auditRange(cfg, head);
-        const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '', range });
+        // Audit pham vi day du (gate DevKit tra thang duoc): co merge-base, khong `message` cua nguoi goi, <= 200 file. Khi do prompt doc
+        // lap: khong tieu de / brief / plan / DoD do tac gia soan (Claude review 04/11: chu tac gia khong duoc dan grok toi PASS).
+        const scoped = Boolean(range.base) && !args.message && range.edited.length <= 200;
+        const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '', range, independent: scoped });
         const promptFile = saveOutgoing(cfg, task, `prompt-audit-grok-r${task.round}`, prompt);
         // Moc giao chot TRUOC khi chay: bao cao PM ghi sau moc nay (pm_verdict tu choi bao cao cu hon lan giao audit gan nhat).
         const at = nowIso();
@@ -848,9 +851,9 @@ export const TOOLS = [
         const reportSha256 = hashFile(repFile);
         if (task.phase === 'IMPLEMENT') setPhase(cfg, task, 'AUDIT', 'pm', 'da giao audit grok');
         // 04/11: pham vi grok da xem (auditBase = merge-base, edited = moi file da co bi sua/xoa) ghi vao lan giao — gate DevKit tra thang
-        // bien ban chi nhan test nam trong pham vi do (push_gate.audit_scope). Khong ghi khi: khong tinh duoc merge-base; `message` cua nguoi
-        // goi (tac gia) lai nhet vao prompt (Grok phan bien: chu tac gia khong duoc dan PASS thanh duyet); danh sach > 200 file (prompt cat bot).
-        const fullScope = Boolean(range.base) && !args.message && range.edited.length <= 200;
+        // bien ban chi nhan test nam trong pham vi do (push_gate.audit_scope). Chi ghi khi audit pham vi day du (scoped) VA pass (OCR vong 3:
+        // lan chay lai cung head tra REVISE khong mang pham vi, va audit_scope doi lan cuoi pass).
+        const fullScope = scoped && verdict === 'pass';
         recordDispatch(cfg, task, {
           kind: 'audit', agent: 'grok', model: GROK_MODEL, promptFile, at,
           extra: {

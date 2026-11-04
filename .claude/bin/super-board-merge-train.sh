@@ -271,8 +271,8 @@ edited_review_stale() {
     --top "$REPO_PATH" --base "$BASE_SHA" 2>/dev/null) || et_rc=$?
   rm -f "$emeta"
   case "$et_rc" in 0) ;; 1) return 1 ;; *) exit "$et_rc" ;; esac
-  # 04/11: duyệt tra thẳng biên bản PM không cũ khi base dời (merge gate verify trong khoá, audit_covers kiểm file test trên main).
-  [ "$src" != pm ] || return 1
+  # 04/11: duyệt tra thẳng biên bản PM không cũ khi base dời, nếu verify chạy post-fix-gate (audit_covers kiểm file test trên main).
+  if [ "$src" = pm ]; then local c; for c in "${VERIFY[@]}"; do case "$c" in *post-fix-gate*) return 1 ;; esac; done; fi
   ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$(head_of "$1")"
 }
 # #643: duyệt test sửa mà base đã đi trước head thì rời đợt trước khi dựng scratch. Không làm đỏ cả chuỗi.

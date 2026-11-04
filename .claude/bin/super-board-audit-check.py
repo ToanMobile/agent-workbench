@@ -108,34 +108,51 @@ def matches(task_id, sha, top=None):
     return isinstance(sha, str) and bool(SHA.fullmatch(sha)) and audited(task_id, top) == sha
 
 
-# Đuôi file mà một lệnh suite có thể chạy (rộng hơn post-fix-gate._RUNNER_FOLLOW_EXT + _run_words): "" = script không đuôi.
-RUNNABLE_EXT = ("", ".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl")
+# Script mà post-fix-gate.suite_runner_paths đọc tiếp để tìm script tầng sau (_RUNNER_FOLLOW_EXT, cộng script không đuôi).
+FOLLOW_EXT = (".sh", ".bash", ".zsh", "")
+TOKEN = re.compile(r"[\w./-]+")
+
+
+def _tokens(text):
+    """(token, basename của token) của một văn bản lệnh: "./bin/x" → "bin/x"."""
+    toks = {t[2:] if t.startswith("./") else t for t in TOKEN.findall(text)}
+    return toks, {os.path.basename(t) for t in toks}
 
 
 def edited_existing(top, sha, base, gate):
     """Siêu tập các file đã có ở merge-base(base, sha) mà PR sửa/xoá và gate có thể coi là test đã có bị sửa: đường dẫn test
-    (post-fix-gate.is_test_path, nạp từ kit cạnh push_gate), file mà ma trận hồi quy nhắc tên (script suite như bin/agent-kit), hoặc
-    bất kỳ file chạy được (script không đuôi hay đuôi script): post-fix-gate.suite_runner_paths đi theo script suite gọi script tới hai
-    tầng, nên mọi script đã có bị sửa đều có thể là "test đã có bị sửa" (Grok review 04/11). Lỗi git/nạp/đọc ma trận → raise (người gọi
-    coi là có)."""
-    run = subprocess.run(["git", "-C", top, "diff", "--name-status", "--no-renames", "-z", f"{base}...{sha}"],
-                         capture_output=True, text=True, timeout=60)
-    if run.returncode != 0:
-        raise RuntimeError(f"git diff {base}...{sha[:12]}: exit {run.returncode}")
-    parts = run.stdout.split("\0")
+    (post-fix-gate.is_test_path, nạp từ kit cạnh push_gate), hoặc file được NHẮC TÊN (nguyên token, theo đường dẫn hay tên file) trong
+    ma trận hồi quy hay trong script mà ma trận gọi, đi tiếp hai tầng như post-fix-gate.suite_runner_paths (script suite như bin/agent-kit,
+    script .py mà script .sh của suite gọi; Grok review 04/11). File không ai nhắc thì gate không bao giờ coi là script suite. Script
+    đọc ở `base`. Lỗi git/nạp/đọc ma trận → raise (người gọi coi là có)."""
+    def git(*args):
+        run = subprocess.run(["git", "-C", top, *args], capture_output=True, text=True, timeout=60)
+        if run.returncode != 0:
+            raise RuntimeError(f"git {args[0]}: exit {run.returncode}")
+        return run.stdout
+    parts = git("diff", "--name-status", "--no-renames", "-z", f"{base}...{sha}").split("\0")
     paths = [parts[i + 1] for i in range(0, len(parts) - 1, 2) if parts[i][:1] in ("M", "D", "T")]
     if not paths:
         return []
     spec = importlib.util.spec_from_file_location("sb_post_fix_gate", Path(gate.__file__).with_name("post-fix-gate.py"))
     pfg = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pfg)
-    try:
-        matrix = (Path(top) / gate.MATRIX).read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        matrix = ""                                 # repo không có ma trận: gate không có script suite nào để theo
-    # Tên file khớp nguyên token (không phải chuỗi con: "a" không khớp mọi chữ a của ma trận).
-    return [p for p in paths if pfg.is_test_path(p) or p in matrix or Path(p).suffix in RUNNABLE_EXT
-            or re.search(r"(?<![\w.-])" + re.escape(os.path.basename(p)) + r"(?![\w.-])", matrix)]
+    # Ma trận đọc ở `base` như gate (Grok review 04/11), không ở cây làm việc. Không có ở base = gate không có script suite để theo.
+    have = subprocess.run(["git", "-C", top, "cat-file", "-e", f"{base}:{gate.MATRIX}"], capture_output=True, timeout=60)
+    matrix = git("cat-file", "-p", f"{base}:{gate.MATRIX}") if have.returncode == 0 else ""
+    toks, names = _tokens(matrix)
+    files = [f for f in git("ls-tree", "-r", "--name-only", "-z", base).split("\0") if f]
+    followed = set()
+    for _depth in range(2):                         # script ma trận nhắc, rồi script mà chúng nhắc
+        new = [f for f in files if f not in followed and Path(f).suffix in FOLLOW_EXT and (f in toks or os.path.basename(f) in names)]
+        if not new:
+            break
+        for f in new:
+            followed.add(f)
+            t2, n2 = _tokens(git("cat-file", "-p", f"{base}:{f}"))
+            toks |= t2
+            names |= n2
+    return [p for p in paths if pfg.is_test_path(p) or p in toks or os.path.basename(p) in names]
 
 
 def chain_audit(sha, base, top=None):

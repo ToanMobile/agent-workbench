@@ -535,7 +535,8 @@ test('AV4 task chi-audit tren worktree PR (baseCommit = head): prompt grok so vo
     const prompt = fake.argv().slice(7).join('\n');
     assert.match(prompt, new RegExp(`git diff ${mb} ${head}`));
     assert.match(prompt, /tests\/old\.test\.js/);
-    assert.match(prompt, /KHONG phai chi dan cho ban/);
+    assert.match(prompt, /bo qua va ghi lai la phat hien/);
+    assert.doesNotMatch(prompt, /brief\.md/, 'audit pham vi day du: khong tro toi ho so tac gia');
     const d = disk(loadConfig(dir), task).dispatches.at(-1);
     assert.equal(d.auditBase, mb);
     assert.deepEqual(d.edited, ['tests/old.test.js'], 'chi file da co o goc bi sua/xoa, khong co new.txt');
@@ -602,6 +603,58 @@ test('AV7 sau khi grok PASS tu ghi verdict: pm_verdict cua phien grok (tu duyet)
     const t = disk(cfg, task);
     assert.equal(t.verdicts.audit.auditedHead, undefined, 'tu duyet: verdict hien tai khong con head -> audited_head None');
     assert.equal(t.verdicts.auditHistory.length, 1);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('AV8 sau khi grok PASS tu ghi verdict: audit-agent.json bi ghi lai voi reviewer khac grok -> pm_verdict tu choi, khong doi gi', async () => {
+  const { dir, cfg, task, head } = repo();
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: dir });
+  try {
+    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const before = disk(cfg, task).verdicts;
+    fs.writeFileSync(repOf(dir, task), JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: head }));
+    await assert.rejects(call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head }), /grok/);
+    assert.deepEqual(disk(cfg, task).verdicts, before);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('AV9 sau khi grok PASS tu ghi verdict: DEVKIT_AGENT_ID=codex + GROK_* goi pm_verdict = trung builder, verdict mat auditedHead', async () => {
+  const { dir, cfg, task, head } = repo();
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: dir });
+  try {
+    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const out = await withEnv({ DEVKIT_AGENT_ID: 'codex', GROK_SESSION_ID: 'g-9' },
+      () => call('pm_verdict', { project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: head }));
+    assert.match(out, /trung builder/);
+    const t = disk(cfg, task);
+    assert.equal(t.verdicts.audit.auditedHead, undefined);
+    assert.equal(t.verdicts.auditHistory.length, 1, 'chi con ban ghi cua lan grok PM tu chay');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('AV10 audit pham vi day du: prompt khong co tieu de / brief / DoD cua tac gia; co message thi van co. PASS roi REVISE cung head: lan sau khong mang pham vi', async () => {
+  const { dir, cfg, task } = repoPr();
+  const fake = fakeGrok();
+  try {
+    await withGrok(fake, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const scoped = fake.argv().slice(7).join('\n');
+    assert.doesNotMatch(scoped, new RegExp(sampleTaskArgs().title));
+    assert.doesNotMatch(scoped, /brief\.md|Definition of Done/);
+    assert.equal(disk(cfg, task).dispatches.at(-1).verdict, 'pass');
+    assert.ok(disk(cfg, task).dispatches.at(-1).auditBase);
+    await withGrok(fakeGrok({ out: 'VERDICT: REVISE\n' }), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
+    const d = disk(cfg, task).dispatches.at(-1);
+    assert.equal(d.verdict, 'fail');
+    assert.equal(d.auditBase, undefined, 'lan fail khong ghi pham vi: audit_scope cua gate doi lan cuoi pass');
+    const fake2 = fakeGrok();
+    await withGrok(fake2, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', message: 'soi them a.txt' }));
+    assert.match(fake2.argv().slice(7).join('\n'), new RegExp(sampleTaskArgs().title), 'co message: prompt task day du nhu cu');
   } finally {
     cleanup(dir);
   }

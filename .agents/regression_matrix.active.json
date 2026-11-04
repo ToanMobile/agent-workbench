@@ -3660,6 +3660,27 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "pm-grok-gate-approval-e2e",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/src/prompt.js",
+        "mcp-servers/antigravity-pm-mcp/src/tasks.js",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-audit-check.py",
+        "tests/super-board/test_e2e_pm_grok_gate_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-E2E-PM-GROK-GATE-01",
+          "name": "04/11 đầu-cuối: code PM thật ghi biên bản audit grok, post-fix-gate thật đọc và duyệt test sửa không bước người; sửa sau audit, REVISE, message, phiên grok, người gọi grok đều không duyệt",
+          "command": "bash tests/super-board/test_e2e_pm_grok_gate_approval.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

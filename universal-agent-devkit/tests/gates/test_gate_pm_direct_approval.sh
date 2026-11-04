@@ -34,13 +34,16 @@ pm_grok() {   # pm_grok <task-id> <project> <auditedHead> [dir] [scope]: audit p
 import json, subprocess, sys
 dest, tid, proj, head, scope = sys.argv[1:6]
 g = lambda *a: subprocess.run(["git", "-C", proj, *a], capture_output=True, text=True).stdout.strip()
-disp = {"kind": "audit", "agent": "grok", "at": "2026-11-04T00:00:00Z", "auditedHead": head}
+disp = {"kind": "audit", "agent": "grok", "at": "2026-11-04T00:00:00Z", "auditedHead": head, "verdict": "pass"}
 if scope != "none":
     base = g("rev-parse", head + "^") if scope == "late" else g("merge-base", "main", head)
     ns = g("diff", "--name-status", "--no-renames", base, head).splitlines()
     edited = [l.split("\t", 1)[1] for l in ns if l[:1] in "MDT"]
     disp.update(auditBase=base, edited=[e for e in edited if e != "tests/t.sh"] if scope == "other" else edited)
-json.dump({"id": tid, "project": proj, "dispatches": [disp], "verdicts": {
+disps = [disp]
+if scope == "refail":                               # lượt grok sau cùng head trả REVISE: dispatch fail, verdicts.audit vẫn pass cũ
+    disps.append(dict(disp, at="2026-11-04T01:00:00Z", verdict="fail"))
+json.dump({"id": tid, "project": proj, "dispatches": disps, "verdicts": {
     "audit": {"verdict": "pass", "round": 1, "reviewer": "grok", "notes": "ok", "auditedHead": head},
     "auditHistory": [{"auditedHead": head, "reviewer": "grok", "at": "2026-11-04T00:00:01Z"}]}}, open(dest, "w"))
 PY2
@@ -167,5 +170,10 @@ mk "$TMP/n11"; pr_commit "$V1" "PR sửa test" >/dev/null; echo 'fun other()=11'
 X="$(git rev-parse HEAD)"; pm_grok T1111-n11 "$TMP/n11" "$X" p-n11 late
 run_gate "$TMP/n11"
 if refused; then ok "N11: auditBase muộn hơn merge-base (không phủ commit sửa test) -> không duyệt"; else bad "N11: phạm vi hẹp: rc=$RC, $(tailout)"; fi
+
+# N12 (OCR vòng 3): grok PASS ở head rồi chạy lại cùng head trả REVISE (lượt cuối fail, verdicts.audit còn pass cũ) -> không duyệt
+mk "$TMP/n12"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1121-n12 "$TMP/n12" "$X" p-n12 refail
+run_gate "$TMP/n12"
+if refused; then ok "N12: lượt grok cuối cùng head là fail -> không duyệt"; else bad "N12: pass rồi fail: rc=$RC, $(tailout)"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

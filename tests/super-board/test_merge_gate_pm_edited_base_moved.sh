@@ -5,6 +5,7 @@
 #  G1 merge gate: PR sửa tests/t.sh, audit PM tại head PR, main tiến không chạm test -> verify trong khoá, merge (code cũ: exit 2).
 #  G2 merge train: như G1 -> không gate-exit-2 trước chuỗi, merge (code cũ: exit 2).
 #  G3 đối chứng: duyệt bằng comment edited-tests (đường cũ) + main tiến -> vẫn exit 2 stale như #643.
+#  G4 duyệt từ biên bản PM nhưng verify_commands không chạy post-fix-gate -> vẫn exit 2 (không ai kiểm lại trên base mới).
 # Chạy offline với gh giả. Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -97,8 +98,12 @@ export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" FAKE_REPO="$R"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_NOTIFY_SKIP=1
 unset SB_MERGE_CALLER SB_MERGE_QUEUE
 export GH_TOKEN=fake-token
+# verify giả mang tên post-fix-gate: merge gate chỉ bỏ exit 2 "stale" cho duyệt từ biên bản PM khi verify chạy gate (nơi audit_covers
+# kiểm main không đổi file test); G4 dùng verify khác -> vẫn exit 2.
+mkdir -p "$TMP/kit/bin" && printf '#!/bin/sh\necho x >> "%s/verify.count"\n' "$TMP" > "$TMP/kit/bin/post-fix-gate.py"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["sh %s/kit/bin/post-fix-gate.py --run-tests --scoped"]}\n' "$TMP" > "$TMP/cfg.json"
 printf '#!/bin/sh\necho x >> "%s/verify.count"\n' "$TMP" > "$TMP/verify.sh"
-printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["sh %s/verify.sh"]}\n' "$TMP" > "$TMP/cfg.json"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["sh %s/verify.sh"]}\n' "$TMP" > "$TMP/cfg-nogate.json"
 merged() { sort "$TMP/merged" 2>/dev/null | tr '\n' ' '; }
 reset_run() { rm -f "$TMP/verify.count" "$TMP/merged" "$TMP/halt.json"; }
 
@@ -123,5 +128,12 @@ card 3 1; advance_main; reset_run
 rc=$?
 if [ "$rc" -eq 2 ] && grep -q "edited-test review is stale before fast-forward" "$TMP/g3.log"; then ok "G3: comment edited-tests + main tiến -> exit 2 như cũ"
 else fail "G3: exit $rc: $(tail -6 "$TMP/g3.log" | tr '\n' ' ')"; fi
+
+# G4. biên bản PM, main tiến, nhưng verify KHÔNG chạy post-fix-gate (không ai kiểm lại duyệt trên base mới) -> exit 2 như comment
+card 4 0; advance_main; reset_run
+( cd "$W/review" && bash "$GATE" --config "$TMP/cfg-nogate.json" --pr 4 --expect-head "$(cat "$TMP/pr4.head")" --subject card --lock-timeout 20 ) >"$TMP/g4.log" 2>&1
+rc=$?
+if [ "$rc" -eq 2 ] && grep -q "edited-test review is stale before fast-forward" "$TMP/g4.log"; then ok "G4: verify không chạy gate -> vẫn exit 2"
+else fail "G4: exit $rc: $(tail -6 "$TMP/g4.log" | tr '\n' ' ')"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }
