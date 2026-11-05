@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Regression test: time budgets of the hooks, on a checklist the size of the largest real one
 # (≈180 rows, a git repo with a few thousand files). Median of 5 runs of the CPU the hook spends (wall time capped at 5x):
-#   prompt hook (bug prompt → REPORTED row written)  ≤ 150 ms  (plan: 100 ms of our own work;
-#                                                               python start-up is ~40 ms of it)
+#   prompt hook (bug prompt → REPORTED row written)  ≤ 110 ms  (measured #813, load 10–17: 74–98 ms; the same hook run twice
+#                                                               122–138 ms, so a doubled cost must go red)
 #   SessionStart (STALE, auto-close, counts)          ≤ 2 s
 #   Stop evidence gate on a proven fix (no test run)  ≤ 5 s
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
@@ -64,7 +64,7 @@ within() {  # within <label> <budget ms> "<cpu> <wall>"
 }
 
 python3 -c 'import json; print(json.dumps({"prompt": "App bị crash khi mở màn hình bản đồ lần thứ hai", "session_id": "b", "transcript_path": "/nonexistent/claude-tr.jsonl"}))' > "$TMP/prompt.json"
-within "prompt hook with bug capture" 150 "$(STDIN_FILE="$TMP/prompt.json" median_ms bash "$DEVKIT_DIR/hooks/prompt_context.sh")"
+within "prompt hook with bug capture" 110 "$(STDIN_FILE="$TMP/prompt.json" median_ms bash "$DEVKIT_DIR/hooks/prompt_context.sh")"
 echo '{}' > "$TMP/empty.json"
 within "SessionStart with STALE check" 2000 "$(STDIN_FILE="$TMP/empty.json" median_ms bash "$DEVKIT_DIR/hooks/session_context.sh")"
 python3 - "$P" <<'PY'
