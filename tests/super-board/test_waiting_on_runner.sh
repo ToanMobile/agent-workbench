@@ -250,13 +250,23 @@ reset; rm -f "$TMP/alive"; PROJECT_ITEMS_JSON="$BOARD_MIX"; export STUB_WO_RC=79
 
 # ── AC3 (rebuild_cap). rebuild_cap → Blocked 🛡 nằm ở super-board-merge-queue.sh `rebuild_or_rebase` (#601 không đụng file đó).
 # merge-queue.sh không có chế độ lib/source (grep SB_LIB_ONLY trong file đó: 0 dòng, 28/10), nên chạy test sẵn có của nó và đòi
-# đúng dòng kiểm "at rebuild_cap → Blocked".
-mq_out=$(cd "$ROOT" && env -i HOME="$HOME" PATH="$ORIG_PATH" TMPDIR="${TMPDIR:-/tmp}" bash "$ROOT/tests/super-board/test_merge_queue.sh" 2>&1); mq_rc=$?
+# đúng dòng kiểm "at rebuild_cap → Blocked". Chỉ chạy phần dựng chung + ca "5. Route từng kết quả" (nơi có dòng đó) + dòng tổng kết của
+# file, không cả file: cả file tốn ~60 s và đã chạy riêng ở REG-SB-MERGE-QUEUE-01 / REG-SB-APPROVED-HEAD-605-02 (cùng chọn khi
+# super-board-run.sh hay super-board-merge-queue.sh đổi); ca khác của nó chập chờn (TERM / busy message) từng làm ca này đỏ oan dù
+# rebuild_cap xanh (gate-full đêm 03/11, 05/11, thẻ #762 #922). $0 của bash -c là đường dẫn file thật: ROOT của nó tính như cũ.
+MQ="$ROOT/tests/super-board/test_merge_queue.sh"
+mq_part=$(awk '/^# ── 1\. /{skip=1} /^# ── 5\. /{skip=0} /^# ── 6\. /{skip=1} /^\[ "\$FAILS" -eq 0 \]/{skip=0} !skip' "$MQ")
+if grep -q '^# ── 5\. Route' <<<"$mq_part" && grep -q 'at rebuild_cap → Blocked, not Ready' <<<"$mq_part" \
+   && ! grep -q '^# ── [1-46-9]' <<<"$mq_part"; then
+  mq_out=$(cd "$ROOT" && env -i HOME="$HOME" PATH="$ORIG_PATH" TMPDIR="${TMPDIR:-/tmp}" bash -c "$mq_part" "$MQ" 2>&1); mq_rc=$?
+else
+  mq_out="could not cut setup + case 5 out of $MQ (section headers changed?)"; mq_rc=99
+fi
 # #750: grep đọc here-string, không `printf … | grep -q`: runner source ở trên bật pipefail, grep -q thoát ở dòng khớp khi printf còn ghi
 # phần đuôi output thì printf dính EPIPE và cả ca đỏ dù test_merge_queue.sh xanh (chập chờn dưới tải)
 [ "$mq_rc" = 0 ] && grep -q "✔ gate-exit-5 at rebuild_cap → Blocked, not Ready" <<<"$mq_out" \
-  && ok "AC3 rebuild_cap still goes to Blocked (test_merge_queue.sh PASS, rebuild_cap case green)" \
-  || fail "AC3 rebuild_cap: test_merge_queue.sh rc=$mq_rc $(printf '%s\n' "$mq_out" | grep -E '✖|rebuild_cap' | head -3)"
+  && ok "AC3 rebuild_cap still goes to Blocked (test_merge_queue.sh setup + route case 5 PASS, rebuild_cap case green)" \
+  || fail "AC3 rebuild_cap: test_merge_queue.sh setup + case 5 rc=$mq_rc $(printf '%s\n' "$mq_out" | grep -E '✖|rebuild_cap|could not' | head -3)"
 
 [ "$FAILS" -eq 0 ] && { echo "PASS test_waiting_on_runner"; exit 0; }
 echo "FAIL test_waiting_on_runner ($FAILS)"; exit 1
