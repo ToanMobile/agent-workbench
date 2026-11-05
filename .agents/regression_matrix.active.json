@@ -4088,6 +4088,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-gate-opt-load-cap",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_opt_load_cap.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-OPT-LOAD-CAP-01",
+          "name": "05/11 chủ repo: hạn số merge gate chạy cùng lúc theo tải — tải ≥ số lõi thì verify lạc quan (ngoài khoá) chỉ thấy N−1 slot pool gate, slot cuối để dành cho verify trong khoá; 3 merge gate cùng lúc tối đa 1 verify lạc quan chạy suite; hết SB_MERGE_OPT_SLOT_WAIT_S thì chạy với cả pool; tải thấp và verify trong khoá như cũ",
+          "command": "bash tests/super-board/test_merge_gate_opt_load_cap.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
