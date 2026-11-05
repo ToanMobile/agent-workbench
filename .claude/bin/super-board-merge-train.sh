@@ -272,8 +272,8 @@ edited_review_stale() {
   rm -f "$emeta"
   case "$et_rc" in 0) ;; 1) return 1 ;; *) exit "$et_rc" ;; esac
   # 04/11: duyệt tra thẳng biên bản PM không cũ khi base dời, nếu verify chạy post-fix-gate (audit_covers kiểm file test trên main).
-  # pm-unknown (không kiểm được biên bản) không phải duyệt gắn head: không cũ.
-  case "$src" in true) ;; pm) ! sb_verify_runs_gate "${VERIFY[@]}" || return 1 ;; *) return 1 ;; esac
+  # #1000 mục 3: pm-unknown (không kiểm được biên bản) không được lỏng hơn pm — cùng luật với pm.
+  case "$src" in true) ;; pm|pm-unknown) ! sb_verify_runs_gate "${VERIFY[@]}" || return 1 ;; *) return 1 ;; esac
   ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$(head_of "$1")"
 }
 # #643: duyệt test sửa mà base đã đi trước head thì rời đợt trước khi dựng scratch. Không làm đỏ cả chuỗi.
