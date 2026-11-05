@@ -46,7 +46,7 @@
 # other content, a new commit, a moved approval source or a digest that cannot be computed never re-use it.
 # REGRESSION_GATE_TOUCHED_RECHECK_S=0 runs the GATE on every Stop (the answer of the user and the verdict are judged again) but it does not start a
 # suite that already passed on the same content: the gate keeps the suites a Stop run passed (budget_pass.json, bin/post-fix-gate.py) and the next
-# run on identical inputs re-uses them, for DEVKIT_GATE_CACHE_MAX_S seconds (default 21600, i.e. 6 h). A suite that starts to fail on unchanged
+# run on identical inputs re-uses them, for DEVKIT_GATE_CACHE_MAX_S seconds (default 259200, i.e. 3 days, as the receipt). A suite that starts to fail on unchanged
 # content is therefore not seen until that record ages out or the content changes; only DEVKIT_GATE_CACHE=0 (the gate's own switch, not this hook's)
 # makes every run start every suite again.
 # Loop-guard: MAX_ATTEMPTS blocks per fingerprint, then the stop is allowed with a
@@ -754,8 +754,10 @@ if _sk_fp is not None and state.get("untested_fp") == _sk_fp:
 # (REGRESSION_GATE_TOUCHED_RECHECK_S when set, else DEVKIT_GATE_CACHE_MAX_S, 21600 s; 0 = every stop). 03/11: the old fixed 300 s
 # window re-ran the gate 36 times a day on unchanged content and sources, ~47 s each. Runs again = judges again
 # (static audits, edited tests, the answer of the user), nothing more: since 2026-10-15 it starts no suite that already passed on this content (the
-# budget_pass.json record of bin/post-fix-gate.py, DEVKIT_GATE_CACHE_MAX_S, default 21600 s = 6 h), so REGRESSION_GATE_TOUCHED_RECHECK_S=0 does not
+# budget_pass.json record of bin/post-fix-gate.py, DEVKIT_GATE_CACHE_MAX_S, default 259200 s = 3 days), so REGRESSION_GATE_TOUCHED_RECHECK_S=0 does not
 # re-check suites either; DEVKIT_GATE_CACHE=0 does.
+# #992: the 21600 s fallback below stays 6 h on purpose: it bounds how long a stored REMINDER is replayed without judging the
+# static audits, edited tests and approval sources again, not how long a suite PASS is re-used (that is the 3-day budget_pass record).
 # Never reused: by another session, for other content or another commit range (the key holds fp, which
 # also names verified_head..HEAD, and the tree fingerprint), after a run that was not this outcome, or
 # when the reminder came with a BUSY suite. Limit: gitignored files the gate reads (proof images under

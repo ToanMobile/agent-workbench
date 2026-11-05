@@ -14,7 +14,7 @@ dùng). Input (bảo thủ — thừa thì chỉ giảm số lần dùng lại, 
   f. danger list: đổi một file trong đó là đổi mọi khoá.
 Suite run_impacted.sh có dấu SELECTION_INPUTS_MARK (#851): khoá chính xác thay a–c bằng input của TẬP CHỌN (SuiteCache.selection_inputs:
 đồ thị tham chiếu của bin/scoped_gate.py — cùng đồ thị merge gate scoped dùng để chọn test); khoá cả cây giữ nguyên.
-#994: TẮT (selection_inputs_marked luôn None) — đồ thị tĩnh không thấy file test liệt kê lúc chạy ⇒ shard chỉ khoá cả cây.
+#994: TẮT (keys() luôn khoá cả cây cho shard; thân cũ ở git 853a6566) — đồ thị tĩnh không thấy file test liệt kê lúc chạy.
 Kho: <git common dir>/postfix-gate/suite_cache/<khoá>.json {pass_n, fail_n, …}. HIT ⇔ pass_n ≥ 1, fail_n = 0, chưa quá tuổi, đúng id
 và lệnh, id không bị cách ly. FAIL là vĩnh viễn với khoá đó (một PASS chạy đua không bao giờ xoá được nó). Chỉ một lượt chạy THẬT lệnh
 đầy đủ của suite mới được ghi. Thư viện chuẩn, không phụ thuộc gate (post-fix-gate.py và stale_rerun.py cùng dùng).
@@ -536,18 +536,6 @@ def selection_list(project_dir, command):
     return sorted(set(r.stdout.split())) if r.returncode == 0 else None
 
 
-def selection_inputs_marked(project_dir, command):
-    """#851: runner của lệnh (SELECTION_CMD, file thường trong cây) có cả SELECTION_MARK lẫn SELECTION_INPUTS_MARK trong 4096 byte đầu ⇒
-    frozenset các test (tương đối kit) nêu sau SELECTION_TREE_MARK (có thể rỗng); không ⇒ None.
-    #994 (fail-closed): LUÔN trả None ⇒ shard run_impacted.sh chỉ khoá cả cây (keys(): sel_files None ⇒ cut). Đồ thị tĩnh của
-    selection_inputs chỉ thấy import / source / tên file được nhắc, không thấy file test liệt kê lúc chạy (glob, `for f in "$DK"/x/*`,
-    `ls`, os.walk, git ls-files / grep): đo 05/11 test_git_env_isolation.sh duyệt 549 file, chỉ 153 trong input ⇒ PASS cũ bị dùng lại
-    khi file được liệt kê đổi. Vá theo mẫu nhận dạng liệt kê (PR #993) bị review tìm ra dạng mới hai vòng (INSTINCT-104) nên bỏ.
-    Giữ hàm và chữ ký cho caller; thân cũ ở git 853a6566. Đường dài: vết input lúc chạy (fs trace) — macOS không làm được khi
-    không có quyền root."""
-    return None
-
-
 def store_dir(project_dir):
     r = _git(project_dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if r.returncode != 0:
@@ -728,26 +716,17 @@ class SuiteCache:
         seen, ext, tools, cut = closure(self.project_dir, self.idx, named | watched, ext_seeds)
         cut = cut or self.idx.skips > skips0
         files |= seen
-        sel = sel_files = None
+        sel = None
         if DIFF_DEPENDENT.search(cmd):   # tập test chọn theo lịch sử git: không có tập thì không có khoá
             sel = selection_list(self.project_dir, cmd)
             if sel is None:
                 return None, None
             self.selections[(sid, cmd)] = sel
-            # #851: runner có SELECTION_INPUTS_MARK ⇒ khoá chính xác theo input của tập chọn (watch_files `kit/*` của shard chỉ là điều kiện
-            # kích hoạt, không phải input của test được chạy); còn lại chỉ khoá cả cây. Input học được (e) vẫn vào khoá.
-            # ponytail: khoá cả suite — một input của một test đổi thì cả shard chạy lại; khoá từng test (per_test_cache, #439) ở lượt scoped
-            # khi đo thấy shard chạy lại vì vài test.
-            tree_tests = selection_inputs_marked(self.project_dir, cmd)
-            if tree_tests is not None and not tree_tests & set(sel):   # B2: test quét cả kit trong tập ⇒ chỉ khoá cả cây
-                sel_files = self.selection_inputs(os.path.normpath(SELECTION_CMD.match(cmd).group("script")), sel)
-            if sel_files is None:
-                cut = True
-            else:
-                cut = False
-                for pat in self.learned.get(sid) or []:
-                    sel_files |= {pat} if pat in self.cmap else self.idx.glob(pat)
-                files = sel_files
+            # #994 (fail-closed): shard run_impacted.sh chỉ khoá cả cây. Đồ thị tĩnh của selection_inputs chỉ thấy import / source / tên
+            # file được nhắc, không thấy file test liệt kê lúc chạy (glob, `for f in "$DK"/x/*`, `ls`, os.walk, git ls-files / grep): đo
+            # 05/11 test_git_env_isolation.sh duyệt 549 file, chỉ 153 trong input ⇒ PASS cũ bị dùng lại khi file được liệt kê đổi.
+            # ponytail: khoá chính xác theo tập chọn (#851) tắt; bật lại theo git 853a6566 (nhánh sel_files của keys(), selection_inputs_marked) khi có vết file lúc chạy (#998).
+            cut = True
         head_obj = {
             "fmt": SUITE_CACHE_FORMAT, "rf": self.result_format, "id": sid, "command": cmd, "selection": sel,
             "untested_exit": test.get("untested_exit"), "local": self.local_sha, "sel": self.selection_env,
@@ -758,39 +737,16 @@ class SuiteCache:
         }
         head = json.dumps(head_obj, sort_keys=True, default=str).encode()
         tail = b"".join(b"x\0" + os.fsencode(tok) + b"\0" + ext[tok].encode() + b"\0" for tok in sorted(ext))
-        p_head, p_ext = head, ext   # phần đầu / đích ngoài cây của khoá CHÍNH XÁC (khoá cả cây và key_parts luôn theo head, tail cũ)
-        if sel_files is not None:
-            # B1: công cụ và đích ngoài cây chỉ từ file của tập chọn (+ token của lệnh), không từ bao đóng watch_files `kit/*`.
-            # M1: DEVKIT_SCOPED_TESTS là danh sách gộp mọi shard và runner gỡ nó trước khi chạy test; phần của shard này đã ở "selection".
-            # ponytail: đích ngoài cây một bước (không đọc tiếp file ngoài cây), nâng cấp khi một test trong kit đọc chuỗi file ngoài cây.
-            p_ext, s_tools = {tok: _file_digest(real) for tok, real in ext_seeds}, set()
-            for p in sorted(files):
-                if os.path.splitext(p)[1] not in _SCAN_EXT:
-                    continue
-                full = os.path.join(self.project_dir, p)
-                info = _file_refs(self.project_dir, self.idx, full, p, os.path.dirname(p))
-                if info is None:
-                    cut = cut or os.path.isfile(full)   # như closure(): không đọc được thì không biết nó nguồn gì
-                    continue
-                s_tools |= info[2]
-                for tok, real in info[1]:
-                    p_ext.setdefault(tok, _file_digest(real))
-            env_sel = self.selection_env
-            if isinstance(env_sel, dict):
-                env_sel = {k: v for k, v in env_sel.items() if k != "DEVKIT_SCOPED_TESTS"}
-            p_head = json.dumps(dict(head_obj, sel=env_sel, env=env_fingerprint(s_tools | _tools_in(cmd))),
-                                sort_keys=True, default=str).encode()
-        p_tail = b"".join(b"x\0" + os.fsencode(tok) + b"\0" + p_ext[tok].encode() + b"\0" for tok in sorted(p_ext))
-        h = hashlib.sha256((b"precise\0" if sel_files is None else b"selection\0") + p_head)
+        h = hashlib.sha256(b"precise\0" + head)
         # covers của id: chỉ khoá chính xác — covers đọc từ .agents/regression_status.json của TỪNG checkout (ngoài dấu vân tay cây); khoá cả
         # cây chỉ theo nội dung cây để hai worktree cùng cây vẫn dùng chung PASS (ca 37c)
         h.update(b"c\0" + json.dumps(self.covers.get(sid), sort_keys=True, default=str).encode() + b"\0")
         for p in sorted(files):
             h.update(b"f\0" + os.fsencode(p) + b"\0" + (self.cmap.get(p) or "-").encode() + b"\0")
-        h.update(p_tail)
+        h.update(tail)
         t = hashlib.sha256(b"tree\0" + head + b"\0" + self.tree_digest.encode() + b"\0" + tail)
-        self.inputs[sid] = len(files) + len(p_ext)
-        self.input_values[(sid, cmd)] = ({p: self.cmap.get(p) for p in files}, dict(p_ext))
+        self.inputs[sid] = len(files) + len(ext)
+        self.input_values[(sid, cmd)] = ({p: self.cmap.get(p) for p in files}, dict(ext))
         self.key_parts[(sid, cmd)] = (head, tail)
         if cut:   # danh sách input bị cắt: không có khoá chính xác — chỉ dùng lại khi CẢ CÂY trùng (review 20/10)
             return t.hexdigest(), t.hexdigest()

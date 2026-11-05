@@ -4059,6 +4059,66 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "rerun-skip-ttl-3d-992",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_rerun_skip_ttl_3d.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-RERUN-SKIP-TTL-3D-992-01",
+          "name": "#992: rerun_skip.json (#648) dùng hạn mặc định 3 ngày như biên nhận (7 giờ dùng lại, 4 ngày chạy lại); DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè, =0 không dùng lại",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_rerun_skip_ttl_3d.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "review-gate-handover-gtimeout-flag-value-992",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_handover_gtimeout_flag_value.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-GTIMEOUT-FLAG-VALUE-992-01",
+          "name": "#992: review_gate — gtimeout N …merge-gate.sh là bàn giao; --dry-run/--preflight làm giá trị của option khác (--subject --dry-run) không phải dry-run",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_handover_gtimeout_flag_value.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "review-gate-ocr-out-literal-hint-992",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_ocr_out_literal_hint.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-OCR-OUT-LITERAL-992-01",
+          "name": "#992: review_gate — thông điệp thiếu OCR nhắc --out viết thẳng đường dẫn; --out $S/spec (biến) vẫn không tính, --out viết thẳng tính",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_ocr_out_literal_hint.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-opt-load-cap",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_opt_load_cap.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-OPT-LOAD-CAP-01",
+          "name": "05/11 chủ repo: hạn số merge gate chạy cùng lúc theo tải — tải ≥ số lõi thì verify lạc quan (ngoài khoá) chỉ thấy N−1 slot pool gate, slot cuối để dành cho verify trong khoá; 3 merge gate cùng lúc tối đa 1 verify lạc quan chạy suite; hết SB_MERGE_OPT_SLOT_WAIT_S thì chạy với cả pool; tải thấp và verify trong khoá như cũ",
+          "command": "bash tests/super-board/test_merge_gate_opt_load_cap.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

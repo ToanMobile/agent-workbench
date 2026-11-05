@@ -10,6 +10,8 @@
 # #994 (fail-closed, 05/11): khoá chính xác theo tập chọn bị TẮT (đồ thị tĩnh không thấy file test liệt kê lúc chạy ⇒ PASS sai) — khoá
 # chính xác = khoá cả cây. U1–U3, U15, U16, U18 nay khẳng định MISS (file không liên quan đổi vẫn đổi khoá) và E1 khẳng định shard CHẠY LẠI;
 # các ca MISS khác giữ nguyên. Bật lại #851 (khi có vết input lúc chạy) thì đảo lại 7 ca này.
+# U0h (#992, đối chứng HIT): không đổi gì ⇒ keys() lần hai == k0 (cả khoá chính xác lẫn khoá cả cây) — mọi ca U1–U26 khẳng định MISS, nên
+# một keys() không tất định (khác mỗi lần gọi) cũng làm chúng xanh; U0h bắt điều đó.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
 unset DEVKIT_GATE_CACHE DEVKIT_GATE_CACHE_MAX_S DEVKIT_SUITE_CACHE_MAX_S DEVKIT_SUITE_CACHE DEVKIT_SENTINEL_MAX_S CI FLAKY_RETRY \
@@ -78,6 +80,8 @@ def reset():
 
 (k0, t0), sel0 = keys()
 print("sel", " ".join(sel0 or []))
+(k0b, t0b), _ = keys()
+print(("OK " if k0 and k0b == k0 and t0b == t0 else "BAD ") + f"U0h không đổi gì: HIT đối chứng (khoá chính xác {k0b == k0}, khoá cả cây {t0b == t0})")
 cases = [  # (nhãn, file đổi, mong HIT?)
     ("U1 bin/other.py (không test nào đọc) — #994 khoá cả cây ⇒ MISS", K + "bin/other.py", False),
     ("U2 test không được chọn (test_z.sh) — #994 khoá cả cây ⇒ MISS", K + "tests/gates/test_z.sh", False),
@@ -187,7 +191,7 @@ printf '%s\n' "$OUT_U" | grep -E '^(sel|OK|BAD)' | sed 's/^/    /'
 if ! printf '%s\n' "$OUT_U" | grep -q '^sel tests/gates/test_a.sh tests/gates/test_b.sh$'; then
   fail "U0. tập chọn của fixture không phải {test_a, test_b}"; printf '%s\n' "$OUT_U" | tail -5
 fi
-for c in U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U13 U14 U15 U16 U17 U18 U19 U20 U21 U22 U23 U24 U25 U26; do
+for c in U0h U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U13 U14 U15 U16 U17 U18 U19 U20 U21 U22 U23 U24 U25 U26; do
   line="$(printf '%s\n' "$OUT_U" | grep -E "^(OK|BAD) $c " | head -1)"
   case "$line" in OK*) ok "${line#OK }" ;; BAD*) fail "${line#BAD }" ;; *) fail "$c: không có kết quả"; printf '%s\n' "$OUT_U" | tail -3 ;; esac
 done

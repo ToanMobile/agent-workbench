@@ -5884,8 +5884,9 @@ def write_rerun_skip(path, fp, mode, suites, local_sha):
 
 
 def _rerun_skip_expired(path):
-    """True khi mtime của bản ghi vượt DEVKIT_GATE_CACHE_MAX_S. Giá trị rác, thiếu file hoặc ≤ 0 tính là hết hạn."""
-    raw = os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600")
+    """True khi mtime của bản ghi vượt DEVKIT_GATE_CACHE_MAX_S (mặc định 3 ngày như biên nhận, #992; trước là 6 h). Giá trị rác,
+    thiếu file hoặc ≤ 0 tính là hết hạn."""
+    raw = os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "259200")
     try:
         max_s = float(raw)
     except (TypeError, ValueError):

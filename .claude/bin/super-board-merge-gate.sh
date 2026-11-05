@@ -1328,11 +1328,57 @@ prepare_scratch_evidence() {
   grep -qxF '.merge-evidence/' "$gd/info/exclude" 2>/dev/null || printf '%s\n' '.merge-evidence/' >> "$gd/info/exclude"
   export DEVKIT_KEEP_FAILED_LOGS_DIR="$SCRATCH/.merge-evidence/tests"
 }
+# 05/11 (chủ repo: "Hạn số merge gate chạy cùng lúc theo tải, để 3 gate không cùng tranh CPU"). Đo runs.jsonl 05/11 08:25–09:11: verify
+# lạc quan (ngoài khoá, PR3) của #1007 và #1004 giữ cả 2 slot pool gate, verify TRONG khoá của #1009 chờ slot 1662,9 s mà vẫn chặn mọi
+# merge của repo; giây/test của verify khi chồng ≈ 1,9 × khi chạy một mình (4,35 → 8,32 s/test, 29/10–05/11). Tải 1 phút ≥ số lõi
+# (capacity cores; SB_MERGE_OPT_LOAD_MAX ghi đè, 0 = tắt) thì verify lạc quan chỉ thấy N−1 slot đầu của pool gate (N = DEVKIT_GATE_SLOTS
+# hay capacity gate_max, ≥ 2): slot cuối để dành cho verify trong khoá (vé cỡ nhỏ ghép bằng _pick_free, P1 02/11). OPT_SLOTS rỗng = không hạn.
+# ponytail: N = 1 thì không còn gì để dành (không hạn); tải đọc một lần lúc verify bắt đầu; merge train có verify riêng, chưa hạn.
+opt_gate_slots() {
+  OPT_SLOTS=""
+  [ "${LOCK_HELD:-0}" -eq 0 ] || return 0
+  local lmax="${SB_MERGE_OPT_LOAD_MAX:-}" n="${DEVKIT_GATE_SLOTS:-}" load
+  [[ "$lmax" =~ ^[0-9]{1,6}$ ]] || lmax=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" cores 2>/dev/null) || lmax=""
+  [[ "$lmax" =~ ^[0-9]{1,6}$ ]] || return 0
+  lmax=$((10#$lmax)); [ "$lmax" -gt 0 ] || return 0
+  load=$(load_now)
+  [[ "$load" =~ ^[0-9]{1,6}$ ]] || return 0
+  [ $((10#$load)) -ge "$lmax" ] || return 0
+  [[ "$n" =~ ^[0-9]{1,6}$ ]] || n=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" gate_max 2>/dev/null) || n=""
+  [[ "$n" =~ ^[0-9]{1,6}$ ]] || return 0
+  n=$((10#$n)); [ "$n" -ge 2 ] || return 0
+  OPT_SLOTS=$((n - 1)); OPT_LOAD=$((10#$load)); OPT_LMAX=$lmax; OPT_N=$n
+}
+# verify_log_busy: dòng --json cuối của VERIFY_LOG là exit 4 kèm .busy == true (hàng đợi gate / khoá dự án bận, T0056).
+verify_log_busy() {
+  local line
+  line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$VERIFY_LOG" 2>/dev/null | tail -1 || true)
+  [ -n "$line" ] && printf '%s' "$line" | jq -e '.exit_code == 4 and .busy == true' >/dev/null 2>&1
+}
 run_verify_cmd_inner() {
-  local c="$1"
+  local c="$1" ow total rc=0
   if [[ "$c" == *"post-fix-gate.py"* ]]; then
+    total="${DEVKIT_GATE_SLOT_WAIT_S:-1800}"
+    opt_gate_slots
+    if [ -n "$OPT_SLOTS" ]; then
+      # Chờ có hạn rồi chạy: hết SB_MERGE_OPT_SLOT_WAIT_S (mặc định 900, ≤ nửa thời gian chờ slot) mà N−1 slot vẫn bận thì post-fix-gate
+      # thoát 4 busy; chạy lại với cả pool trong phần thời gian chờ còn lại — tổng chờ slot không quá DEVKIT_GATE_SLOT_WAIT_S như cũ.
+      ow="${SB_MERGE_OPT_SLOT_WAIT_S:-900}"
+      [[ "$ow" =~ ^[0-9]{1,6}$ ]] || ow=900
+      if [[ "$total" =~ ^[0-9]{1,6}$ ]]; then
+        [ $((10#$ow)) -le $((10#$total / 2)) ] || ow=$((10#$total / 2))
+        total=$((10#$total - 10#$ow)); [ "$total" -ge 1 ] || total=1
+      fi
+      say "load ${OPT_LOAD} >= ${OPT_LMAX}: optimistic verify (outside the merge lock) waits up to ${ow}s for one of ${OPT_SLOTS} of ${OPT_N} gate slot(s), leaving the last slot to the lock holder"
+      ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+          DEVKIT_GATE_SLOTS="$OPT_SLOTS" DEVKIT_GATE_SLOT_WAIT_S="$ow" \
+          && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
+          && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1 || rc=$?
+      if [ "$rc" -ne 4 ] || ! verify_log_busy; then return "$rc"; fi
+      say "the ${OPT_SLOTS} optimistic gate slot(s) stayed busy for ${ow}s; verifying with the whole gate pool (wait up to ${total}s)"
+    fi
     ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
-        DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
+        DEVKIT_GATE_SLOT_WAIT_S="$total" \
         && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
         && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
   else
