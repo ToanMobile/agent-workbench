@@ -19,12 +19,16 @@ export function formatStatusText(report) {
   lines.push(`💰 Chi phí: $${report.usage.totalCostUsd} (${report.usage.totalRequests} req)`);
   lines.push('');
   for (const p of report.profiles.filter((x) => x.vendor === 'anthropic')) {
+    const stale = p.remainingPct === null;
     const pct = p.remainingPct ?? 100;
     const reset = p.resetTimeFormatted ? ` · ⏰ ${p.resetTimeFormatted} (${p.resetRemainHuman})` : '';
-    const icon = p.isFrozen || pct <= 0 ? '🔴' : (p.isParallelActive ?? p.isActive) ? '🟢' : '⚪️';
+    const weekly = p.weeklyRemainingPct != null
+      ? ` · tuần còn ${p.weeklyRemainingPct}%${p.weeklyResetFormatted ? ` (reset ${p.weeklyResetFormatted})` : ''}`
+      : '';
+    const icon = stale ? '⚠️' : p.isFrozen || pct <= 0 ? '🔴' : (p.isParallelActive ?? p.isActive) ? '🟢' : '⚪️';
     const repos = p.assignedRepoCount > 0 ? ` · ${p.assignedRepoCount} repo` : '';
     lines.push(`${icon} ${p.name}${repos}`);
-    lines.push(`   ${bar(pct)} Còn ${pct}%${reset}`);
+    lines.push(stale ? '   Số liệu cũ, không làm mới được (đăng nhập lại)' : `   ${bar(pct)} Còn ${pct}%${reset}${weekly}`);
   }
   lines.push('');
   BACKUP_ORDER.map((id) => report.profiles.find((p) => p.id === id)).filter(Boolean).forEach((p, i) => {

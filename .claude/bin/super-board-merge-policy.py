@@ -97,7 +97,11 @@ DEFAULT_ALWAYS_HUMAN = {
     "auth": {
         "labels": ["auth", "security"],
         "paths": ["**/auth/**", "**/authz/**", "**/permissions/**"],
-        "keywords": ["jwt.sign", "bcrypt", "password_hash", "service_role"],
+        "keywords": ["jwt.sign", "password_hash", "service_role"],
+        # #1028: `bcrypt` không đứng trước `o`: chuỗi con bắt nhầm `libcrypto` (li-BCRYPT-o, GeelyEx2 PR #143) và `subcrypto`.
+        # `jbcrypt`, `pybcrypt`, `mybcrypt`, `_bcrypt`, `bcryptjs`, `bcrypt.hash(` vẫn khớp (Grok review: tiền tố chữ cái là thư viện thật).
+        # ponytail: chỉ loại `bcrypto…`, thư viện tên đó (npm bcrypto) thành auto; thêm khi gặp.
+        "patterns": [r"bcrypt(?!o)"],
     },
     "schema": {
         "labels": ["schema", "destructive"],
