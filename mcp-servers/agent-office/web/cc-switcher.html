@@ -406,10 +406,12 @@
       el('div', null, [el('div', { class: 'acc-name', text: n.title }), el('div', { class: 'acc-mail', text: n.detail })]),
       badgeFor(p)
     ]));
-    card.appendChild(meter('Quota 5 giờ', p.remainingPct, p.resetAtMs ? ('reset ' + fmtTime(p.resetAtMs)) : ''));
-    if (p.weeklyRemainingPct !== null && p.weeklyRemainingPct !== undefined) card.appendChild(meter('Quota 7 ngày', p.weeklyRemainingPct));
+    if (p.quotaStale) card.appendChild(el('div', { class: 'acc-mail', role: 'alert', text: 'Số liệu cũ (' + ago(p.quota.updatedAtMs) + ') — không làm mới được, token có thể đã hết hạn. Đăng nhập lại tài khoản này.' }));
+    else card.appendChild(meter('Quota 5 giờ', p.remainingPct, p.resetAtMs ? ('reset ' + fmtTime(p.resetAtMs)) : ''));
+    if (!p.quotaStale && p.weeklyRemainingPct !== null && p.weeklyRemainingPct !== undefined) card.appendChild(meter('Quota 7 ngày', p.weeklyRemainingPct, p.weeklyResetFormatted ? ('reset ' + p.weeklyResetFormatted) : ''));
     card.appendChild(facts([
-      ['Đã dùng (5 giờ)', p.usedPct + '%'],
+      ['Đã dùng (5 giờ)', p.usedPct == null ? '—' : p.usedPct + '%'],
+      p.weeklyResetAtMs ? ['Reset tuần', p.weeklyResetFormatted + ' · còn ' + fmtDur((p.weeklyResetAtMs - Date.now()) / 1000)] : null,
       ['Reset / mở khóa', p.resetAtMs ? (fmtTime(p.resetAtMs) + ' · còn ' + fmtDur(resetLeft)) : 'Chưa có mốc'],
       p.isFrozen && p.frozenUntilMs ? ['Đóng băng tới', fmtTime(p.frozenUntilMs, true)] : null,
       ['Repo đang gán', String(p.assignedRepoCount || 0)],
@@ -439,7 +441,7 @@
   function renderSummary() {
     var a = state.activeProfile, h = state.health, s = $('#summary'); s.innerHTML = '';
     var cl = cooldownLeft();
-    s.appendChild(kpi('Đang dùng', splitName(a.name).title, 'Còn ' + a.remainingPct + '%' + (a.resetAtMs ? ' · reset ' + fmtTime(a.resetAtMs) : '')));
+    s.appendChild(kpi('Đang dùng', splitName(a.name).title, (a.remainingPct == null ? 'Số liệu cũ' : 'Còn ' + a.remainingPct + '%') + (a.resetAtMs ? ' · reset ' + fmtTime(a.resetAtMs) : '') + (a.weeklyResetFormatted ? ' · tuần reset ' + a.weeklyResetFormatted : '')));
     var cd = kpi('Chống ban (Claude ↔ Claude)', cl > 0 ? ('Chờ ' + fmtDur(cl)) : 'Đổi ngay được', 'Nghỉ ' + state.antiBan.cooldownMinutes + ' phút · đóng băng 429: ' + Math.round(state.antiBan.rateLimitFreezeSec / 3600 * 10) / 10 + ' giờ');
     cd.querySelector('.value').id = 'cdLive';
     s.appendChild(cd);
