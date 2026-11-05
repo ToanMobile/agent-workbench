@@ -10,7 +10,9 @@
     (dừng ở dòng trống, mục AC kế hay tiêu đề). Khối "## AC + proof" (agents-md-block.md) chỉ dùng để nhận diện AC cho mục Not done:
     bằng chứng của nó nằm ngay trên dòng mục, các PR #345/#374 đã merge không có `↳`;
   - (T0255, khi có `--head` và `--base`) report QA mới nhất nêu sha một commit của nhánh PR mà head còn commit code sau sha đó
-    (không tính commit merge và commit chỉ chạm docs/super-board/runs): QA chưa chạy lại trên code cuối.
+    (không tính merge sạch và commit chỉ chạm docs/super-board/runs; #1000: merge sửa tay / giải conflict tay có tính), hay nêu
+    commit đã bị amend / force-push khỏi lịch sử head mà code khác head: QA chưa chạy lại trên code cuối (chi tiết: stale_qa).
+    Lỗi git khi kiểm (base không đọc được…) = thoát 2, không bỏ ghim.
 Người đáng tin = tác giả PR hoặc authorAssociation OWNER/MEMBER/COLLABORATOR. Dòng trích dẫn `> ` và khối ``` bị bỏ qua.
 Không có comment QA hay không có mục AC thì không có gì để từ chối (cổng khác lo việc QA vắng mặt).
 Thoát 2 khi metadata không đọc được hay lỗi bất ngờ: cổng merge coi là "không quyết định được", không phải lỗi build.
@@ -98,66 +100,99 @@ def latest_qa(comments, pr_author=None):
     return latest, latest_at
 
 
-def _git(repo, *args):
-    """stdout của git (đã strip), None khi git lỗi / quá 10 s."""
+class GitError(RuntimeError):
+    """git lỗi / quá giờ khi kiểm ghim sha QA (#1000): không quyết định được (main -> exit 2, merge gate -> exit 7), không lặng lẽ bỏ ghim."""
+
+
+def _git(repo, *args, ok=(0,)):
+    """(mã thoát, stdout đã strip) của git; mã ngoài `ok` hay quá 10 s -> GitError. Subject không phải UTF-8 thay bằng U+FFFD."""
     try:
-        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return r.stdout.strip() if r.returncode == 0 else None
+        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, errors="replace", timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GitError(f"git {args[0]}: {type(exc).__name__}") from exc
+    if r.returncode not in ok:
+        raise GitError(f"git {args[0]} exit {r.returncode}")
+    return r.returncode, r.stdout.strip()
+
+
+def _commit(repo, token):
+    """sha40 của commit `token` trỏ tới, None khi không phải commit (hash file, sha chưa fetch, tiền tố mơ hồ)."""
+    rc, out = _git(repo, "rev-parse", "--verify", "-q", f"{token}^{{commit}}", ok=(0, 1, 128))
+    return out if rc == 0 and out else None
 
 
 def _is_ancestor(repo, a, b):
-    """True/False theo `merge-base --is-ancestor` (exit 0/1); None khi git lỗi (exit khác, quá 10 s) — không đoán là 'không'."""
-    try:
-        r = subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", a, b], capture_output=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return {0: True, 1: False}.get(r.returncode)
+    """True/False theo `merge-base --is-ancestor` (exit 0/1); mã khác -> GitError (không đoán là 'không')."""
+    return _git(repo, "merge-base", "--is-ancestor", a, b, ok=(0, 1))[0] == 0
+
+
+def _same_code(repo, a, b):
+    """True khi hai tree-ish giống nhau ngoài EVIDENCE_DIR."""
+    return _git(repo, "diff", "--quiet", a, b, "--", ".", f":(exclude){EVIDENCE_DIR}", ok=(0, 1))[0] == 0
+
+
+def _code_after(repo, sha, head, base):
+    """Thay đổi code của nhánh sau `sha` tới `head` (không tính base, không tính EVIDENCE_DIR): commit thường, và commit merge có nội
+    dung khác bản gộp tự động của hai cha — sửa tay, giải conflict bằng tay — hay không đúng hai cha (#1000 mục 1: --no-merges bỏ sót)."""
+    _, out = _git(repo, "log", "--no-merges", "--format=%h %s", head, f"^{sha}", f"^{base}", "--", ".", f":(exclude){EVIDENCE_DIR}")
+    found = out.splitlines() if out else []
+    _, merges = _git(repo, "rev-list", "--merges", head, f"^{sha}", f"^{base}")
+    for m in merges.split():
+        parents = _git(repo, "rev-list", "--parents", "-n", "1", m)[1].split()[1:]
+        if len(parents) == 2:
+            # merge-tree (trong chính repo: driver gộp của .gitattributes áp dụng) in tree gộp ở dòng đầu, kể cả khi conflict (exit 1;
+            # tree có dấu conflict nên khác commit đã giải tay). Không có tree = lỗi git.
+            _, mt = _git(repo, "merge-tree", "--write-tree", "--no-messages", parents[0], parents[1], ok=(0, 1))
+            tree = mt.splitlines()[0].strip() if mt else ""
+            if not tree:
+                raise GitError(f"git merge-tree {m[:12]}: no tree")
+            if _same_code(repo, tree, m):
+                continue
+        found.append(f"{m[:9]} merge commit có thay đổi code ngoài bản gộp tự động")
+    return found
 
 
 def stale_qa(comments, pr_author, head, repo, base):
-    """T0255: report QA mới nhất nêu commit của nhánh PR mà head còn commit code sau đó ⇒ mô tả lỗi; còn lại None.
-    Commit của nhánh = tổ tiên của head, không là tổ tiên của base (sha của main mà QA nêu để so ĐỎ thì bỏ qua). Base phải vừa
+    """T0255: report QA mới nhất kiểm một commit mà head còn code chưa QA ⇒ mô tả lỗi; còn lại None. Lỗi git ⇒ GitError.
+    Lời khai: sha ở dòng tiêu đề `[qa] [report]` khi nó là commit; không thì mọi sha trong các dòng hiển thị (#1000: head chỉ được nhắc
+    ở thân không thay lời khai ở tiêu đề). Một sha lời khai == head ⇒ None.
+    Commit của nhánh (own) = tổ tiên của head, không là tổ tiên của base (sha của main mà QA nêu để so ĐỎ thì bỏ qua). Base phải vừa
     fetch (merge gate lo): base cũ làm commit main đã gộp trông như commit của nhánh (Grok T0255 P1). Không đi theo first-parent:
-    builder commit tại chỗ rồi `pull --no-rebase` đẩy commit QA sang cha thứ hai (review T0255 P2). Commit merge và commit chỉ chạm
-    EVIDENCE_DIR không tính là code. Report không nêu commit nào của nhánh, hay git/base không đọc được: không chặn (giữ hành vi
-    cũ). ponytail: commit merge có sửa tay khi giải conflict, và sha QA bị amend/force-push khỏi lịch sử head, không bị tính; so cây
-    của phần nhánh khi gặp ca lọt như vậy."""
+    builder commit tại chỗ rồi `pull --no-rebase` đẩy commit QA sang cha thứ hai (review T0255 P2). Commit chỉ chạm EVIDENCE_DIR và
+    merge sạch không tính là code; merge sửa tay / giải conflict tay thì tính (_code_after). #1000: MỌI sha own còn code sau ⇒ từ chối
+    (không lấy sha "tốt nhất"): report mới nhất nêu sha vòng cũ thì exit 11 là chấp nhận được, QA ghi lại report trên head.
+    Không có sha own: sha lời khai không thuộc lịch sử head lẫn base (amend / force-push) mà code khác head ⇒ từ chối."""
     lines, _ = latest_qa(comments, pr_author)
     if lines is None or not head:
         return None
-    tokens = set(SHA_TOKEN.findall("\n".join(lines)))
-    if any(head.startswith(t) for t in tokens):
+    header = next((l for l in lines if QA_HEADER.match(l)), "")
+    claims = [s for s in (_commit(repo, t) for t in sorted(set(SHA_TOKEN.findall(header)))) if s]
+    if not claims:
+        claims = [s for s in (_commit(repo, t) for t in sorted(set(SHA_TOKEN.findall("\n".join(lines))))) if s]
+    if not claims:
         return None
-    if _git(repo, "rev-parse", "--verify", "-q", f"{base}^{{commit}}") is None:
-        print(f"qa-report-note: bỏ qua ghim sha QA — không đọc được base {base}", file=sys.stderr)
+    head_sha, base_sha = _commit(repo, head), _commit(repo, base)
+    if not head_sha or not base_sha:
+        raise GitError(f"không đọc được {'head ' + head if not head_sha else 'base ' + base}")
+    if head_sha in claims:
         return None
-    own = []
-    for t in sorted(tokens):
-        sha = _git(repo, "rev-parse", "--verify", "-q", f"{t}^{{commit}}")
-        if not sha:
-            continue                      # hash file, sha chưa fetch: không phải lời khai về commit
-        in_head, in_base = _is_ancestor(repo, sha, head), _is_ancestor(repo, sha, base)
-        if in_head is None or in_base is None:
-            print(f"qa-report-note: bỏ qua ghim sha QA — git merge-base lỗi trên {sha[:12]}", file=sys.stderr)
-            return None
-        if in_head and not in_base:
-            own.append(sha)
-    if not own:
-        return None
-    after = []
+    own, foreign = [], []
+    for sha in dict.fromkeys(claims):
+        if _is_ancestor(repo, sha, base_sha):
+            continue
+        (own if _is_ancestor(repo, sha, head_sha) else foreign).append(sha)
     for sha in own:
-        out = _git(repo, "log", "--no-merges", "--format=%h %s", head, f"^{sha}", f"^{base}", "--", ".", f":(exclude){EVIDENCE_DIR}")
-        if out is None:
-            print(f"qa-report-note: bỏ qua ghim sha QA — git log lỗi trên {sha[:12]}", file=sys.stderr)
-            return None
-        if not out:
-            return None
-        after.append((sha, out.splitlines()))
-    sha, commits = min(after, key=lambda a: len(a[1]))
-    return (f"report QA mới nhất kiểm {sha[:12]}, head {head[:12]} còn {len(commits)} commit code sau đó "
-            f"({'; '.join(c[:80] for c in commits[:3])}): QA phải chạy lại trên head")
+        commits = _code_after(repo, sha, head_sha, base_sha)
+        if commits:
+            return (f"report QA mới nhất kiểm {sha[:12]}, head {head_sha[:12]} còn {len(commits)} commit code sau đó "
+                    f"({'; '.join(c[:80] for c in commits[:3])}): QA phải chạy lại trên head")
+    if own:
+        return None
+    for sha in foreign:
+        if not _same_code(repo, sha, head_sha):
+            return (f"report QA mới nhất kiểm {sha[:12]}, commit không còn trong lịch sử head {head_sha[:12]} (amend / force-push) "
+                    f"và code khác head: QA phải chạy lại trên head")
+    return None
 
 
 def latest_qa_unfinished(comments, pr_author=None, body=""):

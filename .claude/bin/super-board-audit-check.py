@@ -12,7 +12,8 @@ CLI: super-board-audit-check.py <task_id> <sha40> [--top DIR] [--pr N]   exit 0 
 CLI: super-board-audit-check.py --chain-audit <sha40> --base <ref> [--top DIR]   (04/11, merge gate / train --has-edited-tests)
      exit 0 = PR sửa/xoá file đã có mà gate có thể coi là test (edited_existing) VÀ có biên bản audit pass của antigravity-pm với
      auditedHead thuộc <base>..<sha40> (duyệt test sửa tra thẳng biên bản, post-fix-gate _pm_audit_cross_review);
-     exit 1 = không có (PR chỉ có audit lớn mà không sửa test thì không bi quan); exit 3 = không kiểm được (lỗi nạp kit / git): người
+     exit 1 = không có (PR chỉ có audit lớn mà không sửa test thì không bi quan); exit 3 = không kiểm được (lỗi nạp kit / git; #1000: pm home lạ, hay head trong <base>..<sha40>
+     chỉ còn ở auditHistory mà verdicts.audit hiện hành không pass trên PR): người
      gọi giữ đường bi quan (khoá, không autosync) nhưng không coi là có duyệt gắn head.
 """
 from __future__ import annotations
@@ -110,7 +111,8 @@ def matches(task_id, sha, top=None):
 
 # Script mà post-fix-gate.suite_runner_paths đọc tiếp để tìm script tầng sau (_RUNNER_FOLLOW_EXT, cộng script không đuôi).
 FOLLOW_EXT = (".sh", ".bash", ".zsh", "")
-TOKEN = re.compile(r"[\w./-]+")
+# \udc80-\udcff: byte không phải UTF-8 giữ nguyên qua surrogateescape (#1000), để tên file byte lạ trong script vẫn khớp đường dẫn diff.
+TOKEN = re.compile(r"[\w./\udc80-\udcff-]+")
 
 
 def _tokens(text):
@@ -126,7 +128,9 @@ def edited_existing(top, sha, base, gate):
     script .py mà script .sh của suite gọi; Grok review 04/11). File không ai nhắc thì gate không bao giờ coi là script suite. Script
     đọc ở `base`. Lỗi git/nạp/đọc ma trận → raise (người gọi coi là có)."""
     def git(*args):
-        run = subprocess.run(["git", "-C", top, *args], capture_output=True, text=True, timeout=60)
+        # #1000 (GeelyEx2 #211): script ma trận gọi có byte không phải UTF-8 làm text=True ném UnicodeDecodeError -> pm-unknown.
+        # surrogateescape như push_gate.git: byte giữ nguyên (khớp lại đúng byte ở đường dẫn diff), không chữ nào thành duyệt.
+        run = subprocess.run(["git", "-C", top, *args], capture_output=True, text=True, errors="surrogateescape", timeout=60)
         if run.returncode != 0:
             raise RuntimeError(f"git {args[0]}: exit {run.returncode}")
         return run.stdout
@@ -172,16 +176,33 @@ def chain_audit(sha, base, top=None):
     try:
         if not edited_existing(top, sha, base, gate):
             return False
+        # #1000 mục 4: pm home lạ không phải fixture test -> audited_heads trả [] như "không có audit" -> False (đường lỏng nhất: biên
+        # nhận cây bỏ verify). PR có sửa test mà biên bản không đáng tin = không kiểm được, không phải "không có".
+        overridden, fixture = getattr(gate, "pm_home_overridden", None), getattr(gate, "pm_home_test_fixture", None)
+        if not callable(overridden) or not callable(fixture) or (overridden() and not fixture()):
+            print("audit-check: --chain-audit cannot check (antigravity-pm state home is not ~/.antigravity-pm)", file=sys.stderr)
+            return None
         heads = gate.audited_heads(top)
         run = subprocess.run(["git", "-C", top, "rev-list", sha, "--not", base], capture_output=True, text=True, timeout=60)
+        if run.returncode != 0:
+            print(f"audit-check: --chain-audit cannot check (git rev-list {sha[:12]} --not {base} exit {run.returncode})",
+                  file=sys.stderr)
+            return None
+        pr_commits = set(run.stdout.split())
+        hits = [(tid, h) for tid, h in heads if h in pr_commits]
+        # #1000 mục 7: chỉ head của verdicts.audit HIỆN HÀNH (pass) là duyệt còn hiệu lực, như post-fix-gate _pm_audit_cross_review
+        # (audited_head(tid) == head). Head chỉ còn trong auditHistory (lượt sau đã REVISE) -> không kiểm được (pm-unknown), không
+        # phải False: False mở lại biên nhận cây / autosync.
+        if any(gate.audited_head(top, tid) == h for tid, h in hits):
+            return True
     except Exception as error:   # noqa: BLE001 - biên bản / git hỏng: không kiểm được
         print(f"audit-check: cannot read the audit records: {error.__class__.__name__}", file=sys.stderr)
         return None
-    if run.returncode != 0:
-        print(f"audit-check: --chain-audit cannot check (git rev-list {sha[:12]} --not {base} exit {run.returncode})", file=sys.stderr)
+    if hits:
+        print("audit-check: --chain-audit cannot check (the PR range matches only auditHistory heads; the current audit verdict is "
+              "not a pass on this PR)", file=sys.stderr)
         return None
-    pr_commits = set(run.stdout.split())
-    return any(h in pr_commits for _tid, h in heads)
+    return False
 
 
 def main():

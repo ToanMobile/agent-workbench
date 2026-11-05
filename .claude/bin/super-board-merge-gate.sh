@@ -136,7 +136,8 @@
 #      the new head and verifies/merges it. Every refusal to sync (as opposed to a lock lost, exit 4) is this same exit 14;
 #      a PR that edits .gitattributes is never synced (its own attributes could swap the named driver), nor one with an
 #      edited-tests comment approval (#643, bound to the head) or an approval that could not be read (pm-unknown)
-#   1  could not read the PR head, resolve origin/<base>, or create the scratch
+#   1  could not read the PR head, resolve origin/<base> (#1000: also `git fetch origin <head-ref> <base>` failing 3 times before
+#      the QA report check), or create the scratch
 #      worktree. Not a conflict and not a rebase pass (the lane treats only 2, 5 and 14
 #      as a rebase pass).
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
@@ -498,10 +499,19 @@ python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} 
 # thẻ về Build (exit 11). Checker thoát 2 (metadata không đọc được), crash, hay thoát 1 mà không in dòng "qa-report:" nào là
 # KHÔNG quyết định được: cùng đường với policy không đọc được (exit 7, người duyệt), không phải lỗi build của thẻ.
 # T0255: kèm head + base để checker từ chối report QA nêu sha cũ mà head còn commit code sau đó. Base phải vừa fetch (base cũ
-# làm sha main mới trông như commit của nhánh): fetch lỗi thì bỏ phần ghim sha, không biến lỗi mạng thành cổng người.
+# làm sha main mới trông như commit của nhánh). #1000 mục 2: fetch lỗi thì KHÔNG bỏ ghim (fail-open: report QA cũ qua cổng) — thử lại 3
+# lần, vẫn lỗi thì thoát 1 (lỗi tạm, lane/queue thử lại; không phải cổng người). Fetch cùng ref ở khối dưới vốn đã chết theo set -e khi
+# lỗi kéo dài, nên không chặn thêm lượt nào.
 QA_PIN=(--head "$HEAD_SHA" --repo "$REPO_PATH" --base "origin/$BASE")
-git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || {
-  say "WARNING: git fetch origin ${HEAD_REF} ${BASE} failed — QA head pin skipped"; QA_PIN=(); }
+QA_FETCH_OK=0
+for qa_try in 1 2 3; do
+  if git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null; then QA_FETCH_OK=1; break; fi
+  [ "$qa_try" -eq 3 ] || sleep 1
+done
+if [ "$QA_FETCH_OK" -eq 0 ]; then
+  say "git fetch origin ${HEAD_REF} ${BASE} failed 3 times — cannot pin the QA report to the head; nothing merged"
+  exit 1
+fi
 QA_REPORT_RC=0
 QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"}) \
   || QA_REPORT_RC=$?
@@ -960,10 +970,21 @@ prove_tree() {
   local tree
   tree=$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')
   # Nhánh chậm hơn base nhưng merge scratch sạch: verify trên cây đã gộp. Timeout phía dưới vẫn thử lại một lần.
-  TRAIN_PROVED=0; TREE_PROVED=0
+  TRAIN_PROVED=0; TREE_PROVED=0; TRAIN_PM_REREAD=0
   if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
     TRAIN_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
     [ -z "$TRAIN_TREE" ] || [ "$TRAIN_TREE" != "$tree" ] || TRAIN_PROVED=1
+  fi
+  # #1000 mục 5: như biên nhận cây ngay dưới — duyệt test sửa tra thẳng biên bản PM (pm / pm-unknown) không nằm trong biên nhận train:
+  # lượt grok sau cùng head có thể đã REVISE sau verify của train. Verify (post-fix-gate) phải đọc lại biên bản. Tính lại mỗi lượt
+  # prove_tree, chỉ khi cây của CHÍNH lượt này khớp biên nhận; khi đó --require-receipt không thoát 12 vì lý do này (base không dời):
+  # gate tự verify (trong khoá, đường EDITED=1).
+  if [ "$TRAIN_PROVED" -eq 1 ]; then
+    edited_query
+    if [ "$EDITED_SRC" = pm ] || [ "$EDITED_SRC" = pm-unknown ]; then
+      TRAIN_PROVED=0; TRAIN_PM_REREAD=1
+      say "train receipt not used: the edited-test approval comes from the antigravity-pm record (${EDITED_SRC}), which verify must re-read"
+    fi
   fi
   # #226 gap 7: biên nhận theo cây gộp. Verify xanh ghi <git common dir>/super-board/verified-trees/<sha256(tree + lệnh verify)>; lượt gate
   # sau (vd. lượt trước thoát exit 4 sau verify) trên đúng cây gộp và đúng bộ lệnh bỏ verify. Base đổi, head đổi hay lệnh đổi: khoá khác.
@@ -982,7 +1003,7 @@ prove_tree() {
   # #676: --require-receipt (train): cây gộp với base HIỆN TẠI chưa được chứng minh (base dời sau verify của train) ⇒ không verify ở
   # gate; thoát 12 (lần đầu: chưa lấy khoá; trong khoá ngắn: trap EXIT thả khoá) TRƯỚC khối #643 và bước cài DevKit, để train verify
   # lại ngoài khoá rồi gọi lại.
-  if [ "$REQUIRE_RECEIPT" -eq 1 ] && [ "$TRAIN_PROVED" -eq 0 ]; then
+  if [ "$REQUIRE_RECEIPT" -eq 1 ] && [ "$TRAIN_PROVED" -eq 0 ] && [ "$TRAIN_PM_REREAD" -eq 0 ]; then
     say "base moved since the train verified ${HEAD_SHA:0:12}: tree $(git -C "$SCRATCH" rev-parse --short 'HEAD^{tree}') has no receipt; not verifying inside the merge lock (exit 12)"
     exit 12
   fi
@@ -992,8 +1013,9 @@ prove_tree() {
     edited_query
     # 04/11: duyệt tra thẳng biên bản PM (EDITED_SRC=pm) không cũ khi base dời NẾU verify chạy post-fix-gate (trong khoá, trên base hiện
     # tại, audit_covers kiểm main không đổi file test — Grok review). Comment #643 (true), và pm khi verify không có gate: base phải là tổ
-    # tiên head. pm-unknown (không kiểm được biên bản) không phải duyệt gắn head: chỉ khoá, không exit 2.
-    if [ "$EDITED" -eq 1 ] && { [ "$EDITED_SRC" = true ] || { [ "$EDITED_SRC" = pm ] && ! verify_runs_gate; }; } \
+    # tiên head. #1000 mục 3: pm-unknown (không kiểm được biên bản) không được lỏng hơn pm — cùng luật với pm.
+    if [ "$EDITED" -eq 1 ] && { [ "$EDITED_SRC" = true ] \
+          || { { [ "$EDITED_SRC" = pm ] || [ "$EDITED_SRC" = pm-unknown ]; } && ! verify_runs_gate; }; } \
         && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
       say "edited-test review is stale before fast-forward (origin/${BASE} is not an ancestor of ${REVIEWED_HEAD})"
       exit 2
