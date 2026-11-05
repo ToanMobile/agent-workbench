@@ -3995,6 +3995,152 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-failopen-1000",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_verify_runs_gate_boundary.sh",
+        "tests/super-board/test_chain_audit_robust.sh",
+        "tests/super-board/test_qa_report_stale_pin.sh",
+        "tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+        "tests/super-board/test_merge_gate_train_receipt_pm.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-1000-VERIFY-RUNS-GATE-01",
+          "name": "#1000 mục 6: sb_verify_runs_gate không nhận echo python3 post-fix-gate.py / not-post-fix-gate.py",
+          "command": "bash tests/super-board/test_verify_runs_gate_boundary.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-CHAIN-AUDIT-01",
+          "name": "#1000 mục 7, 8: --chain-audit đọc script byte không UTF-8; head chỉ trong auditHistory -> pm-unknown",
+          "command": "bash tests/super-board/test_chain_audit_robust.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-QA-STALE-PIN-01",
+          "name": "#1000 mục 1: ghim sha QA — lời khai tiêu đề, merge sửa tay/giải conflict, amend, mọi sha own, lỗi git = exit 2",
+          "command": "bash tests/super-board/test_qa_report_stale_pin.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-QA-PIN-FETCH-01",
+          "name": "#1000 mục 2: merge gate thử lại fetch rồi exit 1, không bỏ ghim sha QA",
+          "command": "bash tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-TRAIN-RECEIPT-PM-01",
+          "name": "#1000 mục 5: biên nhận train không bỏ verify khi duyệt test sửa đến từ biên bản PM (pm / pm-unknown)",
+          "command": "bash tests/super-board/test_merge_gate_train_receipt_pm.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-same-tree-reuse-d1a",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/gates/test_gate_scoped_same_tree_reuse.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SAME-TREE-REUSE-01",
+          "name": "D1(a): lượt không cưỡng bức (Stop, task, --scoped) dùng lại PASS thật cùng cây ≤ 1 h; đổi byte chạy lại; --full không dùng; quá hạn chạy lại",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_scoped_same_tree_reuse.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "rerun-skip-ttl-3d-992",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_rerun_skip_ttl_3d.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-RERUN-SKIP-TTL-3D-992-01",
+          "name": "#992: rerun_skip.json (#648) dùng hạn mặc định 3 ngày như biên nhận (7 giờ dùng lại, 4 ngày chạy lại); DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè, =0 không dùng lại",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_rerun_skip_ttl_3d.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "review-gate-handover-gtimeout-flag-value-992",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_handover_gtimeout_flag_value.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-GTIMEOUT-FLAG-VALUE-992-01",
+          "name": "#992: review_gate — gtimeout N …merge-gate.sh là bàn giao; --dry-run/--preflight làm giá trị của option khác (--subject --dry-run) không phải dry-run",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_handover_gtimeout_flag_value.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "review-gate-ocr-out-literal-hint-992",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_ocr_out_literal_hint.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-OCR-OUT-LITERAL-992-01",
+          "name": "#992: review_gate — thông điệp thiếu OCR nhắc --out viết thẳng đường dẫn; --out $S/spec (biến) vẫn không tính, --out viết thẳng tính",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_ocr_out_literal_hint.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-opt-load-cap",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_opt_load_cap.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-OPT-LOAD-CAP-01",
+          "name": "05/11 chủ repo: hạn số merge gate chạy cùng lúc theo tải — tải ≥ số lõi thì verify lạc quan (ngoài khoá) chỉ thấy N−1 slot pool gate, slot cuối để dành cho verify trong khoá; 3 merge gate cùng lúc tối đa 1 verify lạc quan chạy suite; hết SB_MERGE_OPT_SLOT_WAIT_S thì chạy với cả pool; tải thấp và verify trong khoá như cũ",
+          "command": "bash tests/super-board/test_merge_gate_opt_load_cap.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-no-stale-verify-1012",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_conflicting_in_lock_sync.sh",
+        "tests/super-board/test_merge_gate_wait_lock_holder.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-INLOCK-SYNC-1012-01",
+          "name": "#1012 (a): GitHub báo CONFLICTING chỉ trong khoá (main dời lúc verify, chỉ file có driver gộp đặt tên) ⇒ gộp base mới, verify lại trong khoá, đẩy merge commit đồng bộ rồi merge, không exit 14; file không driver và --dry-run vẫn exit 14",
+          "command": "bash tests/super-board/test_merge_gate_conflicting_in_lock_sync.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-WAIT-HOLDER-1012-01",
+          "name": "#1012 (b): khoá merge đang bị gate sống giữ ⇒ gate lạc quan chờ nó thả rồi verify đúng một lần trên base mới; người giữ chết không chờ; hết SB_MERGE_WAIT_HOLDER_S thì verify như cũ",
+          "command": "bash tests/super-board/test_merge_gate_wait_lock_holder.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

@@ -3,7 +3,7 @@
 # autosync, exit 2 khi base đi trước head). Duyệt nay tra thẳng biên bản antigravity-pm (post-fix-gate _pm_audit_cross_review), không
 # còn comment edited-tests, nên --has-edited-tests ... --top --base cũng hỏi biên bản: audit pass có auditedHead trong <base>..<head> = pm (không phải true của comment).
 #  E1 audit trên nhánh PR -> pm (code cũ: false). E2 audit chỉ trên main -> false. E3 người gọi cũ (không --top) -> false như cũ.
-#  E4 base không resolve -> pm (không kiểm được: bi quan). E5 pm home lạ không phải fixture -> false (biên bản không tính).
+#  E4 base không resolve -> pm (không kiểm được: bi quan). E5 pm home lạ không phải fixture -> pm-unknown (biên bản không tính, #1000: không được thành false).
 #  E6 PR có audit nhưng không sửa test đã có (chỉ code) -> false: audit lớn không làm PR thường bi quan. E7 sửa script ma trận nhắc tên
 #  (script suite) -> pm.
 #  E8 sửa script tầng hai không có tên trong ma trận -> pm. E9 ma trận chỉ ở cây làm việc (không ở base) -> false. E11 rule ma trận PR nối thêm -> pm.
@@ -52,8 +52,9 @@ got="$(has_et "$H")"
 got="$(has_et "$H" --top "$R" --base no-such-ref)"
 [ "$got" = "0 pm-unknown" ] && ok "E4: base không resolve -> pm-unknown (bi quan, không phải duyệt)" || fail "E4: base hỏng: '$got' (muốn '0 pm-unknown')"
 
+# #1000 mục 4: false là đường lỏng nhất (biên nhận cây bỏ verify); không đọc được biên bản đáng tin -> pm-unknown (bi quan).
 got="$(DEVKIT_PM_HOME_TEST=0 has_et "$H" --top "$R" --base main)"
-[ "$got" = "1 false" ] && ok "E5: pm home lạ không phải fixture -> false" || fail "E5: pm home lạ: '$got' (muốn '1 false')"
+[ "$got" = "0 pm-unknown" ] && ok "E5: pm home lạ không phải fixture, PR sửa test -> pm-unknown" || fail "E5: pm home lạ: '$got' (muốn '0 pm-unknown')"
 
 git checkout -q -b code main && echo 'fun a()=2' > src/a.kt && git commit -qam "PR chỉ sửa code"
 C="$(git rev-parse HEAD)"; pm T2003-code "$C"

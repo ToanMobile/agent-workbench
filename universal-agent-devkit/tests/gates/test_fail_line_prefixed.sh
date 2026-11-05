@@ -4,13 +4,15 @@
 # `   > java.lang.OutOfMemoryError:`, logcat tag khác, instrumentation `stack=`, ExceptionGroup `| ValueError:`, tiền tố container/runner.
 #   a. Các dòng đó khớp.
 #   b. Dòng INFO/✔ nhắc `…Error:` sau một từ thường vẫn không khớp (giữ mục b của test_fail_line_precision.sh).
-#   c. Không ReDoS: dòng 1 MB xong dưới 1 s.
+#   c. Không ReDoS: dòng 1 MB xong dưới 1 s CPU (CPU tiến trình con qua tests/lib/cpu_probe.py, không đo đồng hồ tường:
+#      #1010: merge gate #1007 đỏ oan vì ca này đo 5,03 s tường ở load 70; CPU thật 0,09–0,12 s, đo 05/11 ở load 23–57;
+#      regex bậc hai/mũ vẫn bị RLIMIT_CPU giết ⇒ đỏ).
 # Tương thích bash 3.2.
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
-OUT="$(python3 -I - "$GATE" 2>&1 <<'PY'
-import importlib.util, sys, time
+OUT="$(python3 -I - "$GATE" "$DEVKIT_DIR/tests/lib" 2>&1 <<'PY'
+import importlib.util, sys
 spec = importlib.util.spec_from_file_location("pfg", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
@@ -27,10 +29,9 @@ miss = ["2026-11-02 12:00:01 INFO retry after SocketTimeoutError: read timed out
         "  ✔ rejects with TypeError: bad input",
         "  ✔ maps a TypeError: to retry"]
 bad = {"a": [l for l in hit if not F.search(l)], "b": [l for l in miss if F.search(l)]}
-worst = 0.0
-for line in ("a.b$" * 250000, "A$" * 500000, "a " * 500000 + "TypeError", "|" * 1000000):
-    t0 = time.perf_counter(); F.search(line); worst = max(worst, time.perf_counter() - t0)
-bad["c"] = [] if worst < 1.0 else ["dòng 1 MB mất %.2f s" % worst]
+sys.path.insert(0, sys.argv[2]); import cpu_probe   # tests/lib
+worst, why = cpu_probe.worst_cpu(F.search, ("a.b$" * 250000, "A$" * 500000, "a " * 500000 + "TypeError", "|" * 1000000), 1.0)
+bad["c"] = [] if worst < 1.0 else ["dòng 1 MB tốn %.2f s CPU (%s)" % (worst, why)]
 for k in sorted(bad):
     print(("%s_ok" % k) if not bad[k] else ("%s_bad %s" % (k, " | ".join(bad[k]))))
 PY
@@ -42,7 +43,7 @@ check() {   # <key> <mô tả>
 }
 check a "…Error: sau tiền tố Gradle '>', logcat tag, stack=, '|', '[x]' khớp"
 check b "dòng INFO/✔ nhắc …Error: sau một từ thường không khớp"
-check c "không ReDoS: dòng 1 MB xong dưới 1 s"
+check c "không ReDoS: dòng 1 MB xong dưới 1 s CPU"
 [ "$FAILS" -eq 0 ] && { echo "test_fail_line_prefixed: PASS"; exit 0; }
 echo "test_fail_line_prefixed: FAIL ($FAILS)"
 exit 1

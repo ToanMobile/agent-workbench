@@ -3,13 +3,14 @@
 #   a. Dòng INFO có tên lớp đầy đủ sau một từ thường (`retry after java.net.SocketTimeoutError:`) không khớp: trước đó lookbehind chỉ
 #      thấy `t.` trước tên lớp nên dòng này lọt vào 8 dòng đầu của fail_lines.
 #   b. Dòng lỗi thật vẫn khớp: đầu dòng, Gradle `   > `, logcat tag, `stack=`, `| `, `[x] `, `Caused by: `, lớp lồng `$`.
-#   c. Không ReDoS: dòng 1 MB (gồm `Ab` lặp, thứ làm nhánh bậc hai khi bỏ phần neo đầu tên) xong dưới 1 s.
+#   c. Không ReDoS: dòng 1 MB (gồm `Ab` lặp, thứ làm nhánh bậc hai khi bỏ phần neo đầu tên) xong dưới 1 s CPU (CPU tiến trình
+#      con qua tests/lib/cpu_probe.py, không đo đồng hồ tường: #1010).
 # Tương thích bash 3.2.
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
-OUT="$(python3 -I - "$GATE" 2>&1 <<'PY'
-import importlib.util, sys, time
+OUT="$(python3 -I - "$GATE" "$DEVKIT_DIR/tests/lib" 2>&1 <<'PY'
+import importlib.util, sys
 spec = importlib.util.spec_from_file_location("pfg", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
@@ -27,10 +28,9 @@ hit = ["java.lang.OutOfMemoryError: Java heap space",
        "\tandroidx.test.espresso.base.DefaultFailureHandler$AssertionFailedWithCauseError: 'is displayed' doesn't match",
        "E AndroidRuntime: java.lang.OutOfMemoryError: Failed to allocate"]
 bad = {"a": [l for l in miss if F.search(l)], "b": [l for l in hit if not F.search(l)]}
-worst = 0.0
-for line in ("Ab" * 500000, "a.b$" * 250000, "x " * 250000 + "Ab" * 250000, "java." * 200000 + "x"):
-    t0 = time.perf_counter(); F.search(line); worst = max(worst, time.perf_counter() - t0)
-bad["c"] = [] if worst < 1.0 else ["dòng 1 MB mất %.2f s" % worst]
+sys.path.insert(0, sys.argv[2]); import cpu_probe   # tests/lib
+worst, why = cpu_probe.worst_cpu(F.search, ("Ab" * 500000, "a.b$" * 250000, "x " * 250000 + "Ab" * 250000, "java." * 200000 + "x"), 1.0)
+bad["c"] = [] if worst < 1.0 else ["dòng 1 MB tốn %.2f s CPU (%s)" % (worst, why)]
 for k in sorted(bad):
     print(("%s_ok" % k) if not bad[k] else ("%s_bad %s" % (k, " | ".join(bad[k]))))
 PY
@@ -42,7 +42,7 @@ check() {   # <key> <mô tả>
 }
 check a "dòng INFO có tên lớp đầy đủ sau một từ thường không khớp"
 check b "dòng lỗi thật (đầu dòng, Gradle >, logcat, stack=, |, [x], Caused by, lớp lồng \$) vẫn khớp"
-check c "không ReDoS: dòng 1 MB (gồm Ab lặp) xong dưới 1 s"
+check c "không ReDoS: dòng 1 MB (gồm Ab lặp) xong dưới 1 s CPU"
 [ "$FAILS" -eq 0 ] && { echo "test_fail_line_qualified: PASS"; exit 0; }
 echo "test_fail_line_qualified: FAIL ($FAILS)"
 exit 1
