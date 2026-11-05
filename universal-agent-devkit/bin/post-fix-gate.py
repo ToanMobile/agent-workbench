@@ -2260,13 +2260,13 @@ def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=(), 
 # (not --no-cache, not DEVKIT_GATE_CACHE=0) and a time budget (GATE_TOTAL_BUDGET_S > 0: the Stop hook passes one, REGRESSION_GATE_BUDGET_S=0 takes
 # it away, and a CLI run without the variable records nothing). The record also names the HEAD it was taken at (the fingerprint is blind to a
 # commit of the same content) and the selection environment: a record without them, or of another HEAD, is never read. A FAIL still drops it.
-# ponytail: a run with a FAILED suite records nothing, so a repeat of such a run re-runs the suites that passed in it; upgrade when the
-# FAIL-then-same-content repeat is seen to cost more than the "a FAIL leaves nothing to re-use" rule is worth.
+# A run with a FAILED suite writes no budget record. D1(a) (05/11): the suites that passed in such a run go under a same-tree key instead
+# (same_tree_lookup / record_same_tree in main(), read for DEVKIT_SAME_TREE_REUSE_MAX_S, 1 h), so a repeat on the same content re-runs only the red one.
 # ponytail: a record is read for up to DEVKIT_GATE_CACHE_MAX_S (3 days, as the receipt), so a suite that starts to fail on UNCHANGED content (a flaky
 # test, a service that went away) stays unseen that long after an exit-2 reminder, where the hook's 300 s recheck used to run it again; give the
-# record its own, shorter cap when such a miss is seen. An impacted-mode PASS (a suite run on the selected tests only) is never recorded, so a
-# repeat of an impacted run still runs those suites (OfficeReader's exit-2 repeats are impacted runs); record the command run and the vacuity
-# base to cover them.
+# record its own, shorter cap when such a miss is seen. An impacted-mode PASS (a suite run on the selected tests only) is never put in the
+# budget record, so a repeat of an impacted run that ended without a FAIL still runs those suites (OfficeReader's exit-2 repeats are impacted
+# runs); after a red run the same-tree key (D1(a)) holds them, keyed on the impacted template and the changed files.
 BUDGET_RECORD = "budget_pass.json"
 # Environment that changes WHICH tests a suite of mode "full" starts without changing its command (tests/run_impacted.sh reads it: 0 = a RED-proof
 # sandbox, no commit counts as a change). The record names it and a run with another value does not read the record.
@@ -7140,6 +7140,8 @@ def main():
     covers = checklist_covers()
     KEYS, KEYED_IDS = {}, set()   # P2: id(suite) → (khoá chính xác, khoá cả cây); suite PASS theo khoá
     TASK_PRECISE = set()          # #645: id(suite) đã chọn của lượt task / --scoped tra theo khoá CHÍNH XÁC (task_keyed bên dưới)
+    # D1(a): id(suite) → khoá CÙNG CÂY / khoá cả cây của nó; suite PASS theo khoá cùng cây; sổ khoá dùng cho việc đó (sc, hoặc dựng riêng ở lượt Stop)
+    SAME_KEYS, SAME_TREES, SAME_HIT, SAME_ST, SAME_CTX = {}, {}, set(), [None], {}
 
     def lookup_key(t):
         """Khoá được phép DÙNG LẠI cho suite này: suite mà luật chọn cũ vẫn chạy (theo file đổi, STALE) chỉ theo khoá CẢ CÂY — khoá
@@ -7152,8 +7154,9 @@ def main():
 
     def precise_hit(t):
         """PASS dùng lại theo khoá CHÍNH XÁC (suite cached-full thêm vào, suite TASK_PRECISE): không chứng minh gì về nội dung cả cây —
-        không vào biên nhận như PASS thật, không vào DEVKIT_GATE_DONE (review 20/10, P0-A/P0-B)."""
-        return bool(t.get("keyed_full") or id(t) in TASK_PRECISE) and id(t) in KEYED_IDS
+        không vào biên nhận như PASS thật, không vào DEVKIT_GATE_DONE (review 20/10, P0-A/P0-B). PASS theo khoá cùng cây (D1(a), hạn 1 h) cũng
+        vậy: biên nhận / budget_pass.json sống tới 3 ngày, không được mang PASS hạn ngắn đó."""
+        return bool(t.get("keyed_full") or id(t) in TASK_PRECISE or id(t) in SAME_HIT) and id(t) in KEYED_IDS
     MATRIX_TESTS = {}             # id → các mục ma trận (cờ "cache" không vào dict suite)
     for rule in rules:
         for test in rule.get("mandatory_regression_tests", []):
@@ -7658,9 +7661,10 @@ def main():
     def recheck_keyed():
         """PASS dùng lại theo khoá phải còn đứng vững (sổ khoá có flock riêng; một FAIL vừa ghi ở lượt/worktree khác lật nó thành UNTESTED).
         Gọi sau các suite và một lần nữa ngay trước kết luận, có hay không có khoá dự án (review 20/10, P1-5)."""
-        if sc is None:
+        if sc is None and SAME_ST[0] is None:
             return
-        gone_keyed = [t for t in keyed_hits if t.get("status") == "PASS" and not sc.hit(lookup_key(t), t)]
+        gone_keyed = [t for t in keyed_hits if t.get("status") == "PASS"
+                      and not (SAME_ST[0].hit(SAME_KEYS.get(id(t)), t) if id(t) in SAME_HIT else sc.hit(lookup_key(t), t))]
         for t in gone_keyed:
             KEYED_IDS.discard(id(t))
             t.update({"status": "UNTESTED", "label": "STALE", "output_tail": tr(
@@ -7694,6 +7698,116 @@ def main():
                                                f"PASS (content key, {time.strftime('%H:%M', time.localtime(at))})")})
         KEYED_IDS.add(id(t))
         keyed_hits.append(t)
+
+    def same_tree_on():
+        return bool(run_tests and use_cache and not force_reason and os.environ.get("DEVKIT_GATE_MERGE_CHECK") != "1"
+                    and os.environ.get("DEVKIT_SAME_TREE_REUSE", "1") != "0")
+
+    def same_tree_key_of(st, t):
+        """Khoá cùng cây của suite t (lệnh ma trận, không phải lệnh thu hẹp đã chạy), hoặc None khi suite không cache được hay không có khoá cả
+        cây. Khoá cả cây tính từ st.cmap: nội dung lúc dựng sổ, trước khi suite chạy — cả khi gọi sau vòng suite."""
+        k = SAME_KEYS.get(id(t))
+        if k:
+            return k
+        cmd = t.get("full_command") or t.get("command")
+        if not cmd or t.get("matrix_added") or not SAME_CTX:
+            return None
+        src = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == cmd), dict(t, command=cmd))
+        if not suite_cacheable(src)[0]:   # cache:false, thiết bị / Unity, run_impacted.sh, lệnh đọc mạng
+            return None
+        ks = KEYS.get(id(t)) or st.keys(dict(t, command=cmd))
+        if not ks or not ks[1]:
+            return None
+        SAME_TREES[id(t)] = ks[1]
+        SAME_KEYS[id(t)] = st.same_tree_key(ks[1], dict(SAME_CTX, command=cmd, impacted=t.get("impacted_command"),
+                                                         files=sorted(t.get("files") or [])))
+        return SAME_KEYS[id(t)]
+
+    def same_tree_lookup():
+        """D1(a) (đo 7 ngày tới 05/11: 90 882 suite-giây chạy lại suite đã PASS trên CÙNG CÂY ở workbench, 9 035 ở 5 app; 2 ngày cuối gần như
+        hết là lượt Stop sau một suite đỏ — lượt đó không có sc, budget_pass.json không ghi gì khi có FAIL; lượt task / --scoped bỏ suite Gradle).
+        Lượt KHÔNG cưỡng bức (Stop hook, task, --scoped; không merge check của worktree finish) có suite FAIL / TIMEOUT ghi PASS chạy thật của
+        các suite khác dưới khoá CÙNG CÂY (record_same_tree); lượt không cưỡng bức sau trên đúng cây đó dùng lại trong
+        DEVKIT_SAME_TREE_REUSE_MAX_S (1 h). Khoá = khoá cả cây của suite + lệnh / mẫu impacted / file đổi đã chọn suite + base + --since + HEAD
+        + digest cả ma trận + scoped hay không. Lượt --full / sentinel / gate-full (force_reason) không vào đây. PASS dùng lại đi như khoá chính
+        xác (precise_hit): không vào biên nhận scoped / full, budget record, DEVKIT_GATE_DONE, covered_by, checklist. DEVKIT_SAME_TREE_REUSE=0 tắt.
+        Chỉ tính khoá khi sổ có dấu cây này trong hạn (same_tree_marked): lượt không có gì để dùng lại chỉ tốn dựng sổ (content_map).
+        ponytail: tra một lần trước vòng suite (không tra lại sau khi chờ khoá / slot); thêm khi đo thấy hai lượt cùng cây chạy chồng nhau."""
+        if not same_tree_on():
+            return
+        st = sc
+        try:
+            if st is None:
+                st = suite_cache_for(project_dir, rules, find_matrix_path(args.matrix), covers)
+            if st is None or not st.ok:
+                return
+            head = _head_sha(project_dir)
+            base = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--verify", "-q", base_ref + "^{commit}"],
+                                  capture_output=True, text=True, timeout=30).stdout.strip()
+            if not head or not base:
+                return
+            SAME_CTX.update({"v": 1, "base": base, "since": args.since or "", "head": head, "matrix": st.matrix_digest, "scoped": bool(scoped)})
+            SAME_ST[0] = st
+            if not st.same_tree_marked():
+                return
+            for t in regression_tests:
+                if t.get("mode") not in ("cached", "edited"):
+                    same_tree_key_of(st, t)
+        except Exception as e:   # noqa: BLE001 - không tính được khoá: suite chạy như chưa có cache, không bao giờ thành PASS
+            log_warn(f"suite_cache same-tree: {e!r}")
+            SAME_KEYS.clear()
+            return
+        n0 = len(keyed_hits)
+        for t in regression_tests:
+            k = SAME_KEYS.get(id(t))
+            if not k or t.get("mode") in ("cached", "edited"):
+                continue
+            try:
+                # suite_cache.blocked(): khoá cả cây của nội dung này có fail_n > 0 (FAIL ghi ở lượt khác) hoặc id bị cách ly ⇒ bỏ qua bản ghi
+                rec = None if st.blocked(SAME_TREES[id(t)], t.get("id")) else st.hit(k, t)
+            except Exception as e:   # noqa: BLE001 - sổ khoá không đọc được: suite chạy
+                log_warn(f"suite_cache same-tree {t.get('id')}: {e!r}")
+                rec = None
+            if rec:
+                SAME_HIT.add(id(t))
+                mark_keyed(t, rec)
+                at = float(rec.get("last_pass_at") or 0)
+                t["label"] = tr(f"PASS (cùng cây, lúc {time.strftime('%H:%M', time.localtime(at))})",
+                                f"PASS (same tree, {time.strftime('%H:%M', time.localtime(at))})")
+        if len(keyed_hits) > n0:
+            print(f"    {CYAN}▶ {tr(f'dùng lại {len(keyed_hits) - n0} suite theo khoá cùng cây (PASS thật của lượt không cưỡng bức trên đúng nội dung, lệnh, base, HEAD; --no-cache để chạy lại)', f'reusing {len(keyed_hits) - n0} suite(s) by same-tree key (a real PASS of a non-forced run on this exact content, command, base and HEAD; --no-cache to re-run)')}{RESET}")
+
+    def record_same_tree():
+        """D1(a): CHỈ lượt có suite FAIL / TIMEOUT (chỗ hổng: budget_pass.json bị bỏ khi có FAIL; lượt không đỏ đã có budget record, biên nhận,
+        rerun_skip, khoá #645). Ghi PASS chạy THẬT (không chập chờn, không VACUOUS, không hạ tầng, không PASS dùng lại) dưới khoá cùng cây, chỉ
+        khi cả cây không đổi trong lúc chạy và input của khoá còn y nguyên (record_run), rồi đánh dấu cây cho lượt sau. FAIL / TIMEOUT không
+        ghi ở đây (void và F1 của record_keyed lo như cũ)."""
+        st = SAME_ST[0]
+        mod = suite_cache_mod()
+        if st is None or mod is None or not any(x.get("status") in ("FAIL", "TIMEOUT") and id(x) in really_ran for x in regression_tests):
+            return
+        todo = [t for t in regression_tests if id(t) in really_ran and id(t) not in SAME_HIT
+                and t.get("status") == "PASS" and t.get("mode") not in ("cached", "covered", "resource", "skip-compile", "edited")
+                and t.get("label") != "VACUOUS" and not (t.get("flaky") or t.get("infra") or t.get("infra_retry") or t.get("env_blocked"))]
+        if not todo:
+            return
+        cm = mod.content_map(project_dir)
+        if cm is None or mod.tree_digest(cm) != st.tree_digest:
+            log_warn(tr("Cây đổi trong lúc chạy suite — PASS của lượt này không ghi theo khoá cùng cây",
+                        "The tree changed while the suites ran — this run's PASS results are not recorded under same-tree keys"))
+            return
+        wrote = False
+        for t in todo:
+            k = same_tree_key_of(st, t)
+            if not k:
+                continue
+            rt = dict(t, command=t.get("full_command") or t.get("command"))
+            meta = {"kind": mod.SAME_TREE_KIND, "duration": t.get("duration"), "log": t.get("log"), "mode": t.get("mode"),
+                    "ran": t.get("command"), "project": os.path.basename(str(project_dir))[:64], "head": SAME_CTX.get("head")}
+            st.record_run([k], rt, "PASS", meta=meta, at=SUITE_RAN_AT.get(t.get("id")), cmap=cm)
+            wrote = True
+        if wrote:
+            st.same_tree_mark()
 
     def stale_reused():
         """The re-used suites that no longer stand. The file that vouched for them is gone, or is another file than the one this run read (a forced
@@ -7781,6 +7895,7 @@ def main():
                     mark_keyed(t, rec)
         if keyed_hits:
             print(f"    {CYAN}▶ {tr(f'dùng lại {len(keyed_hits)} suite theo khoá nội dung (cùng input, cùng môi trường; --no-cache để chạy lại)', f'reusing {len(keyed_hits)} suite(s) by content key (same inputs and environment; --no-cache to re-run)')}{RESET}")
+    same_tree_lookup()
     _lap("cache")
     to_run = [t for t in regression_tests if t.get("mode") not in ("cached", "edited")]
     # A run that re-used a suite takes the lock even when it has nothing left to run: the check that what it re-used still stands and the writes
@@ -8537,7 +8652,8 @@ def main():
             # lệnh đầy đủ của cover PASS trên ĐÚNG nội dung này: chạy thật, hoặc dùng lại theo biên nhận / khoá CẢ CÂY. Cover dùng lại theo
             # khoá CHÍNH XÁC (phần cached-full thêm) thì không: khoá đó không thấy input của suite được phủ (review 20/10, P0-1)
             if cov is not None and cov.get("status") == "PASS" and (
-                    cov.get("mode") == "full" or (cov.get("mode") == "cached" and not (cov.get("keyed_full") or id(cov) in TASK_PRECISE))):
+                    cov.get("mode") == "full" or (cov.get("mode") == "cached"
+                                                  and not (cov.get("keyed_full") or id(cov) in TASK_PRECISE or id(cov) in SAME_HIT))):
                 t.update({"status": "PASS", "label": "COVERED", "duration": "0s", "mode": "covered",
                           "exit_code": cov.get("exit_code"), "log": cov.get("log"),
                           "mode_reason": tr(f"{cov['id']} đã chạy lệnh đầy đủ và PASS trong lượt này",
@@ -8699,6 +8815,11 @@ def main():
                 sc.stamp_sentinel()   # một lượt chạy THẬT mọi suite cache được (sentinel hay --no-cache): mốc mới cho sentinel
         except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu: không bao giờ đổi kết luận của lượt này
             log_warn(f"suite_cache record: {e!r}")
+    if run_tests and SAME_ST[0] is not None:
+        try:
+            record_same_tree()
+        except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu: không bao giờ đổi kết luận của lượt này
+            log_warn(f"suite_cache same-tree record: {e!r}")
     # What this run RE-USED is judged here, under the lock and before anything is printed or decided from it. The file it read (BEFORE the lock) may
     # have been replaced or dropped while it waited, e.g. by a forced run that FAILED the suite (F1): its PASS is UNTESTED then, not a PASS. Without
     # the lock (BUSY: the wait ran out) there is no way to check it: UNTESTED the same.
