@@ -4,10 +4,12 @@
 # super-board-verify-cmd.sh cùng gọi). Đối số thứ ba `json` (chỉ merge gate): thêm cả ` --json` để đọc điều kiện CHƯA XÁC MINH mà REJECT che
 # (#251 R1); --json chỉ đổi định dạng đầu ra, không đổi tập suite. Lệnh không có token đó: in nguyên. Không tách được token: in nguyên, cảnh báo ra stderr.
 # sb_verify_runs_gate <cmd>...: 0 khi một lệnh CHẠY post-fix-gate.py: token đó ở đầu một đoạn lệnh (đầu dòng, sau ; & | ( hay {) hoặc
-# sau trình thông dịch (python, python3, python3.12, bash, sh — kể cả đường dẫn tuyệt đối và cờ như -u), bỏ phần comment `#`. Chỉ nhắc tên (`echo post-fix-gate.py`, `test -f …/post-fix-gate.py`,
-# `post-fix-gate-lite.sh`) không tính. Merge gate / train: duyệt test sửa tra thẳng biên bản PM chỉ được kiểm lại khi đó.
+# sau trình thông dịch (python, python3, python3.12, bash, sh — kể cả đường dẫn tuyệt đối và cờ như -u) mà CHÍNH nó đứng đầu đoạn lệnh, bỏ
+# phần comment `#`. Đường dẫn trước tên file rỗng hoặc kết thúc bằng `/` (#1000: `not-post-fix-gate.py` không tính). Chỉ nhắc tên
+# (`echo post-fix-gate.py`, `echo python3 post-fix-gate.py`, `test -f …/post-fix-gate.py`, `post-fix-gate-lite.sh`) không tính. Merge
+# gate / train: duyệt test sửa tra thẳng biên bản PM chỉ được kiểm lại khi đó (không nhận = đường exit 2 chặt hơn).
 sb_verify_runs_gate() {
-  local c re="(^|[;&|({][[:space:]]*|(^|[;&|({[:space:]])([^[:space:];&|()]*/)?(python3?([.][0-9]+)?|bash|sh)([[:space:]]+-[^[:space:]]+)*[[:space:]]+)[^[:space:]\"'\`(){};&|=<>#]*post-fix-gate[.]py(\$|[[:space:];&|)<>])"
+  local c re="(^|[;&|({])[[:space:]]*(([^[:space:];&|()]*/)?(python3?([.][0-9]+)?|bash|sh)([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?([^[:space:]\"'\`(){};&|=<>#]*/)?post-fix-gate[.]py(\$|[[:space:];&|)<>])"
   for c in "$@"; do c="${c%%#*}"; c="${c#"${c%%[![:space:]]*}"}"; [[ "$c" =~ $re ]] && return 0; done
   return 1
 }

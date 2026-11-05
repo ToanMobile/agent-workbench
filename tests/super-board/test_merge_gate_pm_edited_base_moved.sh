@@ -7,7 +7,8 @@
 #  G3 đối chứng: duyệt bằng comment edited-tests (đường cũ) + main tiến -> vẫn exit 2 stale như #643.
 #  G4 duyệt từ biên bản PM nhưng verify_commands không chạy post-fix-gate -> vẫn exit 2 (không ai kiểm lại trên base mới).
 #  G5 như G4 qua train.  G6 duyệt từ biên bản PM: biên nhận cây không bỏ verify (lượt grok sau có thể REVISE).
-#  G7 verify có gate = post-fix-gate.py ở vị trí chạy.  G8 không kiểm được biên bản (pm-unknown): khoá, không exit 2.
+#  G7 verify có gate = post-fix-gate.py ở vị trí chạy.  G8 không kiểm được biên bản (pm-unknown) + verify không gate: exit 2 như pm
+#  (#1000). G8b pm-unknown + verify có gate: khoá, merge.  G8c như G8 qua train.
 #  G9 pm-unknown không dùng biên nhận cây.
 # Chạy offline với gh giả. Tương thích bash 3.2.
 set -u
@@ -174,16 +175,31 @@ sb_verify_runs_gate "/usr/bin/python3 universal-agent-devkit/bin/post-fix-gate.p
 sb_verify_runs_gate "python3.12 universal-agent-devkit/bin/post-fix-gate.py" || g7="$g7 py3.12"
 [ -z "$g7" ] && ok "G7: chỉ token post-fix-gate.py nguyên là verify có gate" || fail "G7: sai ở:$g7"
 
-# G8 (review vòng 5): không kiểm được biên bản (bản gate chép ra ngoài, không thấy kit -> pm-unknown), main tiến, verify không có gate:
-#     vẫn lấy khoá (verify trong khoá) nhưng KHÔNG exit 2 — không có duyệt gắn head nào để cũ.
+# G8 (review vòng 5; #1000 mục 3 siết lại): không kiểm được biên bản (bản gate chép ra ngoài, không thấy kit -> pm-unknown), main tiến,
+#     verify không có gate: pm-unknown không được lỏng hơn pm (G4) — không ai kiểm lại duyệt trên base mới -> exit 2 như pm.
 cp -R "$ROOT/.claude/bin" "$TMP/gatebin"
 card 8 0; advance_main; reset_run
 ( cd "$W/review" && bash "$TMP/gatebin/super-board-merge-gate.sh" --config "$TMP/cfg-nogate.json" --pr 8 --expect-head "$(cat "$TMP/pr8.head")" --subject card --lock-timeout 20 ) >"$TMP/g8.log" 2>&1
 rc=$?
-if [ "$rc" -eq 0 ] && grep -q "verifying inside the merge lock" "$TMP/g8.log" && ! grep -q "stale before fast-forward" "$TMP/g8.log" \
+if [ "$rc" -eq 2 ] && grep -q "edited-test review is stale before fast-forward" "$TMP/g8.log" \
     && grep -q "audit-check:" "$TMP/g8.log"; then   # lý do không kiểm được biên bản phải tới log gate (stderr không bị nuốt)
-  ok "G8: pm-unknown -> khoá, không exit 2"
+  ok "G8: pm-unknown, verify không có gate, main tiến -> exit 2 như pm"
 else fail "G8: exit $rc: $(tail -5 "$TMP/g8.log" | tr '\n' ' ')"; fi
+
+# G8b (#1000 mục 3): pm-unknown, main tiến, verify CÓ gate -> như pm (G1): khoá, verify trong khoá, merge (giữ hành vi GeelyEx2 #211).
+card 10 0; advance_main; reset_run
+( cd "$W/review" && bash "$TMP/gatebin/super-board-merge-gate.sh" --config "$TMP/cfg.json" --pr 10 --expect-head "$(cat "$TMP/pr10.head")" --subject card --lock-timeout 20 ) >"$TMP/g8b.log" 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && [ "$(merged)" = "10 " ] && grep -q "verifying inside the merge lock" "$TMP/g8b.log" && ! grep -q "stale before fast-forward" "$TMP/g8b.log"; then
+  ok "G8b: pm-unknown, verify có gate, main tiến -> khoá, verify, merge"
+else fail "G8b: exit $rc merged='$(merged)': $(tail -5 "$TMP/g8b.log" | tr '\n' ' ')"; fi
+
+# G8c (#1000 mục 3): như G8 qua train (bản chép, pm-unknown) -> gate-exit-2 trước chuỗi, như pm (G5).
+card 11 0; advance_main; reset_run
+( cd "$W/review" && bash "$TMP/gatebin/super-board-merge-train.sh" --config "$TMP/cfg-nogate.json" --prs 11 --lock-timeout 20 ) >"$TMP/g8c.log" 2>&1
+rc=$?
+if [ "$rc" -eq 2 ] && grep -q "^train-result: 11 gate-exit-2$" "$TMP/g8c.log"; then ok "G8c: train, pm-unknown, verify không gate -> exit 2"
+else fail "G8c: exit $rc: $(grep -E 'train-|stale|audit-check' "$TMP/g8c.log" | tail -3 | tr '\n' ' ')"; fi
 
 # G9 (OCR P3): pm-unknown với biên nhận cây đã có -> vẫn không dùng biên nhận, verify chạy lại (2 lượt dry-run -> 2 lần verify)
 card 9 0; reset_run
