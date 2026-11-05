@@ -771,7 +771,7 @@ conflicting_exit() {
 # driver_only_overlap <head> <base>: 0 khi có đúng một merge-base, tập file đổi ở CẢ HAI phía từ đó không rỗng và mọi file trong tập có
 # driver gộp đặt tên (`git check-attr merge` đọc .gitattributes của <base>: .gitattributes của chính PR không nới được tập). Giá trị
 # unspecified / unset / set / text / binary là merge dựng sẵn của git: GitHub xung đột y như vậy. SYNC_FILES: tập file; SYNC_WHY: lý do không.
-SYNC_FILES=""; SYNC_WHY=""
+SYNC_FILES=""; SYNC_WHY=""; SYNC_BASE=""   # SYNC_BASE: tip origin/<base> mà sync_candidate vừa fetch và kiểm driver
 driver_only_overlap() {
   local mbs shared f drv pr_files
   mbs=$(git -C "$REPO_PATH" merge-base --all "$1" "$2" 2>/dev/null) || { SYNC_WHY="no merge base of ${1:0:12} and ${2:0:12}"; return 1; }
@@ -814,6 +814,7 @@ sync_candidate() {
   fi
   git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null || { SYNC_WHY="git fetch origin ${HEAD_REF} ${BASE} failed"; return 1; }
   base_pre=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { SYNC_WHY="cannot resolve origin/${BASE}"; return 1; }
+  SYNC_BASE=$base_pre
   driver_only_overlap "$HEAD_SHA" "$base_pre"
 }
 # ---- chờ người đang giữ khoá merge trước verify ngoài khoá (#1012 mục b) ---------------------------------------------------------------
@@ -1892,6 +1893,9 @@ while :; do
     if [ "$MERGEABLE" = CONFLICTING ]; then
       if sync_candidate; then
         AUTOSYNC=1
+        # grok REVISE 05/11: main có thể dời thêm giữa fetch_base_now và fetch của sync_candidate; gộp, verify và đẩy theo đúng tip đã
+        # kiểm driver (không phải BASE_NOW cũ hơn: thoát 4 oan, hoặc đẩy merge với tip cũ rồi vẫn CONFLICTING ⇒ 14).
+        BASE_NOW=$SYNC_BASE
         say "GitHub reports PR #${PR} CONFLICTING with ${BASE} after it moved during verify, but every file changed on both sides has a named merge driver (${SYNC_FILES}): merging ${BASE} into the scratch tree, verifying again inside the merge lock, then fast-forwarding ${HEAD_REF} to that merge commit"
       else
         [ -z "$SYNC_WHY" ] || say "not syncing ${HEAD_REF} itself: ${SYNC_WHY}"

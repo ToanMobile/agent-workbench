@@ -7,6 +7,8 @@
 #      cha 2 = base mới) lên nhánh PR (fast-forward), merge với --match-head-commit = head mới, exit 0      — ĐỎ trên gốc (exit 14)
 #   b) như a nhưng main còn sửa s.txt (PR cũng sửa, không có driver) ⇒ exit 14 như cũ, không đẩy gì, không verify lần hai
 #   c) như a nhưng --dry-run ⇒ exit 14 như cũ (dry run không đồng bộ nhánh), không đẩy gì
+#   d) như a nhưng main dời thêm lần nữa giữa fetch_base_now và fetch của sync_candidate (grok REVISE 05/11) ⇒ gộp, verify và đẩy theo
+#      đúng tip sync_candidate đã kiểm driver: exit 0, cha 2 = tip mới nhất                                   — ĐỎ trên 008caf68 (exit 4)
 # gh giả đọc head và mergeable từ remote trần (CONFLICTING khi main chưa là tổ tiên của nhánh). Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -33,6 +35,11 @@ tip() { git -C "$O" rev-parse refs/heads/issue-61-x 2>/dev/null || echo 00000000
 conflicting() { ! git -C "$O" merge-base --is-ancestor refs/heads/main "$(tip)" 2>/dev/null; }
 case " $* " in
   *" pr view "*"--json mergeable"*)
+    # ca d: main dời thêm lần nữa ngay lúc gate hỏi mergeable trong khoá (sau fetch_base_now, trước fetch của sync_candidate)
+    if conflicting && [ -e "$FAKE_DIR/race" ] && [ ! -e "$FAKE_DIR/raced" ]; then
+      touch "$FAKE_DIR/raced"
+      ( cd "$FAKE_DIR/merger" && git pull -q origin main && echo m-main2 >> m.txt && git commit -qam main-moves-again && git push -q origin main )
+    fi
     if conflicting; then echo CONFLICTING; else echo MERGEABLE; fi | tee -a "$FAKE_DIR/mergeable-answers" ;;
   *" pr view "*"headRefName,headRefOid"*) echo "issue-61-x $(tip)" ;;
   *" pr view "*"state,mergeCommit,headRefOid"*) printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$(tip)" ;;
@@ -134,6 +141,17 @@ grep -q 's.txt (changed on both sides) has no named merge driver' "$D/gate.log" 
 setup inlock_dry; gate --expect-head "$X" --dry-run
 [ "$RC" -eq 14 ] && [ "$ORIGIN_HEAD" = "$X" ] && [ "$(starts)" -eq 1 ] && ok "c: --dry-run: exit 14, nothing pushed, one verify" \
   || fail "c: gate exit $RC, origin ${ORIGIN_HEAD:0:8} (want ${X:0:8}), verifies $(starts): $(why)"
+
+# d) main moves again between fetch_base_now and sync_candidate's own fetch: sync onto the tip whose drivers were checked
+setup inlock_race; touch "$D/race"; gate --expect-head "$X"
+N="$ORIGIN_HEAD"
+[ -e "$D/raced" ] && ok "d: fixture: main moved again at the in-lock mergeable read" || fail "d: fixture: race not triggered"
+[ "$RC" -eq 0 ] && ok "d: exit 0 (not 4)" || fail "d: gate exit $RC, want 0: $(why)"
+[ "$(git -C "$O" rev-list --parents -n 1 "$N")" = "$N $X $B2" ] \
+  && ok "d: pushed merge commit = reviewed head + the newest base ${B2:0:8}" \
+  || fail "d: origin issue-61-x ${N:0:8} parents: $(git -C "$O" rev-list --parents -n 1 "$N") (want X ${X:0:8} + base ${B2:0:8})"
+[ "$(starts)" -eq 2 ] && grep -q "^start inv=2 head=$N lockpr=61" "$D/vlog" \
+  && ok "d: verified again once, inside the lock, on the pushed merge commit" || fail "d: verifies: $(tr '\n' '|' < "$D/vlog" 2>/dev/null)"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_conflicting_in_lock_sync: PASS"; exit 0; } || { echo "test_merge_gate_conflicting_in_lock_sync: FAIL ($FAILS)"; exit 1; }
