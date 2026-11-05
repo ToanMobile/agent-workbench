@@ -278,6 +278,13 @@ fi
 python3 "$GITHUB_READ" --check
 
 LOCK_DIR="${REPO_PATH}/.claude/super-board/inflight/merge.lock"
+# 02/11 (lane rmlock): REPO_PATH "." là worktree của lane gọi gate, nên khoá dưới REPO_PATH là một khoá mỗi worktree: #911 và #912
+# verify song song, nhiều PR verify xanh rồi GitHub từ chối vì main dời trong lúc verify. Khoá nằm trong git common dir, chung mọi
+# worktree của repo (như AH_DIR). Không có common dir (REPO_PATH không phải repo git), hay không tạo được <common dir>/super-board
+# (một file chiếm chỗ: mkdir -p dưới set -e từng giết gate trước khoá), thì giữ đường cũ và nói ra.
+LOCK_GD=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || LOCK_GD=
+if [ -n "$LOCK_GD" ] && mkdir -p "$LOCK_GD/super-board" 2>/dev/null; then LOCK_DIR="$LOCK_GD/super-board/merge.lock"
+else echo "[merge-gate #${PR}] no git common dir usable under ${REPO_PATH}: the merge lock stays per checkout at ${LOCK_DIR}" >&2; fi
 mkdir -p "$(dirname "$LOCK_DIR")"
 
 . "$HERE/super-board-verify-flags.sh"

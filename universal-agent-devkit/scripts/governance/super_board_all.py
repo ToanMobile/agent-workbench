@@ -158,10 +158,57 @@ def runner_launch(rdir, slug, run_script, log_path, slot_dir):
     )
 
 
+def ensure_log_file(path):
+    """#1001: a dangling symlink (link to a deleted runs/… log) counts as absent; a live one keeps its target."""
+    if os.path.islink(path) and not os.path.exists(path):
+        os.unlink(path)
+    Path(path).touch(exist_ok=True)
+
+
 def get_running_pids(slug):
     cmd = f"ps aux | grep -i 'super-board-run.sh {slug}' | grep -v grep | awk '{{print $2}}'"
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     return [p.strip() for p in r.stdout.strip().splitlines() if p.strip()]
+
+def start_one(repo, locks_dir):
+    rdir = repo["dir"]
+    slug = repo["slug"]
+    name = repo["name"]
+
+    if not os.path.isdir(rdir):
+        print(f"⚠️  Bỏ qua {name}: không tìm thấy thư mục {rdir}")
+        return
+
+    clear_early_deaths(rdir)
+
+    # Đảm bảo thư mục log tồn tại
+    os.makedirs(os.path.join(rdir, "docs", "super-board", "runs"), exist_ok=True)
+    os.makedirs(os.path.join(rdir, "docs", "super-board", "inflight"), exist_ok=True)
+
+    log_path = os.path.join(rdir, "docs", "super-board", "runner.log")
+    worker_log_path = os.path.join(rdir, "docs", "super-board", "current-worker.log")
+    ensure_log_file(log_path)
+    ensure_log_file(worker_log_path)
+
+    pids = get_running_pids(slug)
+    if pids:
+        print(f"✅ {name:<30} : Đang chạy sẵn (PID: {', '.join(pids)})")
+        return
+
+    run_script = os.path.join(rdir, ".claude", "bin", "super-board-run.sh")
+    if not os.path.isfile(run_script):
+        run_script = "/Volumes/Data/Toan/agent-workbench/.claude/bin/super-board-run.sh"
+
+    cmd = runner_launch(rdir, slug, run_script, log_path, locks_dir)
+    # #1001: new session + closed stdin, so the caller (e.g. a Claude Bash call) neither waits on nor owns the runner.
+    subprocess.run(cmd, shell=True, start_new_session=True, stdin=subprocess.DEVNULL)
+
+    # Lấy PID mới khởi động
+    new_pids = get_running_pids(slug)
+    pid_str = ', '.join(new_pids) if new_pids else "đã gửi lệnh nền"
+    print(f"🚀 {name:<30} : Đã khởi động ngầm (PID: {pid_str})")
+    print(f"   Log: {log_path}")
+
 
 def start_all():
     print("=================================================================")
@@ -171,42 +218,10 @@ def start_all():
     ensure_claude_workspace_trust()
     print(f"🔒 Suite nặng chạy theo tải máy ({hold_load_text()}; khoá riêng chỉ cho Unity): {locks_dir}\n")
     for repo in REPOS:
-        rdir = repo["dir"]
-        slug = repo["slug"]
-        name = repo["name"]
-        
-        if not os.path.isdir(rdir):
-            print(f"⚠️  Bỏ qua {name}: không tìm thấy thư mục {rdir}")
-            continue
-
-        clear_early_deaths(rdir)
-
-        # Đảm bảo thư mục log tồn tại
-        os.makedirs(os.path.join(rdir, "docs", "super-board", "runs"), exist_ok=True)
-        os.makedirs(os.path.join(rdir, "docs", "super-board", "inflight"), exist_ok=True)
-
-        log_path = os.path.join(rdir, "docs", "super-board", "runner.log")
-        worker_log_path = os.path.join(rdir, "docs", "super-board", "current-worker.log")
-        Path(log_path).touch(exist_ok=True)
-        Path(worker_log_path).touch(exist_ok=True)
-
-        pids = get_running_pids(slug)
-        if pids:
-            print(f"✅ {name:<30} : Đang chạy sẵn (PID: {', '.join(pids)})")
-            continue
-
-        run_script = os.path.join(rdir, ".claude", "bin", "super-board-run.sh")
-        if not os.path.isfile(run_script):
-            run_script = "/Volumes/Data/Toan/agent-workbench/.claude/bin/super-board-run.sh"
-
-        cmd = runner_launch(rdir, slug, run_script, log_path, locks_dir)
-        subprocess.run(cmd, shell=True)
-        
-        # Lấy PID mới khởi động
-        new_pids = get_running_pids(slug)
-        pid_str = ', '.join(new_pids) if new_pids else "đã gửi lệnh nền"
-        print(f"🚀 {name:<30} : Đã khởi động ngầm (PID: {pid_str})")
-        print(f"   Log: {log_path}")
+        try:
+            start_one(repo, locks_dir)
+        except Exception as exc:   # noqa: BLE001 - #1001: one repo failing must not leave the later repos unstarted
+            print(f"⚠️  {repo['name']:<30} : khởi động lỗi ({repo['dir']}): {exc!r}", file=sys.stderr)
 
     print("\n🎉 Toàn bộ Runners đã được kích hoạt! Theo dõi: python3 universal-agent-devkit/scripts/governance/super_board_monitor.py <repo>")
     print("💡 Bây giờ bạn vào BẤT KỲ Project Board nào kéo thẻ sang Ready là máy tự động làm!")

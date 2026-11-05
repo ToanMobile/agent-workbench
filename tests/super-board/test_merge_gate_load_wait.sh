@@ -152,7 +152,7 @@ grep -q "SB_MERGE_LOAD_POLL_S='x' is not a positive number" "$TMP/gate7b.log" \
 ran "$rc" && ok "unreadable load: verify ran (exit 11)" || fail "unreadable load: gate exit $rc"
 
 # Ca 8: lúc chờ, mốc "at" của khoá được làm mới (không thì gate khác gỡ khoá "bỏ quên" và hai merge chạy cùng lúc).
-AT="$WT/.claude/super-board/inflight/merge.lock/at"
+AT="$(cd "$WT" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/super-board/merge.lock/at"
 echo 99 > "$LOADF"; rm -f "$STARTED"
 SB_MERGE_OPTIMISTIC=0 SB_MERGE_LOAD_WAIT_S=8 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate8.log" 2>&1 &   # PR3: khoá giữ lúc chờ = chế độ bi quan
 gp=$!
