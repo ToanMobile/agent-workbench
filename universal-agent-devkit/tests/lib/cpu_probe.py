@@ -3,7 +3,8 @@
 Giới hạn đồng hồ tường cho việc thuần CPU (regex trên dòng 1 MB) phình theo tải máy: ca c của test_fail_line_prefixed.sh tốn
 0,09–0,12 s CPU (đo 05/11 ở load 23–57) nhưng đo 5,03 s tường ở load 70 và làm đỏ oan merge gate #1007.
 CPU của tiến trình con (rusage của os.wait4, user + sys) là đúng chi phí của phép tính, tải bao nhiêu cũng vậy.
-Việc đơn luồng có CPU <= tường, nên cùng một ngưỡng tính bằng giây CPU không bao giờ lỏng hơn ngưỡng cũ tính bằng giây tường.
+Việc đơn luồng có CPU <= tường, nên ngưỡng tính bằng giây CPU chỉ bỏ phần thời gian chờ do tải máy (đúng mục đích); với chính
+phép tính nó chặt như ngưỡng tường lúc máy rảnh (khi không tranh CPU thì CPU ≈ tường), và regex thảm hoạ vẫn vượt nó (đột biến #1011).
 Regex thảm hoạ không bao giờ trả về, và re.search chạy trong C nên signal.alarm không dừng được: tiến trình con có RLIMIT_CPU
 (kernel giết nó khi quá giới hạn CPU, tải không làm chậm việc đó) và một chuông chặn treo rộng theo đồng hồ tường (chỉ cho tiến
 trình con bị đói hoặc bị chặn; không bao giờ tính là đạt).
