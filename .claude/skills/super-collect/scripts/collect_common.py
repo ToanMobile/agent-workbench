@@ -106,3 +106,4 @@ def fingerprint(source, *parts):
         safe.append(p if re.fullmatch(r"[A-Za-z0-9_.:/-]{1,60}", p) else hashlib.sha1(normalize(p).encode()).hexdigest()[:12])
     return "|".join([source, *safe])
 # load test #1013 (d): harmless comment, do not merge
+# load test #1013 (d) run 2
