@@ -49,6 +49,11 @@ check "require('bcrypt')" "const b = require('bcrypt');" '' auth
 check "bcryptjs" "import bcryptjs from 'bcryptjs'" '' auth
 check "go crypto/bcrypt" 'import "golang.org/x/crypto/bcrypt"' '' auth
 check "python import bcrypt" 'import bcrypt' '' auth
+check "jbcrypt (Java)" "implementation 'org.mindrot:jbcrypt:0.4'" '' auth
+check "pybcrypt" 'import pybcrypt' '' auth
+check "mybcrypt (tên ghép liền)" 'const h = mybcrypt.hash(pw);' '' auth
+check "_bcrypt" 'PASSWORD_BCRYPT' '' auth
+check "đối chứng âm: subcrypto" 'const k = await subcrypto.digest(d);' '' auto
 check "jwt.sign" 'const t = jwt.sign(payload, key);' '' auth
 check "password_hash" 'user.password_hash = h' '' auth
 check "service_role" 'const k = env.SUPABASE_SERVICE_ROLE;' '' auth
