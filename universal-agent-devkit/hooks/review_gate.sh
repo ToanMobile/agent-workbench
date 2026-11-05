@@ -1096,6 +1096,7 @@ if ocr_missing:   # the agent review is done: say exactly what is left
         "giao spec cho agent thứ hai — gọi `ocr-review` đúng phạm vi trên TRƯỚC lời gọi Agent review (cùng một tin nhắn được, lệnh OCR",
         "đứng trước), một agent review sau nó là đủ. Đừng cắt output của lệnh (| tail, | head): gate nhận fallback qua dòng đầu",
         "'no valid LLM endpoint' / 'LLM endpoint unusable'.",
+        "`--out` viết thẳng đường dẫn (không `$BIẾN`): gate so thư mục của dòng `spec:` với chữ sau --out trong lệnh (#992).",
         "Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
         *([f"OCR theo nội dung đã phủ {len(ws_mapped) + len(range_mapped)} file; còn lệch: {', '.join(ocr_delta[:10])}"]
           if (ws_mapped or range_mapped) and ocr_delta else []),
