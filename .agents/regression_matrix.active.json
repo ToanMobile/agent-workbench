@@ -3997,6 +3997,54 @@
       ]
     },
     {
+      "component": "super-board-failopen-1000",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_verify_runs_gate_boundary.sh",
+        "tests/super-board/test_chain_audit_robust.sh",
+        "tests/super-board/test_qa_report_stale_pin.sh",
+        "tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+        "tests/super-board/test_merge_gate_train_receipt_pm.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-1000-VERIFY-RUNS-GATE-01",
+          "name": "#1000 mục 6: sb_verify_runs_gate không nhận echo python3 post-fix-gate.py / not-post-fix-gate.py",
+          "command": "bash tests/super-board/test_verify_runs_gate_boundary.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-CHAIN-AUDIT-01",
+          "name": "#1000 mục 7, 8: --chain-audit đọc script byte không UTF-8; head chỉ trong auditHistory -> pm-unknown",
+          "command": "bash tests/super-board/test_chain_audit_robust.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-QA-STALE-PIN-01",
+          "name": "#1000 mục 1: ghim sha QA — lời khai tiêu đề, merge sửa tay/giải conflict, amend, mọi sha own, lỗi git = exit 2",
+          "command": "bash tests/super-board/test_qa_report_stale_pin.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-QA-PIN-FETCH-01",
+          "name": "#1000 mục 2: merge gate thử lại fetch rồi exit 1, không bỏ ghim sha QA",
+          "command": "bash tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-TRAIN-RECEIPT-PM-01",
+          "name": "#1000 mục 5: biên nhận train không bỏ verify khi duyệt test sửa đến từ biên bản PM (pm / pm-unknown)",
+          "command": "bash tests/super-board/test_merge_gate_train_receipt_pm.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "merge-gate-opt-load-cap",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
