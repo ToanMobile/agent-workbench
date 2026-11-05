@@ -4045,6 +4045,22 @@
       ]
     },
     {
+      "component": "gate-same-tree-reuse-d1a",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/gates/test_gate_scoped_same_tree_reuse.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SAME-TREE-REUSE-01",
+          "name": "D1(a): lượt không cưỡng bức (Stop, task, --scoped) dùng lại PASS thật cùng cây ≤ 1 h; đổi byte chạy lại; --full không dùng; quá hạn chạy lại",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_scoped_same_tree_reuse.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "rerun-skip-ttl-3d-992",
       "watch_files": [
         "universal-agent-devkit/bin/post-fix-gate.py",

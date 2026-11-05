@@ -46,6 +46,11 @@ STORE_MAX = 4000                 # bản ghi giữ lại tối đa; cũ hơn STO
 STORE_MAX_AGE_S = 7 * 86400
 FAIL_MAX_AGE_S = 30 * 86400      # bản ghi có FAIL không bị dọn theo số lượng, chỉ theo tuổi này (FAIL là vĩnh viễn với khoá đó)
 QUARANTINE_S = 7 * 86400         # DEVKIT_FLAKY_QUARANTINE_S
+# D1(a) 05/11: PASS chạy thật của lượt KHÔNG cưỡng bức (Stop hook, task, --scoped) ghi dưới khoá CÙNG CÂY (same_tree_key) với kind này; hit()
+# chỉ cho dùng lại trong DEVKIT_SAME_TREE_REUSE_MAX_S (mặc định 1 h: 98 % phần chạy lại cùng cây đo được cách nhau ≤ 1 h). Lượt --full không
+# tính khoá này (tiền tố riêng) nên không bao giờ đọc được bản ghi đó.
+SAME_TREE_KIND = "same_tree_run"
+SAME_TREE_MAX_AGE_S = 3600
 CLOSURE_DEPTH = 3
 CLOSURE_MAX_FILES = 2000
 DIR_EXPAND_MAX = 200             # token chỉ tới thư mục: lấy mọi file dưới nó khi không quá số này
@@ -790,6 +795,32 @@ class SuiteCache:
         head, tail = parts
         return hashlib.sha256(b"tree\0" + head + b"\0" + digest.encode() + b"\0" + tail).hexdigest()
 
+    @staticmethod
+    def same_tree_key(tree_key, run):
+        """Khoá CÙNG CÂY của một lượt không cưỡng bức (D1(a)): khoá cả cây của suite (nội dung cây, lệnh ma trận, mục ma trận, env chọn
+        test, trạng thái cục bộ, đích ngoài cây, công cụ) cộng `run` (lệnh/mẫu impacted, file đổi, base, HEAD, digest cả ma trận...).
+        Tiền tố riêng: không bao giờ trùng khoá chính xác / cả cây mà lượt --full tra. None khi không có khoá cả cây."""
+        if not tree_key:
+            return None
+        return hashlib.sha256(b"same-tree\0" + tree_key.encode() + b"\0"
+                              + json.dumps(run, sort_keys=True, default=str).encode()).hexdigest()
+
+    def same_tree_marked(self, now=None):
+        """True khi một lượt có suite đỏ vừa ghi PASS cùng cây cho đúng nội dung cây này trong hạn (same_tree.json): lượt khác khỏi tính khoá."""
+        at = self._load_side("same_tree.json").get(self.tree_digest)
+        age = (now or time.time()) - at if isinstance(at, (int, float)) and not isinstance(at, bool) else None
+        return age is not None and -60 < age <= _env_float("DEVKIT_SAME_TREE_REUSE_MAX_S", SAME_TREE_MAX_AGE_S)
+
+    def same_tree_mark(self, now=None):
+        """Đánh dấu nội dung cây này có PASS cùng cây; bỏ dấu cũ hơn 1 ngày."""
+        now = now or time.time()
+
+        def upd(d):
+            for k in [k for k, v in d.items() if not isinstance(v, (int, float)) or now - v > 86400]:
+                del d[k]
+            d[self.tree_digest] = now
+        self._update_side("same_tree.json", upd)
+
     # ── kho ──
     def _path(self, key, ext=".json"):
         return os.path.join(self.store, key + ext) if self.store and re.fullmatch(r"[0-9a-f]{64}", key or "") else None
@@ -820,6 +851,8 @@ class SuiteCache:
             return None
         # tuổi tối đa: DEVKIT_SUITE_CACHE_MAX_S, không bao giờ quá DEVKIT_GATE_CACHE_MAX_S của biên nhận (=0 ⇒ không PASS nào quá hạn được dùng lại)
         max_s = min(_env_float("DEVKIT_SUITE_CACHE_MAX_S", MAX_AGE_S), _env_float("DEVKIT_GATE_CACHE_MAX_S", MAX_AGE_S))
+        if rec.get("kind") == SAME_TREE_KIND:   # D1(a): hạn ngắn đọc lúc tra (mọi người gọi hit, kể cả recheck), không phải lúc ghi
+            max_s = min(max_s, _env_float("DEVKIT_SAME_TREE_REUSE_MAX_S", SAME_TREE_MAX_AGE_S))
         if pass_n < 1 or fail_n != 0 or not (-60 < now - at <= max_s):
             return None
         if self.quarantined(test.get("id"), now):
