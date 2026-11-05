@@ -138,6 +138,8 @@ def edited_existing(top, sha, base, gate):
     paths = [parts[i + 1] for i in range(0, len(parts) - 1, 2) if parts[i][:1] in ("M", "D", "T")]
     if not paths:
         return []
+    if gate is None:
+        return paths   # không có kit để phân loại: mọi file đã có bị sửa/xoá đều có thể là test (siêu tập, người gọi bi quan)
     spec = importlib.util.spec_from_file_location("sb_post_fix_gate", Path(gate.__file__).with_name("post-fix-gate.py"))
     pfg = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pfg)
@@ -169,13 +171,17 @@ def chain_audit(sha, base, top=None):
     không. Không kiểm được (không tìm thấy kit, lỗi git) → None: người gọi giữ đường bi quan, không coi là có duyệt."""
     top = top or repo_top()
     gate = push_gate()
-    if not top or gate is None or not isinstance(sha, str) or not SHA.fullmatch(sha) or not base:
-        print(f"audit-check: --chain-audit cannot check ({'push_gate.py of the kit not found next to this script' if gate is None else 'bad repo / sha / base'})",
-              file=sys.stderr)
+    if not top or not isinstance(sha, str) or not SHA.fullmatch(sha) or not base:
+        print("audit-check: --chain-audit cannot check (bad repo / sha / base)", file=sys.stderr)
         return None
     try:
+        # PR không sửa/xoá file nào đã có thì không thể có test đã có bị sửa: False kể cả khi không thấy kit (#1000: pm-unknown nay
+        # chịu exit 2 như pm, nên không được gán cho PR chỉ thêm file).
         if not edited_existing(top, sha, base, gate):
             return False
+        if gate is None:
+            print("audit-check: --chain-audit cannot check (push_gate.py of the kit not found next to this script)", file=sys.stderr)
+            return None
         # #1000 mục 4: pm home lạ không phải fixture test -> audited_heads trả [] như "không có audit" -> False (đường lỏng nhất: biên
         # nhận cây bỏ verify). PR có sửa test mà biên bản không đáng tin = không kiểm được, không phải "không có".
         overridden, fixture = getattr(gate, "pm_home_overridden", None), getattr(gate, "pm_home_test_fixture", None)

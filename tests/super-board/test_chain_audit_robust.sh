@@ -57,4 +57,14 @@ got="$(has_et "$H2" --top "$R2" --base main)"
 [ "$got" = "0 pm-unknown" ] && ok "U2: head chỉ còn trong auditHistory (lượt sau REVISE) -> pm-unknown" \
   || fail "U2: '$got' (muốn '0 pm-unknown'): $(cat "$TMP/err")"
 
+# U4/U5 (merge gate PR #1006, test_merge_gate_no_push_pr_branch): bản bin chép ra ngoài không thấy kit. PR chỉ THÊM file -> false (không
+#     thể có test đã có bị sửa; code trước sửa: pm-unknown, mà pm-unknown nay chịu exit 2 như pm). PR sửa file đã có -> vẫn pm-unknown.
+cp -R "$ROOT/.claude/bin" "$TMP/gatebin"
+git -C "$R2" checkout -q -b addonly main && echo new > "$R2/new.txt" && git -C "$R2" add new.txt && git -C "$R2" commit -qm "PR chỉ thêm file"
+A2="$(git -C "$R2" rev-parse HEAD)"
+got="$(INS="$TMP/gatebin/super-board-install-edited-test-approval.sh" has_et "$A2" --top "$R2" --base main)"
+[ "$got" = "1 false" ] && ok "U4: không thấy kit, PR chỉ thêm file -> false" || fail "U4: '$got' (muốn '1 false'): $(cat "$TMP/err")"
+got="$(INS="$TMP/gatebin/super-board-install-edited-test-approval.sh" has_et "$H2" --top "$R2" --base main)"
+[ "$got" = "0 pm-unknown" ] && ok "U5: không thấy kit, PR sửa test đã có -> pm-unknown" || fail "U5: '$got' (muốn '0 pm-unknown'): $(cat "$TMP/err")"
+
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }
