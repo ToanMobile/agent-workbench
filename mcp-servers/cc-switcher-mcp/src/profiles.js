@@ -557,6 +557,24 @@ export function formatLocalTimeHHMM(tsMs) {
   }).format(new Date(tsMs));
 }
 
+/** "Thứ Bảy 00:00" (giờ VN) — thứ mấy, mấy giờ reset tuần, giống Claude Code. */
+export function formatLocalWeekdayTime(tsMs) {
+  if (!tsMs || tsMs <= 0) return '';
+  const parts = new Intl.DateTimeFormat('vi-VN', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    weekday: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(tsMs));
+  const get = (t) => parts.find((x) => x.type === t)?.value || '';
+  const hh = get('hour') === '24' ? '00' : get('hour');
+  return `${get('weekday')} ${hh}:${get('minute')}`;
+}
+
+// Cache quota OAuth cu hon ngung nay (token het han, mang loi) thi khong con la so lieu that.
+export const QUOTA_STALE_MS = 15 * 60_000;
+
 export function formatRemainDuration(remainMs) {
   if (!remainMs || remainMs <= 0) return '0p';
   const totalMin = Math.max(1, Math.ceil(remainMs / 60000));
@@ -633,11 +651,18 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
           0,
       );
       const weeklyRemainingPct = Math.max(0, 100 - Math.round(weeklyUsed));
+      const rawWeeklyIso =
+        body?.seven_day?.resets_at ||
+        body?.limits?.find((l) => l.group === 'weekly')?.resets_at ||
+        '';
+      const rawWeeklyMs = rawWeeklyIso ? Date.parse(rawWeeklyIso) : 0;
+      const weeklyResetAtMs = Number.isFinite(rawWeeklyMs) && rawWeeklyMs > 0 ? rawWeeklyMs : 0;
       return {
         remainingPct,
         usedPct,
         resetAtMs,
         weeklyRemainingPct,
+        weeklyResetAtMs,
         isRateLimited: remainingPct <= 0,
         source: 'anthropic_oauth',
         updatedAtMs: nowMs,
@@ -1024,7 +1049,14 @@ export function getStatusReport(opts = {}) {
       // Neu cua so 5h truoc da qua gio reset -> tu dong hoi phuc 100%
       remainingPct = quotaResetMs > 0 && quotaResetMs <= nowMs ? 100 : cachedQuota.remainingPct;
     }
-    const usedPct = Math.max(0, 100 - remainingPct);
+    const quotaStale = Boolean(
+      cachedQuota && cachedQuota.source === 'anthropic_oauth' && nowMs - (cachedQuota.updatedAtMs || 0) > QUOTA_STALE_MS,
+    );
+    if (quotaStale && !isFrozen) remainingPct = null;
+    const usedPct = remainingPct === null ? null : Math.max(0, 100 - remainingPct);
+    const weeklyResetAtMs = cachedQuota?.weeklyResetAtMs || 0;
+    let weeklyRemainingPct = cachedQuota?.weeklyRemainingPct ?? null;
+    if (weeklyRemainingPct !== null && weeklyResetAtMs > 0 && weeklyResetAtMs <= nowMs && !quotaStale) weeklyRemainingPct = 100;
     const resetTimeFormatted = effectiveResetMs > nowMs ? formatLocalTimeHHMM(effectiveResetMs) : '';
     const resetRemainHuman = effectiveResetMs > nowMs ? formatRemainDuration(effectiveResetMs - nowMs) : '';
 
@@ -1038,14 +1070,19 @@ export function getStatusReport(opts = {}) {
       assignedRepoCount,
       status: isFrozen
         ? `LIMIT 0% (Mở ${resetTimeFormatted || `${freezeRemainMin}p`})`
-        : isParallelActive
-          ? `ACTIVE (${remainingPct}%)`
-          : `READY (${remainingPct}%)`,
+        : remainingPct === null
+          ? 'SỐ LIỆU CŨ (không làm mới được)'
+          : isParallelActive
+            ? `ACTIVE (${remainingPct}%)`
+            : `READY (${remainingPct}%)`,
       isFrozen,
       freezeRemainMin,
       remainingPct,
       usedPct,
-      weeklyRemainingPct: cachedQuota?.weeklyRemainingPct ?? null,
+      weeklyRemainingPct: quotaStale ? null : weeklyRemainingPct,
+      weeklyResetAtMs: weeklyResetAtMs > nowMs ? weeklyResetAtMs : 0,
+      weeklyResetFormatted: weeklyResetAtMs > nowMs ? formatLocalWeekdayTime(weeklyResetAtMs) : '',
+      quotaStale,
       resetAtMs: effectiveResetMs,
       resetTimeFormatted,
       resetRemainHuman,
