@@ -7,7 +7,7 @@
 #       khi nhãn gỡ; person_count Ready đếm thẻ chờ; file inflight của preflight không chứa thẻ chờ.
 #  AC2  sweep_waiting_on: removed khác rỗng → 0; cadence; helper lỗi → không dời mốc; Done đổi → chạy ngay; board không có
 #       thẻ chờ → không gọi helper.
-#  AC3  preflight hold/unclear vẫn `move … Blocked`, không gọi mark; rebuild_cap → Blocked qua test_merge_queue.sh (PASS).
+#  AC3  preflight hold/unclear vẫn `move … Blocked`, không gọi mark; rebuild_cap → Blocked qua phần dựng + ca 5 của test_merge_queue.sh (PASS).
 #  AC4  sau mark, thẻ mang nhãn không được top_card_in_column chọn lại → preflight không chạy lần 2 cho cùng blocker.
 #  AC5  startup_migrate_waiting chỉ được luồng chính gọi (sau chốt SB_LIB_ONLY); chạy thật với helper stub: --items + INFLIGHT_DIR,
 #       migrated khác rỗng → đọc lại board, rỗng → không, helper lỗi → log, không exit.
