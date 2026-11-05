@@ -181,6 +181,33 @@ def _write(path: str, text: str) -> None:
     os.replace(tmp, path)
 
 
+# #258 (OfficeReader): launchd chạy lượt đêm với môi trường trơ (PATH, TZ), không JAVA_HOME ⇒ ./gradlew rơi về stub `java` của macOS và mọi suite
+# Gradle đỏ giả. Tự đặt JAVA_HOME cho gate; không sửa plist, không cài thêm gì. Ứng viên đổi được bằng DEVKIT_GATE_FULL_JDK_CANDIDATES (':').
+JDK_CANDIDATES = [
+    "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+    "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+    "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+    "/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+]
+
+
+def _jdk_ok(path):
+    return bool(path) and os.access(os.path.join(path, "bin", "java"), os.X_OK)
+
+
+def with_java_home(env):
+    """Trả bản sao env có JAVA_HOME dùng được: giữ nguyên nếu đã trỏ JDK có bin/java, không thì lấy ứng viên đầu tiên dùng được; không có thì để nguyên."""
+    out = dict(env)
+    if _jdk_ok(out.get("JAVA_HOME")):
+        return out
+    raw = os.environ.get("DEVKIT_GATE_FULL_JDK_CANDIDATES")
+    for cand in (raw.split(":") if raw is not None else JDK_CANDIDATES):
+        if _jdk_ok(cand):
+            out["JAVA_HOME"] = cand
+            return out
+    return out
+
+
 def sh(cmd, cwd=None, timeout=None, env=None, shell=False):
     """(exit, stdout+stderr) trong process group riêng: hết giờ / SIGTERM thì giết cả cây con. Hết giờ: exit 124."""
     p = subprocess.Popen(cmd, cwd=cwd, env=env, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1045,7 +1072,7 @@ def cmd_run(args) -> int:
             return 2
         run.log("scratch %s @ %s" % (scratch, sha[:12]))
         override = os.environ.get("DEVKIT_GATE_FULL_CMD")
-        env = dict(os.environ, DEVKIT_SLOT_PRIORITY="nightly")   # hàng đợi heavy_slot: đêm đứng sau merge/push/interactive
+        env = with_java_home(dict(os.environ, DEVKIT_SLOT_PRIORITY="nightly"))   # hàng đợi heavy_slot: đêm đứng sau merge/push/interactive
         if override:
             gate_rc, gate_out = sh(override, cwd=scratch, timeout=GATE_TIMEOUT_S, env=env, shell=True)
         else:
