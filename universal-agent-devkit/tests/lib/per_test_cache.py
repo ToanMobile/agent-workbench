@@ -125,7 +125,7 @@ def plan(kit, out, tests):
         key = sc.keys(entry)[1]
         if not key:
             continue
-        rec = sc.hit(key, entry, now) if mode == "1" else None   # hit() đã giới hạn tuổi PASS (mặc định 6 h)
+        rec = sc.hit(key, entry, now) if mode == "1" else None   # hit() đã giới hạn tuổi PASS (mặc định 3 ngày, MAX_AGE_S)
         if rec:
             print(f"reuse\t{test}\t{int(now - rec['last_pass_at'])}")
             continue
