@@ -4103,6 +4103,28 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-gate-no-stale-verify-1012",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_conflicting_in_lock_sync.sh",
+        "tests/super-board/test_merge_gate_wait_lock_holder.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-INLOCK-SYNC-1012-01",
+          "name": "#1012 (a): GitHub báo CONFLICTING chỉ trong khoá (main dời lúc verify, chỉ file có driver gộp đặt tên) ⇒ gộp base mới, verify lại trong khoá, đẩy merge commit đồng bộ rồi merge, không exit 14; file không driver và --dry-run vẫn exit 14",
+          "command": "bash tests/super-board/test_merge_gate_conflicting_in_lock_sync.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-WAIT-HOLDER-1012-01",
+          "name": "#1012 (b): khoá merge đang bị gate sống giữ ⇒ gate lạc quan chờ nó thả rồi verify đúng một lần trên base mới; người giữ chết không chờ; hết SB_MERGE_WAIT_HOLDER_S thì verify như cũ",
+          "command": "bash tests/super-board/test_merge_gate_wait_lock_holder.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
