@@ -63,8 +63,14 @@ def halt_path():
                             text=True, timeout=5, cwd=os.environ.get('SB_REPO_PATH'))
     cwd = Path(os.environ.get('SB_REPO_PATH') or Path.cwd())
     common = Path(result.stdout.strip())
-    root = (cwd / common).resolve().parent if result.returncode == 0 else cwd
-    return root / '.claude/super-board/github-halt.json'
+    if result.returncode != 0:
+        return cwd / '.claude/super-board/github-halt.json'
+    common = (cwd / common).resolve()
+    # A submodule's common dir is .git/modules/<path>, territory shared with the parent repo and its sibling
+    # submodules, so its halt stays inside that git dir (same rule as cache_dir() in super-board-card.sh).
+    if common.name != '.git':
+        return common / 'super-board/github-halt.json'
+    return common.parent / '.claude/super-board/github-halt.json'
 
 
 def check_halt():

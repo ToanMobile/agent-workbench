@@ -15,7 +15,7 @@ Chỉ chạy khi gate bật (DEVKIT_PER_TEST_CACHE, post-fix-gate.py: "1" dùng 
 --no-cache); `agent-kit test` của người dùng không đặt biến nên luôn chạy hết. Luật như suite (cùng mã SuiteCache, kho riêng
 <kho suite>/per_test để không đẩy bản ghi suite ra khỏi STORE_MAX):
   - dùng lại ⇔ SuiteCache.hit: PASS trên đúng khoá (pass_n ≥ 1, fail_n = 0, không cách ly, không bị void) có lần chạy THẬT trong tuổi tối
-    đa (DEVKIT_SUITE_CACHE_MAX_S / DEVKIT_GATE_CACHE_MAX_S, mặc định 6 h) — test được dùng lại phải chạy thật ít nhất một lần mỗi 6 h;
+    đa (DEVKIT_SUITE_CACHE_MAX_S / DEVKIT_GATE_CACHE_MAX_S, mặc định 3 ngày) — test được dùng lại phải chạy thật ít nhất một lần mỗi 3 ngày;
   - record ghi PASS khi cả cây (và đích ngoài cây) y nguyên sau khi test chạy VÀ không file nào của chúng bị ghi từ lúc plan (dấu stat
     ino, size, mtime_ns, ctime_ns lấy lúc plan, trước mọi test: sửa rồi hoàn tác A→B→A cùng bytes, kể cả trả lại mtime, vẫn đổi ctime —
     băm nội dung thì không thấy; #427); ghi FAIL lên khoá (SuiteCache.hit đòi fail_n = 0) và, khi

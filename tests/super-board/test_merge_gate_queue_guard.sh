@@ -93,7 +93,7 @@ mkcfg "$CFG_ON" true auto; mkcfg "$CFG_OFF" false auto; mkcfg "$CFG_HUMAN" true 
 CFG_HUMAN_OFF="$TMP/cfg-human-off.json"; CFG_WF="$TMP/cfg-wf.json"; CFG_NOKEY="$TMP/cfg-nokey.json"; CFG_HUMAN_WF="$TMP/cfg-human-wf.json"
 mkcfg "$CFG_HUMAN_OFF" false human; mkcfg "$CFG_WF" true auto workflow; mkcfg "$CFG_NOKEY" true auto -; mkcfg "$CFG_HUMAN_WF" true human codex  # #453: workflow = bật, codex = tắt
 LINE='merge-queue: label the PR merge-queue instead of calling the gate directly'
-LOCK="$WT/.claude/super-board/inflight/merge.lock"
+LOCK="$(cd "$WT" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/super-board/merge.lock"
 
 # gate <pr> <env…> -- <args…>: chạy gate từ worktree reviewer, stdout/stderr tách riêng, xoá dấu verify trước mỗi lượt.
 gate() {

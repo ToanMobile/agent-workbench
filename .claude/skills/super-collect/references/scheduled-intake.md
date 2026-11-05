@@ -25,8 +25,8 @@ Confirm the active config matches the intended repo/board, then test a dry run.
 > sources honestly. If reads or a write outcome are halted, preserve the reason
 > and stop; do not clear the halt or blindly retry create/comment.
 
-Adapt invocation to the host: Claude uses `/super-collect --yes`; Codex uses
-`$super-collect --yes`. A local timer can start that host's normal agent runner
+Adapt invocation to the host: Claude uses `/super-collect --yes --direct`; Codex uses
+`$super-collect --yes --direct` (`--direct` files into Backlog: nobody is there to answer `/to-spec`). A local timer can start that host's normal agent runner
 with this prompt. A cloud job needs equivalent repo, tool, skill and credential
 access. No universal scheduler service is bundled.
 

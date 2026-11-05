@@ -193,6 +193,9 @@ HUMAN_APPROVES=$(jq -r '.human_approves_merge // false' "$CONFIG_PATH")
 REBUILD_CAP=$(jq -r '.rebuild_cap // 2' "$CONFIG_PATH")
 BLOCK_ALERT_PCT=$(jq -r '.block_rate_alert_pct // 30' "$CONFIG_PATH")
 TICK_SECONDS=$(jq -r '.tick_seconds // 120' "$CONFIG_PATH")
+# Bản số cho phép tính: tick_seconds sai (chữ) trong $((…)) làm runner chết dưới set -u ("abc: unbound variable", từ #229)
+# trước tick đầu. sleep vẫn nhận giá trị gốc để tick_sleep báo lỗi rồi nghỉ 60 s.
+case "$TICK_SECONDS" in ''|*[!0-9]*) TICK_NUM=60 ;; *) TICK_NUM=$TICK_SECONDS ;; esac
 # Một trần duy nhất (23/10, người dùng: "tổng số task chạy cùng trên Building + QA + Review tối đa là 5", tính trên cả 6 repo, không đo CPU):
 # max_workers (mặc định 5) = tổng worker build + qa + review của MỌI repo trên máy, đếm qua thư mục slot chung (at_worker_cap).
 # Mỗi lane được dùng cả max_workers slot; thứ tự giao trong một tick vẫn là Review → QA → Build.
@@ -2237,11 +2240,11 @@ runaway_action() {
   # super_board_all.py start) giữ board chạy nhưng vẫn có giới hạn: báo runaway, không giao worker mới trong
   # 10 tick (worker đang chạy vẫn tiếp tục), rồi đếm lại (trả 0).
   if [ "${SB_DAEMON:-0}" = "1" ]; then
-    log "⚠ RUNAWAY (daemon): no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles — no new dispatch for $((TICK_SECONDS * 10))s"
+    log "⚠ RUNAWAY (daemon): no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles — no new dispatch for $((${TICK_NUM:-$TICK_SECONDS} * 10))s"
     runaway_summary
     NO_PROGRESS_CYCLE_COUNT=0
     # Hạn chót chứ không sleep: thu hồi lock và quét zombie vẫn chạy mỗi tick, chỉ việc giao mới bị hoãn.
-    RUNAWAY_PAUSE_UNTIL=$(( $(date +%s) + TICK_SECONDS * 10 ))
+    RUNAWAY_PAUSE_UNTIL=$(( $(date +%s) + ${TICK_NUM:-$TICK_SECONDS} * 10 ))
     return 0
   fi
   log "🛑 halt — RUNAWAY: no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles"
@@ -3583,7 +3586,7 @@ self_reload_tick() {
   [ -n "$RELOAD_RUN_SUM" ] || return 0
   now=$(date +%s)
   [ "$now" -ge "$RELOAD_NEXT_CHECK" ] || return 0
-  RELOAD_NEXT_CHECK=$((now + ${SB_RELOAD_EVERY:-${TICK_SECONDS:-120}}))
+  RELOAD_NEXT_CHECK=$((now + ${SB_RELOAD_EVERY:-${TICK_NUM:-${TICK_SECONDS:-120}}}))
   rel=$(git ls-files --full-name -- "$RELOAD_SELF" 2>/dev/null | head -1) || rel=""
   [ -n "$rel" ] || return 0
   git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 fetch -q origin "$BASE_BRANCH" >/dev/null 2>&1 \

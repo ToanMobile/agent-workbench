@@ -159,7 +159,7 @@ issue() {   # issue <K> [labels comma]
 }
 reset() {
   rm -rf "$F"; mkdir -p "$F/labeled"; PRS_ROWS=""; printf '[]\n' > "$F/prs.json"; : > "$F/writes"; : > "$F/calls"
-  rm -f "$INF"/[0-9]* "$STATE" "$COMMON/super-board/merge-queue.labeled" "$ATT" "$COMMON/super-board/merge-queue.lock.pid" "$COMMON/super-board/merge-queue.pending"; rm -rf "$INF/merge.lock"
+  rm -f "$INF"/[0-9]* "$STATE" "$COMMON/super-board/merge-queue.labeled" "$ATT" "$COMMON/super-board/merge-queue.lock.pid" "$COMMON/super-board/merge-queue.pending"; rm -rf "$COMMON/super-board/merge.lock"
   rm -f "$COMMON/super-board/merge-queue.inflight" "$COMMON/super-board/merge-queue.basemoved"   # #676: trạng thái train nền theo PR
 }
 run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait "$@" ) >"$TMP/out" 2>"$TMP/err"; }
@@ -244,11 +244,18 @@ sleep 60 & LIVE=$!; PIDS="$PIDS $LIVE"
 printf 'PID=%s\nLANE=build\n' "$LIVE" > "$INF/77"
 run_q; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "no batching: 1 PR labelled 1 min ago, a board worker alive → the train runs now" || fail "no batching, busy: rc=$rc calls=$(calls): $(cat "$TMP/err")"
-: > "$F/calls"; mkdir -p "$INF/merge.lock"
-echo "$LIVE" > "$INF/merge.lock/pid"; ps -o pgid= -p "$LIVE" | tr -d ' ' > "$INF/merge.lock/pgid"; hostname > "$INF/merge.lock/host"; date +%s > "$INF/merge.lock/at"
+: > "$F/calls"; : > "$F/reads"; mkdir -p "$COMMON/super-board/merge.lock"
+echo "$LIVE" > "$COMMON/super-board/merge.lock/pid"; ps -o pgid= -p "$LIVE" | tr -d ' ' > "$COMMON/super-board/merge.lock/pgid"; hostname > "$COMMON/super-board/merge.lock/host"; date +%s > "$COMMON/super-board/merge.lock/at"
 run_q
 [ "$(calls)" = 1 ] && ok "  … a live merge.lock holder does not delay it" || fail "  … merge.lock delayed the train: calls=$(calls)"
-rm -r "$INF/merge.lock"
+# Lượt thứ hai cùng PR + head: mốc gắn nhãn lấy từ merge-queue.labeled, không đọc lại timeline (tránh chạm giới hạn GitHub).
+grep -q '^timeline' "$F/reads" && fail "  … the second tick re-read the label timeline: $(cat "$F/reads")" || ok "  … second tick: labelled times come from the cache (no timeline read)"
+# Queue không bao giờ dọn merge.lock của gate: khoá còn nguyên sau lượt có holder sống, và sau lượt có holder chết đã quá stale-after.
+[ -d "$COMMON/super-board/merge.lock" ] && ok "  … the queue leaves a live holder's merge.lock alone" || fail "  … merge.lock was removed (live holder)"
+: > "$F/calls"; echo 999999 > "$COMMON/super-board/merge.lock/pid"; echo 999999 > "$COMMON/super-board/merge.lock/pgid"; echo $(( $(date +%s) - 6000 )) > "$COMMON/super-board/merge.lock/at"
+run_q
+[ "$(calls)" = 1 ] && [ -d "$COMMON/super-board/merge.lock" ] && ok "  … and a dead holder's stale merge.lock: train still runs, lock not reaped by the queue" || fail "  … dead stale merge.lock: calls=$(calls) lock=$([ -d "$COMMON/super-board/merge.lock" ] && echo kept || echo removed)"
+rm -r "$COMMON/super-board/merge.lock"
 : > "$F/calls"; git -C "$R" worktree add -q --detach "$TMP/wt1" HEAD
 mkdir -p "$TMP/wt1/.claude/audit-gate"; : > "$TMP/wt1/.claude/audit-gate/test_run.lock"
 python3 -c 'import fcntl,sys,time;f=open(sys.argv[1],"a");fcntl.flock(f,fcntl.LOCK_EX);open(sys.argv[2],"w").close();time.sleep(60)' \
@@ -336,10 +343,14 @@ echo '{"last_red":true}' > "$STATE"
 for n in 51 52 53 54; do pr "$n" "issue-$((n + 10))-x" $((60 - n)); approve "$n" OWNER "$(sha "$n")"; issue $((n + 10)); done
 printf 'train-result: 51 red\ntrain-result: 52 deferred\ntrain-result: 53 deferred\ntrain-result: 54 deferred\n' > "$F/train.out"
 run_q
-[ "$(calls)" = 4 ] && grep -q -- "--prs 51:$(sha 51)\$" "$F/calls" && grep -q -- "--prs 54:$(sha 54)\$" "$F/calls" && ok "a stale red mark on disk does not hold back any PR (one train each)" || fail "held back: $(cat "$F/calls")"
+[ "$(calls)" = 4 ] && grep -q -- "--prs 51:$(sha 51)\$" "$F/calls" && grep -q -- "--prs 52:$(sha 52)\$" "$F/calls" && grep -q -- "--prs 53:$(sha 53)\$" "$F/calls" && grep -q -- "--prs 54:$(sha 54)\$" "$F/calls" \
+  && [ "$(grep -o 'PR #[0-9]*: train started' "$TMP/err" | tr -dc '0-9\n' | tr '\n' ' ')" = "51 52 53 54 " ] \
+  && ok "a stale red mark on disk does not hold back any PR (one train each: exactly 51 52 53 54, oldest first, pinned to their heads)" || fail "held back: $(cat "$F/calls") $(grep 'train started' "$TMP/err")"
 [ "$(jq -r .last_red "$STATE" 2>/dev/null)" = true ] && ok "  … and a red PR in the train does not write a new mark (the stale file is untouched)" || fail "  … state rewritten: $(cat "$STATE" 2>/dev/null)"
 : > "$F/calls"; rm -f "$STATE"; run_q
-grep -q -- "--prs 52:" "$F/calls" && [ ! -e "$STATE" ] && ok "  … no merge-queue.state is created" || fail "  … state created: $(cat "$STATE" 2>/dev/null)"
+# 51 đã đỏ (gỡ nhãn) nên 3 PR deferred giữ nhãn và mỗi PR lại có đúng một train.
+[ "$(calls)" = 3 ] && grep -q -- "--prs 52:$(sha 52)\$" "$F/calls" && grep -q -- "--prs 53:$(sha 53)\$" "$F/calls" && grep -q -- "--prs 54:$(sha 54)\$" "$F/calls" && ! grep -q -- "--prs 51:" "$F/calls" \
+  && [ ! -e "$STATE" ] && ok "  … no merge-queue.state is created; the next tick trains exactly the 3 still-labelled PRs" || fail "  … state created or wrong trains: $(cat "$STATE" 2>/dev/null) $(cat "$F/calls")"
 
 # ── 7. Train exit 79: dừng, đi thẳng lên, không route. Exit 9: route các dòng đã in rồi thoát 9.
 reset; cfg true 6
@@ -351,9 +362,10 @@ echo 9 > "$F/train.rc"; : > "$F/writes"
 run_q; rc=$?
 [ "$rc" -eq 9 ] && has_w "card move 11 Done" && ok "train exit 9: merged PRs routed, then exit 9" || fail "9: rc=$rc writes=$(cat "$F/writes")"
 # Train hỏng mà không in kết quả nào (exit 1): nói rõ trong log, không route.
-: > "$F/train.out"; echo 1 > "$F/train.rc"; : > "$F/writes"; ago 5 > "$F/labeled/1"
+echo '{"last_red":true}' > "$STATE"; : > "$F/train.out"; echo 1 > "$F/train.rc"; : > "$F/writes"; ago 5 > "$F/labeled/1"
 run_q; rc=$?
 grep -q "no train-result" "$TMP/err" && ok "  … and the log says so" || fail "  … log: $(tail -3 "$TMP/err")"
+[ "$(jq -r .last_red "$STATE" 2>/dev/null)" = true ] && ok "  … a train with no results leaves a stale red mark untouched" || fail "  … no results: state $(cat "$STATE" 2>/dev/null)"
 [ ! -s "$F/writes" ] && ok "  … nothing routed" || fail "  … writes: $(cat "$F/writes")"
 
 # ── 8. --dry-run. Ca này khẳng định: file ghi của gh giả rỗng và số lời gọi train là 0.
@@ -412,7 +424,9 @@ grep -q "state merged" "$QUEUE" && ok "header documents the merged recovery" || 
 # ── 11. R1 mục 3: RED_NOW chỉ khi `red`; preflight gate-exit-11 (qa-report/AC) không thu nhỏ đợt sau.
 reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 printf 'train-result: 1 gate-exit-11\ntrain-detail: 1 ac-check: x\n' > "$F/train.out"; echo 11 > "$F/train.rc"
+echo '{"last_red":false}' > "$STATE"
 run_q
+[ "$(jq -r .last_red "$STATE" 2>/dev/null)" = false ] && has_w "pr-unlabel 1 merge-queue" && ok "gate-exit-11 alone: routed, and not a red batch (the mark stays false)" || fail "gate-exit-11 red mark: $(cat "$STATE" 2>/dev/null) $(cat "$F/writes")"
 
 # ── 12. R1 mục 5: queue bị giết giữa đợt (khoá đi theo nó), train mồ côi còn chạy: lượt sau KHÔNG dựng train thứ hai.
 reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11

@@ -60,6 +60,15 @@ chmod +x "$TMP/bin/gh"
 mkdir -p "$TMP/sbbin"
 for f in "$ROOT"/.claude/bin/*; do ln -s "$f" "$TMP/sbbin/$(basename "$f")"; done
 rm -f "$TMP/sbbin/super-board-merge-gate.sh"
+# Gate thật chạy từ $GK, cùng bố cục repo (.claude/bin + universal-agent-devkit + .agents/devkit, đều là symlink về $ROOT: HERE và
+# HERE/../.. của gate trỏ về bản thật như khi chạy từ $ROOT), chỉ thay bước dọn sau merge bằng stub ghi đối số vào clean.calls:
+# worktree.py remove / held / prune-branch thật tốn ~1,7 s mỗi merge và không phải đối tượng của test này. Bước dọn có test riêng
+# (test_post_merge_*.sh); test_merge_queue_e2e.sh vẫn chạy gate → dọn thật. Ca 1 kiểm gate gọi bước dọn đúng đối số sau mỗi merge.
+GK="$TMP/gk"; mkdir -p "$GK/.claude/bin" "$GK/.agents"
+for f in "$ROOT"/.claude/bin/*; do ln -s "$f" "$GK/.claude/bin/$(basename "$f")"; done
+for p in universal-agent-devkit .agents/devkit; do [ -e "$ROOT/$p" ] && ln -s "$ROOT/$p" "$GK/$p"; done
+rm -f "$GK/.claude/bin/super-board-post-merge-clean.sh"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$FAKE_DIR/clean.calls"\n' > "$GK/.claude/bin/super-board-post-merge-clean.sh"
 cat > "$TMP/sbbin/super-board-merge-gate.sh" <<SH
 #!/usr/bin/env bash
 echo "\${SB_MERGE_CALLER:-<unset>} \$*" >> "\$FAKE_DIR/gate.calls"
@@ -88,7 +97,7 @@ if [ "\$pre" = 1 ]; then
   echo "preflight: ok"
   exit 0
 fi
-exec bash "$ROOT/.claude/bin/super-board-merge-gate.sh" "\$@"
+exec bash "$GK/.claude/bin/super-board-merge-gate.sh" "\$@"
 SH
 chmod +x "$TMP/sbbin/super-board-merge-gate.sh"
 TRAIN="$TMP/sbbin/super-board-merge-train.sh"
@@ -110,6 +119,9 @@ reset_run
 [ "$rc" -eq 0 ] && ok "3 PRs: train exit 0" || fail "3 PRs: exit $rc: $(tail -8 "$TMP/t1.log")"
 [ "$(runs)" = 1 ] && ok "3 PRs: verify ran exactly once" || fail "3 PRs: verify ran $(runs) times"
 [ "$(merged_list)" = "1 2 3 " ] && ok "3 PRs: all merged" || fail "3 PRs: merged $(merged_list)"
+want_clean=$(for n in 1 2 3; do printf '. issue-%s-x %s %s\n' "$n" "$(cat "$TMP/pr$n.head")" "$n"; done)
+[ "$(cat "$TMP/clean.calls" 2>/dev/null)" = "$want_clean" ] && ok "3 PRs: the gate ran post-merge-clean once per merge (repo, branch, head, PR)" \
+  || fail "3 PRs: post-merge-clean calls: $(tr '\n' '|' < "$TMP/clean.calls" 2>/dev/null)"
 if origin_has f1 && origin_has f2 && origin_has f3; then ok "3 PRs: origin/main holds all three files"; else fail "3 PRs: files missing on origin/main"; fi
 
 # ── 2. Một PR làm đỏ (#5 thêm file `bad`): chia đôi tìm đúng nó, hai PR còn lại vẫn merge.
@@ -134,7 +146,7 @@ grep -q -- "--pr 7 .*--preflight" "$TMP/gate.calls" && ok "1 PR: preflight ran b
 card_branch 8 k8
 printf '%s %s\n' "$(cat "$TMP/pr8.head")" "0000000000000000000000000000000000000000" > "$TMP/bad.receipt"
 reset_run
-( cd "$W/review" && bash "$ROOT/.claude/bin/super-board-merge-gate.sh" --config "$CFG" --pr 8 --expect-head "$(cat "$TMP/pr8.head")" --train-receipt "$TMP/bad.receipt" ) >"$TMP/t4.log" 2>&1; rc=$?
+( cd "$W/review" && bash "$GK/.claude/bin/super-board-merge-gate.sh" --config "$CFG" --pr 8 --expect-head "$(cat "$TMP/pr8.head")" --train-receipt "$TMP/bad.receipt" ) >"$TMP/t4.log" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && [ "$(merged_list)" = "8 " ] && ok "wrong-tree receipt: PR still merged" || fail "wrong-tree receipt: exit $rc merged=$(merged_list): $(tail -6 "$TMP/t4.log")"
 [ "$(runs)" = 1 ] && ok "wrong-tree receipt: gate verified (receipt did not skip)" || fail "wrong-tree receipt: verify ran $(runs) times"
 

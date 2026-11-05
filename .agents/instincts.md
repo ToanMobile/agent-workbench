@@ -822,3 +822,27 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** Phần đuôi là giá trị shell tính lúc chạy; scanner tĩnh không mô hình được mọi cách shell gán biến, đổi thư mục và tạo symlink. Mỗi điều kiện cấu trúc thêm vào chỉ đóng một dạng (cùng gốc INSTINCT-045).
 - **Quy tắc phòng ngừa & Cách fix:** Không làm lại luật 'tiền tố đã biết' cho đích có biến không biết trong session_lock/trunk_write. Muốn giảm chặn oan thì đổi phía hành vi (agent ghi file bằng tool Write, body qua --body-file, đường dẫn literal) chứ không nới scanner. Mọi đề xuất nới guard shell phải kèm corpus phải-chặn từ 4 vòng T0237 (scratchpad đã xoá; các dạng liệt kê ở Hiện tượng) trước khi review.
 - **Lệnh kiểm tra:** `Replay corpus lệnh bị chặn qua trunk_write (scratchpad T0237: extract.py + replay.py) và thử các dạng ở Hiện tượng; dạng nào được cho qua là fail-open.`
+
+---
+
+### [INSTINCT-105] run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main
+- **Ngày phát hiện:** 2026-11-03
+- **Hiện tượng lỗi:** run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main
+- **Nguyên nhân:** (1) vòng thu kết quả của tests/run_impacted.sh bỏ qua file test không còn trên đĩa ([ -f $t ] || continue): scratch merge gate bị xoá giữa lượt thì mọi test bị bỏ, suite PASS ran=0 dù đã chạy rc=1. (2) .agents/devkit của worktree trỏ về kit ở main checkout: hook sinh lại ngữ cảnh dựng AGENTS.md từ essentials.md CŨ của main, ghi đè phần sửa essentials của worktree, gate sau đó kiểm cây sai
+- **Quy tắc phòng ngừa & Cách fix:** (1) Runner tổng hợp lấy rc thật của test đã khởi chạy (.rc/.log) dù file đã mất; thư mục kit mất ⇒ FAIL; chỉ bỏ qua tên chưa từng chạy (nhánh fix/run-impacted-false-green). (2) Worktree sửa universal-agent-devkit/rules/essentials.md: trước mỗi lần gate chạy git status; AGENTS.md lệch bản commit thì chép lại bằng git show HEAD:AGENTS.md rồi mới gate; không commit bản AGENTS.md do hook sinh lại
+
+---
+
+### [INSTINCT-106] Luồng tự động qua agent ngoài (PM/grok) xanh trên fixture nhưng hỏng khi chạy thật
+- **Ngày phát hiện:** 2026-11-04
+- **Hiện tượng lỗi:** Luồng tự động qua agent ngoài (PM/grok) xanh trên fixture nhưng hỏng khi chạy thật
+- **Nguyên nhân:** Fixture tự tạo .antigravity-pm.json và grok giả; chạy thật trên worktree PR thì PM leo lên checkout chính (không có config) và grok headless dừng vì lệnh cần xin quyền, không có VERDICT
+- **Quy tắc phòng ngừa & Cách fix:** Luồng nhiều agent phải có một lượt chạy THẬT đầu-cuối trên chính PR (agent thật, worktree thật, pm home thật) trước khi nói xong; fixture chỉ chứng minh logic, không chứng minh môi trường
+
+---
+
+### [INSTINCT-107] Cắt output ocr-review bằng tail làm review gate đòi thêm vòng OCR
+- **Ngày phát hiện:** 2026-11-04
+- **Hiện tượng lỗi:** Cắt output ocr-review bằng tail làm review gate đòi thêm vòng OCR
+- **Nguyên nhân:** review_gate nhận fallback delegate qua dòng 'LLM endpoint unusable/no valid LLM endpoint' trong output; '| tail -2' cắt mất dòng đó nên lượt OCR không được tính (PR #977: 29/36 lần chặn vì đòi OCR)
+- **Quy tắc phòng ngừa & Cách fix:** Chạy ocr-review không pipe qua tail/head; chạy nó TRƯỚC lời gọi agent review, và --from phải phủ mọi commit từ verified head

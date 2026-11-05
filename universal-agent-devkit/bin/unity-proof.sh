@@ -34,8 +34,12 @@ if [ -f "$project/Temp/UnityLockfile" ] && pgrep -f "projectPath $project( |$)" 
   echo "unity-proof: a Unity is already running on $project" >&2; exit 2
 fi
 
-# Một Editor batchmode trên máy, cùng khóa với unity-batch.sh. macOS không có flock(1).
-UNITY_LOCK_PATH="${UNITY_BATCH_LOCK:-$HOME/.config/universal-agent-devkit/unity-batch.lock}"
+# Một Editor batchmode trên máy: cùng khoá với unity-batch.sh và pool `unity` của heavy_slot (<slot dir>/unity-1.lock, P5 04/11).
+# SB_HEAVY_SLOT_HELD=1 (không UNITY_BATCH_LOCK): tiến trình cha đang giữ khoá đó, không xin lại. UNITY_LOCK_WAIT_S (mặc định 3600)
+# giới hạn lúc chờ: quá hạn thì exit 2. macOS không có flock(1).
+UNITY_LOCK_PATH="${UNITY_BATCH_LOCK:-${SB_HEAVY_SLOT_DIR:-$HOME/.claude/super-board/locks}/unity-1.lock}"
+UNITY_LOCK_SKIP=0
+[ -z "${UNITY_BATCH_LOCK:-}" ] && [ "${SB_HEAVY_SLOT_HELD:-}" = "1" ] && UNITY_LOCK_SKIP=1
 UNITY_LOCK_PY=""
 UNITY_LOCK_SENTINEL=""
 
@@ -60,15 +64,37 @@ release_unity_lock() {
 }
 
 acquire_unity_lock() {
+  [ "$UNITY_LOCK_SKIP" = "1" ] && return 0
   mkdir -p "$(dirname "$UNITY_LOCK_PATH")" || { echo "unity-proof: cannot create unity lock dir" >&2; exit 2; }
   UNITY_LOCK_SENTINEL="$(mktemp "${TMPDIR:-/tmp}/unity-proof-sentinel.XXXXXX")" || {
     echo "unity-proof: cannot create unity lock sentinel" >&2; exit 2; }
-  python3 - "$UNITY_LOCK_PATH" "$UNITY_LOCK_SENTINEL" <<'PY' &
+  python3 - "$UNITY_LOCK_PATH" "$UNITY_LOCK_SENTINEL" "${UNITY_LOCK_WAIT_S:-3600}" <<'PY' &
 import fcntl, os, sys, time
 path, sentinel = sys.argv[1], sys.argv[2]
-os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+try:
+    wait_s = max(0.0, float(sys.argv[3]))
+except ValueError:
+    wait_s = 3600.0
+os.makedirs(os.path.dirname(path) or ".", mode=0o700, exist_ok=True)
 fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-fcntl.flock(fd, fcntl.LOCK_EX)
+deadline, told = time.monotonic() + wait_s, False
+while True:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+    except OSError:
+        try:
+            holder = os.pread(fd, 32, 0).decode("ascii", "replace").strip() or "?"
+        except OSError:
+            holder = "?"
+        if time.monotonic() >= deadline:
+            with open(sentinel + ".busy", "w") as fh:
+                fh.write(holder)
+            sys.exit(3)
+        if not told:
+            print(f"unity-proof: waiting for the Unity lock {path} (held by pid {holder}, up to {wait_s:g}s)", file=sys.stderr, flush=True)
+            told = True
+        time.sleep(0.2)
 open(sentinel + ".held", "w").close()
 while os.path.exists(sentinel):
     time.sleep(0.05)
@@ -81,7 +107,12 @@ PY
   UNITY_LOCK_PY=$!
   while [ ! -f "${UNITY_LOCK_SENTINEL}.held" ]; do
     if ! kill -0 "$UNITY_LOCK_PY" 2>/dev/null; then
-      echo "unity-proof: unity machine lock failed" >&2
+      if [ -f "${UNITY_LOCK_SENTINEL}.busy" ]; then
+        echo "unity-proof: unity lock busy past UNITY_LOCK_WAIT_S=${UNITY_LOCK_WAIT_S:-3600}s (pid $(cat "${UNITY_LOCK_SENTINEL}.busy")): $UNITY_LOCK_PATH" >&2
+        rm -f "${UNITY_LOCK_SENTINEL}.busy"
+      else
+        echo "unity-proof: unity machine lock failed" >&2
+      fi
       exit 2
     fi
     sleep 0.05
