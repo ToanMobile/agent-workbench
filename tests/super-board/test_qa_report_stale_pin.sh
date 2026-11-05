@@ -3,7 +3,8 @@
 #  P1 dòng tiêu đề `[qa] [report] … @ <sha>` là lời khai; head chỉ được nhắc ở thân ("head <sha> tới sau lượt tôi chạy") không làm report
 #     thành report của head (code cũ: token là tiền tố của head -> bỏ ghim).
 #  P2 commit merge sửa tay (evil merge) sau sha QA -> code chưa QA (code cũ: --no-merges bỏ sót). P3 merge giải conflict bằng tay -> như P2.
-#  P3c đối chứng: gộp main sạch sau sha QA -> qua.
+#  P3c đối chứng: gộp main sạch sau sha QA -> qua. P3u: merge driver union sạch (dạng autosync #570) -> qua.
+#  P1b/P1d chặn hồi quy của luật tiêu đề: token tiêu đề không phải commit, hay chỉ là sha main -> lời khai lấy từ thân.
 #  P4 head bị amend / force-push (sha QA không còn là tổ tiên của head) với code khác -> từ chối (code cũ: bỏ qua).
 #  P4c đối chứng: amend chỉ đổi message (cùng cây) -> qua.
 #  P5 report không có sha ở tiêu đề, thân nêu hai sha nhánh, sha cũ còn code sau đó -> từ chối (code cũ: lấy sha "tốt nhất" -> qua).
@@ -55,6 +56,11 @@ Did: tested ${H:0:10}
 ![s](https://raw.githubusercontent.com/o/r/${H}/docs/super-board/runs/x/s.png)
 ✅ Done: AC1"; check "$H"; passed "P1c dạng chuẩn, thân + URL ảnh nêu head"
 
+# P1d (advisor): tiêu đề chỉ nêu sha của main (không phải sha nhánh) -> không làm lời khai; sha cũ ở thân còn code sau -> vẫn từ chối
+meta "[qa] [report] ✅ pass · PR #5 @ $(git rev-parse --short=10 main)
+Did: tested ${Q:0:10}
+✅ Done: AC1"; check "$H"; refused "P1d tiêu đề chỉ nêu sha main, thân nêu sha cũ"
+
 # P2 evil merge: gộp main, sửa tay code trong commit merge
 branch p2; git checkout -q main && echo m2 > m && git add m && git commit -qm "main: m2"
 git checkout -q p2 && git merge -q --no-ff --no-commit main 2>/dev/null; echo evil >> c && git add c && git commit -qm "merge main (hand-edited)"
@@ -72,6 +78,16 @@ H=$(git rev-parse HEAD); qa_at "$Q"; check "$H"; refused "P3 merge giải confli
 branch p3c; git checkout -q main && echo m3 > m3 && git add m3 && git commit -qm "main: m3"
 git checkout -q p3c && git merge -q --no-edit main; H=$(git rev-parse HEAD)
 qa_at "$Q"; check "$H"; passed "P3c chỉ gộp main sạch sau sha QA"
+
+# P3u (advisor: autosync #570 đẩy merge(X, base) dựng bằng driver gộp): file merge=union hai phía cùng sửa, `git merge` tự gộp
+#     sau sha QA -> merge sạch theo driver, qua.
+git checkout -q main && printf 'log.txt merge=union\n' > .gitattributes && echo base > log.txt && git add .gitattributes log.txt \
+  && git commit -qm "main: union file"
+branch p3u; echo pr-line >> log.txt && git commit -qam "p3u: log line" && Q=$(git rev-parse HEAD)
+git checkout -q main && echo main-line >> log.txt && git commit -qam "main: log line"
+git checkout -q p3u && git merge -q --no-edit main >/dev/null 2>&1; H=$(git rev-parse HEAD)
+[ "$(git rev-list --parents -n 1 HEAD | wc -w | tr -d ' ')" = 3 ] || fail "P3u fixture: merge union không tạo commit merge"
+qa_at "$Q"; check "$H"; passed "P3u merge driver union sạch sau sha QA"
 
 # P4 amend có đổi code
 branch p4; echo amended >> c && git add c && git commit -q --amend -m "p4: build (amended)"; H=$(git rev-parse HEAD)

@@ -105,9 +105,10 @@ class GitError(RuntimeError):
 
 
 def _git(repo, *args, ok=(0,)):
-    """(mã thoát, stdout đã strip) của git; mã ngoài `ok` hay quá 10 s -> GitError. Subject không phải UTF-8 thay bằng U+FFFD."""
+    """(mã thoát, stdout đã strip) của git; mã ngoài `ok` hay quá 60 s -> GitError. Subject không phải UTF-8 thay bằng U+FFFD.
+    60 s (như audit-check): merge-tree / diff trên repo Unity lúc 6 board chạy; lỗi ở đây thành cổng người (exit 7), không lặng lẽ qua."""
     try:
-        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, errors="replace", timeout=10)
+        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, errors="replace", timeout=60)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitError(f"git {args[0]}: {type(exc).__name__}") from exc
     if r.returncode not in ok:
@@ -165,15 +166,17 @@ def stale_qa(comments, pr_author, head, repo, base):
     lines, _ = latest_qa(comments, pr_author)
     if lines is None or not head:
         return None
-    header = next((l for l in lines if QA_HEADER.match(l)), "")
-    claims = [s for s in (_commit(repo, t) for t in sorted(set(SHA_TOKEN.findall(header)))) if s]
-    if not claims:
-        claims = [s for s in (_commit(repo, t) for t in sorted(set(SHA_TOKEN.findall("\n".join(lines))))) if s]
-    if not claims:
-        return None
+    # head/base trước: repo hỏng (rev-parse 128) không được làm mọi token thành "không phải commit" rồi lặng lẽ qua.
     head_sha, base_sha = _commit(repo, head), _commit(repo, base)
     if not head_sha or not base_sha:
         raise GitError(f"không đọc được {'head ' + head if not head_sha else 'base ' + base}")
+    header = next((l for l in lines if QA_HEADER.match(l)), "")
+    claims = [s for s in (_commit(repo, t) for t in sorted(set(SHA_TOKEN.findall(header)))) if s]
+    # Tiêu đề chỉ là lời khai khi nó nêu ít nhất một commit KHÔNG thuộc base (sha main ở tiêu đề không thay sha nhánh ở thân).
+    if not any(not _is_ancestor(repo, s, base_sha) for s in claims):
+        claims = [s for s in (_commit(repo, t) for t in sorted(set(SHA_TOKEN.findall("\n".join(lines))))) if s]
+    if not claims:
+        return None
     if head_sha in claims:
         return None
     own, foreign = [], []
