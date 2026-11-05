@@ -225,8 +225,9 @@ run_case 23 "$TMP/red-odd.log" 1 "$TMP/green.log" 0
 
 # Ca 14: trước lần chạy lại mốc `at` của merge lock phải được làm mới, để gate khác không coi khoá của verify + retry dài là bỏ
 # quên (STALE_AFTER) và chiếm khoá giữa lúc retry. Lần 1 ghi mốc 0 (không phụ thuộc đồng hồ); lần 2 phải thấy mốc khác 0.
-LOCK_AT="$WT/.claude/super-board/inflight/merge.lock/at"
-LOCK_PID="$WT/.claude/super-board/inflight/merge.lock/pid"
+WT_LOCK="$(cd "$WT" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/super-board/merge.lock"
+LOCK_AT="$WT_LOCK/at"
+LOCK_PID="$WT_LOCK/pid"
 cat > "$TMP/zero-stamp-red.sh" <<SH
 echo 0 > '$LOCK_AT'; cat '$TMP/red-timeout.log'
 SH
@@ -280,7 +281,7 @@ SH
   [ "$CASE_RC" -eq "$5" ] && [ "$CASE_RUNS" -eq 1 ] && [ "$LEFT" = "$2" ] \
     && ok "lock taken over during $6: no retry, no merge, other gate's lock kept (exit $5, runs=1)" \
     || fail "lock taken over during $6 (rc=$CASE_RC runs=$CASE_RUNS lock pid=$LEFT, want $5, 1, $2): $(why "$1")"
-  rm -rf "$WT/.claude/super-board/inflight/merge.lock"
+  rm -rf "$WT_LOCK"
 }
 # PR3: ca 17-20 cần khoá giữ suốt verify: chế độ bi quan (SB_MERGE_OPTIMISTIC=0).
 export SB_MERGE_OPTIMISTIC=0
@@ -290,7 +291,7 @@ stolen_case 29 999997 "$TMP/red-mixed.log" 1 11 "a real FAIL verify"
 
 # Ca 20: không làm mới được mốc khoá (thư mục khoá chỉ đọc — như khi gate khác vừa rm -rf khoá sau lúc kiểm pid) → coi như mất
 # khoá: không chạy lại, không merge (exit 4).
-LOCK_D="$WT/.claude/super-board/inflight/merge.lock"
+LOCK_D="$WT_LOCK"
 if [ "$(id -u)" -eq 0 ]; then
   echo "- skip: lock stamp refresh failure (root writes into a chmod 555 directory)"
 else

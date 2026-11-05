@@ -159,7 +159,7 @@ issue() {   # issue <K> [labels comma]
 }
 reset() {
   rm -rf "$F"; mkdir -p "$F/labeled"; PRS_ROWS=""; printf '[]\n' > "$F/prs.json"; : > "$F/writes"; : > "$F/calls"
-  rm -f "$INF"/[0-9]* "$STATE" "$COMMON/super-board/merge-queue.labeled" "$ATT" "$COMMON/super-board/merge-queue.lock.pid" "$COMMON/super-board/merge-queue.pending"; rm -rf "$INF/merge.lock"
+  rm -f "$INF"/[0-9]* "$STATE" "$COMMON/super-board/merge-queue.labeled" "$ATT" "$COMMON/super-board/merge-queue.lock.pid" "$COMMON/super-board/merge-queue.pending"; rm -rf "$COMMON/super-board/merge.lock"
   rm -f "$COMMON/super-board/merge-queue.inflight" "$COMMON/super-board/merge-queue.basemoved"   # #676: trạng thái train nền theo PR
 }
 run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait "$@" ) >"$TMP/out" 2>"$TMP/err"; }
@@ -244,18 +244,18 @@ sleep 60 & LIVE=$!; PIDS="$PIDS $LIVE"
 printf 'PID=%s\nLANE=build\n' "$LIVE" > "$INF/77"
 run_q; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "no batching: 1 PR labelled 1 min ago, a board worker alive → the train runs now" || fail "no batching, busy: rc=$rc calls=$(calls): $(cat "$TMP/err")"
-: > "$F/calls"; : > "$F/reads"; mkdir -p "$INF/merge.lock"
-echo "$LIVE" > "$INF/merge.lock/pid"; ps -o pgid= -p "$LIVE" | tr -d ' ' > "$INF/merge.lock/pgid"; hostname > "$INF/merge.lock/host"; date +%s > "$INF/merge.lock/at"
+: > "$F/calls"; : > "$F/reads"; mkdir -p "$COMMON/super-board/merge.lock"
+echo "$LIVE" > "$COMMON/super-board/merge.lock/pid"; ps -o pgid= -p "$LIVE" | tr -d ' ' > "$COMMON/super-board/merge.lock/pgid"; hostname > "$COMMON/super-board/merge.lock/host"; date +%s > "$COMMON/super-board/merge.lock/at"
 run_q
 [ "$(calls)" = 1 ] && ok "  … a live merge.lock holder does not delay it" || fail "  … merge.lock delayed the train: calls=$(calls)"
 # Lượt thứ hai cùng PR + head: mốc gắn nhãn lấy từ merge-queue.labeled, không đọc lại timeline (tránh chạm giới hạn GitHub).
 grep -q '^timeline' "$F/reads" && fail "  … the second tick re-read the label timeline: $(cat "$F/reads")" || ok "  … second tick: labelled times come from the cache (no timeline read)"
 # Queue không bao giờ dọn merge.lock của gate: khoá còn nguyên sau lượt có holder sống, và sau lượt có holder chết đã quá stale-after.
-[ -d "$INF/merge.lock" ] && ok "  … the queue leaves a live holder's merge.lock alone" || fail "  … merge.lock was removed (live holder)"
-: > "$F/calls"; echo 999999 > "$INF/merge.lock/pid"; echo 999999 > "$INF/merge.lock/pgid"; echo $(( $(date +%s) - 6000 )) > "$INF/merge.lock/at"
+[ -d "$COMMON/super-board/merge.lock" ] && ok "  … the queue leaves a live holder's merge.lock alone" || fail "  … merge.lock was removed (live holder)"
+: > "$F/calls"; echo 999999 > "$COMMON/super-board/merge.lock/pid"; echo 999999 > "$COMMON/super-board/merge.lock/pgid"; echo $(( $(date +%s) - 6000 )) > "$COMMON/super-board/merge.lock/at"
 run_q
-[ "$(calls)" = 1 ] && [ -d "$INF/merge.lock" ] && ok "  … and a dead holder's stale merge.lock: train still runs, lock not reaped by the queue" || fail "  … dead stale merge.lock: calls=$(calls) lock=$([ -d "$INF/merge.lock" ] && echo kept || echo removed)"
-rm -r "$INF/merge.lock"
+[ "$(calls)" = 1 ] && [ -d "$COMMON/super-board/merge.lock" ] && ok "  … and a dead holder's stale merge.lock: train still runs, lock not reaped by the queue" || fail "  … dead stale merge.lock: calls=$(calls) lock=$([ -d "$COMMON/super-board/merge.lock" ] && echo kept || echo removed)"
+rm -r "$COMMON/super-board/merge.lock"
 : > "$F/calls"; git -C "$R" worktree add -q --detach "$TMP/wt1" HEAD
 mkdir -p "$TMP/wt1/.claude/audit-gate"; : > "$TMP/wt1/.claude/audit-gate/test_run.lock"
 python3 -c 'import fcntl,sys,time;f=open(sys.argv[1],"a");fcntl.flock(f,fcntl.LOCK_EX);open(sys.argv[2],"w").close();time.sleep(60)' \

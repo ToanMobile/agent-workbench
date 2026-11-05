@@ -3980,6 +3980,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-gate-lock-shared-worktrees",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_lock_shared_worktrees.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-LOCK-SHARED-WT-01",
+          "name": "02/11 lane rmlock: khoá merge nằm trong git common dir, chung mọi worktree: gate ở worktree B thấy khoá gate ở worktree A đang giữ (exit 4 / chờ tới khi A nhả); khoá common dir của pid đã chết được reap, của pid sống giữ nguyên; REPO_PATH không phải repo git thì giữ đường cũ và nói ra",
+          "command": "bash tests/super-board/test_merge_gate_lock_shared_worktrees.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
