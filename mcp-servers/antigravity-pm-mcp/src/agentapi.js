@@ -120,6 +120,50 @@ export function agyPath() {
   return null;
 }
 
+// ---- grok (reviewer thay Antigravity khi agy bi gioi han, chu repo 03/11/2026) ---------------------------------------------
+export const GROK_MODEL = 'grok-4.7';
+const GROK_TIMEOUT_MS = 20 * 60 * 1000;
+const GROK_TIMEOUT_MAX_MS = 60 * 60 * 1000;
+const ENV_GROK_TIMEOUT = 'ANTIGRAVITY_PM_GROK_TIMEOUT_MS';
+/**
+ * Han grok theo kich thuoc diff (04/11: PR #977, 26 file / 1692 dong doi, bi giet dung 20 phut; lan chay lai ~1700 dong mat 17m51s).
+ * San 20 phut (diff < 100 dong giu dung han cu) + 1 phut moi 100 dong doi (them + xoa): 1700 dong -> 37 phut, gap doi lan chay do duoc.
+ * Khong biet so dong (git loi) thi +1 phut moi file (PR #977 trung binh 65 dong/file; danh sach file co the thieu file moi them).
+ * Tran 60 phut: grok treo cung chi chan tool MCP toi da 1 gio. ANTIGRAVITY_PM_GROK_TIMEOUT_MS dat hop le (> 0) thi THANG, khong bi tran.
+ */
+export function grokTimeoutMs({ files, lines, env = process.env } = {}) {
+  const t = Number(env[ENV_GROK_TIMEOUT]);
+  if (Number.isFinite(t) && t > 0) return t;
+  const n = (x) => (Number.isFinite(x) && x > 0 ? x : 0);
+  const extraMin = typeof lines === 'number' && Number.isFinite(lines) ? Math.floor(n(lines) / 100) : n(files);
+  return Math.min(GROK_TIMEOUT_MS + extraMin * 60 * 1000, GROK_TIMEOUT_MAX_MS);
+}
+/** Binary grok. ANTIGRAVITY_PM_GROK dat thi CHI dung no (nhu agyPath); khong thi ~/.grok/bin/grok. Khong chay duoc -> null. */
+export function grokPath() {
+  const home = process.env.HOME || os.homedir();
+  const c = process.env.ANTIGRAVITY_PM_GROK || path.join(home, '.grok/bin/grok');
+  try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { return null; }
+}
+
+/**
+ * PM tu chay grok o che do plan (chi doc) tren project, mot luot `-p`, DONG BO co tran gio (util.run giet ca nhom khi qua han).
+ * Env bo bien messaging cua phien Claude (#734, nhu agyEnv; spawn bo qua bien gia tri undefined).
+ * timeoutMs: han nguoi goi da tinh (grokTimeoutMs theo kich thuoc diff); khong truyen / khong hop le thi nhu cu (env, khong thi 20 phut).
+ * ponytail: tool MCP bi chan toi khi grok xong (toi da han tren, tran 60 phut tru khi env dat); can chay nen thi theo khuon agyStart.
+ */
+export function runGrokAudit({ grok, cwd, prompt, timeoutMs }) {
+  const env = Object.fromEntries(CLAUDE_SESSION_ENV.map((k) => [k, undefined]));
+  return run(grok, ['-m', GROK_MODEL, '--permission-mode', 'plan', '--cwd', cwd, '-p', prompt], {
+    cwd, env, timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : grokTimeoutMs(),
+  });
+}
+
+/** Ket luan cua grok: chi dong dung khuon `VERDICT: PASS|REVISE|FAIL`; pass khi moi dong VERDICT deu PASS (it nhat mot), con lai fail. */
+export function grokVerdictOf(stdout) {
+  const all = [...String(stdout || '').matchAll(/^[ \t]*VERDICT:[ \t]*(PASS|REVISE|FAIL)[ \t]*$/gm)].map((m) => m[1]);
+  return { verdict: all.length && all.every((v) => v === 'PASS') ? 'pass' : 'fail', lines: all };
+}
+
 const agyRegistryFile = () => path.join(homeStateDir(), 'agy-conversations.json');
 /** So dang ky hoi thoai agy. File hong thi NEM LOI (khong coi la rong roi ghi de: se mat model + cwd cua moi hoi thoai dang chay). */
 function readAgyRegistry() {

@@ -3387,6 +3387,760 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-watchdog-run-capped-fast",
+      "watch_files": [
+        ".claude/bin/super-board-watchdog.sh",
+        "tests/super-board/test_watchdog_run_capped_fast.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WATCHDOG-RUN-CAPPED-FAST-01",
+          "name": "03/11 lane 5: run_capped của watchdog chờ tăng dần 0,02 s ⇒ 0,5 s (10 lệnh nhanh < 3 s), timeout vẫn ra 124, mã thoát của lệnh giữ nguyên",
+          "command": "bash tests/super-board/test_watchdog_run_capped_fast.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-build-rebuild-gate-once",
+      "watch_files": [
+        ".claude/skills/super-build/SKILL.md",
+        "tests/super-board/test_rebuild_gate_once.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REBUILD-GATE-ONCE-01",
+          "name": "03/11 lane 1: mục rebuild sau review của super-build nêu đúng một gate scoped trên cây sau sửa, không gate riêng giữa chừng",
+          "command": "bash tests/super-board/test_rebuild_gate_once.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-gate-scratch-live-lock",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_scratch_live_lock.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-SCRATCH-LIVE-LOCK-01",
+          "name": "03/11 (merge gate #940): scratch của merge gate khoá bằng worktree lock khi gate còn sống — lệnh remove trần giữa lúc verify bị từ chối; cleanup/keep mở khoá trước khi gỡ",
+          "command": "bash tests/super-board/test_merge_gate_scratch_live_lock.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-review-receipt-before-rerun",
+      "watch_files": [
+        ".claude/skills/super-review/SKILL.md",
+        ".claude/bin/super-board-gate-receipt.sh",
+        "tests/super-board/test_reviewer_receipt_before_rerun.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEW-RECEIPT-RERUN-01",
+          "name": "Đợt 2 gate mục 5 (04/11): sau khi duyệt test sửa, lane Review chỉ bỏ lần chạy lại gate khi có biên nhận exit 0 đúng head + fingerprint; chưa có thì chạy gate scoped một lần",
+          "command": "bash tests/super-board/test_reviewer_receipt_before_rerun.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-agent-kit-approve-tests",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-kit",
+        "universal-agent-devkit/scripts/governance/approve_tests.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_agent_kit_approve_tests.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-APPROVE-TESTS-CMD-01",
+          "name": "Đợt 2 gate mục 2 (04/11): agent-kit approve-tests <task> ghi mục duyệt chéo từ biên bản antigravity-pm (reviewer antigravity hoặc grok, nhãn rõ); tác giả không tự duyệt",
+          "command": "bash universal-agent-devkit/tests/gates/test_agent_kit_approve_tests.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-evidence-gate-block-reason-log",
+      "watch_files": [
+        "universal-agent-devkit/hooks/test_evidence_gate.sh",
+        "universal-agent-devkit/tests/gates/test_evidence_gate_block_reason_log.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-EVIDENCE-GATE-REASON-LOG-01",
+          "name": "Đợt 2 gate mục 8 (04/11): test_evidence_gate ghi lý do giữ Stop (nhắc nào) vào log để chẩn đoán được",
+          "command": "bash universal-agent-devkit/tests/gates/test_evidence_gate_block_reason_log.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-approval-after-main-merge",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_approval_after_main_merge.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-APPROVAL-AFTER-MAIN-MERGE-01",
+          "name": "Đợt 2 gate mục 1 (04/11): duyệt test sửa (ledger + trailer Test-approved-by) còn hiệu lực sau khi gộp main vào nhánh PR; reviewer thuộc danh tính phiên bị từ chối; reviewer và auditedHead cùng một biên bản PM",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_approval_after_main_merge.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-pool-live-holder-busy",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_gate_pool_live_holder_busy.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-POOL-LIVE-HOLDER-01",
+          "name": "Đợt 2 gate lane C2 (04/11): Stop run gặp slot hàng đợi gate máy bị gate dự án khác giữ thì trả BUSY sớm theo luật B5 thay vì chờ hết 45 s",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_pool_live_holder_busy.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-regression-gate-reminder-approval-key",
+      "watch_files": [
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/bin/approval_digest.py",
+        "universal-agent-devkit/tests/gates/test_regression_gate_reminder_approval_key.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REMINDER-APPROVAL-KEY-01",
+          "name": "Đợt 2 gate mục 3 (04/11): nhắc 'test sửa chờ duyệt' khoá theo cây + digest sổ duyệt, bỏ TTL 300 s; sổ duyệt đổi thì chạy lại",
+          "command": "bash universal-agent-devkit/tests/gates/test_regression_gate_reminder_approval_key.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-review-gate-ocr-content",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/bin/ocr-review",
+        "universal-agent-devkit/tests/gates/test_review_gate_ocr_content.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-OCR-CONTENT-01",
+          "name": "Đợt 2 gate mục 6 (04/11): review_gate công nhận báo cáo OCR theo hash nội dung file thay vì mtime",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_ocr_content.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-test-run-lock-holder-session",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_test_run_lock_holder_session.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-TEST-RUN-LOCK-SESSION-01",
+          "name": "Đợt 2 gate mục 4 (04/11): khoá test_run.lock do chính phiên giữ thì trả BUSY ngay; holder cùng phiên không đọc được giờ khởi động vẫn BUSY (không thành exit 0 chỉ đọc)",
+          "command": "bash universal-agent-devkit/tests/gates/test_test_run_lock_holder_session.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-worktree-merge-gate-block-reason-log",
+      "watch_files": [
+        "universal-agent-devkit/hooks/worktree_merge_gate.sh",
+        "universal-agent-devkit/tests/gates/test_worktree_merge_gate_block_reason_log.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-WT-MERGE-GATE-REASON-LOG-01",
+          "name": "Đợt 2 gate mục 8 (04/11): worktree_merge_gate ghi một dòng log cho mỗi lần giữ và nhả Stop; state quá 1 MiB coi như không có",
+          "command": "bash universal-agent-devkit/tests/gates/test_worktree_merge_gate_block_reason_log.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-ocr-review-content-map",
+      "watch_files": [
+        "universal-agent-devkit/bin/ocr-review",
+        "universal-agent-devkit/tests/installer/test_ocr_review_content.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-OCR-REVIEW-CONTENT-01",
+          "name": "Đợt 2 gate mục 6 (04/11): ocr-review ghi content_sha256 + content_base của file đã review, hash trước khi review chạy",
+          "command": "bash universal-agent-devkit/tests/installer/test_ocr_review_content.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-approved-tests-same-second",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_approved_tests_same_second.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-APPROVED-SAME-SECOND-01",
+          "name": "#485 + đợt 2 lane A: duyệt test sửa không lệch theo giây; test sửa sau khi duyệt không còn được duyệt; fixture nằm trên nhánh feat như PR thật",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_approved_tests_same_second.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-regression-gate-reminder-throttle",
+      "watch_files": [
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/tests/gates/test_regression_gate_reminder_throttle.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REMINDER-THROTTLE-01",
+          "name": "Nhắc 'test sửa chờ duyệt' không chạy lại cả gate mỗi lần Stop khi cây và sổ duyệt không đổi (ca 4 cập nhật đợt 2: khoá theo digest, không TTL)",
+          "command": "bash universal-agent-devkit/tests/gates/test_regression_gate_reminder_throttle.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-qa-head-pin",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_qa_head_pin.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-QA-HEAD-PIN-01",
+          "name": "merge gate từ chối khi report QA mới nhất nêu sha nhánh PR mà head còn commit code sau đó (T0255)",
+          "command": "bash tests/super-board/test_merge_gate_qa_head_pin.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-shard-group-job-pool",
+      "watch_files": [
+        "universal-agent-devkit/tests/lib/job_pool.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_job_pool.sh",
+        "universal-agent-devkit/tests/gates/test_run_impacted_shared_pool.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-JOB-POOL-01",
+          "name": "04/11 Việc 2: tests/lib/job_pool.py — tối đa <size> việc cùng lúc giữa nhiều tiến trình, --alone không chạy cạnh ai, holder chết nhả slot, không có bể thì chạy ngay, dòng · start chỉ in khi đã giữ slot",
+          "command": "bash universal-agent-devkit/tests/gates/test_job_pool.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-RUNNER-SHARED-POOL-01",
+          "name": "04/11 Việc 2: hai run_impacted.sh chung DEVKIT_TEST_POOL_DIR không vượt DEVKIT_TEST_JOBS test cùng lúc, test alone chạy một mình, biến bể/JOBS không rò vào test",
+          "command": "bash universal-agent-devkit/tests/gates/test_run_impacted_shared_pool.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-shard-group",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_shard_group.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-SHARD-GROUP-01",
+          "name": "04/11 Việc 2: shard REG-DK-ALL-* của runner chạy cạnh nhau một nhóm, chung một bể và JOBS, giữ đúng một slot nặng, shard đỏ không bỏ shard cùng nhóm, DEVKIT_GATE_PARALLEL=0 giữ tuần tự",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_shard_group.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-hook-cached-python",
+      "watch_files": [
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/hardware_safety_gate_main.py",
+        "universal-agent-devkit/hooks/block_dangerous_git_main.py",
+        "universal-agent-devkit/tests/gates/test_hook_cached_python.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-HOOK-CACHED-PY-01",
+          "name": "04/11 (#967): python của hardware_safety_gate.sh / block-dangerous-git.sh là module cạnh hook, bytecode chỉ ở thư mục riêng $TMPDIR/devkit-pycache-$UID (thư mục nhóm ghi được / symlink thì không dùng, không bao giờ __pycache__ cạnh hook); thiếu hoặc hỏng module thì chặn rc 2 nêu tên module; phán quyết giữ nguyên",
+          "command": "bash universal-agent-devkit/tests/gates/test_hook_cached_python.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-pm-direct-approval",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_pm_direct_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-PM-DIRECT-APPROVAL-01",
+          "name": "04/11: test sửa được duyệt bằng biên bản antigravity-pm tra thẳng (không comment / json / trailer); phiên cùng reviewer, audit mới hơn khác blob, pm home lạ, biên bản cũ, head trên main, author tự khai, head chỉ trong history, hai biên bản cùng id đều bị từ chối",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_pm_direct_approval.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-has-edited-tests-pm-record",
+      "watch_files": [
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_has_edited_tests_pm_record.sh",
+        "tests/super-board/test_merge_gate_pm_edited_base_moved.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-HAS-EDITED-PM-01",
+          "name": "04/11: merge gate / train --has-edited-tests nhận duyệt test sửa từ biên bản PM (audit pass trên base..head) để giữ khoá và không autosync; base hỏng = bi quan",
+          "command": "bash tests/super-board/test_has_edited_tests_pm_record.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-PM-EDITED-BASE-MOVED-01",
+          "name": "04/11: merge gate / train không exit 2 'stale' khi duyệt test sửa đến từ biên bản PM và main tiến không chạm test (verify trong khoá); comment edited-tests vẫn exit 2 như #643",
+          "command": "bash tests/super-board/test_merge_gate_pm_edited_base_moved.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "pm-grok-gate-approval-e2e",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/src/prompt.js",
+        "mcp-servers/antigravity-pm-mcp/src/tasks.js",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-audit-check.py",
+        "tests/super-board/test_e2e_pm_grok_gate_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-E2E-PM-GROK-GATE-01",
+          "name": "04/11 đầu-cuối: code PM thật ghi biên bản audit grok, post-fix-gate thật đọc và duyệt test sửa không bước người; sửa sau audit, REVISE, message, phiên grok, người gọi grok đều không duyệt",
+          "command": "bash tests/super-board/test_e2e_pm_grok_gate_approval.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-scoped-no-fail-fast",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/lane_lock.py",
+        "universal-agent-devkit/tests/gates/test_gate_scoped_no_fail_fast.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-SCOPED-NO-FAIL-FAST-01",
+          "name": "04/11: lượt --scoped chạy hết suite và lộ mọi suite đỏ trong một lượt; --fail-fast bật lại; lượt không --scoped giữ fail-fast; lane_lock coi --fail-fast là việc nhẹ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_scoped_no_fail_fast.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-autosync-pm-approval",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_merge_gate_autosync_pm_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AUTOSYNC-PM-01",
+          "name": "04/11: merge gate tự gộp base (driver ma trận) cho PR có duyệt test sửa từ biên bản PM khi verify chạy post-fix-gate; comment edited-tests và pm không gate vẫn exit 14",
+          "command": "bash tests/super-board/test_merge_gate_autosync_pm_approval.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "pm-grok-timeout-by-diff",
+      "watch_files": [
+        "mcp-servers/antigravity-pm-mcp/src/agentapi.js",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/tests/grok-timeout.test.js"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-PM-GROK-TIMEOUT-01",
+          "name": "04/11: hạn grok audit theo kích thước diff (sàn 20 phút, +1 phút/100 dòng, trần 60), env ghi đè vẫn thắng",
+          "command": "cd mcp-servers/antigravity-pm-mcp && node --test tests/grok-timeout.test.js",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "review-gate-handover",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/hooks/devkit_harness.py",
+        "universal-agent-devkit/tests/gates/test_review_gate_handover.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-HANDOVER-01",
+          "name": "04/11: review gate coi gh pr create / agent-kit worktree finish|integrate / merge gate là bàn giao như git push; thông điệp chặn: P0/P1 sửa ngay, P2/P3 thành thẻ Backlog, OCR delegate không cần agent thứ hai, không cắt output bằng tail",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_handover.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-speed-report-merge-p90",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/gate_speed_report.py",
+        "universal-agent-devkit/scripts/governance/gate_runs_report.py",
+        "universal-agent-devkit/tests/gates/test_gate_speed_report_merge_p90.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-SPEED-MERGE-P90-01",
+          "name": "04/11 (#983): gate_speed_report đếm mode=scoped và in p90 merge gate thật (.merge-scratch-*, gồm chờ khoá) + lock_p90, có trong bảng --baseline",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_speed_report_merge_p90.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "selection-inputs-order-and-reject-rerun",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_selection_inputs_order.sh",
+        "universal-agent-devkit/tests/gates/test_gate_reject_rerun_cmds.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SELECTION-INPUTS-ORDER-01",
+          "name": "05/11: selection_inputs (#851) không phụ thuộc PYTHONHASHSEED; sổ PASS từng test khoá cả cây nên test glob file ngoài đồ thị chạy lại khi file đổi",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_selection_inputs_order.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-REJECT-RERUN-CMDS-01",
+          "name": "05/11: gate REJECT in lệnh chạy lại riêng từng chỗ đỏ (test đỏ của shard run_impacted.sh, lệnh suite thường) + nhắc merge gate verify một lần",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_reject_rerun_cmds.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-slot-holder-log",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/governance/gate_speed_report.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_holder_log.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-SLOT-HOLDER-984-01",
+          "name": "05/11 (#984 a): lượt xin slot pool gate ghi gate_slot vào runs.jsonl (giữ được / hết giờ), gate_speed_report in giây giữ theo loại lượt, repo và lúc merge gate chờ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_holder_log.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "essentials-pr-repo-no-local-gate",
+      "watch_files": [
+        "universal-agent-devkit/rules/essentials.md",
+        "universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_gate.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ESSENTIALS-PR-NO-LOCAL-GATE-984-01",
+          "name": "05/11 (#984): repo đi PR không chạy gate scoped ở local, push rồi merge gate --dry-run nền; repo push trunk giữ gate local",
+          "command": "bash universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_gate.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "shard-key-failclosed-994",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_gate_shard_key_enum_failclosed.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SHARD-KEY-FAILCLOSED-994-01",
+          "name": "#994: shard run_impacted.sh chỉ khoá cả cây (fail-closed) — file test chỉ glob lúc chạy đổi thì shard chạy lại và ĐỎ, không dùng lại PASS cũ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_shard_key_enum_failclosed.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-cache-ttl-3d",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_cache_ttl_3d.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-CACHE-TTL-3D-01",
+          "name": "05/11: hạn tuổi mặc định của PASS dùng lại là 3 ngày (khoá nội dung, biên nhận --full, biên nhận scoped): 2 ngày dùng lại, 4 ngày không; DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_cache_ttl_3d.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "essentials-pr-repo-no-local-regate-997",
+      "watch_files": [
+        "universal-agent-devkit/rules/essentials.md",
+        "universal-agent-devkit/rules/core-rules.md",
+        "universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_regate.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ESSENTIALS-PR-NO-LOCAL-REGATE-997-01",
+          "name": "#997: essentials bước 5 (PR repo: merge receipt), câu Git (not in a PR repo) và core-rules §19 không còn bảo repo đi PR chạy lại gate scoped local; merge gate là gate",
+          "command": "bash universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_regate.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-reject-rerun-trunc-timeout-992",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_reject_rerun_trunc_timeout.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REJECT-RERUN-TRUNC-TIMEOUT-992-01",
+          "name": "#992: khối 'Chạy lại riêng' của REJECT in '… +N' khi cắt 20 lệnh, shard TIMEOUT có lệnh cả shard, vế 'không chạy lại cả gate local' chỉ ở repo đi PR",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_reject_rerun_trunc_timeout.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "checklist-overlay-ttl-3d-992",
+      "watch_files": [
+        "universal-agent-devkit/bin/regression_checklist.py",
+        "universal-agent-devkit/tests/gates/test_checklist_overlay_ttl_3d.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-CHECKLIST-OVERLAY-TTL-3D-992-01",
+          "name": "#992: regression_checklist._overlay_fresh mặc định 3 ngày như hạn PASS của gate (2 ngày tin, 4 ngày không); DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè",
+          "command": "bash universal-agent-devkit/tests/gates/test_checklist_overlay_ttl_3d.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "review-gate-handover-merge-gate-forms-992",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_handover_merge_gate_forms.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-MERGE-GATE-FORMS-992-01",
+          "name": "#992: review_gate — merge gate --dry-run/--preflight không là bàn giao; timeout N bash …merge-gate.sh là bàn giao",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_handover_merge_gate_forms.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-lock-shared-worktrees",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_lock_shared_worktrees.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-LOCK-SHARED-WT-01",
+          "name": "02/11 lane rmlock: khoá merge nằm trong git common dir, chung mọi worktree: gate ở worktree B thấy khoá gate ở worktree A đang giữ (exit 4 / chờ tới khi A nhả); khoá common dir của pid đã chết được reap, của pid sống giữ nguyên; REPO_PATH không phải repo git thì giữ đường cũ và nói ra",
+          "command": "bash tests/super-board/test_merge_gate_lock_shared_worktrees.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-failopen-1000",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_verify_runs_gate_boundary.sh",
+        "tests/super-board/test_chain_audit_robust.sh",
+        "tests/super-board/test_qa_report_stale_pin.sh",
+        "tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+        "tests/super-board/test_merge_gate_train_receipt_pm.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-1000-VERIFY-RUNS-GATE-01",
+          "name": "#1000 mục 6: sb_verify_runs_gate không nhận echo python3 post-fix-gate.py / not-post-fix-gate.py",
+          "command": "bash tests/super-board/test_verify_runs_gate_boundary.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-CHAIN-AUDIT-01",
+          "name": "#1000 mục 7, 8: --chain-audit đọc script byte không UTF-8; head chỉ trong auditHistory -> pm-unknown",
+          "command": "bash tests/super-board/test_chain_audit_robust.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-QA-STALE-PIN-01",
+          "name": "#1000 mục 1: ghim sha QA — lời khai tiêu đề, merge sửa tay/giải conflict, amend, mọi sha own, lỗi git = exit 2",
+          "command": "bash tests/super-board/test_qa_report_stale_pin.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-QA-PIN-FETCH-01",
+          "name": "#1000 mục 2: merge gate thử lại fetch rồi exit 1, không bỏ ghim sha QA",
+          "command": "bash tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-1000-TRAIN-RECEIPT-PM-01",
+          "name": "#1000 mục 5: biên nhận train không bỏ verify khi duyệt test sửa đến từ biên bản PM (pm / pm-unknown)",
+          "command": "bash tests/super-board/test_merge_gate_train_receipt_pm.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-same-tree-reuse-d1a",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/gates/test_gate_scoped_same_tree_reuse.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SAME-TREE-REUSE-01",
+          "name": "D1(a): lượt không cưỡng bức (Stop, task, --scoped) dùng lại PASS thật cùng cây ≤ 1 h; đổi byte chạy lại; --full không dùng; quá hạn chạy lại",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_scoped_same_tree_reuse.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "rerun-skip-ttl-3d-992",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_rerun_skip_ttl_3d.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-RERUN-SKIP-TTL-3D-992-01",
+          "name": "#992: rerun_skip.json (#648) dùng hạn mặc định 3 ngày như biên nhận (7 giờ dùng lại, 4 ngày chạy lại); DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè, =0 không dùng lại",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_rerun_skip_ttl_3d.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "review-gate-handover-gtimeout-flag-value-992",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_handover_gtimeout_flag_value.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-GTIMEOUT-FLAG-VALUE-992-01",
+          "name": "#992: review_gate — gtimeout N …merge-gate.sh là bàn giao; --dry-run/--preflight làm giá trị của option khác (--subject --dry-run) không phải dry-run",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_handover_gtimeout_flag_value.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "review-gate-ocr-out-literal-hint-992",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_ocr_out_literal_hint.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REVIEW-GATE-OCR-OUT-LITERAL-992-01",
+          "name": "#992: review_gate — thông điệp thiếu OCR nhắc --out viết thẳng đường dẫn; --out $S/spec (biến) vẫn không tính, --out viết thẳng tính",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_ocr_out_literal_hint.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-opt-load-cap",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_opt_load_cap.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-OPT-LOAD-CAP-01",
+          "name": "05/11 chủ repo: hạn số merge gate chạy cùng lúc theo tải — tải ≥ số lõi thì verify lạc quan (ngoài khoá) chỉ thấy N−1 slot pool gate, slot cuối để dành cho verify trong khoá; 3 merge gate cùng lúc tối đa 1 verify lạc quan chạy suite; hết SB_MERGE_OPT_SLOT_WAIT_S thì chạy với cả pool; tải thấp và verify trong khoá như cũ",
+          "command": "bash tests/super-board/test_merge_gate_opt_load_cap.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-no-stale-verify-1012",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_conflicting_in_lock_sync.sh",
+        "tests/super-board/test_merge_gate_wait_lock_holder.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-INLOCK-SYNC-1012-01",
+          "name": "#1012 (a): GitHub báo CONFLICTING chỉ trong khoá (main dời lúc verify, chỉ file có driver gộp đặt tên) ⇒ gộp base mới, verify lại trong khoá, đẩy merge commit đồng bộ rồi merge, không exit 14; file không driver và --dry-run vẫn exit 14",
+          "command": "bash tests/super-board/test_merge_gate_conflicting_in_lock_sync.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-WAIT-HOLDER-1012-01",
+          "name": "#1012 (b): khoá merge đang bị gate sống giữ ⇒ gate lạc quan chờ nó thả rồi verify đúng một lần trên base mới; người giữ chết không chờ; hết SB_MERGE_WAIT_HOLDER_S thì verify như cũ",
+          "command": "bash tests/super-board/test_merge_gate_wait_lock_holder.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

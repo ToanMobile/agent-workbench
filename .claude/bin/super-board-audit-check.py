@@ -9,11 +9,18 @@ pm home lạ (ANTIGRAVITY_PM_STATE_HOME, HOME=/tmp/x) không phải fixture test
 pm_home_test_fixture, audit T0066 vòng 3). `--pr N`: head chưa có object trong repo thì fetch refs/pull/N/head trước (lỗi → không duyệt).
 
 CLI: super-board-audit-check.py <task_id> <sha40> [--top DIR] [--pr N]   exit 0 = khớp, 1 = không khớp / không kiểm được.
+CLI: super-board-audit-check.py --chain-audit <sha40> --base <ref> [--top DIR]   (04/11, merge gate / train --has-edited-tests)
+     exit 0 = PR sửa/xoá file đã có mà gate có thể coi là test (edited_existing) VÀ có biên bản audit pass của antigravity-pm với
+     auditedHead thuộc <base>..<sha40> (duyệt test sửa tra thẳng biên bản, post-fix-gate _pm_audit_cross_review);
+     exit 1 = không có (PR chỉ có audit lớn mà không sửa test thì không bi quan); exit 3 = không kiểm được (lỗi nạp kit / git; #1000: pm home lạ, hay head trong <base>..<sha40>
+     chỉ còn ở auditHistory mà verdicts.audit hiện hành không pass trên PR): người
+     gọi giữ đường bi quan (khoá, không autosync) nhưng không coi là có duyệt gắn head.
 """
 from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -102,7 +109,121 @@ def matches(task_id, sha, top=None):
     return isinstance(sha, str) and bool(SHA.fullmatch(sha)) and audited(task_id, top) == sha
 
 
+# Script mà post-fix-gate.suite_runner_paths đọc tiếp để tìm script tầng sau (_RUNNER_FOLLOW_EXT, cộng script không đuôi).
+FOLLOW_EXT = (".sh", ".bash", ".zsh", "")
+# \udc80-\udcff: byte không phải UTF-8 giữ nguyên qua surrogateescape (#1000), để tên file byte lạ trong script vẫn khớp đường dẫn diff.
+TOKEN = re.compile(r"[\w./\udc80-\udcff-]+")
+
+
+def _tokens(text):
+    """(token, basename của token) của một văn bản lệnh: "./bin/x" → "bin/x"."""
+    toks = {t[2:] if t.startswith("./") else t for t in TOKEN.findall(text)}
+    return toks, {os.path.basename(t) for t in toks}
+
+
+def edited_existing(top, sha, base, gate):
+    """Siêu tập các file đã có ở merge-base(base, sha) mà PR sửa/xoá và gate có thể coi là test đã có bị sửa: đường dẫn test
+    (post-fix-gate.is_test_path, nạp từ kit cạnh push_gate), hoặc file được NHẮC TÊN (nguyên token, theo đường dẫn hay tên file) trong
+    ma trận hồi quy hay trong script mà ma trận gọi, đi tiếp hai tầng như post-fix-gate.suite_runner_paths (script suite như bin/agent-kit,
+    script .py mà script .sh của suite gọi; Grok review 04/11). File không ai nhắc thì gate không bao giờ coi là script suite. Script
+    đọc ở `base`. Lỗi git/nạp/đọc ma trận → raise (người gọi coi là có)."""
+    def git(*args):
+        # #1000 (GeelyEx2 #211): script ma trận gọi có byte không phải UTF-8 làm text=True ném UnicodeDecodeError -> pm-unknown.
+        # surrogateescape như push_gate.git: byte giữ nguyên (khớp lại đúng byte ở đường dẫn diff), không chữ nào thành duyệt.
+        run = subprocess.run(["git", "-C", top, *args], capture_output=True, text=True, errors="surrogateescape", timeout=60)
+        if run.returncode != 0:
+            raise RuntimeError(f"git {args[0]}: exit {run.returncode}")
+        return run.stdout
+    parts = git("diff", "--name-status", "--no-renames", "-z", f"{base}...{sha}").split("\0")
+    paths = [parts[i + 1] for i in range(0, len(parts) - 1, 2) if parts[i][:1] in ("M", "D", "T")]
+    if not paths:
+        return []
+    if gate is None:
+        return paths   # không có kit để phân loại: mọi file đã có bị sửa/xoá đều có thể là test (siêu tập, người gọi bi quan)
+    spec = importlib.util.spec_from_file_location("sb_post_fix_gate", Path(gate.__file__).with_name("post-fix-gate.py"))
+    pfg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pfg)
+    # Ma trận đọc ở `base` như gate (Grok review 04/11), không ở cây làm việc; và ở head PR (review P2-1: gate tin rule PR nối thêm,
+    # post-fix-gate trust_additive_matrix). Không có ở một commit = commit đó không có script suite để theo.
+    toks, names = set(), set()
+    for ref in (base, sha):
+        have = subprocess.run(["git", "-C", top, "cat-file", "-e", f"{ref}:{gate.MATRIX}"], capture_output=True, timeout=60)
+        t, n = _tokens(git("cat-file", "-p", f"{ref}:{gate.MATRIX}") if have.returncode == 0 else "")
+        toks |= t
+        names |= n
+    files = [f for f in git("ls-tree", "-r", "--name-only", "-z", base).split("\0") if f]
+    followed = set()
+    for _depth in range(2):                         # script ma trận nhắc, rồi script mà chúng nhắc
+        new = [f for f in files if f not in followed and Path(f).suffix in FOLLOW_EXT and (f in toks or os.path.basename(f) in names)]
+        if not new:
+            break
+        for f in new:
+            followed.add(f)
+            t2, n2 = _tokens(git("cat-file", "-p", f"{base}:{f}"))
+            toks |= t2
+            names |= n2
+    return [p for p in paths if pfg.is_test_path(p) or p in toks or os.path.basename(p) in names]
+
+
+def chain_audit(sha, base, top=None):
+    """True khi PR (head sha) có thể đang dựa vào duyệt test sửa tra thẳng từ biên bản PM: PR sửa file test đã có (edited_existing) và
+    một audit pass của repo có auditedHead trong `git rev-list sha --not base` (tổ tiên-hoặc-chính head PR, không thuộc base); False khi
+    không. Không kiểm được (không tìm thấy kit, lỗi git) → None: người gọi giữ đường bi quan, không coi là có duyệt."""
+    top = top or repo_top()
+    gate = push_gate()
+    if not top or not isinstance(sha, str) or not SHA.fullmatch(sha) or not base:
+        print("audit-check: --chain-audit cannot check (bad repo / sha / base)", file=sys.stderr)
+        return None
+    try:
+        # PR không sửa/xoá file nào đã có thì không thể có test đã có bị sửa: False kể cả khi không thấy kit (#1000: pm-unknown nay
+        # chịu exit 2 như pm, nên không được gán cho PR chỉ thêm file).
+        if not edited_existing(top, sha, base, gate):
+            return False
+        if gate is None:
+            print("audit-check: --chain-audit cannot check (push_gate.py of the kit not found next to this script)", file=sys.stderr)
+            return None
+        # #1000 mục 4: pm home lạ không phải fixture test -> audited_heads trả [] như "không có audit" -> False (đường lỏng nhất: biên
+        # nhận cây bỏ verify). PR có sửa test mà biên bản không đáng tin = không kiểm được, không phải "không có".
+        overridden, fixture = getattr(gate, "pm_home_overridden", None), getattr(gate, "pm_home_test_fixture", None)
+        if not callable(overridden) or not callable(fixture) or (overridden() and not fixture()):
+            print("audit-check: --chain-audit cannot check (antigravity-pm state home is not ~/.antigravity-pm)", file=sys.stderr)
+            return None
+        heads = gate.audited_heads(top)
+        run = subprocess.run(["git", "-C", top, "rev-list", sha, "--not", base], capture_output=True, text=True, timeout=60)
+        if run.returncode != 0:
+            print(f"audit-check: --chain-audit cannot check (git rev-list {sha[:12]} --not {base} exit {run.returncode})",
+                  file=sys.stderr)
+            return None
+        pr_commits = set(run.stdout.split())
+        hits = [(tid, h) for tid, h in heads if h in pr_commits]
+        # #1000 mục 7: chỉ head của verdicts.audit HIỆN HÀNH (pass) là duyệt còn hiệu lực, như post-fix-gate _pm_audit_cross_review
+        # (audited_head(tid) == head). Head chỉ còn trong auditHistory (lượt sau đã REVISE) -> không kiểm được (pm-unknown), không
+        # phải False: False mở lại biên nhận cây / autosync.
+        if any(gate.audited_head(top, tid) == h for tid, h in hits):
+            return True
+    except Exception as error:   # noqa: BLE001 - biên bản / git hỏng: không kiểm được
+        print(f"audit-check: cannot read the audit records: {error.__class__.__name__}", file=sys.stderr)
+        return None
+    if hits:
+        print("audit-check: --chain-audit cannot check (the PR range matches only auditHistory heads; the current audit verdict is "
+              "not a pass on this PR)", file=sys.stderr)
+        return None
+    return False
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--chain-audit":
+        cp = argparse.ArgumentParser(prog="super-board-audit-check.py --chain-audit")
+        cp.add_argument("sha")
+        cp.add_argument("--base", required=True)
+        cp.add_argument("--top")
+        cargs = cp.parse_args(sys.argv[2:])
+        try:
+            got = chain_audit(cargs.sha, cargs.base, cargs.top)
+        except Exception as error:   # noqa: BLE001 - lỗi nạp push_gate / repo: không kiểm được, không bao giờ là "không có"
+            print(f"audit-check: --chain-audit failed: {error.__class__.__name__}", file=sys.stderr)
+            got = None
+        return 3 if got is None else 0 if got else 1
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("task_id")
     ap.add_argument("sha")

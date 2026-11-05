@@ -7,6 +7,11 @@
 #   E. gate thật `--run-tests --scoped --diff main`: lane PASS shard; main thêm commit chạm bin/other.py ⇒ merge H+main không chạy lại shard;
 #      main chạm bin/lib_c.py (lib_a.py import) ⇒ chạy lại.
 # Trước #851: lượt scoped không khoá suite run_impacted.sh và khoá của nó là khoá cả cây ⇒ U1–U3 và E1 ĐỎ. Python stdlib, bash 3.2.
+# #994 (fail-closed, 05/11): khoá chính xác theo tập chọn bị TẮT (đồ thị tĩnh không thấy file test liệt kê lúc chạy ⇒ PASS sai) — khoá
+# chính xác = khoá cả cây. U1–U3, U15, U16, U18 nay khẳng định MISS (file không liên quan đổi vẫn đổi khoá) và E1 khẳng định shard CHẠY LẠI;
+# các ca MISS khác giữ nguyên. Bật lại #851 (khi có vết input lúc chạy) thì đảo lại 7 ca này.
+# U0h (#992, đối chứng HIT): không đổi gì ⇒ keys() lần hai == k0 (cả khoá chính xác lẫn khoá cả cây) — mọi ca U1–U26 khẳng định MISS, nên
+# một keys() không tất định (khác mỗi lần gọi) cũng làm chúng xanh; U0h bắt điều đó.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
 unset DEVKIT_GATE_CACHE DEVKIT_GATE_CACHE_MAX_S DEVKIT_SUITE_CACHE_MAX_S DEVKIT_SUITE_CACHE DEVKIT_SENTINEL_MAX_S CI FLAKY_RETRY \
@@ -75,10 +80,12 @@ def reset():
 
 (k0, t0), sel0 = keys()
 print("sel", " ".join(sel0 or []))
+(k0b, t0b), _ = keys()
+print(("OK " if k0 and k0b == k0 and t0b == t0 else "BAD ") + f"U0h không đổi gì: HIT đối chứng (khoá chính xác {k0b == k0}, khoá cả cây {t0b == t0})")
 cases = [  # (nhãn, file đổi, mong HIT?)
-    ("U1 bin/other.py (không test nào đọc)", K + "bin/other.py", True),
-    ("U2 test không được chọn (test_z.sh)", K + "tests/gates/test_z.sh", True),
-    ("U3 file ngoài kit (docs/note.md)", "docs/note.md", True),
+    ("U1 bin/other.py (không test nào đọc) — #994 khoá cả cây ⇒ MISS", K + "bin/other.py", False),
+    ("U2 test không được chọn (test_z.sh) — #994 khoá cả cây ⇒ MISS", K + "tests/gates/test_z.sh", False),
+    ("U3 file ngoài kit (docs/note.md) — #994 khoá cả cây ⇒ MISS", "docs/note.md", False),
     ("U4 test được chọn (test_a.sh)", K + "tests/gates/test_a.sh", False),
     ("U5 file test đọc qua \"$DK/bin/lib_a.py\"", K + "bin/lib_a.py", False),
     ("U6 file lib_a.py import (lib_c.py)", K + "bin/lib_c.py", False),
@@ -130,13 +137,14 @@ def link_devkit():
 def outside_change():
     open(os.path.join(OUTK, "bin/x.py"), "a").write("# đổi\n")
 # B1: công cụ / đích ngoài cây của khoá tập chọn chỉ lấy từ file của tập chọn, không từ watch_files `kit/*`
-pair("U15 bin/other.py (ngoài tập chọn) nhắc công cụ cargo", lambda: None, lambda: write(K + "bin/other.py", "\n# cargo build\n"), True)
-pair("U16 đích ngoài cây chỉ bin/other.py nhắc (.agents/devkit/bin/x.py) đổi",
-     lambda: (link_devkit(), write(K + "bin/other.py", "\n# .agents/devkit/bin/x.py\n")), outside_change, True)
+pair("U15 bin/other.py (ngoài tập chọn) nhắc công cụ cargo — #994 khoá cả cây ⇒ MISS", lambda: None,
+     lambda: write(K + "bin/other.py", "\n# cargo build\n"), False)
+pair("U16 đích ngoài cây chỉ bin/other.py nhắc (.agents/devkit/bin/x.py) đổi — #994 khoá cả cây ⇒ MISS",
+     lambda: (link_devkit(), write(K + "bin/other.py", "\n# .agents/devkit/bin/x.py\n")), outside_change, False)
 pair("U17 đích ngoài cây lib_a.py (tập chọn) nhắc đổi",
      lambda: (link_devkit(), write(K + "bin/lib_a.py", "\n# .agents/devkit/bin/x.py\n")), outside_change, False)
 # M1: DEVKIT_SCOPED_TESTS gộp mọi shard — đổi phần của shard khác (tập chọn shard này giữ nguyên) không đổi khoá
-pair("U18 DEVKIT_SCOPED_TESTS thêm test shard khác (tập chọn giữ nguyên)", lambda: None, lambda: None, True,
+pair("U18 DEVKIT_SCOPED_TESTS thêm test shard khác (tập chọn giữ nguyên) — #994 khoá cả cây ⇒ MISS", lambda: None, lambda: None, False,
      sel2=SEL + "\ntests/verification/test_repo_consistency.sh")
 # B2: test runner khai ở `devkit-selection-tree:` (quét cả kit) trong tập chọn ⇒ shard chỉ khoá cả cây
 REST = "DEVKIT_IMPACTED_DIRS=!gates bash universal-agent-devkit/tests/run_impacted.sh"
@@ -183,7 +191,7 @@ printf '%s\n' "$OUT_U" | grep -E '^(sel|OK|BAD)' | sed 's/^/    /'
 if ! printf '%s\n' "$OUT_U" | grep -q '^sel tests/gates/test_a.sh tests/gates/test_b.sh$'; then
   fail "U0. tập chọn của fixture không phải {test_a, test_b}"; printf '%s\n' "$OUT_U" | tail -5
 fi
-for c in U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U13 U14 U15 U16 U17 U18 U19 U20 U21 U22 U23 U24 U25 U26; do
+for c in U0h U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U13 U14 U15 U16 U17 U18 U19 U20 U21 U22 U23 U24 U25 U26; do
   line="$(printf '%s\n' "$OUT_U" | grep -E "^(OK|BAD) $c " | head -1)"
   case "$line" in OK*) ok "${line#OK }" ;; BAD*) fail "${line#BAD }" ;; *) fail "$c: không có kết quả"; printf '%s\n' "$OUT_U" | tail -3 ;; esac
 done
@@ -207,8 +215,8 @@ else fail "E0. lane exit $r0 (mong 0), test_a chạy $c0 lần (mong 1)"; grep -
 echo 'O = 2' >> "$E/universal-agent-devkit/bin/other.py"; git -C "$E" commit -qam "main: other.py"
 merge "$TMP/m1"; mkdir -p "$TMP/m1/.claude/audit-gate"; : > "$TMP/m1/.claude/audit-gate/test_run.lock"
 gate "$TMP/m1"; r1=$?; c1=$(n E)
-if [ "$r1" = 0 ] && [ "$c1" = "$c0" ]; then ok "E1. merge H+main (main đổi bin/other.py, ngoài input tập chọn): shard dùng lại, không chạy lại"
-else fail "E1. merge exit $r1 (mong 0), test_a chạy $c0 → $c1 (mong không đổi)"; grep -E "REG-SHARD|scoped|suite_cache" "$TMP/out" | tail -5; fi
+if [ "$r1" = 0 ] && [ "$c1" -gt "$c0" ]; then ok "E1. merge H+main (main đổi bin/other.py): #994 khoá cả cây ⇒ shard chạy lại ($c0 → $c1), PASS"
+else fail "E1. merge exit $r1 (mong 0), test_a chạy $c0 → $c1 (mong tăng: #994 không dùng lại theo tập chọn)"; grep -E "REG-SHARD|scoped|suite_cache" "$TMP/out" | tail -5; fi
 
 echo 'C = 2' >> "$E/universal-agent-devkit/bin/lib_c.py"; git -C "$E" commit -qam "main: lib_c.py"
 merge "$TMP/m2"; mkdir -p "$TMP/m2/.claude/audit-gate"; : > "$TMP/m2/.claude/audit-gate/test_run.lock"

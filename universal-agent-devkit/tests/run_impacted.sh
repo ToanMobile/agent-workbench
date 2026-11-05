@@ -208,12 +208,16 @@ trap 'dk_keep_failed_logs; rm -rf "$out"' EXIT
 trap 'dk_keep_failed_logs; rm -rf "$out"; trap - INT EXIT; kill -INT $$' INT
 trap 'dk_keep_failed_logs; rm -rf "$out"; trap - TERM EXIT; kill -TERM $$' TERM
 trap 'dk_keep_failed_logs; rm -rf "$out"; trap - HUP EXIT; kill -HUP $$' HUP
-run_one() { # <test> <out dir>
+run_one() { # <test> <out dir> [alone]
   local o
   o="$2/$(printf '%s' "$1" | tr '/' '_')"
   # #473: `· start` before the test runs, `· done` after: the gate names a hung suite's RUNNING tests (started, not done), not the last one
   # that ended. Same line rules as `· done` below. A reader that is already gone: SIGPIPE here, the test is not started (nobody wants it).
-  printf '· start %s\n' "$1" >&2
+  # 04/11: in a shared pool (job_pool.py) the line is printed by job_pool.py once the test holds its slot (fd 3 = this stderr): a test that
+  # waits for another shard's tests is not running, and the gate's HANG report must not name it.
+  local fd3=-   # job_pool.py's `· start` line: fd 3 = a dup of this stderr in a pool (never reopened: /dev/stderr truncates a file on
+  # Linux), closed otherwise; job_pool.py closes it before the test, so no test ever inherits fd 3
+  if [ -n "${DEVKIT_JOB_POOL:-}" ]; then fd3=2; else printf '· start %s\n' "$1" >&2; fi
   # Stop của Grok export GROK_HOOK_*; detect() coi mọi hook con là Grok và nhả phiên sau 3 lần chặn (exit 0).
   # Bài thử nào cần Grok thì tự gán các biến đó. #660: DEVKIT_GATE_DONE (đã dùng ở trên để lọc pool này) cũng bị gỡ khỏi bài con: bài chạy
   # `run_impacted.sh --list` bên trong sẽ bị lọc mất test của chính nó (impeccable/SKILL.md). Bài nào cần danh sách thì tự gán.
@@ -231,7 +235,7 @@ run_one() { # <test> <out dir>
   # chuyển luôn PYTHONPYCACHEPREFIX vào trong đó để python3 không đẻ __pycache__ làm bẩn cây nguồn khi chạy song song,
   # kèm shim mktemp cho trường hợp BSD mktemp trên macOS bỏ qua TMPDIR khi gọi mktemp -d trần, rồi dọn sạch ngay sau khi run_bounded.py kết thúc.
   # Cả $parallel lẫn $alone đều gọi run_one trong bash -c riêng, nên _dk_tdir giữ ở phạm vi worker (tránh local bash 3.2 bị gỡ trước trap EXIT).
-  local rc=0 t0=$SECONDS
+  local rc=0 t0=$SECONDS w
   _dk_tdir="$(mktemp -d /tmp/dk-XXXXXX 2>/dev/null)" || _dk_tdir=""
   case "$_dk_tdir" in
     /tmp/dk-?*/*|/tmp/dk-) _dk_tdir="" ;;
@@ -257,10 +261,14 @@ run_one() { # <test> <out dir>
   trap '_dk_clean_tdir; trap - HUP EXIT; kill -HUP $$' HUP
   env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
        -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC -u _DEVKIT_IN_MKTEMP_SHIM -u DEVKIT_IMPACTED_DIRS -u DEVKIT_GATE_DONE \
+       -u DEVKIT_TEST_POOL_DIR -u DEVKIT_JOB_POOL ${DEVKIT_JOB_POOL:+-u DEVKIT_TEST_JOBS} \
        ${_dk_tdir:+TMPDIR="$_dk_tdir" PYTHONPYCACHEPREFIX="$_dk_tdir/pyc" PATH="$2/mkbin:$PATH"} \
        SB_HEAVY_SLOT_DIR="$o.slots" \
+       ${DEVKIT_JOB_POOL:+python3 -I "$DEVKIT_JOB_POOL" "$DEVKIT_TEST_POOL_DIR" "$JOBS" ${3:+--alone} --wait-file "$o.wait" --start-fd 3 --start-line "· start $1" --} \
        ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
-       bash "$1" >"$o.log" 2>&1 || rc=$?
+       bash "$1" 3>&"$fd3" >"$o.log" 2>&1 || rc=$?
+  # 04/11: the seconds this test waited for a slot of the gate's shared pool (job_pool.py) are not its own duration
+  [ -s "$o.wait" ] && w="$(cat "$o.wait" 2>/dev/null)" && case "$w" in ''|*[!0-9]*) ;; *) t0=$((t0 + w)) ;; esac
   _dk_clean_tdir
   trap - EXIT INT TERM HUP
   echo "$rc" >"$o.rc"
@@ -351,6 +359,14 @@ fi
 exec "$real" "$@"
 SH
 chmod +x "$out/mkbin/mktemp"
+# 04/11: post-fix-gate.py starts the shards REG-DK-ALL-GATES/WORKTREE/REST-01 side by side and gives each the same DEVKIT_TEST_POOL_DIR and
+# DEVKIT_TEST_JOBS: every test then takes one of $JOBS slots of that pool (tests/lib/job_pool.py), so the shards together never run more
+# tests at once than one shard did, and a timing test of $alone runs with no test of any shard beside it. Not set (agent-kit test, a
+# runner a test starts: run_one drops both variables): no pool, as before.
+DEVKIT_JOB_POOL=""
+[ -n "${DEVKIT_TEST_POOL_DIR:-}" ] && [ -d "$DEVKIT_TEST_POOL_DIR" ] && [ -f "$DK/tests/lib/job_pool.py" ] && command -v python3 >/dev/null 2>&1 \
+  && DEVKIT_JOB_POOL="$DK/tests/lib/job_pool.py"
+export DEVKIT_JOB_POOL DEVKIT_TEST_POOL_DIR JOBS
 # helper vắng (bản kit cũ) hay không có python3: chạy trần như trước, không chặn cả lượt test
 DEVKIT_RUN_BOUNDED=""
 [ -f "$DK/tests/lib/run_bounded.py" ] && command -v python3 >/dev/null 2>&1 && DEVKIT_RUN_BOUNDED="$DK/tests/lib/run_bounded.py"
@@ -399,7 +415,7 @@ w=0; while [ -n "$after" ] && [ -n "$alone" ] && [ ! -e "$after" ] && [ "$w" -lt
   if [ -n "$now" ] && [ "$now" != "$parent" ]; then echo "run_impacted.sh: the process that started this run ($parent) is gone: stopping, the timing tests are not run" >&2; exit 1; fi
   sleep 1; w=$((w + 1))
 done
-for t in $alone; do bash -c 'run_one "$1" "$2"' _ "$t" "$out"; done
+for t in $alone; do bash -c 'run_one "$1" "$2" "$3"' _ "$t" "$out" alone; done
 # #721: dòng hỏng của test đỏ (✖ ✘ ✗ ❌ FAIL not ok ở đầu dòng) nằm TRƯỚC 20 dòng đuôi in bên dưới. Gate-full 31/10:
 # test_game_blender_default.sh 'failures: 2' nhưng ✖ A33/A23 sớm hơn đuôi nên log không có. Tối đa 40; dòng đã ở trong đuôi không in lại.
 dk_fail_lines() { # <log>
@@ -408,9 +424,12 @@ dk_fail_lines() { # <log>
     END { if (k > cap) printf "… còn %d dòng hỏng nữa\n", k - cap; if (k) print "… (20 dòng cuối)" }' "$1" "$1" </dev/null 2>/dev/null
 }   # </dev/null: awk giả đọc stdin (test_run_impacted_order.sh) không treo khi chạy tay ở terminal (T0183)
 rc=0; n_reuse=0; n_ran=0
+# 03/11 (merge gate #940): cây bị xoá giữa lượt (scratch merge gate) ⇒ mọi file "biến mất"; bỏ qua chúng là PASS ran=0 — xanh sai.
+# Kit mất ⇒ FAIL; test đã khởi chạy (có .log/.rc) thì luôn lấy rc thật dù file không còn; tên chưa từng chạy (test bị xoá trong PR) mới bỏ qua.
+[ -d "$DK/tests" ] || { echo "✖ run_impacted.sh: thư mục kit $DK biến mất giữa lượt — không có kết quả, không bao giờ PASS"; rc=1; }
 for t in $selected; do
-  [ -f "$t" ] || continue
   o="$out/$(printf '%s' "$t" | tr '/' '_')"
+  [ -f "$t" ] || [ -e "$o.rc" ] || [ -e "$o.log" ] || continue
   if is_reused "$t"; then
     age="$(awk -F'\t' -v t="$t" '$1 == "reuse" && $2 == t { print $3; exit }' "$out/ptc.plan")"
     echo "↺ $t (PASS dùng lại trên cùng cây, chạy thật $((${age:-0} / 60)) phút trước)"

@@ -10,6 +10,8 @@ cạnh A→B khi A tham chiếu B —
   run_impacted, nhưng bắc cầu); test còn khớp stem như run_impacted (lệnh con của dispatcher gọi tên script theo stem; vào gói có
   manifest mà test ở ngoài thì phải nêu đường dẫn / module, _stem_in_scope);
   dòng `<glob> <test…>` của `<kit>/tests/impact_map.txt` (glob tương đối thư mục kit) → cạnh test→file.
+Cạnh YẾU (chế độ chọn test: decide / test_map / explain, _weak_edge): stem trần và test nhắc tên test khác mà không chạy nó chỉ chọn test
+MỘT bước (như `grep -w` của run_impacted) cộng những gì đích import / source, không đi bắc cầu qua mọi file đích nhắc tên.
 Chỉ file code (và test) là NGUỒN cạnh: tài liệu, ma trận, checklist nhắc tên hàng chục script — tính chúng thì fan-in ≥ 5 phủ nửa kit và
 bao đóng nuốt mọi thứ. Tài liệu / dữ liệu (không phải code) mà test nhắc basename như chuỗi con (`grep -F` của run_impacted, "$P/DESIGN.md"):
 ngoài đồ thị, một bước — 1–4 test đọc ⇒ đúng các test đó; ≥ 5 ⇒ lõi (test-read-by, live + [core:auto]).
@@ -68,6 +70,13 @@ PY_FROM = re.compile(r"^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+(?:\(([^)
 PY_COMMENT = re.compile(r"#[^\n]*")
 PY_IMPORT = re.compile(r"^[ \t]*import[ \t]+([\w.]+(?:[ \t]*,[ \t]*[\w.]+)*)", re.M)
 SH_SOURCE = re.compile(r"(?:^[ \t]*|[;&|({][ \t]*)(?:source|\.)[ \t]+([^\n;&|)]+)", re.M)
+# stem test GỌI (_calls): lệnh con dispatcher (`agent-kit <stem>`, `$AK <stem>`, ["bash", AK, "<stem>"]), `-m <gói.>stem`, từ đầu lệnh,
+# import Python ở bất kỳ đâu (`python3 -c "…; import x"`, heredoc `a; import x`, importlib.import_module("x"))
+DISPATCH = re.compile(r"(?:agent-kit|\bAK\b|\bAGENT_KIT\b)[\"'}\]]*[ \t,]+[\"']?([\w-]+)")
+MODULE = re.compile(r"-m[ \t]+([\w.]+)")
+CMD_WORD = re.compile(r"(?:^|[;&|(`!]|\bthen\b|\bdo\b)[ \t]*(?:exec[ \t]+|time[ \t]+)?([\w./+-]+)", re.M)
+PY_ANY_IMPORT = re.compile(r"\b(?:from[ \t]+([\w.]+)[ \t]+)?import[ \t]+([\w.]+(?:[ \t]*,[ \t]*[\w.]+)*)|import_module\([\"']([\w.]+)")
+COMMENT_AT = re.compile(r"(?:^|[ \t])#")                    # chú thích shell: `#` đầu dòng hoặc sau khoảng trắng
 TEST_RE = [re.compile(p) for p in (
     r"(^|/)tests/(.+/)?test_[^/]*\.(sh|py)$",
     r"(^|/)hooks/tests/[^/]+\.sh$",
@@ -316,10 +325,48 @@ def _stem_in_scope(test, target, fileset, text):
     return os.path.basename(root) in body or (parent + "/" + stem) in body or (parent + "." + stem) in body
 
 
-def build_graph(project, _files=None, _code=None, _reads=None):
+def _calls(body):
+    """Tên (mảnh cuối, basename) test gọi như lệnh hoặc import: DISPATCH, MODULE, CMD_WORD, PY_ANY_IMPORT."""
+    names = set(DISPATCH.findall(body)) | {m.rsplit(".", 1)[-1] for m in MODULE.findall(body)}
+    names |= {os.path.basename(w) for w in CMD_WORD.findall(body)}
+    for frm, grp, dyn in PY_ANY_IMPORT.findall(body):
+        names |= {m.strip().rsplit(".", 1)[-1] for m in grp.split(",") + [frm, dyn] if m.strip()}
+    return names
+
+
+def _only_commented(body, name):
+    """Mọi dòng chứa `name` đều có nó sau `#` chú thích (đầu dòng hay sau khoảng trắng)."""
+    for line in body.splitlines():
+        i = line.find(name)
+        if i < 0:
+            continue
+        m = COMMENT_AT.search(line)
+        if m is None or m.start() > i:
+            return False
+    return True
+
+
+def _weak_edge(test, target, body, calls):
+    """Cạnh test→target (stem trần, hoặc nhắc tên test khác không phải import / source) là YẾU khi test không CHẠY target: test khác
+    thì test shell chỉ nhắc tên nó trong chú thích (nhắc ở chỗ khác — chạy qua vòng for, dòng nối, timeout, biến, chuỗi — là mạnh; test
+    .py / .js giữ mạnh), stem thì test không gọi nó (_calls) và không nêu `<thư mục cha>/<stem>` / `<cha>.<stem>` (require("../src/x")).
+    Không đọc được test ⇒ mạnh (thừa test, không thiếu). ponytail: test gọi stem qua đường không thấy trong chữ (tên ghép lúc chạy,
+    `"$1.py"`) thì cạnh thành yếu; nâng khi bisect / trace của gate-full đêm chỉ ra commit đỏ chỉ nối với test qua cạnh yếu."""
+    if body is None:
+        return False
+    if is_test(target):
+        return test.endswith((".sh", ".bash")) and _only_commented(body, os.path.basename(target))
+    stem = os.path.basename(target).rsplit(".", 1)[0]
+    parent = os.path.basename(os.path.dirname(target))
+    return stem not in calls and not (parent and ((parent + "/" + stem) in body or (parent + "." + stem) in body))
+
+
+def build_graph(project, _files=None, _code=None, _reads=None, _weak=None):
     """{file: set(file)}: A→B khi A tham chiếu B. Mọi file trong danh sách đều là khoá. `_code` (dict) nhận thêm riêng cạnh CODE thật
     (Python import, shell `source` / `.`), không có cạnh nhắc tên / stem / impact_map: dùng cho luật dep-of-core. `_reads` (dict) nhận
-    {file tài liệu / dữ liệu: set(test nhắc basename của nó)} — một bước, ngoài đồ thị (test_readers)."""
+    {file tài liệu / dữ liệu: set(test nhắc basename của nó)} — một bước, ngoài đồ thị (test_readers). `_weak` (dict, chế độ chọn test) nhận
+    {đích: set(test)} cạnh YẾU (_weak_edge) tách khỏi đồ thị, và người đọc `.gitignore` thành test có `git check-ignore` (test chứa chuỗi
+    ".gitignore" phần lớn ghi .gitignore fixture riêng). Không truyền `_weak` (khoá cache của suite_cache): đồ thị như cũ, đủ input."""
     files = _files if _files is not None else list_files(project)
     fileset = set(files)
     graph = {p: set() for p in files}
@@ -379,7 +426,7 @@ def build_graph(project, _files=None, _code=None, _reads=None):
             by_data[base] = rest
     lens = sorted({len(b) for b in by_data}) if _reads is not None else []
     skills = skills if _reads is not None else {}
-    bodies = {}
+    bodies, stems = {}, {}
 
     def read_test(t):
         if t not in bodies:
@@ -397,7 +444,8 @@ def build_graph(project, _files=None, _code=None, _reads=None):
             out.update(named.get(t, ()))
             if test_src:                                    # stem nguyên từ, như run_impacted (chỉ test)
                 for piece in t.split("."):
-                    out.update(q for q in by_stem.get(piece, ()) if _stem_in_scope(src, q, fileset, read_test))
+                    hit = {q for q in by_stem.get(piece, ()) if _stem_in_scope(src, q, fileset, read_test)}
+                    (out if _weak is None else stems.setdefault(src, set())).update(hit)
                 for n in lens:
                     if n > len(t):
                         break
@@ -416,6 +464,26 @@ def build_graph(project, _files=None, _code=None, _reads=None):
         dep.discard(src)
         out.update(dep)
         out.discard(src)
+    if _weak is not None:   # trước impact_map: cạnh khai báo tay luôn mạnh
+        for t in [x for x in graph if is_test(x)]:
+            # ứng viên yếu: stem không trùng cạnh mạnh, test khác chỉ được nhắc tên (không import / source, không impact_map)
+            cand = (stems.get(t, set()) - graph[t]) | {b for b in graph[t] if is_test(b) and b not in code[t]}
+            cand.discard(t)
+            if not cand:
+                continue
+            body = read_test(t)
+            calls = _calls(body) if body is not None else None
+            for b in cand:
+                if _weak_edge(t, b, body, calls):
+                    graph[t].discard(b)
+                    _weak.setdefault(b, set()).add(t)
+                else:
+                    graph[t].add(b)
+        if _reads is not None:
+            readers = {t for t, sc in scans.items() if is_test(t) and "check-ignore" in sc["tok"]}
+            for p in files:
+                if os.path.basename(p) == ".gitignore":
+                    _reads[p] = set(readers)
     for a, b in _impact_map_edges(project, files, fileset):
         if a != b:
             graph[a].add(b)
@@ -483,9 +551,10 @@ def _reach(start, adj, barrier=()):
     return seen
 
 
-def test_map(project, graph=None, barrier=None):
-    """{file: sorted [test]}: T phủ F khi F trong bao đóng bắc cầu tham chiếu của T (T phủ chính nó; không đi xuyên file lõi)."""
-    code = None
+def test_map(project, graph=None, barrier=None, weak=None, code=None):
+    """{file: sorted [test]}: T phủ F khi F trong bao đóng bắc cầu tham chiếu của T (T phủ chính nó; không đi xuyên file lõi); cạnh yếu
+    T→X (`weak`) phủ X và bao đóng cạnh code (import / source) của X, như decide. Không truyền graph (truy vết commit của gate_full):
+    đồ thị đầy đủ như trước, không tách cạnh yếu — tập file liên quan rộng hơn tập decide chọn."""
     if graph is None:
         code = {}
         graph = build_graph(project, _code=code)
@@ -495,6 +564,9 @@ def test_map(project, graph=None, barrier=None):
         if is_test(t):
             for f in _reach(t, graph, barrier):
                 out.setdefault(f, set()).add(t)
+    for x, ts in (weak or {}).items():   # đích lõi: chỉ chính nó (decide không mở tiếp qua lõi)
+        for f in ({x} if x in barrier else _reach(x, code or {}, barrier)):
+            out.setdefault(f, set()).update(ts)
     return {f: sorted(ts) for f, ts in sorted(out.items())}
 
 
@@ -637,8 +709,8 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
         changed = sorted({c.replace("\\", "/") for c in changed if c})
         changed, res["head_pinned"] = pin_to_head(project, base, changed, from_tree)   # #770: path ghim nhìn theo HEAD như tree_fp
         res["changed"] = changed
-        code, reads = {}, {}
-        graph = build_graph(project, _code=code, _reads=reads)
+        code, reads, weak = {}, {}, {}
+        graph = build_graph(project, _code=code, _reads=reads, _weak=weak)
     except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as e:
         res["reasons"].append("base/đồ thị lỗi ⇒ full: %s" % e)
         res["graph_error"] = (str(e) or repr(e))[:300]
@@ -649,6 +721,7 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
     roots = core_nodes(project, graph, core)
     deps = core_deps(code, roots)
     barrier = roots | set(deps)
+    rcode = _reverse(code)
     tests, expanded = set(), set(changed)
     mx_readers = _matrix_append_readers(project, base, from_tree) if MATRIX_FILE in changed else None
     for f in changed:
@@ -681,6 +754,9 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
         up = _reach(f, rev, barrier) if f in rev else {f}
         expanded |= up
         mine = {t for t in up if is_test(t)} | reads.get(f, set())   # 1–4 test đọc tài liệu / dữ liệu: đúng các test đó, không bắc cầu
+        for x in (_reach(f, rcode, barrier) if f in rcode else {f}):   # cạnh yếu: đích là f hoặc import / source f (vào lõi, không mở tiếp)
+            if x == f or x not in barrier:
+                mine |= weak.get(x, set())
         tests |= mine
         if nnt(f) or state:
             res["docs"].append(f)
@@ -832,10 +908,14 @@ def write_core_auto(project, entries):
 
 
 def gen(project, write_core=False):
-    code, reads = {}, {}
-    graph = build_graph(project, _code=code, _reads=reads)
-    tm = test_map(project, graph, core_nodes(project, graph, code=code))
-    auto = core_auto(project, graph, reads)
+    code, reads, weak = {}, {}, {}
+    graph = build_graph(project, _code=code, _reads=reads, _weak=weak)
+    tm = test_map(project, graph, core_nodes(project, graph, code=code), weak, code)
+    full = {p: set(bs) for p, bs in graph.items()}   # _fragile đếm test tham chiếu như trước khi tách cạnh yếu: [core:auto] không phình
+    for x, ts in weak.items():
+        for t in ts:
+            full[t].add(x)
+    auto = core_auto(project, full, reads)
     out = os.path.join(common_dir(project), "postfix-gate")
     os.makedirs(out, exist_ok=True)
     head = _git(project, "rev-parse", "HEAD", check=False).stdout.decode().strip()
@@ -851,16 +931,17 @@ def gen(project, write_core=False):
 
 
 def explain(project, path):
-    code, reads = {}, {}
-    graph = build_graph(project, _code=code, _reads=reads)
+    code, reads, weak = {}, {}, {}
+    graph = build_graph(project, _code=code, _reads=reads, _weak=weak)
     rev = _reverse(graph)
     core = load_core(project)
-    tm = test_map(project, graph, core_nodes(project, graph, core, code))
+    tm = test_map(project, graph, core_nodes(project, graph, core, code), weak, code)
     fi = fan_in(graph)
     return {"file": path, "in_graph": path in graph, "is_test": is_test(path), "test_read_by": sorted(reads.get(path, ())),
             "core_glob": [g for g in core["core"] if match_pattern(path, g)], "fan_in": fi.get(path, 0),
             "dep_of_core": core_deps(code, core_nodes(project, graph, core)).get(path),
             "references": sorted(graph.get(path, ())), "referenced_by": sorted(rev.get(path, ())),
+            "weak_by": sorted(weak.get(path, ())),
             "tests": tm.get(path, []), "matrix_covered": _matrix_covers(path, _load_matrix(project)),
             "needs_no_test": default_needs_no_test(path)}
 
