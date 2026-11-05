@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # #1028: từ khoá auth `bcrypt` khớp chuỗi con làm `libcrypto_utils` (GeelyEx2 PR #143) bị gắn human-gate auth (exit 7).
-# Khớp theo ranh giới từ: tên thật (`bcrypt.hash(`, `require('bcrypt')`, `bcryptjs`) vẫn cần người, `libcrypto` thì auto.
+# Pattern `bcrypt(?!o)`: tên thật (`bcrypt.hash(`, `require('bcrypt')`, `bcryptjs`) vẫn cần người, `libcrypto` thì auto.
 # Đi đúng đường của merge gate: github-read (gh giả) → file diff → merge-policy. Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
