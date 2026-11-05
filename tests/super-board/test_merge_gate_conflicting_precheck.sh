@@ -90,7 +90,7 @@ run_case conflicting CONFLICTING
 grep -q "git merge --no-edit origin/main" "$DIR/gate.log" && grep -q -- "--expect-head" "$DIR/gate.log" \
   && ok "CONFLICTING: message says merge origin/main into the branch, push, rerun with the new --expect-head" \
   || fail "CONFLICTING: message lacks the fix: $(grep 'merge-gate' "$DIR/gate.log" | tail -3)"
-[ ! -e "$DIR/repo/.claude/worktrees/review-x/.claude/super-board/inflight/merge.lock" ] && ok "CONFLICTING: merge lock released" \
+[ ! -e "$(cd "$DIR/repo" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/super-board/merge.lock" ] && ok "CONFLICTING: merge lock released" \
   || fail "CONFLICTING: merge lock left behind"
 [ "$ORIGIN_HEAD" = "$X" ] && ok "CONFLICTING: PR branch on origin unchanged (#570)" || fail "CONFLICTING: PR branch moved ${X:0:8} -> ${ORIGIN_HEAD:0:8}"
 ls -d "$DIR"/repo/.claude/worktrees/.merge-scratch-* >/dev/null 2>&1 && fail "CONFLICTING: scratch dir left behind: $(ls -d "$DIR"/repo/.claude/worktrees/.merge-scratch-*)" \
