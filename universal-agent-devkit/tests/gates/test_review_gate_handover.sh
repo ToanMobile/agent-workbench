@@ -4,7 +4,7 @@
 #     review sau nó = OCR xong; không agent review sau, --delegate-only, helper sau ||, sửa thêm: vẫn chặn.
 #  2. Hành động bàn giao không phải push (gh pr create, agent-kit worktree finish, agent-kit integrate, super-board-merge-gate.sh)
 #     trong lượt: reply CHƯA XONG không còn bỏ qua review khi code chưa được review lúc bàn giao (trước: chỉ git push được tính).
-#  3. Thông điệp chặn: P0/P1 sửa ngay trong PR; P2/P3 thành thẻ Backlog (createTask); mode delegate không cần agent thứ hai — gọi
+#  3. Thông điệp chặn: P0..P3 sửa ngay trong PR, không hạ thành thẻ Backlog (chủ repo 06/11); bug ngoài PR thì createTask; mode delegate không cần agent thứ hai — gọi
 #     `ocr-review` TRƯỚC lời gọi Agent (cùng tin nhắn được); không cắt output bằng | tail.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -100,15 +100,16 @@ expect 0 "  … gh pr create ở lượt TRƯỚC: lượt này không bàn giao
 # ── 3. thông điệp chặn ──
 fresh; ev edit -50 t1 "$P/app.py"
 stop m1 "REVIEW_GATE_OCR=0 REVIEW_GATE_REQUIRE_OCR=0"
-grep -q 'P0/P1' "$TMP/err" && grep -q 'P2/P3' "$TMP/err" && grep -q 'Backlog' "$TMP/err" && grep -q 'createTask' "$TMP/err" \
-  && ok "thông điệp chặn: P0/P1 sửa trong PR, P2/P3 thành thẻ Backlog (createTask)" || fail "thông điệp chặn thiếu P0/P1 / P2/P3 / Backlog / createTask: $(tr '\n' ' ' < "$TMP/err")"
+grep -q 'P0\.\.P3' "$TMP/err" && grep -q 'không hạ thành thẻ Backlog' "$TMP/err" && grep -q 'createTask' "$TMP/err" \
+  && ! grep -qi 'P2/P3[^.]*không sửa' "$TMP/err" \
+  && ok "thông điệp chặn: P0..P3 sửa trong PR, không hạ thành thẻ Backlog, bug ngoài PR thì createTask" || fail "thông điệp chặn sai luật P0..P3 / Backlog / createTask: $(tr '\n' ' ' < "$TMP/err")"
 grep -q 'delegate' "$TMP/err" && grep -q 'không cần giao spec' "$TMP/err" \
   && ok "thông điệp chặn: mode delegate không cần agent thứ hai" || fail "thông điệp chặn thiếu câu mode delegate: $(tr '\n' ' ' < "$TMP/err")"
 fresh; ev edit -50 t1 "$P/app.py"; ev agent -40 t2 principal-code-reviewer
 stop m2 -; rc=$?
 [ "$rc" = 2 ] && grep -q 'ocr-review' "$TMP/err" && grep -q 'không cần' "$TMP/err" && grep -q 'TRƯỚC lời gọi Agent' "$TMP/err" \
-  && grep -q '| tail' "$TMP/err" && grep -q 'P2/P3' "$TMP/err" && ! grep -q 'giao spec đó cho một reviewer agent SAU' "$TMP/err" \
-  && ok "thông điệp thiếu OCR: OCR trước Agent trong cùng tin nhắn, không agent thứ hai, không cắt output, P2/P3 Backlog" \
+  && grep -q '| tail' "$TMP/err" && grep -q 'P0\.\.P3' "$TMP/err" && ! grep -qi 'P2/P3[^.]*không sửa' "$TMP/err" && ! grep -q 'giao spec đó cho một reviewer agent SAU' "$TMP/err" \
+  && ok "thông điệp thiếu OCR: OCR trước Agent trong cùng tin nhắn, không agent thứ hai, không cắt output, P0..P3 sửa trong PR" \
   || fail "thông điệp thiếu OCR (rc $rc): $(tr '\n' ' ' < "$TMP/err")"
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }
