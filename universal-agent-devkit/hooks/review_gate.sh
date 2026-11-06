@@ -1077,9 +1077,8 @@ lines += [
     "  B) Hoặc Skill code-review / open-code-review trên diff.",
     "  C) Nếu đổi test/CI: thêm test-architect-seti; Android đổi kiến trúc/API: android-principal-architect.",
     "  D) Hoặc Workflow 'multi-lens-audit' nếu môi trường hỗ trợ workflow.",
-    "Finding P0/P1: sửa ngay trong PR này (theo CLASS, không chỉ instance) rồi review lại.",
-    "Finding P2/P3: KHÔNG sửa trong PR (mỗi lần sửa là lần sửa mới, gate đòi review lại) — tạo thẻ Backlog (skill createTask)",
-    "  rồi ghi số thẻ vào báo cáo.",
+    "Finding P0..P3: sửa ngay trong PR này (theo CLASS, không chỉ instance) rồi review lại; không hạ thành thẻ Backlog",
+    "  (chủ repo 06/11). Bug thật ngoài phạm vi PR thì tạo thẻ (skill createTask) rồi ghi số thẻ vào báo cáo.",
     "`ocr-review` ra mode delegate (không có LLM endpoint): không cần giao spec cho agent thứ hai — gọi `ocr-review` TRƯỚC",
     "  lời gọi Agent review (cùng một tin nhắn được, lệnh OCR đứng trước); một agent review sau nó là đủ.",
 ]
@@ -1091,8 +1090,8 @@ if ocr_missing:   # the agent review is done: say exactly what is left
         *(['  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm>'] if need_ws else []),
         *([f'  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm khác> --from {since_base[:12]}'
            "   (phần đã commit sau lần xác minh cuối: lệnh không --from chỉ xem phần chưa commit)"] if since else []),
-        "rồi xử lý phát hiện: P0/P1 sửa ngay trong PR (sửa code thì review lại); P2/P3 không sửa trong PR, tạo thẻ Backlog (skill",
-        "createTask) và ghi số thẻ vào báo cáo. Máy chưa có LLM endpoint thì lệnh tự rơi về spec delegation (mode delegate): không cần",
+        "rồi xử lý phát hiện: P0..P3 sửa ngay trong PR (sửa code thì review lại), không hạ thành thẻ Backlog; bug thật ngoài PR thì",
+        "tạo thẻ (skill createTask) và ghi số thẻ vào báo cáo. Máy chưa có LLM endpoint thì lệnh tự rơi về spec delegation (mode delegate): không cần",
         "giao spec cho agent thứ hai — gọi `ocr-review` đúng phạm vi trên TRƯỚC lời gọi Agent review (cùng một tin nhắn được, lệnh OCR",
         "đứng trước), một agent review sau nó là đủ. Đừng cắt output của lệnh (| tail, | head): gate nhận fallback qua dòng đầu",
         "'no valid LLM endpoint' / 'LLM endpoint unusable'.",
