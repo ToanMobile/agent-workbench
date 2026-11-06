@@ -20,7 +20,7 @@ Mục tiêu (chủ repo, 01/11): "tăng chất lượng 5 repo cũng như nâng 
 - Tốc độ không phải là tự động: ghi rõ thẻ gỡ được tín hiệu đụng tay nào (ở app với `Port:`, ở board workbench với `Kit:` mức a), hoặc ghi "chỉ tiết kiệm giờ máy".
 
 ## 3. Thẻ mới
-- P2/P3 từ review chỉ tối ưu nội bộ kit thì ghi vào PR, không tạo thẻ Backlog.
+- **Không đẩy lỗi vào Backlog** (lệnh chủ repo 06/11, nguyên văn: "vụ p0,p1 thì làm còn các p2,p3 v.v.. Thì đưa vô backlog remove rule này cho tôi đi để nó xử lý hết ko đưa backlog"): mọi lỗi hoặc phát hiện review (P0, P1, P2, P3) gặp khi đang làm thì sửa luôn trong cùng task/PR, kèm oracle và gate; không tạo thẻ Backlog, không chỉ ghi vào PR. Việc nằm ngoài phạm vi §1 thì bỏ, không tạo thẻ.
 
 ## 4. Tự sửa cấu hình hỏng, không hỏi (lệnh chủ repo 01/11: "tự sửa config cho mọi quyền mục đích auto 100%")
 - Cấu hình repo/kit bị hỏng làm luồng tự động đứng (`.git/config` như `core.bare`/`core.worktree`, `.git/info/exclude`, config super-board, `.antigravity-pm.json`, hook kit lệch bản kit): agent tự trả về trạng thái tốt đã biết (bản trước khi hỏng, bản của kit, hoặc patch đã đo), không hỏi người dùng. Ghi lại bản cũ, lệnh đã chạy và cách kiểm vào RESULT của phiên.
