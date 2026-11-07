@@ -1751,6 +1751,31 @@ for cmd in "${VERIFY[@]}"; do
       say "verify timed out (exit ${VRC}) but the scratch tree could not be reset; not retrying"
     fi
   fi
+  # Gate speed v26 mục 7: đỏ CHỈ ở guard của điểm gộp ([merge-guard] của base) ⇒ chạy lại mỗi guard đỏ đúng một lần; guard nào vẫn đỏ thì
+  # lượt vẫn đỏ. Đỏ rồi xanh: ghi comment PR, không ghi biên nhận cây (lượt sau kiểm lại).
+  if [ "$VRC" -eq 1 ] && GUARD_RED=$(sb_merge_guard_red_ids "$VERIFY_LOG" "$SCRATCH" "$BASE_SHA"); then
+    GUARD_STILL=""; GUARD_FLAKY=""
+    for gid in $GUARD_RED; do
+      git -C "$SCRATCH" reset -q --hard "$MERGED_SHA" 2>/dev/null && git -C "$SCRATCH" clean -fdq 2>/dev/null \
+        || { say "scratch tree could not be reset before re-running ${gid}; not retrying"; GUARD_STILL="$GUARD_STILL $gid"; continue; }
+      say "merge-guard ${gid} red; re-running it once"
+      echo "[merge-gate] merge-guard re-run: ${gid}" >>"$VERIFY_LOG"
+      if sb_merge_guard_rerun "$SCRATCH" "$gid" >>"$VERIFY_LOG" 2>&1; then GUARD_FLAKY="$GUARD_FLAKY $gid"; else GUARD_STILL="$GUARD_STILL $gid"; fi
+    done
+    git -C "$SCRATCH" reset -q --hard "$MERGED_SHA" 2>/dev/null && git -C "$SCRATCH" clean -fdq 2>/dev/null \
+      || { say "scratch tree could not be restored to ${MERGED_SHA} after the guard re-run"; GUARD_STILL="${GUARD_STILL:- restore}"; }
+    if [ -z "$GUARD_STILL" ]; then
+      VRC=0; TREE_RECEIPT=""
+      say "merge-guard(s)${GUARD_FLAKY} red on the first run, green on one re-run: not rejecting the PR"
+      if [ "$DRY" -eq 1 ]; then say "dry run: would comment the merge-guard re-run on PR #${PR}"
+      else
+        gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "[reviewer] [flaky] Merge gate: merge-guard\`${GUARD_FLAKY}\` đỏ ở lượt verify đầu, xanh khi chạy lại riêng đúng một lần; các kiểm khác đều đạt. Ghi nhận flaky (nhạy tải), PR không bị gán red." >/dev/null 2>&1 \
+          || say "could not comment the merge-guard re-run on PR #${PR}"
+      fi
+    else
+      say "merge-guard(s) red on the re-run too:${GUARD_STILL}"
+    fi
+  fi
   if [ "$VRC" -ne 0 ] && red_only_on_base "$VRC" "$VERIFY_LOG" "$cmd"; then
     say "verify red only on suites that are red on origin/${BASE} too (#251): not rejecting the PR"
     VRC=0

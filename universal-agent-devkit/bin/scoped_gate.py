@@ -134,6 +134,22 @@ def _sections(text):
     return out
 
 
+def merge_guard_ids(project, base=""):
+    """Gate speed v26 mục 7: id mục [merge-guard] của .agents/gate-core.txt trên cây này ∪ của commit `base` (`git show`): một PR không gỡ
+    được guard bằng cách xoá id khỏi danh sách. Thứ tự: cây này trước, id chỉ base có nối sau. Không có file / mục: []."""
+    out = []
+    try:
+        with open(os.path.join(project, CORE_FILE), encoding="utf-8") as f:
+            out = list(_sections(f.read()).get("merge-guard", []))
+    except (OSError, ValueError):
+        out = []
+    if base:
+        r = _git(project, "show", "%s:%s" % (base, CORE_FILE), check=False)   # base chưa có file: chỉ danh sách của cây này
+        if r.returncode == 0:
+            out += [i for i in _sections(r.stdout.decode("utf-8", "replace")).get("merge-guard", []) if i not in out]
+    return list(dict.fromkeys(out))
+
+
 def load_core(project):
     """{"core": [glob], "smoke": [path], "core_smoke": [path]} từ .agents/gate-core.txt ([core] ∪ [core:auto], [smoke], [core-smoke]);
     thiếu file → DEFAULT_CORE."""
@@ -990,7 +1006,8 @@ def cap_selection(project, decision, selected, added, rules, changed, rebuild, u
         named = _named_tests(cmd)
         if not any(p.startswith(KIT_TEST_PREFIXES) for p in named):
             return True                                     # suite không phải kit (app, mcp-server, Gradle, Unity), shard của ma trận cũ
-        return (t.get("id") in guards or t.get("id") == "SCOPED-EXTRA" or any(p in keep or p in core_smoke for p in named)
+        # guard của điểm gộp không qua đây: gate tiêm nó SAU cap (mục 7), nên `guards` chỉ còn để giữ chữ ký cho người gọi cũ
+        return (t.get("id") == "SCOPED-EXTRA" or any(p in keep or p in core_smoke for p in named)
                 or watches(t.get("id"), outer))
     gone = [t for t in selected if t.get("command") and not stays(t)]
     gone_ids = {t.get("id") for t in gone}

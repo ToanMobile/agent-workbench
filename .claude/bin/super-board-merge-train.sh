@@ -392,6 +392,13 @@ rerun_one_test() {
       && python3 "$HERE/super-board-heavy-slot.py" -- bash "$1" ) >>"$VLOG" 2>&1 8>&-
 }
 FLAKY=()
+GUARD_FLAKY=()   # gate speed v26 mục 7: guard của điểm gộp đỏ rồi xanh khi chạy lại một lần
+# note_guard_flaky <PR> <guard id>: ghi vào PR (comment) guard đỏ rồi xanh khi chạy lại. Lỗi gh chỉ cảnh báo: PR đã xanh.
+note_guard_flaky() {
+  echo "train-guard-flaky: $1 $2"
+  gh pr comment "$1" ${REPO:+--repo "$REPO"} --body "[reviewer] [flaky] Merge-train: merge-guard \`$2\` đỏ ở lượt verify đầu, xanh khi chạy lại riêng đúng một lần; các kiểm khác đều đạt. Ghi nhận flaky (nhạy tải), PR không bị gán red." >/dev/null 2>&1 \
+    || say "could not comment the merge-guard re-run on PR #${1}"
+}
 # note_flaky <PR> <test>: ghi rõ flaky vào PR (comment) và vào thẻ riêng của test (một thẻ bug mở, không trùng). Lỗi gh chỉ cảnh báo: PR đã xanh.
 note_flaky() {
   local p="$1" t="$2" found
@@ -488,6 +495,23 @@ verify_set() {
           case " ${FLAKY[*]-} " in *" $flaky_test "*) ;; *) FLAKY+=("$flaky_test") ;; esac; say "${flaky_test} passed on re-run: flaky, not blaming any PR"; break
         fi
         say "${flaky_test} red on re-run too"; echo "[merge-train] re-ran ${flaky_test}: red again" >>"$VLOG"
+      fi
+      # Gate speed v26 mục 7: đỏ CHỈ ở guard của điểm gộp ([merge-guard] của base, kiểm `rows == 1` ở trên không áp cho id guard) ⇒ chạy lại
+      # mỗi guard đỏ đúng một lần như merge gate; guard nào vẫn đỏ thì lượt đỏ. Xanh hết: ghi comment cho PR khi merge (note_guard_flaky).
+      local gid guard_red guard_still=""
+      if [ "$rc" -eq 1 ] && guard_red=$(sb_merge_guard_red_ids "$VLOG" "$SCRATCH" "$BASE_SHA"); then
+        for gid in $guard_red; do
+          git -C "$SCRATCH" reset -q --hard "$merged" 2>/dev/null && git -C "$SCRATCH" clean -fdq 2>/dev/null || { guard_still="$guard_still $gid"; continue; }
+          say "merge-guard ${gid} red; re-running it once"
+          echo "[merge-train] merge-guard re-run: ${gid}" >>"$VLOG"
+          sb_merge_guard_rerun "$SCRATCH" "$gid" >>"$VLOG" 2>&1 || guard_still="$guard_still $gid"
+        done
+        git -C "$SCRATCH" reset -q --hard "$merged" 2>/dev/null && git -C "$SCRATCH" clean -fdq 2>/dev/null || guard_still="${guard_still:- restore}"
+        if [ -z "$guard_still" ]; then
+          for gid in $guard_red; do case " ${GUARD_FLAKY[*]-} " in *" $gid "*) ;; *) GUARD_FLAKY+=("$gid") ;; esac; done
+          say "merge-guard(s) $(echo $guard_red) passed on re-run: flaky, not blaming any PR"; break
+        fi
+        say "merge-guard(s) red on re-run too:${guard_still}"
       fi
       say "red [$*]: $(tail -3 "$VLOG" | tr '\n' ' ' | cut -c1-300)"
       return 1
@@ -627,7 +651,8 @@ while [ "${#TODO[@]}" -gt 0 ]; do
         run_gate "$p" 1 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" ${PASS[@]+"${PASS[@]}"}
       fi
       case "$GRC" in
-        0)     MERGED_OK+=("$p"); echo "train-result: $p merged"; for t in ${FLAKY[@]+"${FLAKY[@]}"}; do note_flaky "$p" "$t"; done ;;
+        0)     MERGED_OK+=("$p"); echo "train-result: $p merged"; for t in ${FLAKY[@]+"${FLAKY[@]}"}; do note_flaky "$p" "$t"; done
+               for t in ${GUARD_FLAKY[@]+"${GUARD_FLAKY[@]}"}; do note_guard_flaky "$p" "$t"; done ;;
         79|9)  early_results; echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;   # R7: halt / readiness của gate đi thẳng tới caller
         11)    echo "train-result: $p red"; echo "train-red: $p"; GATERED+=("$p")   # R7: verify riêng của gate đỏ = PR về Build, có dòng train-red
                detail_tail "$p" "$GATE_ERR" ;;   # gate in đuôi log verify đỏ ra stderr

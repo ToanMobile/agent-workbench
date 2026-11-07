@@ -7306,6 +7306,34 @@ def main():
               f" ({len(scoped.get('docs') or [])} file tài liệu, {scoped.get('elapsed_s', '?')} s){RESET}")
         if args.core_touched:
             print(f"  • {YELLOW}core-touched ({len(args.core_touched)} file lõi; review 2/2 soi kỹ): {', '.join(args.core_touched[:10])}{RESET}")
+        # Gate speed v26 mục 7: guard của điểm gộp (scratch merge gate / train / integrate) tiêm CUỐI, sau cap: PR không chạm kit vẫn chạy nó,
+        # không bao giờ vào deferred_to_heavy, luôn chạy thật (merge_guard: không khoá, không biên nhận, không same-tree, không rerun-skip).
+        # Danh sách = [merge-guard] của cây này ∪ của base; id có trong danh sách mà ma trận không có ⇒ một suite đỏ mang tên id đó.
+        if at_merge_point(project):
+            guard_ids = scoped_gate.merge_guard_ids(project, scoped.get("base_sha") or "")
+            by_id = {}
+            for _r in rules:
+                for _t in _r.get("mandatory_regression_tests", []):
+                    by_id.setdefault(_t.get("id"), (_r, _t))
+            have = {t.get("id"): t for t in regression_tests}
+            for gid in guard_ids:
+                if gid in have:
+                    have[gid]["merge_guard"] = True
+                    continue
+                _r, _t = by_id.get(gid) or (None, None)
+                if _t is None or not _t.get("command"):
+                    regression_tests.append({"component": "merge-guard", "id": gid, "name": "merge-guard thiếu trong ma trận",
+                                             "command": f"echo '✖ merge-guard {gid}: id có trong [merge-guard] nhưng không có trong ma trận'; exit 1",
+                                             "files": [], "parallel_safe": False, "status": "NOT_RUN", "duration": "-", "merge_guard": True})
+                    continue
+                regression_tests.append({
+                    "component": _r.get("component", "UnknownComponent"), "id": gid, "name": _t.get("name"), "command": _t.get("command"),
+                    "impacted_command": None, "files": [], "untested_exit": _t.get("untested_exit"),
+                    "parallel_safe": _t.get("parallel_safe") is True, "status": "NOT_RUN", "duration": "-", "merge_guard": True,
+                    "covered_by": None})
+            if guard_ids:
+                _deferred["suites"] = [s for s in _deferred["suites"] if s not in set(guard_ids)]
+                print(f"  • {CYAN}merge-guard: {len(guard_ids)} suite {tr('chạy thật ở điểm gộp', 'run for real at the merge point')}{RESET}")
         if not regression_tests:
             print(f"  • {CYAN}{tr('0 test liên quan: thay đổi này không có test trực tiếp nào phải chạy', '0 related tests: this change has no direct test to run')}{RESET}")
     # what the change itself needs (coverage verdicts): chụp TRƯỚC khi thu hẹp, lượt --scoped thu hẹp hết thì vẫn exit 0, không phải "không test nào khớp"
@@ -7456,6 +7484,8 @@ def main():
     selection_cache = {}
     if sc is not None:
         for t in regression_tests:
+            if t.get("merge_guard"):   # gate speed v26 mục 7: guard của điểm gộp luôn chạy thật, không khoá nội dung
+                continue
             src = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t)   # "cache": false
             # #645 lượt task / --scoped: chỉ suite cache được theo khoá chính xác — không run_impacted.sh (tập chọn theo lịch sử git, `--list`
             # mỗi lượt), không Gradle (đồ thị build ngầm, P0-2); FAIL của chúng vẫn vào sổ khoá ở khối F1 sau các suite
@@ -7572,6 +7602,8 @@ def main():
 
         def reusable_suite(t):
             cmd = t["command"]
+            if t.get("merge_guard"):   # mục 7: biên nhận (full, scoped, budget, anh em) không thay được lần chạy thật của guard
+                return False
             if scoped_src:   # #785: suite khai "cache": false hoặc khớp DEVICE_SUITE vẫn chạy thật mỗi lượt kể cả khi mượn biên nhận scoped
                 src_m = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == cmd), t)
                 if src_m.get("cache") is False or DEVICE_SUITE.search(cmd):
@@ -7835,7 +7867,7 @@ def main():
         n0 = len(keyed_hits)
         for t in regression_tests:
             k = SAME_KEYS.get(id(t))
-            if not k or t.get("mode") in ("cached", "edited"):
+            if not k or t.get("mode") in ("cached", "edited") or t.get("merge_guard"):
                 continue
             try:
                 # suite_cache.blocked(): khoá cả cây của nội dung này có fail_n > 0 (FAIL ghi ở lượt khác) hoặc id bị cách ly ⇒ bỏ qua bản ghi
@@ -7999,6 +8031,7 @@ def main():
             and hygiene_ok and anti_laziness_ok and deps_ok and settings_ok
             and rerun_mode != "full"   # #678: --full dùng lại qua cached_full_pass (biên nhận đủ suite + mode "cached"), không qua bản ghi skip
             and not edited_early and not tests_touched and not device_selected and not unkeyed_selected
+            and not any(t.get("merge_guard") for t in regression_tests)   # mục 7: guard của điểm gộp không bỏ qua theo bản ghi skip
             and not _rerun_skip_expired(rerun_path)
             and rerun_skip_match(_read_rerun_skip(rerun_path), rerun_fp, rerun_mode, selected_ids, rerun_local_sha)
             and not _rerun_cache_blocks(sc, regression_tests, lookup_key, rerun_path)
