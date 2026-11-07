@@ -134,7 +134,8 @@ fi
 if [ -n "$ITEMS_FILE" ]; then
   ITEMS=$(cat "$ITEMS_FILE")
 else
-  ITEMS=$("$HERE/super-board-card.sh" --owner "$OWNER" --number "$NUMBER" items)
+  ITEMS=$(SB_CARD_HOME_REPO=$(jq -r '.repo.remote // empty' "${CONFIG:-/dev/null}" 2>/dev/null) \
+    "$HERE/super-board-card.sh" --owner "$OWNER" --number "$NUMBER" items)
 fi
 
 # `variant` was removed in v3.0.0 (labels route cards now). Absent or "full" is

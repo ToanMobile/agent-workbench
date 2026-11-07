@@ -63,6 +63,7 @@ if [ -n "$CONFIG" ]; then
   [ -n "$OWNER" ]  || OWNER=$(echo "$CJ" | jq -r '.project.owner // ""')
   [ -n "$NUMBER" ] || NUMBER=$(echo "$CJ" | jq -r '.project.number // ""')
   [ -n "$REPO" ]   || REPO=$(echo "$CJ" | jq -r '.repo.remote // ""')
+  [ -n "${SB_CARD_HOME_REPO:-}" ] || SB_CARD_HOME_REPO=$(echo "$CJ" | jq -r '.repo.remote // ""')
 fi
 [ -n "$REPO" ] || REPO=$(git remote get-url origin 2>/dev/null || true)
 REPO=$(echo "$REPO" | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
@@ -230,11 +231,33 @@ items() {
   items_once
 }
 
+# 07/11: Board #1 chứa thẻ #91 của repo khác; runner đọc theo số trong repo mình, trúng PR #91 và dừng rc=79.
+# Có SB_CARD_HOME_REPO (runner hoặc --config đặt) thì chỉ trả thẻ repo nhà; số thẻ bị lọc nằm ở .skippedForeign.
+# Không còn thẻ nào của repo nhà: nhiều khả năng cấu hình sai repo, không lọc để board khỏi trống im lặng.
+home_items() {  # stdout: JSON board
+  local raw rc=0 home out
+  raw=$(items) || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  home=$(printf '%s' "${SB_CARD_HOME_REPO:-}" | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+  if [ -z "$home" ]; then printf '%s\n' "$raw"; return 0; fi
+  if ! out=$(printf '%s' "$raw" | jq -e --arg h "$home" '
+      def repo: .content.repository // "" | ascii_downcase;
+      ($h | ascii_downcase) as $home
+      | [ .items[] | select(repo != "" and repo != $home) ] as $foreign
+      | if ($foreign | length) > 0 and ([ .items[] | select(repo == $home) ] | length) == 0 then empty
+        else (.items - $foreign) as $keep
+             | { items: $keep, totalCount: ($keep | length), skippedForeign: [ $foreign[].content.number ] } end'); then
+    echo "warning: no card of SB_CARD_HOME_REPO=$home on this board (wrong repo in config?); not filtering" >&2
+    printf '%s\n' "$raw"; return 0
+  fi
+  printf '%s\n' "$out"
+}
+
 case "$VERB" in
   move)    [ $# -eq 2 ] || { echo "usage: move <issue> <Status>" >&2; exit 64; }; move "$1" "$2" ;;
   status)  [ $# -eq 1 ] || { echo "usage: status <issue>" >&2; exit 64; }; read_card "$1"; echo "$STATUS_NAME" ;;
   item-id) [ $# -eq 1 ] || { echo "usage: item-id <issue>" >&2; exit 64; }; item_id "$1"; echo "$ITEM_ID" ;;
   ids)     load_ids; jq -n --arg p "$PROJECT_ID" --arg f "$FIELD_ID" --argjson o "$OPTIONS_JSON" '{projectId:$p, fieldId:$f, options:$o}' ;;
-  items)   items ;;
+  items)   home_items ;;
   *) echo "unknown verb: $VERB" >&2; exit 64 ;;
 esac

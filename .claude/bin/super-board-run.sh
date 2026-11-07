@@ -245,12 +245,19 @@ fetch_project_items() {
   # lại) từng giết runner ngay. Đọc lại có backoff + jitter (SB_FETCH_RETRY_DELAYS, giây). Mã halt có chủ đích
   # (RUNNER_HALT_CODES, vd 79: github-read halt sau lỗi mạng lặp lại) trả về ngay, không đọc lại.
   # Hỏng hết lượt: trả mã của lần đọc cuối, cache cũ giữ nguyên.
-  local fresh rc=0 d pause delays
+  local fresh rc=0 d pause delays foreign
   read -r -a delays <<< "${SB_FETCH_RETRY_DELAYS-10 30 60}"   # tách theo khoảng trắng, không glob ("*" là một giá trị)
   for d in ${delays[@]+"${delays[@]}"} ""; do
     rc=0
-    fresh=$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" items) || rc=$?
-    if [ "$rc" -eq 0 ]; then PROJECT_ITEMS_JSON="$fresh"; CARD_WRITE_BLOCKED=""; return 0; fi   # board mới: thẻ đã Blocked nằm đúng cột
+    fresh=$(SB_CARD_HOME_REPO=$(jq -r '.repo.remote // empty' "${CONFIG_PATH:-/dev/null}" 2>/dev/null) \
+      "$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" items) || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      PROJECT_ITEMS_JSON="$fresh"; CARD_WRITE_BLOCKED=""   # board mới: thẻ đã Blocked nằm đúng cột
+      foreign=$(printf '%s' "$fresh" | jq -c '.skippedForeign // []' 2>/dev/null) || foreign=""
+      if [ -n "$foreign" ] && [ "$foreign" != "${SKIPPED_FOREIGN:-[]}" ]; then log "⚠ board has cards of another repo, skipped: $foreign"; fi
+      SKIPPED_FOREIGN="${foreign:-${SKIPPED_FOREIGN:-[]}}"
+      return 0
+    fi
     case "$RUNNER_HALT_CODES" in *" $rc "*) return "$rc" ;; esac
     [ -n "$d" ] || break
     case "$d" in *[!0-9]*|?????*) d=10 ;; esac   # giá trị lạ (1.5, chữ, quá dài): dùng 10s, không để lỗi số học giết runner
