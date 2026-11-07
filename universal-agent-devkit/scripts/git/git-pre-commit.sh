@@ -7,10 +7,11 @@
 # Runs `post-fix-gate.py --staged`: the gate's static checks (secrets and
 # forbidden files, lazy placeholders, floating / http:// dependencies, perf,
 # swallowed errors, raw logging) on the STAGED content — also for commits made
-# outside any agent (terminal, IDE). Then the matrix suites the staged files touch,
-# when quick: not Gradle/Unity/xcodebuild, last recorded run ≤ 30 s, 120 s in all, a
-# hang (> 60 s) warns instead of blocking (DEVKIT_PRECOMMIT_TESTS=all | 0,
-# DEVKIT_PRECOMMIT_MAX_S, _BUDGET_S, _TEST_TIMEOUT). The rest stays `postfix-gate --run-tests`.
+# outside any agent (terminal, IDE). No suite runs by default (DEVKIT_PRECOMMIT_TESTS=0):
+# the task gate and merge gate run them. =light runs the matrix suites the staged files
+# touch, when quick: not Gradle/Unity/xcodebuild, last recorded run ≤ 30 s, 120 s in all, a
+# hang (> 60 s) warns instead of blocking; =all adds heavy ones (DEVKIT_PRECOMMIT_MAX_S,
+# _BUDGET_S, _TEST_TIMEOUT). Acceptance stays `postfix-gate --run-tests --scoped`.
 #
 # Blocks (exit 1) on a REJECT, and fails closed when the gate cannot give a
 # verdict (no python3, crash, git error): an unchecked commit is not a clean one.
@@ -38,6 +39,8 @@ blocked() {
 command -v python3 >/dev/null 2>&1 \
   || blocked "$(L "không có python3 — không quét được secret, commit bị chặn." "python3 not found — cannot scan for secrets, commit blocked.")"
 
+# Gate speed v26 item 2: no suite at commit unless asked (the task gate and merge gate run them).
+export DEVKIT_PRECOMMIT_TESTS="${DEVKIT_PRECOMMIT_TESTS:-0}"
 OUT="$(CLAUDE_PROJECT_DIR="$ROOT" python3 "$DEVKIT_ROOT/bin/post-fix-gate.py" --staged --json 2>&1)"
 RC=$?
 LAST="$(printf '%s\n' "$OUT" | tail -n 1)"
@@ -55,8 +58,13 @@ case "$RC:$STATE" in
   3:clean)
     exit 0 ;;  # nothing of the user's staged (only DevKit links)
   2:clean)
-    printf '%s\n' "$REPORT" | grep -E "Suite (nhẹ|không)|Light suites|Suites (not|that)" || true
-    echo "✔ DevKit pre-commit: $(L "kiểm tĩnh sạch + suite nhẹ của file đã stage XANH (suite nặng: cổng Stop / nightly)" "static checks clean + light suites of the staged files green (heavy suites: Stop gate / nightly)")"
+    case "$DEVKIT_PRECOMMIT_TESTS" in
+      light|all)
+        printf '%s\n' "$REPORT" | grep -E "Suite (nhẹ|không)|Light suites|Suites (not|that)" || true
+        echo "✔ DevKit pre-commit: $(L "kiểm tĩnh sạch + suite của file đã stage XANH (còn lại: gate của task / merge gate / heavy gate)" "static checks clean + suites of the staged files green (the rest: task gate / merge gate / heavy gate)")" ;;
+      *)
+        echo "✔ DevKit pre-commit: $(L "kiểm tĩnh sạch, không chạy suite (no suites run; DEVKIT_PRECOMMIT_TESTS=light để chạy)" "static clean, no suites run (DEVKIT_PRECOMMIT_TESTS=light to run them)")" ;;
+    esac
     exit 0 ;;
   2:unreadable)
     printf '%s\n' "$REPORT" >&2

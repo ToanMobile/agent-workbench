@@ -12,7 +12,7 @@ DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 export DEVKIT_LANG=en
-unset CLAUDE_PROJECT_DIR TARGET_DIR DEVKIT_PRECOMMIT DEVKIT_ALLOW_LARGE
+unset CLAUDE_PROJECT_DIR TARGET_DIR DEVKIT_PRECOMMIT DEVKIT_ALLOW_LARGE DEVKIT_PRECOMMIT_TESTS
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 new_repo() {
@@ -136,10 +136,11 @@ bash "$KIT" githooks uninstall >/dev/null 2>&1
   && ok "  … uninstall removes the line from the target" || fail "uninstall on a symlinked hook"
 rm -f "$HOOKS/commit-msg"
 
-# ── pre-commit runs the light regression suites the staged files touch ──────────
+# ── pre-commit runs the light regression suites the staged files touch, when asked ──
 # A commit with a proper subject could still carry code that turns the checklist red (Goods
-# 2026-09-25): tests only ran in agent sessions. Light suites (no Gradle/Unity/xcodebuild)
-# run at commit; heavy ones only with DEVKIT_PRECOMMIT_TESTS=all; =0 turns it off.
+# 2026-09-25). Gate speed v26 item 2: the hook runs no suite by default (the task gate and
+# merge gate run them); DEVKIT_PRECOMMIT_TESTS=light runs light suites (no Gradle/Unity/
+# xcodebuild), =all heavy ones too, =0 or unset runs none.
 new_repo
 mkdir -p .agents && cat > .agents/regression_matrix.active.json <<'JSON'
 {"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/main/*"],
@@ -148,15 +149,25 @@ mkdir -p .agents && cat > .agents/regression_matrix.active.json <<'JSON'
 JSON
 git add -A && DEVKIT_PRECOMMIT=0 git commit -qm "chore: add the regression matrix"
 echo "fun ok() = 1 // BROKEN" > src/main/A.kt && git add -A
-try_commit -m "feat: change the core function" && fail "code that fails a light suite was committed" \
+# Default (no DEVKIT_PRECOMMIT_TESTS): static checks only, no suite runs, and the hook says so.
+if try_commit -m "feat: change the core function"; then
+  ok "default: no suite runs, a light-red change still commits"
+  git reset -q --soft HEAD~1   # undo it: the same staged change is tried with =light below
+else
+  fail "default ran a suite or blocked: $(cat "$TMP/out")"
+fi
+! grep -q "REG-LIGHT" "$TMP/out" && ok "  … REG-LIGHT not run by default" || fail "default ran REG-LIGHT: $(cat "$TMP/out")"
+grep -q "no suites run" "$TMP/out" && ok "  … the hook says no suites ran" || fail "no 'no suites run' line: $(cat "$TMP/out")"
+! grep -q "light suites of the staged files green" "$TMP/out" && ok "  … and does not claim light suites passed" || fail "claims suites passed: $(cat "$TMP/out")"
+DEVKIT_PRECOMMIT_TESTS=light try_commit -m "feat: change the core function" && fail "code that fails a light suite was committed" \
   || { grep -q "REG-LIGHT" "$TMP/out" && ok "a failing light suite blocks the commit, named" || fail "no suite named: $(cat "$TMP/out")"; }
 grep -q "REG-HEAVY" "$TMP/out" && ok "  … a heavy suite (gradle) is named as not run here" || fail "heavy suite not mentioned"
 DEVKIT_PRECOMMIT_TESTS=0 try_commit -m "feat: change the core function" && ok "DEVKIT_PRECOMMIT_TESTS=0 skips the tests" \
   || fail "=0 still blocked: $(cat "$TMP/out")"
 echo "fun ok() = 2" > src/main/A.kt && git add -A
-try_commit -m "feat: fix the core function again" && ok "code that passes the light suite commits" || fail "green code blocked: $(cat "$TMP/out")"
+DEVKIT_PRECOMMIT_TESTS=light try_commit -m "feat: fix the core function again" && ok "code that passes the light suite commits" || fail "green code blocked: $(cat "$TMP/out")"
 echo "# readme" > README.md && git add -A
-try_commit -m "docs: explain the core function" && ! grep -q "REG-LIGHT" "$TMP/out" && ok "no suite runs when no watched file is staged" \
+DEVKIT_PRECOMMIT_TESTS=light try_commit -m "docs: explain the core function" && ! grep -q "REG-LIGHT" "$TMP/out" && ok "no suite runs when no watched file is staged" \
   || fail "docs commit ran suites / blocked: $(cat "$TMP/out")"
 
 # A suite whose last recorded run took longer than DEVKIT_PRECOMMIT_MAX_S (30 s) is skipped and
@@ -173,7 +184,7 @@ json.dump({"version": 1, "items": {"REG-SLOW": {"id": "REG-SLOW", "kind": "test"
 PY
 git add -A && DEVKIT_PRECOMMIT=0 git commit -qm "chore: add slow and hanging suites"
 echo "fun ok() = 3" > src/main/A.kt && git add -A
-t0=$(date +%s); DEVKIT_PRECOMMIT_TEST_TIMEOUT=2 try_commit -m "feat: change the core function once more"; rc=$?; t1=$(date +%s)
+t0=$(date +%s); DEVKIT_PRECOMMIT_TESTS=light DEVKIT_PRECOMMIT_TEST_TIMEOUT=2 try_commit -m "feat: change the core function once more"; rc=$?; t1=$(date +%s)
 [ "$rc" = 0 ] && ok "a suite recorded at 400 s is skipped and a hanging one times out: the commit goes through" \
   || fail "slow/hanging suite blocked the commit: $(cat "$TMP/out")"
 grep -q "REG-SLOW" "$TMP/out" && ok "  … the slow suite is named" || fail "slow suite not named: $(cat "$TMP/out")"
