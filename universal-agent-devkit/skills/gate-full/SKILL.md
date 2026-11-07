@@ -62,7 +62,8 @@ mà hoãn tới heavy gate (`scoped_gate.cap_selection`) ⇒ `deferred`, không 
 
 ## Đỏ: chia đôi + thẻ P1 (không có mốc history)
 
-0. Nhóm b (#700): suite đỏ có nhãn `"timing": true` trong ma trận, hoặc trong toàn văn log của suite MỌI khối hỏng lá (`✖/✗ …` + dòng thụt
+0. Nhóm b (#700): suite đỏ có nhãn `"timing": true` trong ma trận; suite runner kit (run_impacted / `agent-kit test`) khi MỌI đường
+   `✖ tests/…` đỏ có nhãn ở khoá gốc ma trận `"timing_paths": {"tests/…": "<bằng chứng>"}` (bằng chứng rỗng không tính); hoặc trong toàn văn log của suite MỌI khối hỏng lá (`✖/✗ …` + dòng thụt
    sâu hơn; khối có khối con chỉ xét khối con) có dấu hiệu thời gian thực / môi trường (watchdog "quá lớn / quá phức tạp…", `killed after
    …s (deadline)`, `Killed: 9`), hoặc không có khối hỏng nào mà có dòng tổng kết hook contract `ENV-BLOCKED: hook watchdog fired under
    load, no verdict` (và không có Traceback / dòng `FAIL` trần). Không bao giờ nhóm b (#749): lần đầu đỏ thật dù lần chạy lại (FLAKY_RETRY)
