@@ -5861,6 +5861,9 @@ def suite_env():
             "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD", "DEVKIT_GATE_SLOTS", "DEVKIT_GATE_SLOT_WAIT_S",
             # P3 (02/11): núm pool heavy (bin/heavy_slot.py) cũng của MỘT lần gate — lọt xuống thì gate lồng đọc trần / chờ của lượt cha
             "DEVKIT_SLOT_HEAVY_MAX", "DEVKIT_SLOT_HEAVY_WAIT_S", "DEVKIT_SLOT_HEAVY_BUDGET_S",
+            # lane D2 (07/11): ngân sách của MỘT lượt gate. GATE_TOTAL_BUDGET_S lọt xuống thì gate lồng thành _stop_like, chạy shard tuần tự
+            # (REG-DK-GATE-SHARD-GROUP-01 đỏ). DEVKIT_SLOT_PRIORITY / DEVKIT_SLOT_LOAD_WAIT_S cố ý giữ: suite của merge gate đứng đầu hàng heavy
+            "GATE_TOTAL_BUDGET_S", "DEVKIT_SLOT_ADVISORY_BUDGET_S",
             "DEVKIT_PER_TEST_CACHE",   # B2: chỉ run_in_group đặt nó, cho lệnh run_impacted.sh chuẩn của lượt này
             # #644: danh sách --scoped chỉ cho runner kit (run_in_group gắn lại): suite khác chép runner thật rồi hỏi --list thì thấy nó
             "DEVKIT_SCOPED_TESTS", "DEVKIT_SCOPED_NO_CONSISTENCY",
