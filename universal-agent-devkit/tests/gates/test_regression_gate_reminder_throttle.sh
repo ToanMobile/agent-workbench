@@ -1,20 +1,14 @@
 #!/usr/bin/env bash
-# Regression test: hooks/regression_gate.sh must not run the whole gate again on every Stop while the
-# only thing left is "an existing test was edited, a person has to review the diff".
-# Measured 2026-10-08 on OfficeReader (10 sessions in one checkout): 70 of 71 Stop-hook gate runs in 17 h
-# ended exit 2 with that reminder, 58 of them on a content that had not changed for 30 minutes, each run
-# 31-37 s (suites ~10 s, static checks the rest) and each one printing the same reminder.
-# The first Stop of a change still blocks and still runs the gate; the repeats OF THE SAME SESSION print the
-# stored reminder without running it for REGRESSION_GATE_TOUCHED_RECHECK_S seconds (default 300, 0 = always
-# run). After that the gate runs again, so the user's answer ("Duyệt") still clears the reminder. Never reused:
-# by another session (the gate result depends on the session and its transcript), for a different content
-# (also an edit inside an untracked file or a new commit), or when the reminder came with a BUSY suite.
-# This test counts SUITE runs to tell that the gate ran. Since 2026-10-15 a Stop-style gate run records the suites that passed (the gate's
-# budget_pass.json, tests/gates/test_gate_stop_run_record.sh) and the next run on the same content starts none of them, so the count is
-# no longer a proxy for "the gate ran": the gate cache is off here, and what the hook stores and when it runs the gate is judged as before.
-# What this switch hides: with the cache on, a suite that starts to fail on UNCHANGED content after an exit-2 reminder is not run again until the
-# record ages out (6 h) or the content changes (before: after the 300 s recheck), and REGRESSION_GATE_TOUCHED_RECHECK_S=0 runs the gate on every
-# Stop but no longer starts a suite that passed on the same content. The cases below that make a suite fail on unchanged content need the cache off.
+# Regression test: hooks/regression_gate.sh must not block every Stop while the only thing left is "an existing test was edited, another
+# agent has to review the diff". Measured 2026-10-08 on OfficeReader (10 sessions in one checkout): 70 of 71 Stop-hook gate runs in 17 h
+# ended exit 2 with that reminder. Gate speed v26 mục 1: the Stop runs no gate; the agent's gate run writes the "edited_test" outcome
+# (<git dir>/postfix-gate/outcomes/<fp>.json) and the Stop "blocks once with the cure, later stops only remind" for that content.
+# What this file keeps: the first Stop of a content blocks naming the file; repeats remind (no block, not a PASS); a new content (tracked,
+# untracked bytes, a new commit) is judged again; a gate run that sees a failing suite writes no outcome, so the old reminder can never
+# hide that failure.
+# Gone with the Stop gate call (plan v26 mục 1, "Remove the gate call RG:833 and result branches RG:855-1096"): the per-session stored
+# reminder that skipped the gate run, its REGRESSION_GATE_TOUCHED_RECHECK_S / DEVKIT_GATE_CACHE_MAX_S window and the approval digest
+# (tests/gates/test_regression_gate_reminder_approval_key.sh, deleted): the gate run the agent makes judges the approval sources itself.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
 export WORKTREE_TRUNK_MODE=0   # K12 (18/10): các ca ở đây là phiên sửa thẳng main (không trunk mode); ở trunk mode Stop tại main không gate (test_regression_gate_trunk_main.sh)
@@ -34,205 +28,67 @@ echo "fun ok() = 1" > src/Core.kt && echo "assert(true)" > src/test/CoreTest.kt
 RUNS="$TMP/runs"; : > "$RUNS"
 cat > .agents/regression_matrix.active.json <<JSON
 {"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt","src/test/*.kt"],
- "mandatory_regression_tests":[{"id":"REG-X","name":"core","command":"printf x >> $RUNS"}]}]}
+ "mandatory_regression_tests":[{"id":"REG-X","name":"core","command":"printf x >> $RUNS; [ ! -f $TMP/failnow ]"}]}]}
 JSON
 git add -A && git commit -qm init
 echo "fun ok() = 2" > src/Core.kt && echo "// weakened" > src/test/CoreTest.kt
 runs() { wc -c < "$RUNS" | tr -d ' '; }
-
-# This session edited the existing test (an Edit tool_use with no timestamp = this session's write).
-python3 - "$X" "$TMP/s.jsonl" <<'PY'
-import json, sys, time
-repo, tp = sys.argv[1], sys.argv[2]
-open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
-    {"type": "user", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 600)),
-     "message": {"role": "user", "content": "fix it"}},
-    {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "e1", "name": "Edit",
-        "input": {"file_path": repo + "/src/test/CoreTest.kt", "old_string": "a", "new_string": "b"}}]}}]))
-PY
+printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix it"},"uuid":"u1","sessionId":"s-y2"}' > "$TMP/s.jsonl"
 stop() { printf '{"session_id":"s-y2","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/s.jsonl" \
   | env "$@" CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
-STATE="$X/.claude/audit-gate/regression_gate.state.json"
-LOG="$X/.claude/audit-gate/regression_gate.log"
-age_reminder() { python3 -c 'import json,sys,time
-p = sys.argv[1]; d = json.load(open(p)); d["touched"]["s-y2"]["at"] = time.time() - float(sys.argv[2]); json.dump(d, open(p, "w"))' "$STATE" "$1"; }
+# gaterun [ENV=VAL …]: the agent's gate run, the command a block prints (--diff <verified_head> on this trunk branch once one is recorded)
+gaterun() {
+  local vh; vh="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verified_head") or "")' "$X/.claude/audit-gate/regression_gate.state.json" 2>/dev/null)"
+  git -C "$X" cat-file -e "${vh:-none}^{commit}" 2>/dev/null || vh=""
+  ( cd "$X" && env "$@" CLAUDE_PROJECT_DIR="$X" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --scoped --brief ${vh:+--diff "$vh"} ) >"$TMP/gate.out" 2>&1; GRC=$?; }
 
-# 1. first Stop of the change: the gate runs and blocks (unchanged behaviour)
+# 1. first Stop of the change: blocks, naming the edited test (the gate run said exit 2)
+gaterun X=1; n0="$(runs)"; stop X=1; rc=$?
+[ "$GRC" = 2 ] && [ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && [ "$(runs)" = "$n0" ] \
+  && ok "first stop: blocked once, naming the edited test; the Stop ran no suite" \
+  || fail "first stop: gate=$GRC rc=$rc runs $n0 -> $(runs) err='$(head -3 "$TMP/err")'"
+
+# 2. same content: a reminder, no block, no run, not a PASS
 stop X=1; rc=$?
-[ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && [ "$(runs)" = 1 ] \
-  && ok "first stop: the gate ran once and blocked, naming the edited test" \
-  || fail "first stop: rc=$rc runs=$(runs) err='$(head -3 "$TMP/err")'"
-
-# 2. same content, right after: the stored reminder, no gate run
+[ "$rc" = 0 ] && grep -q "src/test/CoreTest.kt" "$TMP/out" && grep -q "Vẫn chờ người duyệt" "$TMP/out" && grep -q "KHÔNG phải PASS" "$TMP/out" \
+  && [ "$(runs)" = "$n0" ] && ok "repeat stop: allowed with the reminder naming the file, no run" \
+  || fail "repeat stop: rc=$rc runs=$(runs) out='$(head -c 300 "$TMP/out")' err='$(head -2 "$TMP/err")'"
 stop X=1; rc=$?
-[ "$rc" = 0 ] && grep -q "src/test/CoreTest.kt" "$TMP/out" && grep -q "Vẫn chờ người duyệt" "$TMP/out" \
-  && ok "repeat stop: allowed with the reminder naming the file" \
-  || fail "repeat stop: rc=$rc out='$(head -c 300 "$TMP/out")' err='$(head -2 "$TMP/err")'"
-[ "$(runs)" = 1 ] && grep -q "reused, no run" "$LOG" \
-  && ok "repeat stop: the gate did NOT run again (suite run count still 1), logged as reused" \
-  || fail "repeat stop re-ran the gate: runs=$(runs) log=$(tail -2 "$LOG")"
-stop X=1; [ "$(runs)" = 1 ] && ok "a third stop in the window: still no run" || fail "third stop ran the gate (runs=$(runs))"
+[ "$rc" = 0 ] && grep -q "Vẫn chờ người duyệt" "$TMP/out" && ok "a third stop: still the reminder (never a block loop)" || fail "third stop: rc=$rc"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(1 if d.get("pass_fp") else 0)' "$X/.claude/audit-gate/regression_gate.state.json" \
+  && ok "the reminder never stores a PASS for the content" || fail "reminder stored pass_fp"
 
-# 2b. a hand-written or corrupt timestamp never crashes the hook: it just means "run the gate"
-python3 -c 'import json,sys
-p = sys.argv[1]; d = json.load(open(p)); d["touched"]["s-y2"]["at"] = 10**400; json.dump(d, open(p, "w"))' "$STATE"
-before=$(runs); stop X=1; rc=$?
-[ "$rc" = 0 ] && [ "$(runs)" -gt "$before" ] && ! grep -q Traceback "$TMP/err" \
-  && ok "a huge touched_at (OverflowError in the age): no crash, the gate runs" \
-  || fail "huge touched_at: rc=$rc runs $before -> $(runs) err='$(head -3 "$TMP/err")'"
-
-python3 -c 'import json,sys,time
-p = sys.argv[1]; d = json.load(open(p)); d["touched"]["s-y2"]["at"] = time.time(); d["touched"]["s-y2"]["lines"] = "not a list"; json.dump(d, open(p, "w"))' "$STATE"
-before=$(runs); stop X=1; rc=$?
-[ "$rc" = 0 ] && [ "$(runs)" -gt "$before" ] && ! grep -q Traceback "$TMP/err" \
-  && ok "a stored reminder whose lines are not a list is not reused: the gate runs" \
-  || fail "wrong-typed lines: rc=$rc runs $before -> $(runs) err='$(head -3 "$TMP/err")'"
-
-# 2c. another session never gets this session's reminder: its first Stop runs the gate itself
-before=$(runs)
-printf '{"session_id":"s-b","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/s.jsonl" \
-  | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rcb=$?
-[ "$(runs)" -gt "$before" ] && ok "session B's first stop ran the gate itself (it did not take A's stored reminder)" \
-  || fail "session B's first stop reused session A's reminder (runs stayed $before)"
-before=$(runs)
-printf '{"session_id":"s-b","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/s.jsonl" \
-  | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rcb2=$?
-grep -q "reused, no run" "$LOG" && ok "session B repeats its own reminder without a run" || fail "B repeat ran (log: $(tail -2 "$LOG"))"
-[ "$(runs)" = "$before" ] || fail "session B repeat ran the gate (runs $before -> $(runs))"
-python3 -c 'import json,sys
-d = json.load(open(sys.argv[1])); sys.exit(0 if "s-b" in d.get("touched", {}) and "s-y2" in d.get("touched", {}) else 1)' "$STATE" \
-  && ok "the reminders are stored per session (s-y2 and s-b side by side), B's first stop did not reuse A's" \
-  || fail "reminders not stored per session: $(python3 -c 'import json,sys; print(list(json.load(open(sys.argv[1])).get("touched", {})))' "$STATE")"
-
-# 3. REGRESSION_GATE_TOUCHED_RECHECK_S=0 turns the reuse off
-before=$(runs); stop REGRESSION_GATE_TOUCHED_RECHECK_S=0; rc=$?
-[ "$rc" = 0 ] && [ "$(runs)" -gt "$before" ] && grep -q "src/test/CoreTest.kt" "$TMP/out" \
-  && ok "REGRESSION_GATE_TOUCHED_RECHECK_S=0: the gate runs on every stop again, reminder still printed" \
-  || fail "recheck=0: rc=$rc runs=$(runs) out='$(head -c 200 "$TMP/out")'"
-
-# 4. after the window the gate runs again
-age_reminder 400
-before=$(runs); stop REGRESSION_GATE_TOUCHED_RECHECK_S=300; rc=$?
-[ "$rc" = 0 ] && [ "$(runs)" -gt "$before" ] && ok "reminder older than the window: the gate runs again" || fail "aged reminder: rc=$rc runs $before -> $(runs)"
-before=$(runs); stop REGRESSION_GATE_TOUCHED_RECHECK_S=300; [ "$(runs)" = "$before" ] && ok "and the window restarts from that run" || fail "window did not restart (runs $before -> $(runs))"
-
-# 5. the user's answer still clears the reminder once the window is over
-python3 - "$X" "$TMP/s.jsonl" <<'PY'
-import json, sys, time
-repo, tp = sys.argv[1], sys.argv[2]
-q = "Duyệt diff test src/test/CoreTest.kt?"
-iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + 5))
-rec = {"type": "user", "sessionId": "s-y2", "timestamp": iso,
-       "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]},
-       "toolUseResult": {"questions": [{"question": q, "header": "Test", "options": [
-           {"label": "Duyệt", "description": "giữ diff"}, {"label": "Không", "description": "đổi hướng"}]}],
-           "answers": {q: "Duyệt"}}}
-open(tp, "a").write(json.dumps(rec) + "\n")
-PY
-age_reminder 400
-sleep 6
+# 3. a new content is judged again: tracked edit, then an edit inside an untracked file (same status line), then a new commit
+echo "// weakened again" > src/test/CoreTest.kt
 stop X=1; rc=$?
-if [ "$rc" = 0 ] && ! grep -q "Vẫn chờ người duyệt" "$TMP/out"; then
-  ok "the user's approval clears the reminder once the window is over (the gate ran and passed)"
-else
-  fail "approval did not clear the reminder: rc=$rc runs=$(runs) out='$(head -c 300 "$TMP/out")' err='$(head -2 "$TMP/err")'"
-fi
-
-# 6. a different content never reuses the reminder
-git checkout -q -- src/test/CoreTest.kt && echo "// weakened again" > src/test/CoreTest.kt
-python3 - "$X" "$TMP/s.jsonl" <<'PY'
-import json, sys, time
-repo, tp = sys.argv[1], sys.argv[2]
-open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
-    {"type": "user", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 600)),
-     "message": {"role": "user", "content": "fix it"}},
-    {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "e2", "name": "Edit",
-        "input": {"file_path": repo + "/src/test/CoreTest.kt", "old_string": "a", "new_string": "b"}}]}}]))
-PY
-before=$(runs)
-stop X=1; rc=$?
-[ "$rc" = 2 ] && [ "$(runs)" -gt "$before" ] && ok "a new content with the test edit pending: blocked again and the gate ran" \
-  || fail "new content: rc=$rc runs=$(runs) (before $before)"
-stop X=1; rc=$?; before=$(runs)         # first repeat of the new content: its run was the blocked stop above
-stop X=1
-[ "$rc" = 0 ] && [ "$(runs)" = "$before" ] && ok "the repeat of the new content is again a reminder without a run" \
-  || fail "window not honoured after the new content (rc=$rc runs $before -> $(runs))"
-echo "scratch v1" > untracked.txt
-stop X=1            # a new untracked file changes the status: a new content
-before=$(runs)
+[ "$rc" = 2 ] && ok "a new content (tracked edit), no gate run for it yet: blocked" || fail "new content: rc=$rc"
+gaterun X=1; stop X=1; rc=$?; stop X=1; rc2=$?
+[ "$GRC" = 2 ] && [ "$rc" = 2 ] && [ "$rc2" = 0 ] && grep -q "Vẫn chờ người duyệt" "$TMP/out" \
+  && ok "the new content after its gate run: blocked once with the cure, then reminded" \
+  || fail "new content outcome: gate=$GRC rc=$rc rc2=$rc2"
+echo "scratch v1" > untracked.txt; gaterun X=1; stop X=1; stop X=1
 echo "scratch v2 with other bytes" > untracked.txt      # same git status line, other bytes
-stop X=1
-[ "$(runs)" -gt "$before" ] && ok "an edit inside an untracked file (same status, other bytes) is a new content: the gate runs" \
-  || fail "untracked edit reused the reminder (runs $before -> $(runs))"
-
-# 7. an unrelated commit leaves status and `git diff HEAD` of the dirty files alone but changes the commit range:
-#    the reminder of the old range must not be reused
-stop X=1; before=$(runs)
+stop X=1; rc=$?
+[ "$rc" = 2 ] && ! grep -q "Vẫn chờ người duyệt" "$TMP/out" && ok "an edit inside an untracked file (same status, other bytes) is a new content: no reminder, blocked" \
+  || fail "untracked edit reused the reminder (rc=$rc out='$(head -c 200 "$TMP/out")')"
+rm -f untracked.txt; gaterun X=1; stop X=1; stop X=1
 echo "other" > other.txt && git add other.txt && git commit -qm "unrelated" -- other.txt
-stop X=1
-[ "$(runs)" -gt "$before" ] && ok "a new commit (same dirty files): the gate runs, the old reminder is not reused" \
-  || fail "reminder reused across a new commit (runs $before -> $(runs))"
+stop X=1; rc=$?
+[ "$rc" = 2 ] && ! grep -q "Vẫn chờ người duyệt" "$TMP/out" && ok "a new commit (same dirty files): the old reminder is not reused, blocked" \
+  || fail "reminder reused across a new commit (rc=$rc)"
 
-# 8. a reminder that came with a BUSY suite (another run holds the lock) is not stored: once the lock is free
-#    the next Stop must run the suite, and a failing suite must block (it used to be hidden for the whole window)
-BZ="$TMP/busy"; mkdir -p "$BZ/src/test" "$BZ/.agents" && cd "$BZ" || exit 1
-git init -q . && git config user.email t@t && git config user.name t
-echo "fun ok() = 1" > src/Core.kt && echo "assert(true)" > src/test/CoreTest.kt
-RUNS2="$TMP/runs2"; : > "$RUNS2"
-cat > .agents/regression_matrix.active.json <<JSON
-{"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt","src/test/*.kt"],
- "mandatory_regression_tests":[{"id":"REG-X","name":"core","command":"printf x >> $RUNS2; [ ! -f $TMP/failnow ]"}]}]}
-JSON
-git add -A && git commit -qm init
-echo "fun ok() = 2" > src/Core.kt && echo "// weakened" > src/test/CoreTest.kt
-bstop() { printf '{"session_id":"s-y2","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/s2.jsonl" \
-  | env "$@" CLAUDE_PROJECT_DIR="$BZ" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
-python3 - "$BZ" "$TMP/s2.jsonl" <<'PY'
-import json, sys, time
-repo, tp = sys.argv[1], sys.argv[2]
-open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
-    {"type": "user", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 600)),
-     "message": {"role": "user", "content": "fix it"}},
-    {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "e1", "name": "Edit",
-        "input": {"file_path": repo + "/src/test/CoreTest.kt", "old_string": "a", "new_string": "b"}}]}}]))
-PY
-rm -f "$TMP/held"; mkdir -p "$BZ/.claude/audit-gate"
-python3 - "$BZ" "$TMP/held" <<'PY' &
-import fcntl, sys, time
-with open(sys.argv[1] + "/.claude/audit-gate/test_run.lock", "a") as f:
-    fcntl.flock(f, fcntl.LOCK_EX)
-    open(sys.argv[2], "w").close()
-    time.sleep(8)
-PY
-holder=$!
-for _ in $(seq 1 50); do [ -f "$TMP/held" ] && break; sleep 0.1; done
-bstop TEST_RUN_LOCK_WAIT_S=1; rc=$?
-[ "$rc" = 2 ] && [ "$(wc -c < "$RUNS2" | tr -d ' ')" = 0 ] && grep -q "BUSY" "$TMP/err" \
-  && ok "lock held: the stop is blocked for the edited test, the suite did not run (BUSY)" \
-  || fail "busy stop: rc=$rc ran=$(wc -c < "$RUNS2") err='$(head -4 "$TMP/err")'"
-wait "$holder" 2>/dev/null
-touch "$TMP/failnow"
-bstop X=1; rc=$?
-[ "$(wc -c < "$RUNS2" | tr -d ' ')" -ge 1 ] && [ "$rc" = 2 ] && grep -q "REG-X" "$TMP/err" && ! grep -q "BUSY" "$TMP/err" \
-  && ok "lock free again: the next stop runs the suite and the failing suite blocks (the BUSY line was not kept)" \
-  || fail "after BUSY: rc=$rc ran=$(wc -c < "$RUNS2") err='$(head -4 "$TMP/err")' out='$(head -c 200 "$TMP/out")'"
-# a fresh stored reminder, then a run that sees the failure: nothing may be left to hide it afterwards
+# 4. a reminder, then a change that lets the gate see a failing suite (the test edit undone, REG-X red): blocked, no reminder. While the
+#    edit waits, the session-less gate run takes no lock and starts no suite (post-fix-gate #472 B: exit 2, never a PASS, no receipt),
+#    so neither BUSY nor a red suite can pass behind the reminder: they show on the first run after the approval or the undo.
+echo "fun ok() = 4" > src/Core.kt
+gaterun X=1; stop X=1; stop X=1; rc=$?
+[ "$GRC" = 2 ] && [ "$rc" = 0 ] && grep -q "Vẫn chờ người duyệt" "$TMP/out" && ok "test edited, suite not run yet: the reminder stands" || fail "touched test: gate=$GRC rc=$rc"
+touch "$TMP/failnow"; echo "assert(true)" > src/test/CoreTest.kt
+gaterun X=1; stop X=1; rc=$?
+[ "$GRC" = 1 ] && grep -q "REG-X" "$TMP/gate.out" && [ "$rc" = 2 ] && ! grep -q "Vẫn chờ người duyệt" "$TMP/out" \
+  && ok "the gate run that sees REG-X fail: the stop blocks, the old reminder does not hide it" \
+  || fail "stale reminder hid a failure (gate=$GRC rc=$rc out='$(head -c 150 "$TMP/out")')"
 rm -f "$TMP/failnow"
-bstop X=1; rc=$?
-[ "$rc" = 0 ] && grep -q "Vẫn chờ người duyệt" "$TMP/out" && ok "suite green again: the reminder is stored (touched test only)" \
-  || fail "green suite, touched test: rc=$rc out='$(head -c 200 "$TMP/out")' err='$(head -3 "$TMP/err")'"
-touch "$TMP/failnow"
-# (the old loop guard may release the second block of one content with a visible warning: look at both streams)
-bran=$(wc -c < "$RUNS2" | tr -d ' ')
-bstop REGRESSION_GATE_TOUCHED_RECHECK_S=0
-cat "$TMP/out" "$TMP/err" | grep -q "REG-X core: FAIL" && [ "$(wc -c < "$RUNS2" | tr -d ' ')" -gt "$bran" ] \
-  && ok "RECHECK_S=0 run runs the suite and reports the failure" || fail "failure not seen: out='$(head -c 200 "$TMP/out")' err='$(head -3 "$TMP/err")'"
-bran=$(wc -c < "$RUNS2" | tr -d ' ')
-bstop X=1
-cat "$TMP/out" "$TMP/err" | grep -q "REG-X core: FAIL" && ! grep -q "Vẫn chờ người duyệt diff test" "$TMP/out" && [ "$(wc -c < "$RUNS2" | tr -d ' ')" -gt "$bran" ] \
-  && ok "after a run that saw a failure the older stored reminder is gone: the suite runs and the failure is reported again" \
-  || fail "stale reminder hid a failure (ran $bran -> $(wc -c < "$RUNS2") times out='$(head -c 150 "$TMP/out")')"
-
 cd "$TMP" || exit 1
 if [ "$FAILS" -ne 0 ]; then echo "regression gate reminder throttle: $FAILS FAILED"; exit 1; fi
 echo "regression gate reminder throttle: all checks passed"

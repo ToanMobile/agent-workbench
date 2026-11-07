@@ -389,12 +389,10 @@ fi
 release_all; echo 1 > "$TMP/load"
 
 # ── 14. Stop hook đặt ngân sách chờ tải ngắn (review 20/10): tải ≥ 100 kéo dài, lượt Stop có GATE_TOTAL_BUDGET_S 900 từng chờ tải tới
-#       600 s (DEVKIT_SLOT_ADVISORY_BUDGET_S mặc định) rồi các suite sau thành BUDGET (exit 4). Hook phải truyền mặc định 120.
-if grep -Eq '"DEVKIT_SLOT_ADVISORY_BUDGET_S": *os\.environ\.get\("DEVKIT_SLOT_ADVISORY_BUDGET_S", *"120"\)' "$DEVKIT_DIR/hooks/regression_gate.sh"; then
-  ok "14. Stop hook truyền DEVKIT_SLOT_ADVISORY_BUDGET_S (mặc định 120) cho gate"
-else
-  fail "14. hooks/regression_gate.sh không truyền DEVKIT_SLOT_ADVISORY_BUDGET_S mặc định 120 cho gate"
-fi
+#       600 s (DEVKIT_SLOT_ADVISORY_BUDGET_S mặc định) rồi các suite sau thành BUDGET (exit 4). Hook từng truyền mặc định 120.
+#       v26 mục 1 bỏ lời gọi gate của Stop (grep 07/11: mọi subprocess của hooks/regression_gate.sh là git; chỉ PROBE nạp module gate,
+#       không chạy suite), nên ca này bỏ. Hành vi thay thế (Stop không gọi gate, không chờ slot) do test_gate_slot_queue.sh ca (h) và
+#       test_regression_gate_receipt.sh ca a giữ.
 
 # ── 15. stale_rerun.main (SessionStart, chạy nền) không chờ tải (review 20/10): run_one chờ tải trong lúc giữ test_run.lock của dự án,
 #       Stop gate của người dùng chờ khoá đó 45 s rồi ra BUSY. main đặt mặc định DEVKIT_SLOT_LOAD_WAIT_S=0, giá trị người gọi đặt vẫn giữ.

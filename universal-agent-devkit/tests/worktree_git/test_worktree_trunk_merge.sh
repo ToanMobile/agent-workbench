@@ -193,9 +193,9 @@ FK="$TMP/kit"; mkdir -p "$FK/bin" "$FK/profiles" && ln -s "$DEVKIT_DIR/scripts" 
 printf 'import os\nif __name__ == "__main__":\n    print("some output")\n    print(os.environ.get("FAKE_GATE_LAST", "null"))\n' > "$FK/bin/post-fix-gate.py"
 repo x; wtadd x w; newcaller x w; xb="$(G "$TMP/x" rev-parse HEAD)"
 for last in null 3 '[]' '{"regression_tests": [null]}' '{"regression_tests": "FAIL"}'; do
-  (cd "$TMP/x" && FAKE_GATE_LAST="$last" python3 "$FK/scripts/git/worktree.py" automerge "$TMP/x-w" > "$TMP/out" 2> "$TMP/err"); rc=$?
-  python3 -c 'import json,sys; d = json.loads(sys.argv[1]); sys.exit(0 if isinstance(d, dict) and d.get("status") == "blocked" and any(s in d.get("message", "") for s in ("không trả kết quả", "gave no result")) else 1)' \
-      "$(tail -1 "$TMP/out")" 2>/dev/null && [ "$rc" = 1 ] && [ "$(G "$TMP/x" rev-parse HEAD)" = "$xb" ] && [ -d "$TMP/x-w" ] && ! grep -q Traceback "$TMP/err" \
+  # v26 mục 1: `automerge` (đường Stop) không chạy gate nữa; `finish` chạy gate, nên ca này đi qua finish (một dòng ✖ blocked)
+  (cd "$TMP/x" && FAKE_GATE_LAST="$last" python3 "$FK/scripts/git/worktree.py" finish "$TMP/x-w" > "$TMP/out" 2> "$TMP/err"); rc=$?
+  grep -q "blocked" "$TMP/out" && grep -q "không trả kết quả\|gave no result" "$TMP/out" && [ "$rc" = 1 ] && [ "$(G "$TMP/x" rev-parse HEAD)" = "$xb" ] && [ -d "$TMP/x-w" ] && ! grep -q Traceback "$TMP/err" \
     && ok "a gate whose last line is $last: no result, refused in one JSON line, main unmoved" \
     || fail "gate last line $last: rc $rc, out '$(tail -1 "$TMP/out" | cut -c1-160)', err '$(tail -1 "$TMP/err" | cut -c1-160)'"
 done

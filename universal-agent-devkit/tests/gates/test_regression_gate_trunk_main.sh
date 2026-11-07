@@ -7,6 +7,7 @@
 #   3 payload không có session_id / transcript Claude (Grok / agent bắc cầu): như cũ, vẫn gate
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
+# v26 mục 1: "gated" = the handover Stop blocks with the gate command (no receipt) and starts NO suite (ran.marker stays absent).
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/regression_gate.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -30,7 +31,7 @@ git add -A && git commit -qm init
 git config devkit.trunkMode false
 printf '%s\n' '{"type":"user","timestamp":"2026-10-18T00:00:00Z","message":{"role":"user","content":"go"}}' > "$TMP/t.jsonl"
 change; rm -f ran.marker; stop "{\"session_id\":\"s-1\",\"hook_event_name\":\"Stop\",\"transcript_path\":\"$TMP/t.jsonl\",\"last_assistant_message\":\"XONG\\nđã sửa\"}"; rc=$?
-[ "$rc" = 2 ] && [ -e ran.marker ] && ok "trunk mode off: the failing suite runs and blocks (rc 2)" || fail "trunk off: rc $rc (want 2)"
+[ "$rc" = 2 ] && [ ! -e ran.marker ] && grep -q -- "--run-tests --scoped" "$TMP/err" && ok "trunk mode off: the failing suite runs and blocks (rc 2)" || fail "trunk off: rc $rc (want 2)"
 
 # 1 trunk mode bật, phiên Claude Code (có transcript) ở main: không chạy, không chặn
 git config devkit.trunkMode true
@@ -42,11 +43,11 @@ grep -q "trunk mode" .claude/audit-gate/regression_gate.log 2>/dev/null && ok " 
 
 # 3 không có session_id: vẫn gate như cũ
 change; rm -f ran.marker; stop '{"hook_event_name":"Stop"}'; rc=$?
-[ "$rc" = 2 ] && [ -e ran.marker ] && ok "no session id (bridged agent): still gated, the suite ran (rc 2)" || fail "no session id: rc $rc (want 2)"
+[ "$rc" = 2 ] && [ ! -e ran.marker ] && grep -q -- "--run-tests --scoped" "$TMP/err" && ok "no session id (bridged agent): still gated, the suite ran (rc 2)" || fail "no session id: rc $rc (want 2)"
 
 # 4 có session_id nhưng KHÔNG có transcript Claude (Grok gửi session_id): vẫn gate (OCR 18/10: nhánh `degraded` phải có test)
 change; rm -f ran.marker; stop '{"session_id":"s-1","hook_event_name":"Stop","last_assistant_message":"XONG"}'; rc=$?
-[ "$rc" = 2 ] && [ -e ran.marker ] && ok "session id but no Claude transcript (degraded): still gated (rc 2)" || fail "degraded with session id: rc $rc (want 2)"
+[ "$rc" = 2 ] && [ ! -e ran.marker ] && grep -q -- "--run-tests --scoped" "$TMP/err" && ok "session id but no Claude transcript (degraded): still gated (rc 2)" || fail "degraded with session id: rc $rc (want 2)"
 
 # 6 Grok giữa chừng (không XONG, không nhận đã xong): không chạy suite. Nếu không, mỗi Stop giữ composer tới 900s.
 change; rm -f ran.marker
@@ -68,7 +69,7 @@ rc=$?
 change; rm -f ran.marker
 stop '{"sessionId":"s-grok-cc","hookEventName":"stop","hook_event_name":"Stop","lastAssistantMessage":"XONG"}'
 rc=$?
-[ "$rc" = 2 ] && [ -e ran.marker ] && ok "grok camelCase handover still gated (rc 2)" \
+[ "$rc" = 2 ] && [ ! -e ran.marker ] && grep -q -- "--run-tests --scoped" "$TMP/err" && ok "grok camelCase handover still gated (rc 2)" \
   || fail "grok camelCase handover: rc $rc (want 2), marker=$( [ -e ran.marker ] && echo yes || echo no)"
 
 # 9 Claude, commit của chính phiên đã nằm trên remote: lời giữa chừng không chạy suite.
@@ -93,7 +94,7 @@ rc=$?
 change; rm -f ran.marker
 stop "{\"session_id\":\"s-claude\",\"hook_event_name\":\"Stop\",\"transcript_path\":\"$TMP/t.jsonl\",\"last_assistant_message\":\"XONG\"}"
 rc=$?
-[ "$rc" = 2 ] && [ -e ran.marker ] && ok "claude handover with commits already on the remote: still gated (rc 2)" \
+[ "$rc" = 2 ] && [ ! -e ran.marker ] && grep -q -- "--run-tests --scoped" "$TMP/err" && ok "claude handover with commits already on the remote: still gated (rc 2)" \
   || fail "claude handover: rc $rc (want 2), marker=$( [ -e ran.marker ] && echo yes || echo no)"
 
 # 5 trunk mode, phiên Claude ở WORKTREE của chính nó (không phải main): vẫn gate (chỉ main được bỏ qua)
@@ -102,7 +103,7 @@ git worktree add -q --detach "$REPO/.claude/worktrees/w5" HEAD
 mkdir -p .claude/audit-gate/session_worktree && printf '%s\n' "$REPO/.claude/worktrees/w5" > .claude/audit-gate/session_worktree/s-5
 echo "fun ok() = 55" > "$REPO/.claude/worktrees/w5/src/Core.kt"; rm -f "$REPO/.claude/worktrees/w5/ran.marker"
 stop "{\"session_id\":\"s-5\",\"hook_event_name\":\"Stop\",\"cwd\":\"$REPO/.claude/worktrees/w5\",\"transcript_path\":\"$TMP/t.jsonl\",\"last_assistant_message\":\"XONG\"}"; rc=$?
-[ "$rc" = 2 ] && [ -e "$REPO/.claude/worktrees/w5/ran.marker" ] && ok "trunk mode, Stop in the session's own worktree: still gated there (rc 2)" \
+[ "$rc" = 2 ] && [ ! -e "$REPO/.claude/worktrees/w5/ran.marker" ] && grep -q -- "--run-tests --scoped" "$TMP/err" && ok "trunk mode, Stop in the session's own worktree: still gated there (rc 2)" \
   || fail "own worktree in trunk mode skipped (rc $rc, ran: $( [ -e "$REPO/.claude/worktrees/w5/ran.marker" ] && echo yes || echo no)): $(head -c 300 "$TMP/err")"
 
 echo
