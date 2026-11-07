@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# loadtest v26 item 10 (throwaway PR, never merged): comment-only edit so the merge gate sees an edited test.
 # Test hồi quy (T0052): bin/capacity.py là NGUỒN DUY NHẤT của mọi giới hạn song song (ngưỡng tải, số job test, nhóm suite của gate,
 # suite nặng, gate cùng lúc, worker super-board, lane song song) — tính từ số lõi × hệ số DEVKIT_CAPACITY, co lại khi tải cao.
 # Hai ngưỡng tải: hold_load (8 × lõi, 12 lõi: 96) — việc BẮT BUỘC (suite của gate, verify của merge gate) chờ trên mức này (người dùng
