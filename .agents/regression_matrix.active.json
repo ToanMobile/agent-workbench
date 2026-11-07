@@ -4141,6 +4141,20 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-all-kit-runner",
+      "watch_files": [
+        "universal-agent-devkit/tests/run_impacted.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-KIT-01",
+          "name": "Gate speed v14 mục 5a: lượt --scoped chạy test kit đã chọn qua một runner run_impacted.sh, thay ba shard",
+          "command": "bash universal-agent-devkit/tests/run_impacted.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

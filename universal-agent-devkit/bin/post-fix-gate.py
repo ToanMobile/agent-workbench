@@ -4018,6 +4018,9 @@ def force_full_reason(args):
 # test ngoài kit thành một suite riêng chạy từ gốc project. Gate luôn tự đặt hoặc gỡ biến này: giá trị agent export không lọt vào lượt khác.
 # Chỉ lệnh runner kit nhận biến (run_in_group gắn, suite_env gỡ): suite khác thấy `unset`.
 SCOPED_TESTS_ENV = "DEVKIT_SCOPED_TESTS"
+# Gate speed v14 mục 5a: lượt --scoped chạy test kit qua một hàng duy nhất, chỉ mang danh sách đã chọn; --tree, --full và gate-full giữ ba shard.
+KIT_ROW_ID = "REG-DK-ALL-KIT-01"
+KIT_SHARD_IDS = ("REG-DK-ALL-GATES-01", "REG-DK-ALL-WORKTREE-01", "REG-DK-ALL-REST-01")
 _KIT_RUNNER = re.compile(r"(?:^|\s)(?:bash\s+)?(\S*?)tests/run_impacted\.sh(?:\s|$)")
 _SHARD_PREFIX = re.compile(r"\s*DEVKIT_IMPACTED_DIRS=")   # #616 B: lệnh shard của runner (tiền tố gán biến)
 
@@ -4084,7 +4087,7 @@ def scoped_suites(decision, rules, selected, covers=None, skip=None):
     if cmds:
         body = "; ".join(f"{c} || rc=1" for c in cmds)
         added.append(("scoped", {"id": "SCOPED-EXTRA", "name": "#644: test scoped ngoài kit (scoped_gate.decide)",
-                                 "command": f"rc=0; {body}; exit $rc"}))
+                                 "command": f"rc=0; {body}; exit $rc", "parallel_safe": True}))
     return added, kit_tests, None
 
 
@@ -4765,7 +4768,7 @@ EXTEND_CAP_FACTOR = 3   # #616 A: hard ceiling = this × timeout, load never lif
 EXTEND_MIN_TIMEOUT_S = 60   # #616 A: a --timeout below this is a test's own short budget, never extended (DEVKIT_GATE_EXTEND_MIN_S overrides: tests)
 # #801 / owner 02/11: the workbench tests/gates shard passes at p95 860 s of the 900 s --timeout (12 TIMEOUTs since 31/10): it gets
 # this many times --timeout. ponytail: ids fixed in the kit; move to a per-test matrix key when a second suite needs its own ceiling.
-SUITE_TIMEOUT_FACTOR = {"REG-DK-ALL-GATES-01": 2}
+SUITE_TIMEOUT_FACTOR = {"REG-DK-ALL-GATES-01": 2, "REG-DK-ALL-KIT-01": 2}
 POOL_REFRESH_S = 5   # 04/11: how often the shard group's pool size (tests/lib/job_pool.py <dir>/size) follows capacity.test_jobs()
 
 
@@ -7196,6 +7199,10 @@ def main():
         for test in rule.get("mandatory_regression_tests", []):
             if test.get("id"):
                 MATRIX_TESTS.setdefault(test["id"], []).append(test)
+    # Mục 5a: hàng KIT chỉ của lượt --scoped (cùng điều kiện với khối --scoped dưới); lượt khác chạy shard, chạy thêm nó là chạy hai lần
+    scoped_turn = bool(getattr(args, "scoped", False) and run_tests and not force_full_reason(args) and not args.since)
+    if not scoped_turn and matrix_added:
+        matrix_added = [i for i in matrix_added if i != KIT_ROW_ID]
     for rule in rules:
         comp_name = rule.get("component", "UnknownComponent")
         watch_files = rule_watch(rule, covers)
@@ -7208,6 +7215,8 @@ def main():
             continue
         impacted_components.append(comp_name)
         for test in rule.get("mandatory_regression_tests", []):
+            if test.get("id") == KIT_ROW_ID and not scoped_turn:
+                continue
             regression_tests.append({
                 "component": comp_name,
                 "id": test.get("id"),
@@ -7228,7 +7237,7 @@ def main():
     # (scoped_gate.no_full); cả bộ suite chỉ ở gate-full đêm 00:00. Lượt --full / --force-full tường minh, --since (Stop hook) giữ hành vi cũ.
     scoped = None
     os.environ.pop(SCOPED_TESTS_ENV, None)
-    if getattr(args, "scoped", False) and run_tests and not force_full_reason(args) and not args.since:
+    if scoped_turn:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import scoped_gate  # noqa: PLC0415 - sibling module in bin/ (thiếu thì gate hỏng to, không âm thầm leo full)
         project = str(get_project_dir())
@@ -7239,6 +7248,9 @@ def main():
         except Exception as e:   # noqa: BLE001 - không quyết được: smoke + [core-smoke], lý do giữ ở would_full
             scoped = {"mode": "full", "reasons": [f"scoped_gate: {e!r}"[:200]], "graph_error": f"{e!r}"[:200], "tests": [], "smoke": []}
         scoped = scoped_gate.no_full(scoped, project)
+        # Mục 5a: có hàng KIT thì bỏ ba shard, scoped_suites chọn hàng KIT (lệnh không tiền tố). Không có (app, ma trận cũ): shard giữ như trước.
+        if any(t.get("id") == KIT_ROW_ID for r in rules for t in r.get("mandatory_regression_tests", [])):
+            regression_tests[:] = [t for t in regression_tests if t.get("id") not in KIT_SHARD_IDS]
         skipped = []
         added, kit_tests, _ = scoped_suites(scoped, rules, regression_tests, covers, skip=skipped)
         if skipped:   # test py/js không luật ma trận nào chạy đúng môi trường: không chạy ở PR, bù bằng [core-smoke]
@@ -7313,7 +7325,7 @@ def main():
             log_warn(f"suite_cache: {e!r}")
             sc = None
     if run_tests and force_reason:
-        stale = stale_suite_ids(args.matrix) - {t["id"] for t in regression_tests}
+        stale = stale_suite_ids(args.matrix) - {t["id"] for t in regression_tests} - {KIT_ROW_ID}
         for rule in rules:
             for test in rule.get("mandatory_regression_tests", []):
                 if test.get("id") in stale:
