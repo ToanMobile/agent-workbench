@@ -496,14 +496,19 @@ def timing_ids(matrix_path: str) -> set:
             if isinstance(t, dict) and t.get("timing") is True}
 
 
-def timing_paths(matrix_path: str) -> set:
+def timing_paths(matrix_path: str, scratch: str = "", ref: str = "") -> set:
     """Nhãn timing theo từng đường test kit (v26 mục 9): khoá gốc ma trận `"timing_paths": {"tests/…": "<bằng chứng>"}`, đường TƯƠNG ĐỐI
     KIT như `✖ tests/…` của run_impacted.sh. Đặt ở gốc, không trong rule: driver gộp ma trận giữ khoá gốc, còn sửa rule có sẵn làm ma trận
-    thôi là "chỉ thêm". Bằng chứng rỗng / không phải chuỗi ⇒ không tính. Đọc lỗi ⇒ rỗng."""
+    thôi là "chỉ thêm". Đọc ma trận ở commit `ref` (`git show ref:<đường ma trận trong scratch>`), KHÔNG ở đỉnh: ma trận chỉ-thêm giữ mọi
+    khoá gốc (trust_additive_matrix), nên PR tự gắn nhãn cho test của nó thì nhãn chỉ tính sau khi đã ở commit mốc của một lượt heavy trước.
+    Không ref, ma trận ngoài scratch, đọc lỗi ⇒ rỗng. Bằng chứng rỗng / không phải chuỗi ⇒ không tính."""
+    rel = os.path.relpath(matrix_path, scratch) if matrix_path and scratch and os.path.isabs(matrix_path) else ""
+    if not ref or not rel or rel.startswith(".."):
+        return set()
+    rc, out = git(scratch, "show", "%s:%s" % (ref, rel))
     try:
-        with open(matrix_path or "", encoding="utf-8") as f:
-            labels = json.load(f).get("timing_paths")
-    except (OSError, ValueError, AttributeError):
+        labels = json.loads(out).get("timing_paths") if rc == 0 else None
+    except (ValueError, AttributeError):
         return set()
     return {p for p, why in labels.items() if isinstance(why, str) and why.strip()} if isinstance(labels, dict) else set()
 
@@ -521,12 +526,13 @@ def _full_gate_out(scratch: str, gate_out: str) -> str:
 
 
 def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, kit_rc, kit_out: str,
-                record_notes: bool = True):
+                record_notes: bool = True, timing_ref: str = ""):
     """(verdict, checks). checks: [(nhãn, lệnh shell, cwd tương đối scratch)] — chỉ phần đỏ để chạy lại khi chia đôi."""
     data = last_json(gate_out)
     kit_dir = os.path.join(scratch, kit_rel) if kit_rel else ""
     timing = timing_ids(data.get("matrix_path"))
-    tpaths = timing_paths(data.get("matrix_path"))   # nhóm b khi MỌI đường đỏ của suite đều có nhãn; một đường không nhãn ⇒ đỏ thật
+    # nhóm b khi MỌI đường đỏ của suite đều có nhãn (ma trận của commit timing_ref, không phải đỉnh); một đường không nhãn ⇒ đỏ thật
+    tpaths = timing_paths(data.get("matrix_path"), scratch, timing_ref)
     run.info["red_tests"] = {}
     checks, red, env_red, group_b = [], [], [], []
     for t in data.get("regression_tests") or []:
@@ -619,6 +625,12 @@ def baseline_row(pg: str, repo: str, sha: str):
                 and git(repo, "merge-base", "--is-ancestor", r["sha"], sha)[0] == 0:
             return r
     return None
+
+
+def timing_ref(pg: str, repo: str, sha: str) -> str:
+    """Commit đọc nhãn timing_paths: sha của mốc (baseline_row), không có mốc thì cha đầu của đỉnh; commit gốc ⇒ "" (không nhãn nào)."""
+    base = baseline_row(pg, repo, sha)
+    return base["sha"] if base else git_out(repo, "rev-parse", "--verify", "-q", sha + "^")
 
 
 def new_reds(run: "Run", base) -> dict:
@@ -1309,7 +1321,8 @@ def cmd_run(args) -> int:
                                  env=dict(env, DEVKIT_RECORD_DURATIONS="1"))
             run.raw(kit_out)
             run.log("agent-kit test exit %d" % kit_rc)
-        verdict, checks = collect_red(run, scratch, kit_rel or "universal-agent-devkit", gate_rc, gate_out_full, kit_rc, kit_out)
+        verdict, checks = collect_red(run, scratch, kit_rel or "universal-agent-devkit", gate_rc, gate_out_full, kit_rc, kit_out,
+                                      timing_ref=timing_ref(pg, repo, sha))
         run.info["result"] = verdict
         last_green_path = os.path.join(pg, "last_full_green_sha")
         if verdict == "green":
@@ -1411,7 +1424,8 @@ def cmd_run(args) -> int:
                 try:
                     if run.info["result"] == "?" and gate_rc is not None:
                         collect_red(run, scratch, kit_rel or "universal-agent-devkit", gate_rc,
-                                    gate_out_full or _full_gate_out(scratch, gate_out), kit_rc, kit_out, record_notes=False)
+                                    gate_out_full or _full_gate_out(scratch, gate_out), kit_rc, kit_out, record_notes=False,
+                                    timing_ref=timing_ref(pg, repo, sha))
                 except Exception as exc:
                     run.log("lỗi thu suite đỏ khi nhận SIGTERM: %s" % exc)
                 run.info["result"] = "aborted"
