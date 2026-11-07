@@ -95,6 +95,11 @@ run_gate "$TMP/p3"
 if refused && has "pm_dispatch kind=audit agent=grok" && ! has "approved_tests.json\` (khoá"; then ok "P3: thông điệp chỉ luồng PM audit, không bảo ghi json"
 else bad "P3: thông điệp CHƯA XÁC MINH: rc=$RC, $(tailout)"; fi
 
+# P3b. 07/11: gợi ý đặt Antigravity (mặc định) lên trước grok; grok chỉ khi Antigravity bị giới hạn
+if refused && has 'pm_dispatch kind=audit` (mặc định Antigravity' && has 'pm_verdict kind=audit verdict=pass auditedHead=' && has 'agent-kit approve-tests <task-id>' \
+   && has 'chỉ khi Antigravity bị giới hạn mới dùng `pm_dispatch kind=audit agent=grok`'; then ok "P3b: thông điệp gợi ý Antigravity trước, grok khi bị giới hạn"
+else bad "P3b: thông điệp vẫn gợi ý grok trước: rc=$RC, $(tailout)"; fi
+
 # N1. phiên là grok (GROK_SESSION_ID) -> không duyệt (tự duyệt); DEVKIT_AGENT_ID=grok-build cũng vậy
 mk "$TMP/n1"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1011-n1 "$TMP/n1" "$X"
 run_gate "$TMP/n1" GROK_SESSION_ID=g-1
