@@ -283,11 +283,16 @@ pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 : > "$F/train.hold"
 ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" ) >"$TMP/out1" 2>"$TMP/err1" & FIRST=$!; PIDS="$PIDS $FIRST"
 i=0; while [ ! -e "$F/train.started" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+# #676: lượt đầu (không --wait) phóng train nền rồi tự thoát, nhả khoá; train vẫn giữ hold. Chờ lượt đầu thoát (có trần, train.hold
+# vẫn còn) rồi mới chạy lượt sau: chỉ train.started thì lượt đầu có thể còn giữ khoá dưới tải (gate-full đêm 07/11: "no busy message").
+i=0; while kill -0 "$FIRST" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+kill -0 "$FIRST" 2>/dev/null && fail "  … the first run still holds on after its train started (10 s)"
+wait "$FIRST"; rc1=$?
 run_q; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "overlapping run: exits 0 at once, no second train" || fail "overlap: rc=$rc calls=$(calls): $(cat "$TMP/err")"
 grep -q "PR #1: its train is still running; not started again" "$TMP/err" && ok "  … and says the PR's train is still running" || fail "  … no busy message: $(cat "$TMP/err")"
-rm -f "$F/train.hold"; wait "$FIRST"; rc=$?
-[ "$rc" -eq 0 ] && ok "  … the first run finishes normally" || fail "  … first run rc=$rc: $(cat "$TMP/err1")"
+rm -f "$F/train.hold"
+[ "$rc1" -eq 0 ] && ok "  … the first run finishes normally" || fail "  … first run rc=$rc1: $(cat "$TMP/err1")"
 
 # ── 5. Route từng kết quả (rebuild_cap = 2).
 reset; cfg true 10
@@ -450,6 +455,8 @@ reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 ( cd "$R" && exec bash "$QUEUE" --config "$TMP/cfg.json" --wait ) >"$TMP/out1" 2>"$TMP/err1" & QPID=$!; PIDS="$PIDS $QPID"
 i=0; while [ ! -e "$F/train.started" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 TP=$(head -1 "$TMP/train.pids")
+# Không có pid train (queue không phóng, vd. khoá bận) thì `kill -0 ""` sai và ca dưới XANH oan: đòi train thật đã chạy.
+[ -n "$TP" ] || fail "TERM case: no train started (train.pids empty): $(cat "$TMP/err1")"
 kill -TERM "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
 i=0; while kill -0 "$TP" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
 kill -0 "$TP" 2>/dev/null && fail "TERM to the queue left its train running (pid $TP)" || ok "TERM to the queue is forwarded to the train"
