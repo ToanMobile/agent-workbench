@@ -166,10 +166,12 @@ rc, out, _ = hook("sửa bug proof_gate ở 4 repo GeelyEx2, OfficeReader, Goods
 chk(rc == 0 and "- Song song" in out and "lanes plan" in out and 'isolation: "worktree"' in out and "--full" in out,
     "hook: a split request gets the parallel line (lanes plan, worktree isolation, one --full)", out)
 chk("phiên riêng" in out and "lane" in out, "hook: the line names a separate session for another repo and the no-refan rule for a lane", out)
-# the triage rule (user 18/10: "nào cực quan trọng thì làm còn ko quan trọng thì đưa vô backlog xử lý sau"): a new defect found mid-batch is
-# fixed now only when it is critical, anything else becomes a Backlog card through createTask
-chk("cực quan trọng" in out and "mất dữ liệu" in out and "gate báo xanh sai" in out and "createTask" in out and "Backlog" in out,
-    "hook: the line carries the triage rule (critical now, the rest a Backlog card via createTask)", out)
+# the defect rule (owner 06/11 replaced the 18/10 "critical now, the rest a Backlog card" triage: "để nó xử lý hết ko đưa backlog"):
+# every finding P0..P3 inside the batch is fixed in the batch; only a real bug outside the batch becomes a card through createTask
+chk("sửa luôn trong đợt" in out and "P0..P3" in out and "ngoài phạm vi đợt" in out and "createTask" in out,
+    "hook: the line carries the fix-all rule (P0..P3 fixed in the batch, an out-of-batch bug a card via createTask)", out)
+chk("không sửa, tạo thẻ Backlog" not in out and "cực quan trọng" not in out,
+    "hook: the old 'only critical now, the rest a Backlog card' triage is gone", out)
 rc, out, _ = hook("cảm ơn, làm tốt lắm")
 chk(rc == 0 and out == "", "hook: chit-chat stays silent", repr(out))
 rc, out, _ = hook("có nên chạy 4 repo song song không?")
