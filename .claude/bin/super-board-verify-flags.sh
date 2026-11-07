@@ -122,10 +122,12 @@ gate_masked_conditions_clean() {
 # sb_verify_single_pfg_cmd <cmd>: 0 khi lệnh verify là ĐÚNG MỘT lệnh post-fix-gate.py (tuỳ chọn VAR=x và python/python3 đứng trước), không
 # ghép (`; & | < >` hay xuống dòng: lệnh khác có thể chưa chạy hay đỏ vì PR), không phải script bọc (`./scripts/verify.sh`, `make verify` có thể
 # chạy post-fix-gate rồi bước khác cũng exit 1; R2). Chỉ khi đó đỏ của lệnh mới là đỏ của các suite trong log: red_only_on_base và chạy lại
-# guard (v26 mục 7) dựa vào điều này. Rỗng = không.
+# guard (v26 mục 7) dựa vào điều này. Rỗng = không. Không nhận thay thế lệnh (`$(` hay backtick: lệnh lồng chạy trước, có thể đỏ hay
+# đổi đường dẫn), và token phải là `post-fix-gate.py` trần hoặc đường dẫn kết thúc bằng `/post-fix-gate.py` (không nhận `xpost-fix-gate.py`).
 sb_verify_single_pfg_cmd() {
-  local re='^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(python3?[[:space:]]+(-[A-Za-z]+[[:space:]]+)*)?[^[:space:]]*post-fix-gate[.]py([[:space:]]|$)'
+  local re='^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(python3?[[:space:]]+(-[A-Za-z]+[[:space:]]+)*)?([^[:space:]]*/)?post-fix-gate[.]py([[:space:]]|$)'
   case "$1" in ''|*[\;\&\|\<\>]*|*$'\n'*) return 1 ;; esac
+  case "$1" in *'`'*|*'$('*) return 1 ;; esac
   [[ "$1" =~ $re ]]
 }
 

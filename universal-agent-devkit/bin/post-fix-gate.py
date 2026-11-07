@@ -1760,9 +1760,12 @@ def cached_scoped_pass(project_dir, matrix_arg, fp, scoped_decision, path=None, 
         max_s = _scoped_reuse_max_s()
     except (ImportError, OSError, ValueError, TypeError, OverflowError, RecursionError):
         return _reject("not_found")
-    if not isinstance(r, dict) or not isinstance(r.get("tests"), list) or not r["tests"]:
+    if not isinstance(r, dict) or not isinstance(r.get("tests"), list):
         return _reject("malformed")
     if r.get("scope") != "scoped":
+        return _reject("malformed")
+    # v26 mục 1: tests rỗng chỉ nhận ở biên nhận scoped không có test liên quan (scoped_tests, smoke, core_smoke đều rỗng), như proof_gate.sh
+    if not r["tests"] and any(r.get(k) for k in ("scoped_tests", "smoke", "core_smoke")):
         return _reject("malformed")
     if r.get("exit") != 0 or isinstance(r.get("exit"), bool) or r.get("carried_from") or not isinstance(r.get("project"), str):
         return _reject("exit_or_carried")
@@ -9571,7 +9574,7 @@ def main():
                                    capture_output=True).returncode == 0):
             if write_task_receipt(project_dir, task_fp, task_mb, args.session or os.environ.get("DEVKIT_SESSION_ID")
                                   or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID"), regression_tests, args.matrix):
-                print(f"  • {GREEN}{tr('Biên nhận task đã ghi (XONG của task trong lượt này; push nhánh đích vẫn cần --full)', 'Task receipt written (XONG for this task in this turn; a push to the trunk still needs --full)')}{RESET}")
+                print(f"  • {GREEN}{tr('Biên nhận task đã ghi (XONG của task trong lượt này; repo PR vào main qua merge gate, lượt nặng chạy thứ Hai và thứ Năm)', 'Task receipt written (XONG for this task in this turn; a PR repo reaches main through the merge gate, heavy runs on Monday and Thursday)')}{RESET}")
         elif exit_code == 1 and run_tests and not project_gone:
             drop_task_receipt(project_dir, task_fp or tested_fp or budget_fp or tree_fp_of(project_dir))
         # #648: ghi khi exit 0, mọi suite đã chọn đều chạy PASS thật, local_sha có giá trị. Lượt FAIL/TIMEOUT xoá bản ghi.
