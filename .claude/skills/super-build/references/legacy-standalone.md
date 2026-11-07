@@ -35,7 +35,7 @@ Source column is `Ready` (override with `BUILD_LOOP_SOURCE_COLUMN`):
 ```bash
 SOURCE_COLUMN="${BUILD_LOOP_SOURCE_COLUMN:-Ready}"
 
-SB_CARD_HOME_REPO="$(git remote get-url origin)" .claude/bin/super-board-card.sh --owner "$BUILD_LOOP_OWNER" --number "$BUILD_LOOP_PROJECT" items \
+SB_CARD_HOME_REPO="$(git remote get-url origin 2>/dev/null)" .claude/bin/super-board-card.sh --owner "$BUILD_LOOP_OWNER" --number "$BUILD_LOOP_PROJECT" items \
   | jq --arg col "$SOURCE_COLUMN" '.items[] | select(.status == $col and .content.type == "Issue")'
 ```
 

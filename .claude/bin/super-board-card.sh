@@ -238,13 +238,13 @@ home_items() {  # stdout: JSON board
   local raw rc=0 home out
   raw=$(items) || rc=$?
   [ "$rc" -eq 0 ] || return "$rc"
-  home=$(printf '%s' "${SB_CARD_HOME_REPO:-}" | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+  home=$(printf '%s' "${SB_CARD_HOME_REPO:-}" | sed -E 's#^.*github\.com[:/]##; s#/+$##; s#\.git$##')
   if [ -z "$home" ]; then printf '%s\n' "$raw"; return 0; fi
   out=$(printf '%s' "$raw" | jq --arg h "$home" '
       def repo: .content.repository // "" | ascii_downcase;
       ($h | ascii_downcase) as $home
       | [ .items[] | select(repo != "" and repo != $home) ] as $foreign
-      | (.items - $foreign) as $keep
+      | [ .items[] | select(repo == "" or repo == $home) ] as $keep
       | { items: $keep, totalCount: ($keep | length), skippedForeign: [ $foreign[].content.number ] }') || return 69
   if [ "$(printf '%s' "$out" | jq '([.items[] | select(.content.repository)] | length == 0) and ((.skippedForeign | length) > 0)' 2>/dev/null)" = true ]; then
     echo "warning: no card of SB_CARD_HOME_REPO=$home on this board (wrong repo in config?); all cards skipped" >&2

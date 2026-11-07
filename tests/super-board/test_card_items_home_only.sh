@@ -5,6 +5,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CARD="${SB_CARD:-$ROOT/.claude/bin/super-board-card.sh}"
+unset SB_CARD_HOME_REPO SB_CONFIG
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -43,7 +44,8 @@ check "skippedForeign ghi số thẻ bị lọc" "$(printf '%s' "$out" | jq -c .
 out=$(run case Own/Home)
 check "khác hoa thường vẫn là repo nhà" "$(printf '%s' "$out" | nums)" '[7,8]'
 
-for remote in https://github.com/Own/Home https://github.com/Own/Home.git git@github.com:Own/Home.git; do
+for remote in https://github.com/Own/Home https://github.com/Own/Home.git git@github.com:Own/Home.git \
+    ssh://git@github.com/Own/Home https://github.com/Own/Home/ https://tok@github.com/Own/Home.git/; do
   out=$(run mixed "$remote")
   check "chuẩn hoá remote $remote" "$(printf '%s' "$out" | nums)" '[7,"draft"]'
 done
@@ -75,7 +77,7 @@ fetch() {  # $1 = chuỗi trang gh giả cho từng lần đọc; in "<số th�
       export GH_PAGE="$T/$p.json"
       fetch_project_items || { echo "rc=$?"; continue; }
       printf "%s\n" "$PROJECT_ITEMS_JSON" | jq -c "[.items[] | .content.number // \"draft\"]"
-    done' _ "$RUNNER" "$(dirname "$CARD")" "$TMP"
+    done' _ "$RUNNER" "$ROOT/.claude/bin" "$TMP"
 }
 page 1 "$(node 7 Own/Home)" > "$TMP/home.json"
 out=$(fetch "mixed mixed home" | tr '\n' ' ')
@@ -92,13 +94,28 @@ printf '{"data":{"repositoryOwner":{"projectV2":{"items":{"pageInfo":{"hasNextPa
   "$(stnode 7 HOMECARD Own/Home)" "$(stnode 91 FOREIGNCARD Own/Other)" > "$TMP/st.json"
 cat > "$TMP/stbin/gh" <<SH
 #!/bin/sh
-case "\$*" in *graphql*) cat "$TMP/st.json" ;; esac
+case "\$*" in
+  *"repository{nameWithOwner}"*) cat "$TMP/st.json" ;;
+  *graphql*) jq 'del(.data.repositoryOwner.projectV2.items.nodes[].content.repository)' "$TMP/st.json" ;;
+esac
 exit 0
 SH
 chmod +x "$TMP/stbin/gh"
 out=$(cd "$TMP/st" && PATH="$TMP/stbin:$PATH" PYTHONDONTWRITEBYTECODE=1 python3 "$STATUS" s 2>&1)
 case "$out" in *HOMECARD*) ok "status vẫn tính thẻ repo nhà" ;; *) fail "status thiếu thẻ repo nhà: $(printf '%s' "$out" | tail -3)" ;; esac
 case "$out" in *FOREIGNCARD*) fail "status tính cả thẻ repo khác" ;; *) ok "status bỏ thẻ repo khác" ;; esac
+jq '.data.repositoryOwner.projectV2.items.nodes |= map(select(.content.number == 91))' "$TMP/st.json" > "$TMP/st2.json" && mv "$TMP/st2.json" "$TMP/st.json"
+out=$(cd "$TMP/st" && PATH="$TMP/stbin:$PATH" PYTHONDONTWRITEBYTECODE=1 python3 "$STATUS" s 2>&1)
+case "$out" in *"no card of"*) ok "status cảnh báo khi không còn thẻ repo nhà" ;; *) fail "status lọc hết thẻ mà không cảnh báo" ;; esac
+
+# wave-plan đọc board live khi không có --items: đường đọc của backend workflow.
+WAVE="${SB_WAVE:-$ROOT/.claude/bin/super-board-wave-plan.sh}"
+printf '{"project":{"owner":"Own","number":1},"repo":{"path":".","remote":"https://github.com/Own/Home"},"verify_commands":["bash tests/check.sh"]}' > "$TMP/wavecfg.json"
+printf '[]' > "$TMP/queued.json"
+printf '{"7":{"runnable":true,"parseable":true,"blockers":[]},"91":{"runnable":true,"parseable":true,"blockers":[]}}' > "$TMP/deps.json"
+out=$(cd "$ROOT" && GH_PAGE="$TMP/mixed.json" SB_GITHUB_HALT_FILE="$TMP/halt.json" PATH="$TMP/bin:$PATH" \
+  bash "$WAVE" --config "$TMP/wavecfg.json" --deps "$TMP/deps.json" --queued "$TMP/queued.json" 2>"$TMP/wave.err" | jq -c '[.cards[].number]')
+check "wave-plan chỉ xếp thẻ repo nhà" "$out" '[7]'
 
 [ "$FAILS" -eq 0 ] && { echo "PASS"; exit 0; }
 echo "FAIL ($FAILS)"; exit 1
