@@ -221,7 +221,7 @@ The agent MUST trigger these skills from context by itself and NEVER ask the use
 | **1. Discovery & Arch** | `codebase-memory` | Khám phá dự án, tìm symbol, hàm, route, truy vết blast radius, Cypher | **SSOT ĐỒ THỊ:** Tự động resolve symbol, trace inbound/outbound callers, truy vấn Cypher, hoặc fallback Read/Grep an toàn. |
 | **1. Discovery & Arch** | `spec-driven-development` | Tính năng mới phức tạp chạm $\ge 2$ module, $\ge 3$ files hoặc > 200 LOC | Tự động soạn thảo spec kỹ thuật, phân tích assumptions và edge cases trước khi code. |
 | **1. Discovery & Arch** | `grill-plan` | Kế hoạch có rủi ro kiến trúc cao, thay đổi shared flow | Tự động phản biện đối lập, stress-test kế hoạch, tìm lỗ hổng kiến trúc trước khi code. |
-| **1. Discovery & Arch** | `plan-3-review` | Task lớn hoặc rủi ro cần 3 bên phản biện plan | Claude, Antigravity, Grok phản biện plan nhiều vòng có giới hạn, rồi kiểm lại diff sau khi code. |
+| **1. Discovery & Arch** | `plan-3-review` | User yêu cầu 3 bên duyệt plan | Claude, Antigravity, Grok phản biện plan rồi kiểm diff, mỗi phần tối đa 3 vòng. |
 | **1. Discovery & Arch** | `documentation-and-adrs` | Quyết định kiến trúc, chọn pattern/thư viện, đổi data model | Tự động tạo hồ sơ ADR (Architecture Decision Record) lưu trữ rationale và trade-offs. |
 | **1. Discovery & Arch** | `deep-module-design` | Thiết kế interface, seam kiểm thử, phân tách trừu tượng | Tự động đánh giá interface sâu, tính đóng gói, Dependency Inversion (DIP) và mockability. |
 | **2. Dual-Agent Orchestration** | `giao` | Tác vụ code phức tạp khi Claude Code đóng vai Leader PM | Tự động kích hoạt quy trình 7 giai đoạn: Task ➔ Plan ➔ Review ➔ Implement ➔ Audit ➔ Test ➔ Proof ➔ Accept. |
