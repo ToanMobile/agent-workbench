@@ -14,6 +14,7 @@
 #   p6. tests/d.sh chỉ có nhãn ở ĐỈNH: không nhóm b; tests/b.sh có nhãn ở cha: nhóm b;
 #   Có history, mốc c0:
 #   p7. tests/b.sh (nhãn thêm sau mốc): không nhóm b; tests/a.sh: nhóm b.
+#   p8. (không history) suite REG-NEW-T-01 do đỉnh thêm cùng "timing": true: không nhóm b; REG-OLD-T-01 (timing từ c0): nhóm b.
 # Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -33,13 +34,15 @@ g init -q "$S"
 mkdir -p "$S/kit/tests" "$T/pg/nightly"
 for n in a b c d e; do printf '#!/bin/sh\nexit 1\n' >"$S/kit/tests/$n.sh"; done
 EV='"tests/a.sh": "watchdog 7 s dưới tải, nightly 01-03/11", "tests/c.sh": " "'
-printf '{"rules": [], "timing_paths": {%s}}\n' "$EV" >"$S/m.json"
+R0='{"component": "c", "mandatory_regression_tests": [{"id": "REG-OLD-T-01", "command": "true", "timing": true}]}'
+RN='{"component": "n", "mandatory_regression_tests": [{"id": "REG-NEW-T-01", "command": "true", "timing": true}]}'
+printf '{"rules": [%s], "timing_paths": {%s}}\n' "$R0" "$EV" >"$S/m.json"
 printf '{"rules": []}\n' >"$S/m0.json"
 g -C "$S" add -A && g -C "$S" commit -qm c0
 C0="$(g -C "$S" rev-parse HEAD)"
-printf '{"rules": [], "timing_paths": {%s, "tests/b.sh": "flaky"}}\n' "$EV" >"$S/m.json"
+printf '{"rules": [%s], "timing_paths": {%s, "tests/b.sh": "flaky"}}\n' "$R0" "$EV" >"$S/m.json"
 g -C "$S" commit -qam c1
-printf '{"rules": [], "timing_paths": {%s, "tests/b.sh": "flaky", "tests/d.sh": "flaky"}}\n' "$EV" >"$S/m.json"
+printf '{"rules": [%s, %s], "timing_paths": {%s, "tests/b.sh": "flaky", "tests/d.sh": "flaky"}}\n' "$R0" "$RN" "$EV" >"$S/m.json"
 g -C "$S" commit -qam c2
 C2="$(g -C "$S" rev-parse HEAD)"
 cat >"$T/drive.py" <<'PY'
@@ -49,7 +52,9 @@ import gate_full
 scratch, matrix, logdir, suite_paths, kit_paths, pg, sha = sys.argv[1:8]
 lines = lambda s: ["✖ %s" % p for p in s.split(",") if p]
 rows = []
-if suite_paths:
+if suite_paths.startswith("id:"):   # suite thường (không run_impacted): nhãn theo mã suite
+    rows.append({"id": suite_paths[3:], "status": "FAIL", "command": "true", "fail_lines": ["✖ đếm sai: want 1, got 2"], "output_tail": ""})
+elif suite_paths:
     rows.append({"id": "REG-DK-ALL-01", "status": "FAIL", "command": "bash kit/tests/run_impacted.sh --all",
                  "fail_lines": lines(suite_paths), "output_tail": ""})
 gate_out = json.dumps({"verdict": "FAIL", "exit_code": 1, "matrix_path": matrix, "regression_tests": rows})
@@ -82,6 +87,10 @@ OUT="$(drive m.json tests/d.sh "")"
 chk "p6a. nhãn chỉ có ở đỉnh (PR tự gắn): không nhóm b" '[ "$(gb "$OUT")" = "[]" ]' "$OUT"
 OUT="$(drive m.json tests/b.sh "")"
 chk "p6b. nhãn có ở cha đỉnh (không mốc): nhóm b" '[ "$(gb "$OUT")" = "$SUITE" ]' "$OUT"
+OUT="$(drive m.json id:REG-NEW-T-01 "")"
+chk "p8a. \"timing\": true chỉ ở rule đỉnh thêm: không nhóm b" '[ "$(gb "$OUT")" = "[]" ]' "$OUT"
+OUT="$(drive m.json id:REG-OLD-T-01 "")"
+chk "p8b. \"timing\": true có ở cha đỉnh: nhóm b" '[ "$(gb "$OUT")" = "['"'"'REG-OLD-T-01'"'"']" ]' "$OUT"
 printf '{"result": "red", "sha": "%s", "red_tests": {}}\n' "$C0" >"$T/pg/nightly/history.jsonl"
 OUT="$(drive m.json tests/b.sh "")"
 chk "p7a. mốc c0: nhãn b thêm sau mốc không tính" '[ "$(gb "$OUT")" = "[]" ]' "$OUT"

@@ -485,31 +485,41 @@ def suite_output(run: Run, scratch: str, t: dict, fallback: str) -> str:
         return fallback
 
 
-def timing_ids(matrix_path: str) -> set:
-    """Mã suite gắn "timing": true trong ma trận gate đã dùng (gate --json ghi matrix_path); đọc lỗi ⇒ không suite nào."""
+def _label_matrix(matrix_path: str, scratch: str, ref: str) -> dict:
+    """Ma trận để đọc nhãn timing (v26 mục 9, review P2): ma trận nằm trong cây đang thử (scratch) ⇒ bản ở commit `ref`
+    (`git show ref:<đường>`), KHÔNG bản ở đỉnh: ma trận chỉ-thêm giữ mọi khoá gốc và rule mới (trust_additive_matrix), nên nhãn PR tự gắn
+    cho test của nó chỉ tính khi đã có ở commit mốc của một lượt heavy trước. Không ref ⇒ {}. Ma trận ngoài scratch (không thuộc cây của
+    PR) ⇒ đọc file. Đọc lỗi ⇒ {}."""
+    if not matrix_path:
+        return {}
+    full = matrix_path if os.path.isabs(matrix_path) or not scratch else os.path.join(scratch, matrix_path)
+    rel = os.path.relpath(full, scratch) if scratch else ".."
     try:
-        with open(matrix_path or "", encoding="utf-8") as f:
-            rules = json.load(f).get("rules") or []
-    except (OSError, ValueError, AttributeError):
-        return set()
+        if rel == ".." or rel.startswith(".." + os.sep):
+            with open(full, encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            if not ref:
+                return {}
+            rc, out = git(scratch, "show", "%s:%s" % (ref, rel))
+            data = json.loads(out) if rc == 0 else {}
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def timing_ids(matrix_path: str, scratch: str = "", ref: str = "") -> set:
+    """Mã suite gắn "timing": true trong ma trận gate đã dùng (gate --json ghi matrix_path), đọc qua _label_matrix (bản ở `ref`)."""
+    rules = _label_matrix(matrix_path, scratch, ref).get("rules")
     return {t.get("id") for r in rules if isinstance(r, dict) for t in r.get("mandatory_regression_tests") or []
-            if isinstance(t, dict) and t.get("timing") is True}
+            if isinstance(t, dict) and t.get("timing") is True} if isinstance(rules, list) else set()
 
 
 def timing_paths(matrix_path: str, scratch: str = "", ref: str = "") -> set:
     """Nhãn timing theo từng đường test kit (v26 mục 9): khoá gốc ma trận `"timing_paths": {"tests/…": "<bằng chứng>"}`, đường TƯƠNG ĐỐI
     KIT như `✖ tests/…` của run_impacted.sh. Đặt ở gốc, không trong rule: driver gộp ma trận giữ khoá gốc, còn sửa rule có sẵn làm ma trận
-    thôi là "chỉ thêm". Đọc ma trận ở commit `ref` (`git show ref:<đường ma trận trong scratch>`), KHÔNG ở đỉnh: ma trận chỉ-thêm giữ mọi
-    khoá gốc (trust_additive_matrix), nên PR tự gắn nhãn cho test của nó thì nhãn chỉ tính sau khi đã ở commit mốc của một lượt heavy trước.
-    Không ref, ma trận ngoài scratch, đọc lỗi ⇒ rỗng. Bằng chứng rỗng / không phải chuỗi ⇒ không tính."""
-    rel = os.path.relpath(matrix_path, scratch) if matrix_path and scratch and os.path.isabs(matrix_path) else ""
-    if not ref or not rel or rel.startswith(".."):
-        return set()
-    rc, out = git(scratch, "show", "%s:%s" % (ref, rel))
-    try:
-        labels = json.loads(out).get("timing_paths") if rc == 0 else None
-    except (ValueError, AttributeError):
-        return set()
+    thôi là "chỉ thêm". Đọc qua _label_matrix (bản ở `ref`, không ở đỉnh). Bằng chứng rỗng / không phải chuỗi ⇒ không tính."""
+    labels = _label_matrix(matrix_path, scratch, ref).get("timing_paths")
     return {p for p, why in labels.items() if isinstance(why, str) and why.strip()} if isinstance(labels, dict) else set()
 
 
@@ -530,7 +540,7 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
     """(verdict, checks). checks: [(nhãn, lệnh shell, cwd tương đối scratch)] — chỉ phần đỏ để chạy lại khi chia đôi."""
     data = last_json(gate_out)
     kit_dir = os.path.join(scratch, kit_rel) if kit_rel else ""
-    timing = timing_ids(data.get("matrix_path"))
+    timing = timing_ids(data.get("matrix_path"), scratch, timing_ref)
     # nhóm b khi MỌI đường đỏ của suite đều có nhãn (ma trận của commit timing_ref, không phải đỉnh); một đường không nhãn ⇒ đỏ thật
     tpaths = timing_paths(data.get("matrix_path"), scratch, timing_ref)
     run.info["red_tests"] = {}
