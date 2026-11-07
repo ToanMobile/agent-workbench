@@ -785,6 +785,19 @@ if out is not None:
         out = None
     elif reason not in ("nothing", "device_untested", "env", "matrix", "edited_test"):
         out = None
+# The gate says "matrix" for every matrix it does not trust. Only a NEW matrix that shadows no committed one is let through (a commit, a
+# human decision, makes it trusted); an edited COMMITTED matrix (`exit 1` -> `true`) or an uncommitted one in front of a committed one
+# would switch the committed tests off, so they block and need a person to review the matrix edit.
+if out is not None and reason == "matrix":
+    def in_head(p):
+        return subprocess.run(["git", "-C", repo, "cat-file", "-e", "HEAD:./" + os.path.relpath(p, repo).replace(os.sep, "/")],
+                              capture_output=True).returncode == 0
+    shadowed = [os.path.relpath(c, repo) for c in candidates[candidates.index(matrix) + 1:] if in_head(c)]
+    if in_head(matrix) or shadowed:
+        block(["Regression gate CHƯA ĐẠT — " + (("ma trận chưa commit `%s` che ma trận đã commit `%s`" % (rel, "`, `".join(shadowed)))
+                                                 if shadowed else ("ma trận đã commit `%s` bị sửa trong thay đổi" % rel))
+               + ": gate không tin nó nên không test hồi quy nào chạy"] + olines,
+              ["Cần người review thay đổi ma trận (rồi commit, hoặc hoàn lại). Không sửa ma trận / test cũ để lách."], 2)
 if out is not None:
     once = state.get("outcome_said") != rfp + ":" + reason
     state["outcome_said"] = rfp + ":" + reason
@@ -801,8 +814,13 @@ if out is not None:
         allow("outcome env", verified=False, said=("Regression gate REJECT vì môi trường — máy này thiếu công cụ/SDK/mạng, hoặc suite bị kill "
                                                    "từ ngoài, KHÔNG phải PASS: " + text + " Chạy lại trên máy có đủ công cụ trước khi báo xong.") if once else None)
     if reason == "matrix":
+        # changed code the new matrix does not watch: said too, or it would stay untested after the commit
+        unw = sorted(p for p in (e[3:] for e in entries) if not p.startswith((".agents/", "templates/regression_matrix"))
+                     and not no_test_needed(p) and not watched(p, watch_patterns()))
         allow("outcome matrix", verified=False, said=("⚠ Regression gate KHÔNG chạy test hồi quy: ma trận chưa commit nên gate chưa tin nó. "
-                                                      "Cần làm: commit " + rel + ". " + text) if once else None)
+                                                      "Cần làm: commit " + rel + ". " + text
+                                                      + ((" Ngoài ra %d file code đổi mà ma trận này không theo dõi (thêm vào watch_files): %s."
+                                                          % (len(unw), ", ".join(unw[:10]))) if unw else "")) if once else None)
     # edited_test: only another agent clears it (cross-review). Block ONCE per change so the agent says it; later stops only remind.
     lines = ["Regression gate CHƯA ĐẠT — test có sẵn bị sửa/xoá, chờ duyệt chéo"] + olines
     if state.get("touched_fp") == fp:
