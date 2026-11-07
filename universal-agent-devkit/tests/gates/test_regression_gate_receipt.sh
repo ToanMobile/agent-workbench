@@ -12,6 +12,7 @@
 #   h  chỉ đổi README.md (không luật ma trận theo dõi) ⇒ cho dừng không cần biên nhận
 #   i  repo PR (super-board), nhánh đã push, cây sạch ⇒ cho dừng; bẩn ⇒ lệnh là commit rồi `git push`
 #   j  gate đỏ (exit 1) ⇒ không biên nhận ⇒ chặn
+#   k  outcome device_untested / env / matrix mới ⇒ nói một lần rồi cho dừng (env, matrix: verified_head không dời); ma trận đã commit bị sửa ⇒ chặn
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 unset DEVKIT_GATE_CACHE DEVKIT_SUITE_CACHE CI DEVKIT_SCOPED_TESTS DEVKIT_IMPACTED_SINCE GATE_TOTAL_BUDGET_S DEVKIT_GATE_MERGE_CHECK \
@@ -166,6 +167,53 @@ echo "def ok(): return 2" > "$R/src/core.py"
 gate "$R"
 stop "$R"
 [ "$GRC" -eq 1 ] && [ "$RC" -eq 2 ] && ok "j. gate đỏ ⇒ không biên nhận ⇒ chặn" || fail "j. gate=$GRC rc=$RC"
+
+# k  outcomes viết tay (lượt gate của agent ghi <git dir>/postfix-gate/outcomes/<fp>.json): device_untested, env, matrix MỚI ⇒ nói một lần
+#    (systemMessage ở Stop đầu, không ở Stop sau) rồi cho dừng; env và matrix không dời verified_head; ma trận ĐÃ commit bị sửa ⇒ chặn
+outcome() {   # outcome <repo> <reason> <base>
+  python3 - "$DEVKIT_DIR/bin" "$1" "$2" "$3" <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[1]); import tree_fp
+p = os.path.join(os.path.dirname(tree_fp.receipt_path(sys.argv[2])), "outcomes", tree_fp.tree_fingerprint(sys.argv[2]) + ".json")
+os.makedirs(os.path.dirname(p), exist_ok=True)
+json.dump({"exit": 4 if sys.argv[3] == "device_untested" else 2, "reason": sys.argv[3], "lines": ["OUTCOME-" + sys.argv[3] + " REG-1"],
+           "base": sys.argv[4], "at": 0}, open(p, "w"))
+PY
+}
+untested_fp() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("untested_fp") or "")' "$1/.claude/audit-gate/regression_gate.state.json" 2>/dev/null; }
+# k1 device_untested: base = HEAD = verified_head (phủ dải)
+R="$TMP/k1"; new_repo "$R"; stop "$R"
+echo "def ok(): return 2" > "$R/src/core.py"; outcome "$R" device_untested "$(git -C "$R" rev-parse HEAD)"
+rm -f "$MARK"; stop "$R"; r1=$RC; o1="$(cat "$TMP/out")"; stop "$R"; r2=$RC
+[ "$r1" = 0 ] && printf '%s' "$o1" | grep -q "UNTESTED" && printf '%s' "$o1" | grep -q "OUTCOME-device_untested" && [ "$r2" = 0 ] && [ ! -s "$TMP/out" ] \
+  && [ -n "$(untested_fp "$R")" ] && [ ! -e "$MARK" ] \
+  && ok "k1. outcome device_untested ⇒ cho dừng, nói một lần (UNTESTED), ghi untested_fp, không suite" \
+  || fail "k1. r1=$r1 r2=$r2 out1=$o1 out2=$(cat "$TMP/out") untested_fp=$(untested_fp "$R")"
+# k2 env: verified_head đứng yên (một commit sau nó)
+R="$TMP/k2"; new_repo "$R"; stop "$R"; V0="$(vh_of "$R")"
+( cd "$R" && echo "def ok(): return 2" > src/core.py && git commit -qam k2 && echo "def ok(): return 3" > src/core.py )
+outcome "$R" env "$(git -C "$R" rev-parse HEAD)"
+stop "$R"; r1=$RC; o1="$(cat "$TMP/out")"; stop "$R"; r2=$RC
+[ "$r1" = 0 ] && printf '%s' "$o1" | grep -q "môi trường" && printf '%s' "$o1" | grep -q "OUTCOME-env" && [ "$r2" = 0 ] && [ ! -s "$TMP/out" ] \
+  && [ -n "$V0" ] && [ "$(vh_of "$R")" = "$V0" ] \
+  && ok "k2. outcome env ⇒ cho dừng, nói một lần, verified_head không dời" \
+  || fail "k2. r1=$r1 r2=$r2 out1=$o1 out2=$(cat "$TMP/out") vh $V0 -> $(vh_of "$R")"
+# k3 ma trận MỚI chưa commit (bỏ khỏi git, không che ma trận đã commit nào)
+R="$TMP/k3"; new_repo "$R"; stop "$R"; V0="$(vh_of "$R")"
+( cd "$R" && git rm -q --cached .agents/regression_matrix.active.json && git commit -qm untrack && echo "def ok(): return 2" > src/core.py )
+outcome "$R" matrix "$(git -C "$R" rev-parse HEAD)"
+stop "$R"; r1=$RC; o1="$(cat "$TMP/out")"; stop "$R"; r2=$RC
+[ "$r1" = 0 ] && printf '%s' "$o1" | grep -q "commit .agents/regression_matrix.active.json" && [ "$r2" = 0 ] && [ ! -s "$TMP/out" ] \
+  && [ -n "$V0" ] && [ "$(vh_of "$R")" = "$V0" ] \
+  && ok "k3. outcome matrix (ma trận mới) ⇒ cho dừng, nói một lần, verified_head không dời" \
+  || fail "k3. r1=$r1 r2=$r2 out1=$o1 out2=$(cat "$TMP/out") err=$(cat "$TMP/err") vh $V0 -> $(vh_of "$R")"
+# k4 ma trận ĐÃ commit bị sửa ⇒ chặn (cần người review)
+R="$TMP/k4"; new_repo "$R"; stop "$R"
+sed -i.bak 's/"core"/"core2"/' "$R/.agents/regression_matrix.active.json" && rm -f "$R/.agents/regression_matrix.active.json.bak"
+echo "def ok(): return 2" > "$R/src/core.py"; outcome "$R" matrix "$(git -C "$R" rev-parse HEAD)"
+stop "$R"
+[ "$RC" = 2 ] && grep -q "bị sửa" "$TMP/err" && grep -q "review" "$TMP/err" && ok "k4. outcome matrix trên ma trận ĐÃ commit bị sửa ⇒ chặn, cần review" \
+  || fail "k4. rc=$RC out=$(cat "$TMP/out") err=$(cat "$TMP/err")"
 
 [ "$FAILS" -eq 0 ] && { echo "PASS"; exit 0; }
 echo "failures: $FAILS"; exit 1
