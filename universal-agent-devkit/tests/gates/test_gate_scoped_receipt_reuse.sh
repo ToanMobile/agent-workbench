@@ -488,7 +488,7 @@ import heavy_slot
 h = heavy_slot.acquire_pool("gate", heavy_slot.pool_paths("gate", 1), wait_s=10.0, label="hold-5b")
 open(ready_f, "w").write("1")
 t0 = time.monotonic()
-while not os.path.exists(rel_f) and time.monotonic() - t0 < 300.0:
+while not os.path.exists(rel_f) and os.path.isdir(os.path.dirname(rel_f)) and time.monotonic() - t0 < 300.0:
     time.sleep(0.05)
 heavy_slot.release_pool(h)
 PY
