@@ -1333,9 +1333,16 @@ def cmd_run(args) -> int:
             else:
                 # chạy lại MỌI đỏ ở đỉnh một lần: xanh hết (khác lần đầu) ⇒ mọi suite đỏ là nhóm b — chỉ khi suite nào cũng có lệnh đã
                 # chạy lại; suite không có command (ma trận thiếu) thì "xanh" là rỗng, giữ red như cũ
-                tip = {c[0]: checks_fail(run, scratch, [c], args.timeout) for c in checks}
+                # lệnh của đỏ mới trước (cần cho chia đôi); lệnh kinh niên chỉ khi mọi lệnh tới giờ đều xanh — một lệnh không xanh là
+                # đủ biết không phải nhóm b, không chạy lại thêm (đỏ kinh niên có thể chạy tới --timeout / 2 h dưới khoá toàn máy)
+                tip, stopped = {}, False
+                for c in sorted(checks, key=lambda c: c[0].split(":")[0] not in detail):
+                    if c[0].split(":")[0] not in detail and any(v != "good" for v in tip.values()):
+                        stopped = True
+                        break
+                    tip[c[0]] = checks_fail(run, scratch, [c], args.timeout)
                 rerun = {c[0].split(":")[0] for c in checks}
-                if tip and all(v == "good" for v in tip.values()) and set(run.info["red"]) <= rerun:
+                if tip and not stopped and all(v == "good" for v in tip.values()) and set(run.info["red"]) <= rerun:
                     all_b, run.info["group_b"] = True, list(run.info["red"])
                 for n, (sid, d) in enumerate(detail.items()):
                     if n >= BISECT_MAX_TESTS:

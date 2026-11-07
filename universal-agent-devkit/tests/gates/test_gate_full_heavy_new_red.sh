@@ -7,7 +7,8 @@
 # → c5 (a2.bad: ca mới "ca A2" trong REG-A-01) → c6 (c.bad: REG-C-01 đỏ). Gate giả chạy tests/{a,b,c}.sh; thẻ giả; gh giả theo $T/gh.mode.
 #   n1. base xanh rồi c3: REG-A-01 đỏ mới ⇒ chia đôi ra c2, một thẻ REG-A-01, history new_red + red_tests;
 #   n2. c3 lần nữa: REG-A-01 kinh niên (dòng ✖ khác pid/đường tạm vẫn là cùng ca) ⇒ không thẻ, không chạy lại, exit 1;
-#   n3. c4: REG-A-01 kinh niên + REG-B-01 mới ⇒ đúng một thẻ (REG-B-01), nghi vấn riêng của REG-B-01 = c4, REG-A-01 không chia đôi;
+#   n3. c4: REG-A-01 kinh niên + REG-B-01 mới ⇒ đúng một thẻ (REG-B-01), nghi vấn riêng của REG-B-01 = c4, REG-A-01 không chia đôi
+#       và không chạy lại ở đỉnh (REG-B-01 đã đỏ ở đỉnh: không thể nhóm b);
 #   n4. c5 + thẻ mở của REG-A-01: ca mới "ca A2" ⇒ comment vào thẻ đó nêu "ca A2", không thẻ mới; nghi vấn của REG-A-01 = c5 (khớp ca);
 #   n5. c6, gh lỗi: REG-C-01 mới nhưng không mở thẻ, history unreported, red_tests không có REG-C-01; lượt sau gh ổn ⇒ thẻ REG-C-01;
 #   n6. hai đỏ mới cùng lượt (không history, last_full_green_sha = base): REG-A-01 ⇒ c2, REG-B-01 ⇒ c4 (mỗi test một nghi vấn);
@@ -32,7 +33,7 @@ g init -q --bare "$T/origin.git"
 g init -q "$T/seed"
 mkdir -p "$T/seed/tests"
 for t in a b c; do
-  printf '#!/bin/sh\nr=0\n[ -e %s.bad ] && { echo "✖ ca %s: hỏng pid $$ ở /tmp/x.$$"; r=1; }\n' "$t" "$(printf %s "$t" | tr a-c A-C)" >"$T/seed/tests/$t.sh"
+  printf '#!/bin/sh\n[ -n "$FAKE_IN_GATE" ] || echo %s >>"$RERUNS"\nr=0\n[ -e %s.bad ] && { echo "✖ ca %s: hỏng pid $$ ở /tmp/x.$$"; r=1; }\n' "$t" "$t" "$(printf %s "$t" | tr a-c A-C)" >"$T/seed/tests/$t.sh"
 done
 printf '[ -e a2.bad ] && { echo "✖ ca A2: hỏng"; r=1; }\n' >>"$T/seed/tests/a.sh"
 for t in a b c; do printf 'exit $r\n' >>"$T/seed/tests/$t.sh"; done
@@ -49,7 +50,7 @@ cat >"$T/fakegate.py" <<'PY'
 import json, os, subprocess, sys
 tests, red = [], False
 for t in ("a", "b", "c"):
-    p = subprocess.run(["sh", "tests/%s.sh" % t], capture_output=True, text=True)
+    p = subprocess.run(["sh", "tests/%s.sh" % t], capture_output=True, text=True, env=dict(os.environ, FAKE_IN_GATE="1"))
     sid = "REG-%s-01" % t.upper()
     if p.returncode:
         red = True
@@ -84,13 +85,13 @@ fi
 echo '[]'
 SH
 chmod +x "$T/fakecard.sh" "$T/bin/gh"
-export PATH="$T/bin:$PATH" CARD_LOG="$T/cards.log"
+export PATH="$T/bin:$PATH" CARD_LOG="$T/cards.log" RERUNS="$T/reruns"
 export DEVKIT_GATE_FULL_CMD="python3 $T/fakegate.py" DEVKIT_GATE_FULL_CARD_CMD="sh $T/fakecard.sh"
 export DEVKIT_GATE_FULL_LOG_DIR="$T/logs" DEVKIT_GATE_FULL_POLL_S=1 DEVKIT_CAPACITY_LOAD=0 DEVKIT_GATE_FULL_GLOBAL_LOCK="$T/global.lock"
 unset DEVKIT_GATE_FULL_BISECT
 
 push() { g -C "$T/seed" push -q origin main; }
-run_gf() { rm -f "$T/cards.log" "$T/gh.calls"; python3 "$GF" run --repo "$T/repo" --slug fake/repo --timeout 30 >"$T/out" 2>&1; echo $?; }
+run_gf() { rm -f "$T/cards.log" "$T/gh.calls" "$T/reruns"; python3 "$GF" run --repo "$T/repo" --slug fake/repo --timeout 30 >"$T/out" 2>&1; echo $?; }
 cards() { if [ -f "$T/cards.log" ]; then grep -c -- '^---$' "$T/cards.log"; else echo 0; fi; }
 row() { tail -1 "$HIST" | python3 -c "import json,sys; r=json.load(sys.stdin); print($1)" 2>/dev/null; }
 
@@ -113,6 +114,8 @@ chk "n3. c4: REG-B-01 mới ⇒ đúng một thẻ REG-B-01, nghi vấn c4; REG-
   '[ "$rc" = 1 ] && [ "$(cards)" = 1 ] && grep -q ": REG-B-01 đỏ" "$T/cards.log" && ! grep -q ": REG-A-01 đỏ" "$T/cards.log" \
    && [ "$(row "r[\"suspects\"][\"REG-B-01\"][\"sha\"]")" = "$C4" ] && [ "$(row "sorted(r[\"suspects\"])")" = "['"'"'REG-B-01'"'"']" ]' \
   "rc=$rc cards=$(cards) $(tail -1 "$HIST" | cut -c1-500)"
+chk "n3b. đỏ mới REG-B-01 đỏ ở đỉnh ⇒ không chạy lại REG-A-01 kinh niên (không đổi được kết luận nhóm b)" \
+  'grep -qx b "$T/reruns" && ! grep -qx a "$T/reruns"' "reruns: $(tr '\n' ' ' <"$T/reruns" 2>/dev/null)"
 C5=$(commit a2.bad c5); push
 echo cardA >"$T/gh.mode"
 rc=$(run_gf)
