@@ -5862,6 +5862,7 @@ def suite_env():
             "DEVKIT_SCOPED_TESTS", "DEVKIT_SCOPED_NO_CONSISTENCY",
             # gate speed v26 mục 10: núm độ rộng / slot của điểm gộp là của lượt gate này; gate lồng trong một suite (test) không thừa hưởng
             "DEVKIT_MERGE_PARALLEL", "DEVKIT_MERGE_WIDE_LOAD_MAX", "DEVKIT_MERGE_GATE_SLOTS",
+            "DEVKIT_MERGE_POINT",   # dấu điểm gộp (at_merge_point) của lượt cha: gate lồng trong suite không phải điểm gộp
             "DEVKIT_IMPACTED_DIRS",   # #616: shard do tiền tố của lệnh ma trận đặt; biến có sẵn trong môi trường không được thu hẹp suite không tiền tố
             # 04/11: bể test chung của nhóm shard (tests/lib/job_pool.py) là của MỘT lượt gate: nhóm tự đặt lại sau suite_env(), suite khác không vào bể
             "DEVKIT_TEST_POOL_DIR", "DEVKIT_JOB_POOL",
@@ -6309,8 +6310,12 @@ RUN_LOG_CHANGED_MAX = 50          # đường dẫn tối đa trong changed_file
 
 
 def at_merge_point(project_dir) -> bool:
-    """True khi một thành phần của đường dẫn project bắt đầu bằng tiền tố scratch của điểm gộp. Chỉ xét chuỗi (không lstat/realpath):
-    _log_gate_run không được chạm hệ thống file ngoài file của nó (tests/gates/test_gate_run_log.sh)."""
+    """True khi DEVKIT_MERGE_POINT=1 (chỉ merge gate, merge train và integrate đặt cho lệnh verify của chúng; suite_env() bỏ nó) VÀ một thành
+    phần của đường dẫn project bắt đầu bằng tiền tố scratch của điểm gộp. Chỉ đường dẫn thì gate lồng trong một suite có fixture dưới
+    .merge-scratch-* cũng nhận độ rộng / sàn slot / guard của điểm gộp (review P3, tests/gates/test_gate_merge_point_marker.sh).
+    Chỉ xét chuỗi (không lstat/realpath): _log_gate_run không được chạm hệ thống file ngoài file của nó (tests/gates/test_gate_run_log.sh)."""
+    if os.environ.get("DEVKIT_MERGE_POINT") != "1":
+        return False
     return any(p.startswith(MERGE_POINT_PREFIXES) for p in os.path.normpath(str(project_dir)).split(os.sep))
 
 

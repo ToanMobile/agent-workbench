@@ -18,6 +18,7 @@ GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 export SB_HEAVY_SLOT_DIR="$TMP/slots" SB_HEAVY_SLOT_POLL_S=0.1; mkdir -p "$SB_HEAVY_SLOT_DIR"
+export DEVKIT_MERGE_POINT=1   # at_merge_point cần dấu này (merge gate / train / integrate đặt) cùng đường dẫn .merge-scratch-*
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }

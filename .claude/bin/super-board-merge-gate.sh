@@ -1420,6 +1420,7 @@ verify_log_busy() {
   line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$VERIFY_LOG" 2>/dev/null | tail -1 || true)
   [ -n "$line" ] && printf '%s' "$line" | jq -e '.exit_code == 4 and .busy == true' >/dev/null 2>&1
 }
+# DEVKIT_MERGE_POINT=1: dấu điểm gộp cho post-fix-gate (at_merge_point cần cả dấu lẫn đường dẫn .merge-scratch-*; suite_env bỏ nó).
 run_verify_cmd_inner() {
   local c="$1" ow total rc=0
   if [[ "$c" == *"post-fix-gate.py"* ]]; then
@@ -1435,19 +1436,19 @@ run_verify_cmd_inner() {
         total=$((10#$total - 10#$ow)); [ "$total" -ge 1 ] || total=1
       fi
       say "load ${OPT_LOAD} >= ${OPT_LMAX}: optimistic verify (outside the merge lock) waits up to ${ow}s for one of ${OPT_SLOTS} of ${OPT_N} gate slot(s), leaving the last slot to the lock holder"
-      ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+      ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" DEVKIT_MERGE_POINT=1 \
           DEVKIT_GATE_SLOTS="$OPT_SLOTS" DEVKIT_GATE_SLOT_WAIT_S="$ow" \
           && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
           && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1 || rc=$?
       if [ "$rc" -ne 4 ] || ! verify_log_busy; then return "$rc"; fi
       say "the ${OPT_SLOTS} optimistic gate slot(s) stayed busy for ${ow}s; verifying with the whole gate pool (wait up to ${total}s)"
     fi
-    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" DEVKIT_MERGE_POINT=1 \
         DEVKIT_GATE_SLOT_WAIT_S="$total" \
         && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
         && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
   else
-    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" DEVKIT_MERGE_POINT=1 \
         DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
         && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
         && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$c" ) >"$VERIFY_LOG" 2>&1

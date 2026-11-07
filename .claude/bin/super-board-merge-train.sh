@@ -470,7 +470,7 @@ verify_set() {
       # DEVKIT_SLOT_ADVISORY_HELD=1 nên post-fix-gate bỏ qua pool heavy — nhiều train song song sẽ lách trần suite nặng. Lệnh khác vẫn qua slot.
       local slot_wrap=(python3 "$HERE/super-board-heavy-slot.py" --)
       [[ "$run_cmd" != *"post-fix-gate.py"* ]] || slot_wrap=()
-      ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+      ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" DEVKIT_MERGE_POINT=1 \
           DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
           && DEVKIT_LANG="${DEVKIT_LANG:-vi}" ${slot_wrap[@]+"${slot_wrap[@]}"} bash -c "$run_cmd" ) >"$VLOG" 2>&1 8>&- || rc=$?
       [ "$rc" -ne 0 ] || break
