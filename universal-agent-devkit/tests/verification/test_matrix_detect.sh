@@ -125,9 +125,12 @@ out="$(CLAUDE_PROJECT_DIR="$P" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-
 cp "$TMP/m.bak" "$M"
 
 # --- the Stop-time regression gate enforces it ---------------------------------------
+# v26 mục 1: the Stop runs no suite; it blocks without a gate receipt, and the agent's gate run (which the Stop names) is what fails.
 touch "$P/fail"
 out="$(printf '{"session_id":"md1","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/regression_gate.sh" 2>&1)"; rc=$?
-[ "$rc" = 2 ] && printf '%s' "$out" | grep -q "REG-AUTO-01" && ok "regression gate blocks the stop while the project's suite fails" \
+gout="$(CLAUDE_PROJECT_DIR="$P" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --no-checklist 2>&1)"; grc=$?
+[ "$rc" = 2 ] && printf '%s' "$out" | grep -q -- "--run-tests" && [ "$grc" = 1 ] && printf '%s' "$gout" | grep -q "REG-AUTO-01" \
+  && ok "regression gate blocks the stop (no receipt) and the gate run fails on the project's suite" \
   || fail "regression gate did not enforce the generated matrix (rc=$rc)"
 rm -f "$P/fail"
 
@@ -180,7 +183,8 @@ printf 'package pc\n\nfunc Add(a, b int) int { return a + b }\n' > "$P/PCConnect
 printf 'package pc\n\nimport "testing"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal("bad") } }\n' > "$P/PCConnect/calc_test.go"
 python3 "$DEVKIT_DIR/bin/agent-config.py" --profile android --target "$P" >/dev/null 2>&1
 (cd "$P" && git add -A && git commit -qm init)
-gate() { printf '{"session_id":"%s","hook_event_name":"Stop"}' "$1" | CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/regression_gate.sh" 2>&1; }
+# v26 mục 1: the Stop runs no suite; the selection of the generated matrix is judged on the agent's gate run (exit 1 = a suite failed).
+gate() { CLAUDE_PROJECT_DIR="$P" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --no-checklist 2>&1; r=$?; case "$r" in 0) return 0 ;; 1) return 2 ;; *) return $((r + 10)) ;; esac; }
 printf 'package pc\n\n// Add sums.\nfunc Add(a, b int) int { return a + b }\n' > "$P/PCConnect/calc.go"
 out="$(gate mono1)"; rc=$?
 [ "$rc" = 0 ] && ! printf '%s' "$out" | grep -q CarConnect && ok "change in PCConnect/: only its go test runs (CarConnect's failing Gradle is not run)" \

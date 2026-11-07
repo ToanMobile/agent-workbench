@@ -115,7 +115,7 @@ unset DEVKIT_GATE_FULL_BISECT
 
 run_gf() {   # run_gf <mode> [VAR=giá trị…]: một lượt gate_full.py, in exit code; xoá dấu vết lượt trước (reruns, thẻ)
   local mode="$1"; shift
-  rm -f "$T/reruns" "$T/card.args"
+  rm -f "$T/reruns" "$T/card.args" "$HIST"   # v26 mục 6: mỗi ca là đỏ MỚI (không mốc history từ ca trước)
   env "$@" FAKE_MODE="$mode" python3 "$GF" run --repo "$T/repo" --timeout 30 >"$T/out.$mode" 2>&1
   echo $?
 }

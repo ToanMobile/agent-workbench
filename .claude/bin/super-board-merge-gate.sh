@@ -1386,20 +1386,29 @@ prepare_scratch_evidence() {
 # 05/11 (chủ repo: "Hạn số merge gate chạy cùng lúc theo tải, để 3 gate không cùng tranh CPU"). Đo runs.jsonl 05/11 08:25–09:11: verify
 # lạc quan (ngoài khoá, PR3) của #1007 và #1004 giữ cả 2 slot pool gate, verify TRONG khoá của #1009 chờ slot 1662,9 s mà vẫn chặn mọi
 # merge của repo; giây/test của verify khi chồng ≈ 1,9 × khi chạy một mình (4,35 → 8,32 s/test, 29/10–05/11). Tải 1 phút ≥ số lõi
-# (capacity cores; SB_MERGE_OPT_LOAD_MAX ghi đè, 0 = tắt) thì verify lạc quan chỉ thấy N−1 slot đầu của pool gate (N = DEVKIT_GATE_SLOTS
+# (capacity cores; SB_MERGE_OPT_LOAD_MAX ghi đè, 0 = tắt; v26 mục 10 thử 2 × lõi, đo tải 08/11 trượt ngưỡng nên lùi) thì verify lạc quan chỉ thấy N−1 slot đầu của pool gate (N = DEVKIT_GATE_SLOTS
 # hay capacity gate_max, ≥ 2): slot cuối để dành cho verify trong khoá (vé cỡ nhỏ ghép bằng _pick_free, P1 02/11). OPT_SLOTS rỗng = không hạn.
 # ponytail: N = 1 thì không còn gì để dành (không hạn); tải đọc một lần lúc verify bắt đầu; merge train có verify riêng, chưa hạn.
 opt_gate_slots() {
   OPT_SLOTS=""
   [ "${LOCK_HELD:-0}" -eq 0 ] || return 0
   local lmax="${SB_MERGE_OPT_LOAD_MAX:-}" n="${DEVKIT_GATE_SLOTS:-}" load
+  # Gate speed v26 mục 10: mặc định vẫn là số lõi. Lượt đo tải thật 08/11 với 2 × lõi kèm sàn 2 slot cho load1 p90 25,5 > 24 nên đã lùi;
+  # SB_MERGE_OPT_LOAD_MAX ghi đè.
   [[ "$lmax" =~ ^[0-9]{1,6}$ ]] || lmax=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" cores 2>/dev/null) || lmax=""
   [[ "$lmax" =~ ^[0-9]{1,6}$ ]] || return 0
   lmax=$((10#$lmax)); [ "$lmax" -gt 0 ] || return 0
   load=$(load_now)
   [[ "$load" =~ ^[0-9]{1,6}$ ]] || return 0
   [ $((10#$load)) -ge "$lmax" ] || return 0
-  [[ "$n" =~ ^[0-9]{1,6}$ ]] || n=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" gate_max 2>/dev/null) || n=""
+  if ! [[ "$n" =~ ^[0-9]{1,6}$ ]]; then
+    n=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" gate_max 2>/dev/null) || n=""
+    # mục 10: như post-fix-gate ở ưu tiên merge, pool gate không dưới DEVKIT_MERGE_GATE_SLOTS khi DEVKIT_GATE_SLOTS không đặt; mặc định tắt
+    # (lượt đo tải 08/11: load1 p90 25,5 > 24), đặt 2 thì bật
+    local floor="${DEVKIT_MERGE_GATE_SLOTS:-0}"
+    [[ "$floor" =~ ^[0-9]{1,6}$ ]] || floor=0
+    [[ "$n" =~ ^[0-9]{1,6}$ ]] && [ $((10#$n)) -lt $((10#$floor)) ] && n=$((10#$floor))
+  fi
   [[ "$n" =~ ^[0-9]{1,6}$ ]] || return 0
   n=$((10#$n)); [ "$n" -ge 2 ] || return 0
   OPT_SLOTS=$((n - 1)); OPT_LOAD=$((10#$load)); OPT_LMAX=$lmax; OPT_N=$n
@@ -1410,6 +1419,7 @@ verify_log_busy() {
   line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$VERIFY_LOG" 2>/dev/null | tail -1 || true)
   [ -n "$line" ] && printf '%s' "$line" | jq -e '.exit_code == 4 and .busy == true' >/dev/null 2>&1
 }
+# DEVKIT_MERGE_POINT=1: dấu điểm gộp cho post-fix-gate (at_merge_point cần cả dấu lẫn đường dẫn .merge-scratch-*; suite_env bỏ nó).
 run_verify_cmd_inner() {
   local c="$1" ow total rc=0
   if [[ "$c" == *"post-fix-gate.py"* ]]; then
@@ -1425,19 +1435,19 @@ run_verify_cmd_inner() {
         total=$((10#$total - 10#$ow)); [ "$total" -ge 1 ] || total=1
       fi
       say "load ${OPT_LOAD} >= ${OPT_LMAX}: optimistic verify (outside the merge lock) waits up to ${ow}s for one of ${OPT_SLOTS} of ${OPT_N} gate slot(s), leaving the last slot to the lock holder"
-      ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+      ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" DEVKIT_MERGE_POINT=1 \
           DEVKIT_GATE_SLOTS="$OPT_SLOTS" DEVKIT_GATE_SLOT_WAIT_S="$ow" \
           && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
           && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1 || rc=$?
       if [ "$rc" -ne 4 ] || ! verify_log_busy; then return "$rc"; fi
       say "the ${OPT_SLOTS} optimistic gate slot(s) stayed busy for ${ow}s; verifying with the whole gate pool (wait up to ${total}s)"
     fi
-    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" DEVKIT_MERGE_POINT=1 \
         DEVKIT_GATE_SLOT_WAIT_S="$total" \
         && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
         && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
   else
-    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+    ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" DEVKIT_MERGE_POINT=1 \
         DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
         && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
         && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$c" ) >"$VERIFY_LOG" 2>&1
@@ -1501,6 +1511,31 @@ gate_red_suite_ids() {
       if (id == "") odd = 1; else ids[++n] = id
     }
     END { if (!(rej && static == 1 && n > 0 && !odd)) exit 1; for (i = 1; i <= n; i++) print ids[i] }'
+}
+# Gate speed v26 mục 5a: suite runner kit (`…tests/run_impacted.sh`) đỏ ở lượt --scoped chỉ chạy danh sách đã chọn (DEVKIT_SCOPED_TESTS); chạy
+# lại lệnh ma trận trên base là một tập test KHÁC, không chứng minh gì. In đường dẫn (từ gốc repo) của từng dòng `| ✖ tests/x.sh` trong khối
+# của suite `$2` trong log `$1`, mỗi dòng một test. Fail closed (exit 1): không dòng ✖ nào, một dòng ✖ không phải đường dẫn test hẹp
+# (`✖ run_impacted.sh: thư mục kit … biến mất`), hay danh sách có thể đã bị cắt (fail_lines của post-fix-gate giữ tối đa 40 dòng test đỏ).
+SB_RED_TEST_CAP=40
+gate_red_kit_tests() {
+  local t out=""
+  t=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$1" 2>/dev/null | LC_ALL=C awk -v want="$2" -v cap="$SB_RED_TEST_CAP" '
+    /^[[:space:]]*\[[ x]\] [^|]*\|/ {
+      split($0, parts, "|"); id = parts[2]; sub(/^[[:space:]]+/, "", id); sub(/[[:space:]].*$/, "", id); inblk = (id == want); next
+    }
+    inblk && /^[[:space:]]*\| ✖ / {
+      line = $0; sub(/^[[:space:]]*\| ✖ /, "", line); sub(/[[:space:]]*$/, "", line)
+      if (line !~ /^(hooks\/)?tests\/[A-Za-z0-9_][A-Za-z0-9_.\/-]*\.sh$/ || line ~ /\.\./) { odd = 1; next }
+      if (!(line in seen)) { seen[line] = 1; o[++n] = line }
+    }
+    END { if (odd || n == 0 || n >= cap) exit 1; for (i = 1; i <= n; i++) print o[i] }') || return 1
+  while IFS= read -r t; do
+    # run_impacted.sh in đường dẫn tương đối kit; trong agent-workbench kit nằm dưới universal-agent-devkit/ (như merge-train single_red_test)
+    if [ -d "$SCRATCH/universal-agent-devkit/tests" ]; then out="${out}universal-agent-devkit/${t}"$'\n'
+    elif [ -d "$SCRATCH/.agents/devkit/tests" ]; then out="${out}.agents/devkit/${t}"$'\n'
+    else out="${out}${t}"$'\n'; fi
+  done <<<"$t"
+  printf '%s' "$out"
 }
 
 # Chạy lệnh suite trên cây base trong scratch, trong nhóm tiến trình riêng bị kill cả nhóm khi quá giờ, env không có GIT_* /
@@ -1621,17 +1656,7 @@ Tìm nguyên nhân gốc vì sao \`${id}\` đỏ trên ${BASE} và sửa tại �
   return 0
 }
 
-# #251 R1: post-fix-gate.py xét REJECT TRƯỚC các điều kiện CHƯA XÁC MINH (ma trận không tin được, test đã có bị sửa, file không đọc được, test
-# mới mồ côi, code chưa có test, không suite nào khớp): khi có suite đỏ, log chỉ còn REJECT và các điều kiện đó chưa từng được đánh giá. Dòng JSON
-# cuối của `--json` vẫn mang chúng. Chỉ khi JSON có mặt và mọi điều kiện sạch (trường thiếu = không sạch) mới coi REJECT là chỉ do suite đỏ.
-gate_masked_conditions_clean() {
-  local line
-  line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$1" 2>/dev/null | tail -1) || return 1
-  [ -n "$line" ] || return 1
-  printf '%s' "$line" | jq -e '(.matrix_problem // "x") == "" and ((.tests_touched // ["x"]) | length) == 0 and ((.unreadable // ["x"]) | length) == 0
-    and ((.uncovered // ["x"]) | length) == 0 and ((.orphan_tests // ["x"]) | length) == 0 and (.busy == false) and (.budget_exhausted == false)
-    and ((.regression_tests // []) | length) > 0' >/dev/null 2>&1
-}
+# gate_masked_conditions_clean (#251 R1) và sb_verify_single_pfg_cmd (R2): ở super-board-verify-flags.sh, dùng chung với chạy lại guard.
 
 # Verify đỏ (exit $1, log $2, lệnh $3): mọi suite đỏ cũng đỏ trên origin/<base> (scratch reset về BASE_SHA, chạy lệnh trong ma trận
 # CỦA BASE, rồi trả về MERGED_SHA)? Có → mở thẻ cho từng suite, return 0 (không REJECT PR). Mọi trường hợp khác → return 1: giữ kết quả
@@ -1639,17 +1664,14 @@ gate_masked_conditions_clean() {
 # không có trong ma trận của base hay có lệnh khác với cây gộp (PR thêm/sửa suite thì PR chịu); suite xanh, quá giờ hay không chạy
 # được trên base.
 red_only_on_base() {
-  local rc="$1" log_file="$2" vcmd="$3" ids id bcmd mcmd name p all_red=1 sr pfg_cmd_re
+  local rc="$1" log_file="$2" vcmd="$3" ids id bcmd mcmd name p all_red=1 sr
   local base_matrix="$SCRATCH/.red-on-base-matrix.json" merged_matrix="$SCRATCH/.agents/regression_matrix.active.json"
   local jqq='[.. | objects | select(.id? == $id and (.command? | type) == "string")] | first // empty'
-  local ids_list=() names=() cmds=()
+  local ids_list=() names=() cmds=() run_ids=() kt kts kp rel
   BASE_SUITE_BUSY=0   # #914: run_suite_on_base hết giờ chờ slot pool gate (75) ⇒ 1; chỗ gọi thoát 4, không đẩy thẻ về Build
   [ "$rc" -eq 1 ] || return 1
-  case "$vcmd" in *[\;\&\|\<\>]*|*$'\n'*) return 1 ;; esac
-  # R2: không ghép lệnh là chưa đủ: `./scripts/verify.sh`, `make verify` có thể chạy post-fix-gate rồi bước khác cũng exit 1. Phải là chính
-  # post-fix-gate.py (tuỳ chọn biến môi trường VAR=x và python/python3 đứng trước).
-  pfg_cmd_re='^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(python3?[[:space:]]+(-[A-Za-z]+[[:space:]]+)*)?[^[:space:]]*post-fix-gate[.]py([[:space:]]|$)'
-  [[ "$vcmd" =~ $pfg_cmd_re ]] || return 1
+  # Lệnh ghép hay script bọc (R2): lệnh khác có thể chưa chạy hay đỏ vì PR. Phải là đúng một post-fix-gate.py (verify-flags.sh).
+  sb_verify_single_pfg_cmd "$vcmd" || return 1
   gate_masked_conditions_clean "$log_file" || { say "the gate log carries no clean --json (or an UNVERIFIED condition hidden by REJECT); red stays red"; return 1; }
   [ -f "$merged_matrix" ] || return 1
   git -C "$SCRATCH" show "${BASE_SHA}:.agents/regression_matrix.active.json" >"$base_matrix" 2>/dev/null || { rm -f "$base_matrix"; return 1; }
@@ -1657,21 +1679,40 @@ red_only_on_base() {
   while IFS= read -r id; do
     bcmd=$(jq -r --arg id "$id" "$jqq | .command" "$base_matrix" 2>/dev/null) || bcmd=""
     mcmd=$(jq -r --arg id "$id" "$jqq | .command" "$merged_matrix" 2>/dev/null) || mcmd=""
+    if [[ "$mcmd" == *tests/run_impacted.sh* ]]; then
+      # Gate speed v26 mục 5a: runner kit ⇒ từng test đỏ của log chạy RIÊNG trên base, nhưng QUA CHÍNH runner của base
+      # (DEVKIT_SCOPED_TESTS=<test>, không test consistency): cùng cwd = kit, run_bounded, TMPDIR chuẩn, env DEVKIT_TEST_* như lượt gate. Chạy trần
+      # `bash <test>` từ gốc repo thì test phụ thuộc cwd/env đỏ vì môi trường và một đỏ do PR được dung thứ sai (fail-open). Chỉ dung thứ khi
+      # đầu ra runner có đúng dòng `✖ <test>` (exit của runner không đủ: nó đỏ vì lý do khác cũng được); test vắng trên base (PR mới thêm) hay
+      # PASS dùng lại (↺) không in dòng đó (run_impacted.sh: vòng in ✔/✖ bỏ qua file vắng, in ↺ rồi continue) ⇒ không dung thứ.
+      # DEVKIT_IMPACT_TEST_CHANGED rỗng: run_impacted.sh chỉ đọc DEVKIT_SCOPED_TESTS khi biến đó rỗng.
+      # Lệnh của runner trên base không cần khớp: cái được kiểm là file test của base. rel đã qua mẫu hẹp của gate_red_kit_tests (không nháy).
+      kts=$(gate_red_kit_tests "$log_file" "$id") || { say "red runner suite ${id}: its red tests could not be listed exactly (none, odd line or possibly cut at ${SB_RED_TEST_CAP}); red stays red"; rm -f "$base_matrix"; return 1; }
+      name=$(jq -r --arg id "$id" "$jqq | .name // \"\"" "$merged_matrix" 2>/dev/null) || name=""
+      ids_list+=("$id"); names+=("$name")
+      while IFS= read -r kt; do
+        case "$kt" in universal-agent-devkit/*) kp=universal-agent-devkit/ ;; .agents/devkit/*) kp=.agents/devkit/ ;; *) kp="" ;; esac
+        rel="${kt#"$kp"}"
+        cmds+=("o=\$(DEVKIT_SCOPED_TESTS='${rel}' DEVKIT_SCOPED_NO_CONSISTENCY=1 DEVKIT_IMPACT_TEST_CHANGED= bash '${kp}tests/run_impacted.sh' 2>&1); r=\$?; case \$r in 126|127) exit 127 ;; esac; printf '%s\\n' \"\$o\" | LC_ALL=C grep -qxF -- '✖ ${rel}' && exit 1; exit 0")
+        run_ids+=("${id} ${kt}")
+      done <<<"$kts"
+      continue
+    fi
     if [ -z "$bcmd" ] || [ "$bcmd" != "$mcmd" ]; then
       say "red suite ${id} is not the same suite in the matrix of origin/${BASE}; the PR owns it"; rm -f "$base_matrix"; return 1
     fi
     name=$(jq -r --arg id "$id" "$jqq | .name // \"\"" "$base_matrix" 2>/dev/null) || name=""
-    ids_list+=("$id"); names+=("$name"); cmds+=("$bcmd")
+    ids_list+=("$id"); names+=("$name"); cmds+=("$bcmd"); run_ids+=("$id")
   done <<<"$ids"
   rm -f "$base_matrix"
   git -C "$SCRATCH" reset -q --hard "$BASE_SHA" 2>/dev/null || return 1
-  for p in "${!ids_list[@]}"; do
-    sr=0; run_suite_on_base "${cmds[$p]}" "${ids_list[$p]}" || sr=$?
+  for p in "${!cmds[@]}"; do
+    sr=0; run_suite_on_base "${cmds[$p]}" "${run_ids[$p]%% *}" || sr=$?
     if [ "$sr" -ne 1 ]; then
       all_red=0
-      if [ "$sr" -eq 0 ]; then say "${ids_list[$p]} is green on origin/${BASE}: the PR broke it"
-      elif [ "$sr" -eq 75 ]; then BASE_SUITE_BUSY=1; say "${ids_list[$p]}: the gate pool stayed busy, the base check did not run (not the PR's fault)"
-      else say "${ids_list[$p]} did not run to a red result on origin/${BASE} (exit ${sr})"; fi
+      if [ "$sr" -eq 0 ]; then say "${run_ids[$p]} is green on origin/${BASE}: the PR broke it"
+      elif [ "$sr" -eq 75 ]; then BASE_SUITE_BUSY=1; say "${run_ids[$p]}: the gate pool stayed busy, the base check did not run (not the PR's fault)"
+      else say "${run_ids[$p]} did not run to a red result on origin/${BASE} (exit ${sr})"; fi
       break
     fi
   done
@@ -1715,6 +1756,31 @@ for cmd in "${VERIFY[@]}"; do
       run_verify_cmd "$run_cmd" || VRC=$?
     else
       say "verify timed out (exit ${VRC}) but the scratch tree could not be reset; not retrying"
+    fi
+  fi
+  # Gate speed v26 mục 7: đỏ CHỈ ở guard của điểm gộp ([merge-guard] của base) ⇒ chạy lại mỗi guard đỏ đúng một lần; guard nào vẫn đỏ thì
+  # lượt vẫn đỏ. Đỏ rồi xanh: ghi comment PR, không ghi biên nhận cây (lượt sau kiểm lại).
+  if [ "$VRC" -eq 1 ] && GUARD_RED=$(sb_merge_guard_red_ids "$VERIFY_LOG" "$SCRATCH" "$BASE_SHA" "$cmd"); then
+    GUARD_STILL=""; GUARD_FLAKY=""
+    for gid in $GUARD_RED; do
+      git -C "$SCRATCH" reset -q --hard "$MERGED_SHA" 2>/dev/null && git -C "$SCRATCH" clean -fdq 2>/dev/null \
+        || { say "scratch tree could not be reset before re-running ${gid}; not retrying"; GUARD_STILL="$GUARD_STILL $gid"; continue; }
+      say "merge-guard ${gid} red; re-running it once"
+      echo "[merge-gate] merge-guard re-run: ${gid}" >>"$VERIFY_LOG"
+      if sb_merge_guard_rerun "$SCRATCH" "$gid" >>"$VERIFY_LOG" 2>&1; then GUARD_FLAKY="$GUARD_FLAKY $gid"; else GUARD_STILL="$GUARD_STILL $gid"; fi
+    done
+    git -C "$SCRATCH" reset -q --hard "$MERGED_SHA" 2>/dev/null && git -C "$SCRATCH" clean -fdq 2>/dev/null \
+      || { say "scratch tree could not be restored to ${MERGED_SHA} after the guard re-run"; GUARD_STILL="${GUARD_STILL:- restore}"; }
+    if [ -z "$GUARD_STILL" ]; then
+      VRC=0; TREE_RECEIPT=""
+      say "merge-guard(s)${GUARD_FLAKY} red on the first run, green on one re-run: not rejecting the PR"
+      if [ "$DRY" -eq 1 ]; then say "dry run: would comment the merge-guard re-run on PR #${PR}"
+      else
+        gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "[reviewer] [flaky] Merge gate: merge-guard\`${GUARD_FLAKY}\` đỏ ở lượt verify đầu, xanh khi chạy lại riêng đúng một lần; các kiểm khác đều đạt. Ghi nhận flaky (nhạy tải), PR không bị gán red." >/dev/null 2>&1 \
+          || say "could not comment the merge-guard re-run on PR #${PR}"
+      fi
+    else
+      say "merge-guard(s) red on the re-run too:${GUARD_STILL}"
     fi
   fi
   if [ "$VRC" -ne 0 ] && red_only_on_base "$VRC" "$VERIFY_LOG" "$cmd"; then

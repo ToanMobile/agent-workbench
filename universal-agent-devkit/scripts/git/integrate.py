@@ -302,7 +302,8 @@ def run_gate(scratch, remote):
     nhất của cả đợt (điểm gộp). #644: --scoped = test của diff cả đợt + smoke; #741: không leo --full (lõi chạy test chạm tới nó, không suy ra test thì [core-smoke]);
     --full đêm thuộc skill gate-full."""
     gate = os.path.join(DEVKIT, "bin", "post-fix-gate.py")
-    env = dict(os.environ, CLAUDE_PROJECT_DIR=scratch, DEVKIT_SLOT_PRIORITY="merge")
+    # DEVKIT_MERGE_POINT: dấu điểm gộp của post-fix-gate (at_merge_point cần cả dấu lẫn đường dẫn .integrate-scratch-*)
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=scratch, DEVKIT_SLOT_PRIORITY="merge", DEVKIT_MERGE_POINT="1")
     try:
         # Phiên riêng: nhóm tiến trình của gate (gate + suite con) dừng được trọn bằng killpg khi integrate bị SIGTERM/SIGINT (#475).
         p = subprocess.Popen([sys.executable, gate, "--run-tests", "--scoped", "--brief", "--diff", remote], cwd=scratch, env=env,

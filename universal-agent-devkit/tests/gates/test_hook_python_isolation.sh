@@ -322,6 +322,7 @@ def norm(text, root):
     text = re.sub(r"\d{4}-\d\d-\d\dT[\d:.]+Z?", "<ts>", text)
     text = re.sub(r"\b\d{8}-\d{6}\b", "<stamp>", text)   # evidence log names
     text = re.sub(r"\b\d{9,}(?:\.\d+)?\b", "<n>", text)
+    text = re.sub(r"\b[0-9a-f]{40}\b", "<sha>", text)   # v26: the Stop hook's command names the fixture repo's verified_head commit
     text = re.sub(r"hoạt động cách đây \d+s\b", "hoạt động cách đây <age>s", text)   # bin/session_lock.py describe(): see HB_AGE
     return text.strip()
 

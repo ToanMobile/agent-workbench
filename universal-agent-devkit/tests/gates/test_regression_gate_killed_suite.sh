@@ -23,7 +23,11 @@ FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 REPO="$TMP/repo"
-stop() { printf '{"session_id":"s-%s","hook_event_name":"Stop"}' "$RANDOM" \
+# v26 mục 1: the Stop runs no suite. stop = the agent's gate run (the command a block prints; output in $TMP/gate.out) and then the
+# Stop, which reads what that run wrote: a run whose only red suites were killed from outside writes the "env" outcome (said once, the
+# Stop is let through, never a receipt); any real verdict writes nothing, and the Stop blocks.
+stop() { ( cd "$REPO" && CLAUDE_PROJECT_DIR="$REPO" python3 "$GATE" --run-tests --scoped --brief ) >"$TMP/gate.out" 2>&1
+  printf '{"session_id":"s-%s","hook_event_name":"Stop"}' "$RANDOM" \
   | CLAUDE_PROJECT_DIR="$REPO" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
 make_repo() { # $1 = body of suite.sh
   rm -rf "$REPO" && mkdir -p "$REPO/src" "$REPO/templates" && cd "$REPO" || exit 1
@@ -71,7 +75,7 @@ stop; rc=$?
 # 2. a real failing test (exit 1, Gradle-style failure line) -> still blocks
 make_repo 'echo "FooTest > bar FAILED"; echo "1 test completed, 1 failed"; exit 1'
 stop; rc=$?
-[ "$rc" = 2 ] && grep -q "REG-1" "$TMP/err" && ok "real test failure: still blocks" || fail "real test failure not blocked (rc=$rc)"
+[ "$rc" = 2 ] && grep -q "REG-1" "$TMP/gate.out" && ok "real test failure: still blocks" || fail "real test failure not blocked (rc=$rc)"
 
 # 3. killed AFTER a failing test was printed -> a verdict exists, still blocks
 make_repo 'echo "FooTest > bar FAILED"; kill -9 $$'
@@ -124,11 +128,11 @@ cat > templates/regression_matrix.json <<'JSON'
 JSON
 git add -A && git commit -qm init; echo "fun ok() = 2" > src/Core.kt
 stop; rc=$?
-[ "$rc" = 2 ] && grep -q "REG-F" "$TMP/err" && ok "killed suite next to a real failure: still blocks" || fail "mixed case allowed (rc=$rc)"
+[ "$rc" = 2 ] && grep -q "REG-F" "$TMP/gate.out" && ok "killed suite next to a real failure: still blocks" || fail "mixed case allowed (rc=$rc)"
 
 # 6. kill switch restores the old behaviour
 make_repo 'kill -9 $$'
-printf '{"session_id":"s-x","hook_event_name":"Stop"}' | REGRESSION_GATE_KILLED_IS_ENV=0 CLAUDE_PROJECT_DIR="$REPO" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rc=$?
+REGRESSION_GATE_KILLED_IS_ENV=0 stop; rc=$?
 [ "$rc" = 2 ] && ok "REGRESSION_GATE_KILLED_IS_ENV=0: a killed suite blocks again" || fail "switch ignored (rc=$rc)"
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }
