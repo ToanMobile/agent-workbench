@@ -2302,7 +2302,7 @@ BUDGET_RECORD = "budget_pass.json"
 # sandbox, no commit counts as a change). The record names it and a run with another value does not read the record.
 # ponytail: one name; a suite whose selection also reads the upstream or the clock (run_impacted.sh: the last hours of commits) is judged by the
 # content and HEAD alone, so a window that moved with the clock only ever narrows; list more names here when a matrix suite reads another one.
-SELECTION_ENV = ("DEVKIT_IMPACTED_SINCE", "DEVKIT_SCOPED_TESTS")   # #644: danh sách test của lượt --scoped (run_impacted.sh chạy đúng nó)
+SELECTION_ENV = ("DEVKIT_IMPACTED_SINCE", "DEVKIT_SCOPED_TESTS", "DEVKIT_SCOPED_NO_CONSISTENCY")   # #644: danh sách test của lượt --scoped (run_impacted.sh chạy đúng nó)
 
 
 def _selection_env():
@@ -4018,6 +4018,7 @@ def force_full_reason(args):
 # test ngoài kit thành một suite riêng chạy từ gốc project. Gate luôn tự đặt hoặc gỡ biến này: giá trị agent export không lọt vào lượt khác.
 # Chỉ lệnh runner kit nhận biến (run_in_group gắn, suite_env gỡ): suite khác thấy `unset`.
 SCOPED_TESTS_ENV = "DEVKIT_SCOPED_TESTS"
+SCOPED_NO_CONSISTENCY_ENV = "DEVKIT_SCOPED_NO_CONSISTENCY"   # gate speed v16 mục 4: diff không chạm kit ⇒ run_impacted.sh không ép test repo consistency
 # Gate speed v14 mục 5a: lượt --scoped chạy test kit qua một hàng duy nhất, chỉ mang danh sách đã chọn; --tree, --full và gate-full giữ ba shard.
 KIT_ROW_ID = "REG-DK-ALL-KIT-01"
 KIT_SHARD_IDS = ("REG-DK-ALL-GATES-01", "REG-DK-ALL-WORKTREE-01", "REG-DK-ALL-REST-01")
@@ -4825,6 +4826,8 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout, extend: dict = None) ->
         # #644: danh sách --scoped (kể cả rỗng) chỉ tới lệnh runner kit run_impacted.sh (shard cũng vậy); suite_env gỡ nó khỏi mọi suite khác.
         # Vẫn nằm trong os.environ của gate: khoá cache (_selection_env, suite_cache.selection_list `--list`) đọc nó như cũ
         env = dict(suite_env() if env is None else env, **{SCOPED_TESTS_ENV: os.environ[SCOPED_TESTS_ENV]})
+        if SCOPED_NO_CONSISTENCY_ENV in os.environ:
+            env[SCOPED_NO_CONSISTENCY_ENV] = os.environ[SCOPED_NO_CONSISTENCY_ENV]
     with _VACUITY_LOCK:   # registered in the same step as the start: a signal in between still finds it
         proc = subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, errors="replace", start_new_session=True, env=env)
@@ -5852,7 +5855,7 @@ def suite_env():
             "DEVKIT_SLOT_HEAVY_MAX", "DEVKIT_SLOT_HEAVY_WAIT_S", "DEVKIT_SLOT_HEAVY_BUDGET_S",
             "DEVKIT_PER_TEST_CACHE",   # B2: chỉ run_in_group đặt nó, cho lệnh run_impacted.sh chuẩn của lượt này
             # #644: danh sách --scoped chỉ cho runner kit (run_in_group gắn lại): suite khác chép runner thật rồi hỏi --list thì thấy nó
-            "DEVKIT_SCOPED_TESTS",
+            "DEVKIT_SCOPED_TESTS", "DEVKIT_SCOPED_NO_CONSISTENCY",
             "DEVKIT_IMPACTED_DIRS",   # #616: shard do tiền tố của lệnh ma trận đặt; biến có sẵn trong môi trường không được thu hẹp suite không tiền tố
             # 04/11: bể test chung của nhóm shard (tests/lib/job_pool.py) là của MỘT lượt gate: nhóm tự đặt lại sau suite_env(), suite khác không vào bể
             "DEVKIT_TEST_POOL_DIR", "DEVKIT_JOB_POOL",
@@ -6750,6 +6753,7 @@ def main():
     global _MAIN_T0, _STEP_LAST, _MAIN_LOAD1, _SHADOW_ON
     _MAIN_T0 = time.monotonic()
     _SHADOW_ON = os.environ.pop("DEVKIT_SHADOW_MAP", "") == "1"
+    os.environ.pop(SCOPED_NO_CONSISTENCY_ENV, None)
     os.environ.pop(SCOPED_TESTS_ENV, None)   # #644: giá trị kế thừa không được thu hẹp cả pre-commit (run_staged_audit chạy trước khối --scoped)
     try:
         _MAIN_LOAD1 = round(os.getloadavg()[0], 2)
@@ -7236,7 +7240,9 @@ def main():
     # #741 (anh Đạt 31/10): KHÔNG BAO GIỜ leo full — lõi chạy test chạm tới nó, file không test riêng / đồ thị lỗi thêm [core-smoke]
     # (scoped_gate.no_full); cả bộ suite chỉ ở gate-full đêm 00:00. Lượt --full / --force-full tường minh, --since (Stop hook) giữ hành vi cũ.
     scoped = None
+    scoped_needs = None
     os.environ.pop(SCOPED_TESTS_ENV, None)
+    os.environ.pop(SCOPED_NO_CONSISTENCY_ENV, None)
     if scoped_turn:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import scoped_gate  # noqa: PLC0415 - sibling module in bin/ (thiếu thì gate hỏng to, không âm thầm leo full)
@@ -7251,14 +7257,34 @@ def main():
         # Mục 5a: có hàng KIT thì bỏ ba shard, scoped_suites chọn hàng KIT (lệnh không tiền tố). Không có (app, ma trận cũ): shard giữ như trước.
         if any(t.get("id") == KIT_ROW_ID for r in rules for t in r.get("mandatory_regression_tests", [])):
             regression_tests[:] = [t for t in regression_tests if t.get("id") not in KIT_SHARD_IDS]
+        # Gate speed v16 mục 4, 5b: dò trước (test nào không suite nào chạy được; thay đổi này cần gì, cho kết luận phủ test), rồi thu hẹp về test trực tiếp.
+        # File đổi nhìn theo HEAD như decide: .claude/settings.json bẩn cục bộ không làm diff thành "chạm kit".
+        probe = []
+        added, kit_tests, _ = scoped_suites(scoped, rules, regression_tests, covers, skip=probe)
+        scoped_needs = list(regression_tests) + [t for _, t in added]
+        diff_view = (set(modified_files) | set(RENAME_SOURCES.values())) - set(scoped.get("head_pinned") or [])
+        if not any(scoped_gate.is_kit_path(f) for f in diff_view):
+            os.environ[SCOPED_NO_CONSISTENCY_ENV] = "1"
         skipped = []
-        added, kit_tests, _ = scoped_suites(scoped, rules, regression_tests, covers, skip=skipped)
+
+        def _rebuild(decision, selected):
+            skipped[:] = []
+            got, kit, _why = scoped_suites(decision, rules, selected, covers, skip=skipped)
+            return got, kit
+        narrowed = scoped_gate.cap_selection(project, scoped, regression_tests, added, rules, diff_view, _rebuild, unrunnable=probe, needs_no_test=needs_no_test)
+        regression_tests[:] = narrowed["selected"]
+        added, kit_tests = narrowed["added"], narrowed["kit_tests"]
+        scoped["deferred_to_heavy"] = narrowed["deferred_to_heavy"]
         if skipped:   # test py/js không luật ma trận nào chạy đúng môi trường: không chạy ở PR, bù bằng [core-smoke]
             scoped["not_run"] = args.scoped_not_run = skipped
             scoped["would_full"].append("không luật ma trận cụ thể nào chạy được: " + ", ".join(skipped[:5]))
             if not scoped["core_smoke"]:
                 scoped_gate.add_core_smoke(scoped, project)
                 added, kit_tests, _ = scoped_suites(scoped, rules, regression_tests, covers, skip=[])
+        _deferred = scoped["deferred_to_heavy"]
+        if _deferred["tests"] or _deferred["suites"]:
+            print(f"  • {YELLOW}deferred_to_heavy: {len(_deferred['tests'])} test, {len(_deferred['suites'])} suite "
+                  f"{tr('không chạy ở lượt này, heavy gate chạy', 'not run here, the heavy gate runs them')}{RESET}")
         if scoped["would_full"]:
             print(f"  • {YELLOW}{tr('--scoped (#741: không leo full; trước đây: ', '--scoped (#741: no escalation to full; it used to: ')}"
                   f"{'; '.join(scoped['would_full'][:3])})" + (f" + [core-smoke] {len(scoped['core_smoke'])} test" if scoped["core_smoke"] else "")
@@ -7280,7 +7306,10 @@ def main():
               f" ({len(scoped.get('docs') or [])} file tài liệu, {scoped.get('elapsed_s', '?')} s){RESET}")
         if args.core_touched:
             print(f"  • {YELLOW}core-touched ({len(args.core_touched)} file lõi; review 2/2 soi kỹ): {', '.join(args.core_touched[:10])}{RESET}")
-    impacted_tests = list(regression_tests)   # what the change itself needs (coverage verdicts)
+        if not regression_tests:
+            print(f"  • {CYAN}{tr('0 test liên quan: thay đổi này không có test trực tiếp nào phải chạy', '0 related tests: this change has no direct test to run')}{RESET}")
+    # what the change itself needs (coverage verdicts): chụp TRƯỚC khi thu hẹp, lượt --scoped thu hẹp hết thì vẫn exit 0, không phải "không test nào khớp"
+    impacted_tests = list(regression_tests) if scoped_needs is None else scoped_needs
     project_dir = get_project_dir()
     run_start_tree = head_tree(project_dir)   # the tree this run tests; mark_merge_gate_receipt keys the receipt to THIS tree, not to whatever HEAD is after the run
     force_reason = force_full_reason(args)
@@ -9379,7 +9408,8 @@ def main():
                     "reasons": list(scoped.get("reasons") or []), "base": scoped.get("base_sha") or "", "tree": run_start_tree,
                     # #741: lượt không leo full — file lõi đã chạm, lý do leo full cũ, [core-smoke] đã chạy (review 2/2 đọc)
                     "core_touched": list(scoped.get("core_touched") or []), "would_full": list(scoped.get("would_full") or []),
-                    "core_smoke": list(scoped.get("core_smoke") or []), "not_run": list(scoped.get("not_run") or [])}
+                    "core_smoke": list(scoped.get("core_smoke") or []), "not_run": list(scoped.get("not_run") or []),
+                    "deferred_to_heavy": scoped.get("deferred_to_heavy") or {"tests": [], "suites": []}}
             if exit_code == 0 and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", meta["base"]):
                 print(f"  • {YELLOW}{tr(f'Không ghi biên nhận scoped: không phân giải được base {base_ref} thành sha commit', f'Scoped receipt not written: base {base_ref} does not resolve to a commit sha')}{RESET}")
             elif exit_code == 0 and (impacted_run or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)):

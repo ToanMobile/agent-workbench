@@ -3,7 +3,7 @@
 # từng test của run_impacted.sh (tests/lib/per_test_cache.py, B2) như lượt cưỡng bức: một test đỏ / TIMEOUT trong suite runner không còn bắt
 # lượt sau trên ĐÚNG CÂY đó chạy lại mọi test đã PASS (merge gate TIMEOUT REG-DK-ALL-GATES-01 hai lần trong 7 ngày). Trước P4 lượt --scoped
 # để DEVKIT_PER_TEST_CACHE = "0" (chỉ lượt --full / --force-full / CI… bật) ⇒ S2 ĐỎ.
-#   S1. lượt --scoped đầu: diff (lib/shared.txt chưa commit) chọn test_a, test_b, test_c qua runner run_impacted.sh THẬT; test_c FAIL (cờ ngoài
+#   S1. lượt --scoped đầu: diff (lib/shared.txt + lib/<t>.py riêng của từng test, chưa commit) chọn test_a, test_b, test_c qua runner run_impacted.sh THẬT; test_c FAIL (cờ ngoài
 #       cây) ⇒ exit ≠ 0, cả ba chạy (tiền đề: không leo full, runner thật chạy).
 #   S2. cùng cây, cờ vẫn bật: test_a, test_b in "↺" (dùng lại PASS), chỉ test_c chạy; runs.jsonl ghi ptc_reuse > 0.
 #   S3. --scoped --no-cache, và S4. DEVKIT_GATE_CACHE=0: chế độ "record" (chỉ ghi) ⇒ cả ba chạy thật, ptc_reuse = 0.
@@ -40,8 +40,9 @@ ln -s "$DEVKIT_DIR/bin" "$KIT/bin"
 echo 'true' > "$KIT/tests/verification/test_repo_consistency.sh"
 echo v1 > "$KIT/lib/shared.txt"
 for t in a b c; do
-  printf 'DK="$(cd "$(dirname "$0")/../.." && pwd)"\necho %s >> %s/count.%s\ngrep -q v "$DK/lib/shared.txt" || exit 1\n' "$t" "$TMP" "$t" \
+  printf 'DK="$(cd "$(dirname "$0")/../.." && pwd)"\necho %s >> %s/count.%s\ngrep -q v "$DK/lib/shared.txt" || exit 1\ngrep -q V "$DK/lib/%s.py" || exit 1\n' "$t" "$TMP" "$t" "$t" \
     > "$KIT/tests/gates/test_$t.sh"
+  echo 'V = 1' > "$KIT/lib/$t.py"
 done
 printf '[ -f %s/fail_c ] && exit 1\nexit 0\n' "$TMP" >> "$KIT/tests/gates/test_c.sh"
 printf '.claude/\n' > "$R/.gitignore"
@@ -53,6 +54,8 @@ json.dump({"project": "t", "rules": [{"component": "K", "watch_files": ["univers
 PY
 git -C "$R" add -A && git -C "$R" commit -qm init
 echo v2 > "$KIT/lib/shared.txt"   # diff chưa commit (base HEAD): chọn ba test đọc file này
+# v26 mục 5b: --scoped chỉ giữ test hạng đầu của MỖI file code đổi ⇒ mỗi test có file code riêng trong diff để cả ba vẫn chạy
+for t in a b c; do echo 'V = 2' > "$KIT/lib/$t.py"; done
 : > "$TMP/fail_c"
 RUNS="$R/.git/postfix-gate/runs.jsonl"
 

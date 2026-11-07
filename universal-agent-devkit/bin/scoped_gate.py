@@ -692,7 +692,7 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
     nnt = needs_no_test or default_needs_no_test
     res = {"mode": "full", "reasons": [], "core_hits": [], "changed": [], "docs": [], "tests": [], "smoke": [],
            "unmapped": [], "expanded": [], "matrix_covered": [], "deleted": [], "no_own_test": [], "graph_error": None, "elapsed_s": 0.0,
-           "head_pinned": []}
+           "head_pinned": [], "by_file": {}}
     core = load_core(project)
     res["smoke"] = [p for p in core["smoke"] if os.path.isfile(os.path.join(project, p))]
 
@@ -727,6 +727,7 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
     for f in changed:
         if f == MATRIX_FILE and mx_readers is not None:   # P6: ma trận chỉ nối rule ⇒ không lõi, chỉ test đọc ma trận thật (rule mới: gate chạy)
             tests |= set(mx_readers)
+            res["by_file"][f] = sorted(mx_readers)
             res["matrix_covered"].append(f)
             continue
         hit = True
@@ -758,6 +759,8 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
             if x == f or x not in barrier:
                 mine |= weak.get(x, set())
         tests |= mine
+        if mine:
+            res["by_file"][f] = sorted(mine)                # cap_selection: test nào được chọn qua file nào
         if nnt(f) or state:
             res["docs"].append(f)
         elif mine or hit:                                   # lõi đã là full: không kể thêm là unmapped
@@ -793,11 +796,14 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
             if hit:
                 tests.add(t)
                 named_gone |= hit
+                for f in hit:
+                    res["by_file"].setdefault(f, []).append(t)
         files = list(graph)
         for t, f in _impact_map_edges(project, files + gone, set(files)):
             if f in gone:
                 tests.add(t)
                 named_gone.add(f)
+                res["by_file"].setdefault(f, []).append(t)
     res["no_own_test"] += [f for f in gone if f not in named_gone]
     if res["core_hits"]:
         res["reasons"].insert(0, "khớp lõi ⇒ full: %s" % ", ".join(res["core_hits"][:10]))
@@ -810,10 +816,10 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
 
 
 def add_core_smoke(res, project):
-    """Thêm [core-smoke] (file còn trên đĩa) vào res["smoke"] và res["core_smoke"]; một lần."""
+    """Thêm [core-smoke] (file còn trên đĩa) vào res["smoke"] và res["core_smoke"]; một lần. Gate speed v16 mục 5b: [smoke] không còn đi kèm."""
     core = load_core(project)
-    have = [p for p in core["smoke"] + core["core_smoke"] if os.path.isfile(os.path.join(project, p))]
-    res["core_smoke"] = [p for p in core["core_smoke"] if p in have]
+    have = [p for p in core["core_smoke"] if os.path.isfile(os.path.join(project, p))]
+    res["core_smoke"] = have
     res["smoke"] = list(dict.fromkeys(list(res.get("smoke") or []) + have))
     return res
 
@@ -832,6 +838,180 @@ def no_full(res, project):
     out["reasons"] = []
     out["mode"] = "scoped"
     return out
+
+
+# --- thu hẹp lượt --scoped: chỉ test kit trực tiếp chặn merge, phần còn lại để heavy gate (gate speed v16 mục 4, 5b) -----------
+
+KIT_PATH_PREFIXES = ("universal-agent-devkit/", ".agents/devkit/", ".claude/hooks/", ".claude/bin/", ".claude/workflows/", ".claude/skills/",
+                     ".claude/super-board/", ".claude/commands/", ".githooks/", "tests/super-board/", ".agents/context/")
+KIT_PATH_FILES = ("AGENTS.md", "CLAUDE.md", CORE_FILE, MATRIX_FILE)
+KIT_TEST_PREFIXES = ("tests/super-board/", "universal-agent-devkit/", ".agents/devkit/", ".claude/bin/")
+BOARD_CONFIGS = ".claude/super-board/configs/"
+_PATH_TOKEN = re.compile(r"[\w./+-]+")
+_INTERP = r"(?:(?:bash|sh|zsh|python3?|node)\s+(?:-\S+\s+)*)?"
+_CMD_START = r"(?:^|[;&|(`!]|\bthen\b|\bdo\b|\bif\b|\belse\b|\bwhile\b)\s*(?:[A-Za-z_]\w*=\S*\s+)*(?:exec\s+|time\s+|env\s+|timeout\s+\S+\s+)?"
+
+
+def is_kit_path(path):
+    """Đường dẫn thuộc phần DevKit cài vào mọi repo."""
+    p = path.replace("\\", "/")
+    return p in KIT_PATH_FILES or p.startswith(KIT_PATH_PREFIXES) or fnmatch.fnmatch(p, ".claude/settings*.json")
+
+
+def _norm_name(name):
+    return name.replace("-", "").replace("_", "").replace("superboard", "")
+
+
+def _named_tests(cmd):
+    return [w for w in _PATH_TOKEN.findall(cmd or "") if is_test(w)]
+
+
+def _no_comments(body):
+    return "\n".join(line for line in body.splitlines() if not line.lstrip().startswith("#"))
+
+
+def _executes(body, base):
+    """Dòng không phải chú thích CHẠY file tên `base`: đầu lệnh (kèm trình thông dịch), hoặc qua biến gán đường dẫn của nó rồi dùng biến làm lệnh."""
+    b = re.escape(base)
+    if re.search(_CMD_START + _INTERP + r"[\"']?[^\s\"';&|]*" + b + r"[\"']?(?:$|[\s;&|)])", body, re.M):
+        return True
+    for var in set(re.findall(r"^[ \t]*(?:export[ \t]+|local[ \t]+)?([A-Za-z_]\w*)=[\"']?[^\s\"']*" + b + r"[\"']?[ \t]*(?:#.*)?$", body, re.M)):
+        if re.search(_CMD_START + _INTERP + r"[\"']?\$\{?" + var + r"\}?[\"']?(?:$|[\s;&|)])", body, re.M):
+            return True
+    return False
+
+
+def _impact_tests(project, path):
+    """Test mà `<kit>/tests/impact_map.txt` khai cho `path` (đường dẫn từ gốc repo)."""
+    out = set()
+    for kit in ("universal-agent-devkit/", ".agents/devkit/"):
+        if not path.startswith(kit):
+            continue
+        try:
+            with open(os.path.join(project, kit, "tests/impact_map.txt"), encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            parts = line.split()
+            if parts and not parts[0].startswith("#") and fnmatch.fnmatch(path[len(kit):], parts[0]):
+                out.update(kit + t for t in parts[1:])
+    return out
+
+
+def _tracked_durations(project):
+    """{đường dẫn từ gốc repo: giây} từ tests/lib/test_durations.txt ĐÃ TRACK của kit. Không đọc file đo trong git common dir: thứ tự phải suy được từ
+    nội dung repo, để QA, merge gate và gate_full cùng chọn."""
+    out = {}
+    for kit in ("universal-agent-devkit/", ".agents/devkit/"):
+        try:
+            with open(os.path.join(project, kit, "tests/lib/test_durations.txt"), encoding="utf-8") as f:
+                for line in f:
+                    w = line.split()
+                    if len(w) >= 2 and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", w[0]):
+                        out[kit + w[1]] = float(w[0])
+        except OSError:
+            continue
+    return out
+
+
+def _test_rank(project, test, target, memo):
+    """Hạng của `test` với file đổi `target` (nhỏ hơn đứng trước): 1 tên test khớp tên file sau khi bỏ `-`, `_`, `super_board` (trùng hẳn đứng trước khớp một phần),
+    2 import / source / chạy file, 3 impact_map khai, 4 cạnh khác."""
+    stem = _norm_name(os.path.basename(target).rsplit(".", 1)[0])
+    name = os.path.basename(test).rsplit(".", 1)[0]
+    name = _norm_name(name[5:] if name.startswith("test_") else name)
+    if stem and name == stem:
+        return (1, 0)
+    if stem and stem in name:
+        return (1, 1)
+    if test not in memo:
+        try:
+            with open(os.path.join(project, test), encoding="utf-8", errors="replace") as f:
+                body = _no_comments(f.read())
+        except OSError:
+            body = ""
+        memo[test] = (body, _calls(body), _scan(project, test))
+    body, calls, scan = memo[test]
+    base = os.path.basename(target)
+    raw_stem = base.rsplit(".", 1)[0]
+    imported = {piece for _, mod, names in scan["imp"] for piece in [mod.rsplit(".", 1)[-1]] + list(names)}
+    if raw_stem in imported or base in scan["src"] or base in calls or raw_stem in calls or _executes(body, base):
+        return (2, 0)
+    return (3, 0) if test in _impact_tests(project, target) else (4, 0)
+
+
+def _is_code_file(project, path, nnt):
+    return (not nnt(path) or path.endswith(SOURCE_EXT)
+            or ("." not in os.path.basename(path) and _shebang(os.path.join(project, path))))
+
+
+def cap_selection(project, decision, selected, added, rules, changed, rebuild, unrunnable=(), needs_no_test=None, guards=()):
+    """Gate speed v16 mục 5b: chỉ test kit trực tiếp chặn merge. Ở lại: test đổi trong diff và suite nêu tên nó; test hạng đầu của MỖI file code đổi (kit hay không,
+    cả file bị xoá mà test nêu tên); [core-smoke]; suite có watch_files khớp file đổi ngoài kit, .claude/super-board/configs/ hay .claude/settings*.json; suite không phải kit; guard. File code không
+    test nào, không suite nào ở lại phủ ⇒ [core-smoke]. [smoke] rời lượt --scoped. Còn lại vào deferred_to_heavy và không chạy.
+    Suite kit = lệnh nêu tên test dưới KIT_TEST_PREFIXES. `decision` được tỉa tại chỗ; `selected`, `added` = [(component, test)] như scoped_suites; `changed` = file đổi đã
+    ghim theo HEAD; `rebuild(decision, selected)` → (added, kit_tests) gọi lại scoped_suites; `unrunnable`: test không suite nào chạy được, không chọn làm test hạng đầu.
+    Trả {"selected", "added", "kit_tests", "deferred_to_heavy": {"tests", "suites"}}. Dùng chung với gate_full._scoped_pick để test bị hoãn tính là không chạy.
+    ponytail: one direct test per file, raise when gate_full's escape_check names a deferred test."""
+    nnt = needs_no_test or default_needs_no_test
+    by_file = decision.get("by_file") or {}
+    changed = set(changed)
+    core_smoke = set(decision.get("core_smoke") or [])
+    decision["smoke"] = [p for p in decision.get("smoke") or [] if p in core_smoke]
+    all_tests = list(decision.get("tests") or [])
+    durations, memo, skip = _tracked_durations(project), {}, set(unrunnable)
+    keep = {t for t in all_tests if t in changed or t in core_smoke or not t.startswith(KIT_TEST_PREFIXES)}
+    for f in sorted(by_file):
+        if is_test(f) or not _is_code_file(project, f, nnt):
+            continue
+        cands = [t for t in by_file[f] if t not in skip] or list(by_file[f])
+
+        def order(t):
+            d = durations.get(t)
+            return (_test_rank(project, t, f, memo), d is None, d or 0.0, t)
+        keep.add(min(cands, key=order))
+    decision["tests"] = [t for t in all_tests if t in keep]
+    new_added, kit_tests = rebuild(decision, selected)
+    raw = [(r, [p for p in (r.get("watch_files") or []) if isinstance(p, str)]) for r in rules if isinstance(r, dict)]
+    outer = {f for f in changed if not is_kit_path(f) or f.startswith(BOARD_CONFIGS) or fnmatch.fnmatch(f, ".claude/settings*.json")}
+
+    def watches(sid, files):
+        return any(any(isinstance(x, dict) and x.get("id") == sid for x in r.get("mandatory_regression_tests") or [])
+                   and any(match_pattern(f, p) for f in files for p in w) for r, w in raw)
+
+    def stays(t):
+        cmd = t.get("command") or ""
+        if watches(t.get("id"), outer):
+            return True                                     # watch khớp file đổi ngoài kit: luôn ở lại (kể cả runner)
+        runner = [p for p in _PATH_TOKEN.findall(cmd) if p.endswith("tests/run_impacted.sh")]
+        if any(p.startswith(KIT_TEST_PREFIXES) for p in runner) and not cmd.lstrip().startswith("DEVKIT_IMPACTED_DIRS="):
+            return bool(kit_tests)                          # runner của kit chỉ ở lại khi còn test cho nó
+        named = _named_tests(cmd)
+        if not any(p.startswith(KIT_TEST_PREFIXES) for p in named):
+            return True                                     # suite không phải kit (app, mcp-server, Gradle, Unity), shard của ma trận cũ
+        return (t.get("id") in guards or t.get("id") == "SCOPED-EXTRA" or any(p in keep or p in core_smoke for p in named)
+                or watches(t.get("id"), outer))
+    gone = [t for t in selected if t.get("command") and not stays(t)]
+    gone_ids = {t.get("id") for t in gone}
+    kept_sel = [t for t in selected if t.get("id") not in gone_ids]
+    kept_added = [(c, t) for c, t in new_added if stays(t)]
+    gone_ids |= {t.get("id") for _, t in new_added if not stays(t)}
+    # File code không test, không suite nào ở lại phủ: [core-smoke]
+    kept_ids = {t.get("id") for t in kept_sel} | {t.get("id") for _, t in kept_added}
+    for f in sorted(changed):
+        if (f not in by_file and not is_test(f) and _is_code_file(project, f, nnt) and not core_smoke and not nnt(f)
+                and not any(watches(i, {f}) for i in kept_ids)):
+            add_core_smoke(decision, project)
+            core_smoke = set(decision.get("core_smoke") or [])
+            new_added, kit_tests = rebuild(decision, kept_sel)
+            kept_added = [(c, t) for c, t in new_added if stays(t)]
+            break
+    named_now = {p for t in kept_sel for p in _named_tests(t.get("command"))} | {p for _, t in kept_added for p in _named_tests(t.get("command"))}
+    still = [t for t in all_tests if t not in keep and t in named_now]       # suite còn lại vẫn chạy nó: biên nhận phải ghi
+    decision["tests"] = sorted(set(decision["tests"]) | set(still))
+    deferred = {"tests": sorted(t for t in all_tests if t not in keep and t not in named_now), "suites": sorted(str(i) for i in gone_ids)}
+    return {"selected": kept_sel, "added": kept_added, "kit_tests": kit_tests, "deferred_to_heavy": deferred}
 
 
 # --- gen: map + [core:auto] ------------------------------------------------------------------------------------------------
