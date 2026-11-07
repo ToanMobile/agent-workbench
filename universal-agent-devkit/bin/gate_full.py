@@ -28,7 +28,7 @@ Một lượt:
   6. xanh ⇒ nightly/full_pass.json, last_full_green_sha, nightly/history.jsonl;
   7. đỏ ⇒ chạy lại CHỈ suite/test đỏ ở đỉnh, rồi chia đôi các merge first-parent last_green..sha (≤ 16; không có last_green: 8 merge gần
      nhất) ra commit nghi vấn, tạo thẻ P1 qua scripts/governance/create_task.py (đã có thẻ mở cùng suite đỏ (tiêu đề P1, hoặc mã suite trong tiêu đề/body) thì comment vào đó, không tạo trùng);
-     MỌI suite đỏ đều nhóm b (thời gian thực / môi trường: nhãn "timing": true trong ma trận, dấu hiệu GROUP_B_SIGN trên dòng không
+     MỌI suite đỏ đều nhóm b (thời gian thực / môi trường: nhãn "timing": true trong ma trận hoặc mọi đường test đỏ có trong "timing_paths", dấu hiệu GROUP_B_SIGN trên dòng không
      phải dòng đạt, hoặc chạy lại ở đỉnh xanh) ⇒ result red-env, không chia đôi, thẻ vẫn mở / ghi thêm (#700).
      DEVKIT_GATE_FULL_BISECT=0 không bao giờ chia đôi, =1 luôn chia đôi (ra commit nghi vấn ⇒ red, #748), auto (mặc định) bỏ chia đôi
      khi red-env. Đỏ (red / red-env) ⇒ truy vết (#759): commit first-parent last_green..sha kèm PR / thẻ, với mỗi suite đỏ các commit
@@ -496,6 +496,18 @@ def timing_ids(matrix_path: str) -> set:
             if isinstance(t, dict) and t.get("timing") is True}
 
 
+def timing_paths(matrix_path: str) -> set:
+    """Nhãn timing theo từng đường test kit (v26 mục 9): khoá gốc ma trận `"timing_paths": {"tests/…": "<bằng chứng>"}`, đường TƯƠNG ĐỐI
+    KIT như `✖ tests/…` của run_impacted.sh. Đặt ở gốc, không trong rule: driver gộp ma trận giữ khoá gốc, còn sửa rule có sẵn làm ma trận
+    thôi là "chỉ thêm". Bằng chứng rỗng / không phải chuỗi ⇒ không tính. Đọc lỗi ⇒ rỗng."""
+    try:
+        with open(matrix_path or "", encoding="utf-8") as f:
+            labels = json.load(f).get("timing_paths")
+    except (OSError, ValueError, AttributeError):
+        return set()
+    return {p for p, why in labels.items() if isinstance(why, str) and why.strip()} if isinstance(labels, dict) else set()
+
+
 def _full_gate_out(scratch: str, gate_out: str) -> str:
     gitdir = git_out(scratch, "rev-parse", "--absolute-git-dir") if scratch and os.path.isdir(scratch) else ""
     last_out = os.path.join(gitdir, "postfix-gate", "last_output.log") if gitdir else ""
@@ -514,6 +526,7 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
     data = last_json(gate_out)
     kit_dir = os.path.join(scratch, kit_rel) if kit_rel else ""
     timing = timing_ids(data.get("matrix_path"))
+    tpaths = timing_paths(data.get("matrix_path"))   # nhóm b khi MỌI đường đỏ của suite đều có nhãn; một đường không nhãn ⇒ đỏ thật
     run.info["red_tests"] = {}
     checks, red, env_red, group_b = [], [], [], []
     for t in data.get("regression_tests") or []:
@@ -533,7 +546,7 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
                 checks.append((sid, cmd, "."))
             full = suite_output(run, scratch, t, text)
             run.info["red_tests"][sid] = {"paths": paths, "cases": case_lines(full)}
-            if sid in timing or group_b_text(full):
+            if sid in timing or (paths and set(paths) <= tpaths) or group_b_text(full):
                 group_b.append(sid)
         elif st in ("TIMEOUT", "UNTESTED"):
             env_red.append("%s (%s)" % (sid, st))
@@ -549,7 +562,7 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
             checks.append(("agent-kit test", "bash %s/bin/agent-kit test" % shlex.quote(kit_rel), "."))
         if "agent-kit test" in red:
             run.info["red_tests"]["agent-kit test"] = {"paths": paths, "cases": case_lines(kit_out)}
-        if kit_rc != 124 and group_b_text(kit_out):
+        if kit_rc != 124 and ((paths and set(paths) <= tpaths) or group_b_text(kit_out)):
             group_b.append("agent-kit test")
     run.info["red"], run.info["env_red"], run.info["group_b"] = red, env_red, group_b
     if red:
