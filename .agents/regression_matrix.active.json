@@ -3514,6 +3514,22 @@
       ]
     },
     {
+      "component": "devkit-regression-gate-reminder-approval-key",
+      "watch_files": [
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/bin/approval_digest.py",
+        "universal-agent-devkit/tests/gates/test_regression_gate_reminder_approval_key.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REMINDER-APPROVAL-KEY-01",
+          "name": "Đợt 2 gate mục 3 (04/11): nhắc 'test sửa chờ duyệt' khoá theo cây + digest sổ duyệt, bỏ TTL 300 s; sổ duyệt đổi thì chạy lại",
+          "command": "bash universal-agent-devkit/tests/gates/test_regression_gate_reminder_approval_key.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-review-gate-ocr-content",
       "watch_files": [
         "universal-agent-devkit/hooks/review_gate.sh",
