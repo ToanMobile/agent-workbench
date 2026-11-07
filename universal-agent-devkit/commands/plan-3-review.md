@@ -1,1 +1,0 @@
-../skills/plan-3-review/SKILL.md
