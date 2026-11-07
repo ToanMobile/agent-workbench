@@ -91,6 +91,12 @@ R="$TMP/g"; new_repo "$R" "REG-A REG-B"
 printf '[merge-guard]\nREG-C\nREG-A\n' > "$R/.agents/gate-core.txt"
 G="$(cd "$R" && python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import scoped_gate as g; print(g.merge_guard_ids(".", "main"), g.merge_guard_ids("."))' "$DEVKIT_DIR/bin" 2>&1)"
 [ "$G" = "['REG-C', 'REG-A', 'REG-B'] ['REG-C', 'REG-A']" ] && ok "g. hợp với base, cây này trước" || fail "g. $G"
+# g2: merge_guards (gate_full._scoped_pick dùng chung): dòng ma trận, id thiếu, test lệnh guard nêu tên
+G2="$(cd "$R" && python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import scoped_gate as g
+rules = [{"component": "c", "mandatory_regression_tests": [{"id": "REG-A", "command": "bash universal-agent-devkit/tests/gates/test_guard.sh"}]}]
+m = g.merge_guards(".", rules, "main"); print(m["ids"], [t["id"] for _, t in m["rows"]], m["missing"], m["tests"])' "$DEVKIT_DIR/bin" 2>&1)"
+[ "$G2" = "['REG-C', 'REG-A', 'REG-B'] ['REG-A'] ['REG-C', 'REG-B'] ['universal-agent-devkit/tests/gates/test_guard.sh']" ] \
+  && ok "g2. merge_guards: dòng, id thiếu, test" || fail "g2. $G2"
 
 [ "$FAILS" -eq 0 ] && { echo "PASS"; exit 0; }
 echo "failures: $FAILS"; exit 1

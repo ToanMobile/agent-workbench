@@ -7316,6 +7316,9 @@ def main():
             if not scoped["core_smoke"]:
                 scoped_gate.add_core_smoke(scoped, project)
                 added, kit_tests, _ = scoped_suites(scoped, rules, regression_tests, covers, skip=[])
+                # [core-smoke] thêm sau cap chạy ở lượt này: test nào cap đã hoãn mà nay chạy thì không còn là deferred_to_heavy
+                _cs = set(scoped.get("core_smoke") or [])
+                scoped["deferred_to_heavy"]["tests"] = [p for p in scoped["deferred_to_heavy"]["tests"] if p not in _cs]
         _deferred = scoped["deferred_to_heavy"]
         if _deferred["tests"] or _deferred["suites"]:
             print(f"  • {YELLOW}deferred_to_heavy: {len(_deferred['tests'])} test, {len(_deferred['suites'])} suite "
@@ -7345,29 +7348,26 @@ def main():
         # không bao giờ vào deferred_to_heavy, luôn chạy thật (merge_guard: không khoá, không biên nhận, không same-tree, không rerun-skip).
         # Danh sách = [merge-guard] của cây này ∪ của base; id có trong danh sách mà ma trận không có ⇒ một suite đỏ mang tên id đó.
         if at_merge_point(project):
-            guard_ids = scoped_gate.merge_guard_ids(project, scoped.get("base_sha") or "")
-            by_id = {}
-            for _r in rules:
-                for _t in _r.get("mandatory_regression_tests", []):
-                    by_id.setdefault(_t.get("id"), (_r, _t))
+            mg = scoped_gate.merge_guards(project, rules, scoped.get("base_sha") or "")   # cùng một hàm với gate_full._scoped_pick
+            guard_ids = mg["ids"]
             have = {t.get("id"): t for t in regression_tests}
-            for gid in guard_ids:
+            for gid in mg["missing"]:
+                regression_tests.append({"component": "merge-guard", "id": gid, "name": "merge-guard thiếu trong ma trận",
+                                         "command": f"echo '✖ merge-guard {gid}: id có trong [merge-guard] nhưng không có trong ma trận'; exit 1",
+                                         "files": [], "parallel_safe": False, "status": "NOT_RUN", "duration": "-", "merge_guard": True})
+            for comp, _t in mg["rows"]:
+                gid = _t.get("id")
                 if gid in have:
                     have[gid]["merge_guard"] = True
                     continue
-                _r, _t = by_id.get(gid) or (None, None)
-                if _t is None or not _t.get("command"):
-                    regression_tests.append({"component": "merge-guard", "id": gid, "name": "merge-guard thiếu trong ma trận",
-                                             "command": f"echo '✖ merge-guard {gid}: id có trong [merge-guard] nhưng không có trong ma trận'; exit 1",
-                                             "files": [], "parallel_safe": False, "status": "NOT_RUN", "duration": "-", "merge_guard": True})
-                    continue
                 regression_tests.append({
-                    "component": _r.get("component", "UnknownComponent"), "id": gid, "name": _t.get("name"), "command": _t.get("command"),
+                    "component": comp, "id": gid, "name": _t.get("name"), "command": _t.get("command"),
                     "impacted_command": None, "files": [], "untested_exit": _t.get("untested_exit"),
                     "parallel_safe": _t.get("parallel_safe") is True, "status": "NOT_RUN", "duration": "-", "merge_guard": True,
                     "covered_by": None})
             if guard_ids:
                 _deferred["suites"] = [s for s in _deferred["suites"] if s not in set(guard_ids)]
+                _deferred["tests"] = [p for p in _deferred["tests"] if p not in set(mg["tests"])]
                 print(f"  • {CYAN}merge-guard: {len(guard_ids)} suite {tr('chạy thật ở điểm gộp', 'run for real at the merge point')}{RESET}")
         if not regression_tests:
             print(f"  • {CYAN}{tr('0 test liên quan: thay đổi này không có test trực tiếp nào phải chạy', '0 related tests: this change has no direct test to run')}{RESET}")

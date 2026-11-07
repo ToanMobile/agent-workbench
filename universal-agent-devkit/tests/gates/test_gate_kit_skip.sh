@@ -8,6 +8,7 @@
 #   e  diff chạm kit: test trực tiếp và consistency chạy, smoke không
 #   f  is_kit_path nhận đúng danh sách
 #   g  run_impacted.sh: cờ bỏ test consistency, đọc một lần; không cờ vẫn thêm; suite khác không thấy cờ
+#   h  [core-smoke] thêm sau cap (test py không chạy được) trùng test cap đã hoãn: chạy, và không còn trong deferred_to_heavy
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 unset DEVKIT_GATE_CACHE DEVKIT_SUITE_CACHE CI FLAKY_RETRY DEVKIT_GATE_PARALLEL DEVKIT_GATE_DONE DEVKIT_IMPACT_TEST_CHANGED DEVKIT_IMPACTED_SINCE \
@@ -93,6 +94,19 @@ R="$TMP/e"; new_repo "$R"; echo v2 > "$R/universal-agent-devkit/lib/shared.txt";
 gate "$R"
 ran consistency && ran kit && ok "e. diff chạm kit: consistency, test kit chạy" || { fail "e. rc=$RC suite=$(ids)"; tail -15 "$TMP/out"; }
 ran smoke && fail "e. smoke vẫn chạy" || ok "e. [smoke] rời lượt --scoped"
+
+# h: [core-smoke] thêm SAU cap (test py không luật nào chạy được) mà trùng một test cap đã hoãn: nó chạy, nên không còn trong deferred_to_heavy
+R="$TMP/h"; new_repo "$R"
+printf 'python3 "$(dirname "$0")/../../../app/reader.py"\necho x >> %s/ran.second\n' "$TMP" > "$R/universal-agent-devkit/tests/gates/test_second_runner.sh"
+mkdir -p "$R/tests"; printf 'from app import reader\n\ndef test_x():\n    assert True\n' > "$R/tests/test_reader.py"
+printf '\n[core-smoke]\nuniversal-agent-devkit/tests/gates/test_second_runner.sh\n' >> "$R/.agents/gate-core.txt"
+git -C "$R" add -A; git -C "$R" commit -qm h0; git -C "$R" branch -qf main HEAD
+echo 'print(3)' > "$R/app/reader.py"; git -C "$R" commit -qam e
+gate "$R"
+D="$(receipt "$R" 'd["deferred_to_heavy"]["tests"]')"; NR="$(receipt "$R" 'd["not_run"]')"
+case "$NR" in *test_reader.py*) ok "h. test py không chạy được ⇒ [core-smoke] sau cap" ;; *) fail "h. dựng ca hỏng: not_run=$NR rc=$RC"; tail -15 "$TMP/out" ;; esac
+ran second && ok "h. test [core-smoke] chạy" || fail "h. test [core-smoke] không chạy"
+case "$D" in *test_second_runner.sh*) fail "h. test [core-smoke] đã chạy vẫn nằm trong deferred_to_heavy: $D" ;; *) ok "h. deferred_to_heavy không ghi test đã chạy ($D)" ;; esac
 
 # f
 F="$(python3 - "$DEVKIT_DIR/bin" <<'PY'

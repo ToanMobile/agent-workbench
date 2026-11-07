@@ -150,6 +150,23 @@ def merge_guard_ids(project, base=""):
     return list(dict.fromkeys(out))
 
 
+def merge_guards(project, rules, base=""):
+    """Guard của điểm gộp như post-fix-gate tiêm (mục 7), cho người gọi khác (gate_full._scoped_pick): {"ids": merge_guard_ids(project, base),
+    "rows": [(component, test dict của ma trận)] theo thứ tự ids, "missing": [id không có lệnh trong `rules`], "tests": [đường dẫn test các lệnh
+    guard nêu tên]}. `rules` = danh sách rule của ma trận đang dùng."""
+    ids = merge_guard_ids(project, base)
+    by_id = {}
+    for r in rules or []:
+        if isinstance(r, dict):
+            for t in r.get("mandatory_regression_tests") or []:
+                if isinstance(t, dict):
+                    by_id.setdefault(t.get("id"), (r.get("component", "UnknownComponent"), t))
+    rows = [by_id[i] for i in ids if i in by_id and by_id[i][1].get("command")]
+    missing = [i for i in ids if not (i in by_id and by_id[i][1].get("command"))]
+    tests = list(dict.fromkeys(p for _, t in rows for p in _named_tests(t.get("command"))))
+    return {"ids": ids, "rows": rows, "missing": missing, "tests": tests}
+
+
 def load_core(project):
     """{"core": [glob], "smoke": [path], "core_smoke": [path]} từ .agents/gate-core.txt ([core] ∪ [core:auto], [smoke], [core-smoke]);
     thiếu file → DEFAULT_CORE."""
