@@ -7,6 +7,8 @@
 #   m4  id chỉ là guard ở cây PR, không ở base: không chạy lại, exit 11
 #   m5  JSON có điều kiện bị REJECT che (test sửa chưa duyệt): không chạy lại, exit 11
 #   m6  sb_merge_guard_red_ids: dòng TIMEOUT không phải đỏ chạy lại được
+#   m8  gate_masked_conditions_clean ở verify-flags.sh (merge gate và train cùng dùng): JSON sạch 0, có điều kiện bị che 1
+#   m7  lệnh verify ghép (`post-fix-gate.py … && npm test`): không chạy lại guard (lệnh sau && chưa chạy), exit 11
 set -u
 export LC_ALL=C LANG=C
 export SB_NOTIFY_SKIP=1
@@ -93,7 +95,7 @@ J='"regression_tests":[{"id":"REG-G1","status":"FAIL"}],"unreadable":[],"uncover
 echo "{\"exit_code\":1,\"matrix_problem\":\"\",\"tests_touched\":[],$J}" > "$TMP/clean.json"
 echo "{\"exit_code\":1,\"matrix_problem\":\"\",\"tests_touched\":[\"tests/t.sh\"],$J}" > "$TMP/masked.json"
 
-run_case() {  # $1 = PR, $2 = log verify giả (exit 1), $3 = JSON
+run_case() {  # $1 = PR, $2 = log verify giả (exit 1), $3 = JSON, $4 = phần nối sau lệnh post-fix-gate (lệnh ghép)
   local n="$1" cfg="$TMP/cfg$1.json" script
   rm -f "$TMP/created" "$TMP/commented"
   mkdir -p "$TMP/g$n"; script="$TMP/g$n/post-fix-gate.py"
@@ -104,7 +106,7 @@ if "--json" in sys.argv:
     sys.stdout.write(open("${3:-$TMP/clean.json}").read())
 sys.exit(1)
 PY
-  python3 -c 'import json,sys; print(json.dumps({"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"project":{"owner":"o","number":1},"verify_commands":sys.argv[1:]}))' "python3 $script" > "$cfg"
+  python3 -c 'import json,sys; print(json.dumps({"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"project":{"owner":"o","number":1},"verify_commands":sys.argv[1:]}))' "python3 $script${4:+ $4}" > "$cfg"
   ( cd "$WT" && bash "$GATE" --config "$cfg" --pr "$n" --expect-head "$(cat "$TMP/pr$n.head")" ) >"$TMP/gate$n.log" 2>&1
   CASE_RC=$?
   RERUNS=$(grep -c "re-running it once" "$TMP/gate$n.log" 2>/dev/null || true); RERUNS=${RERUNS:-0}
@@ -127,10 +129,19 @@ mkpr 54; run_case 54 "$TMP/g2.log"
 mkpr 55; run_case 55 "$TMP/g1.log" "$TMP/masked.json"
 [ "$CASE_RC" -eq 11 ] && [ "$RERUNS" -eq 0 ] && ok "m5. điều kiện bị REJECT che: không chạy lại, exit 11" || fail "m5. rc=$CASE_RC reruns=$RERUNS: $(why 55)"
 
+rm -f "$TMP/npm.ran"
+mkpr 56; run_case 56 "$TMP/g1.log" "" "&& echo ran >> $TMP/npm.ran"
+[ "$CASE_RC" -eq 11 ] && [ "$RERUNS" -eq 0 ] && [ ! -f "$TMP/npm.ran" ] && ok "m7. lệnh verify ghép: không chạy lại guard, exit 11" || fail "m7. rc=$CASE_RC reruns=$RERUNS: $(why 56)"
+
 # m6
 cp "$TMP/clean.json" "$TMP/t.json"; cat "$TMP/timeout.log" "$TMP/t.json" > "$TMP/timeout.full"
-M6=$(cd "$WT" && HERE="$ROOT/.claude/bin" bash -c '. "$1/super-board-verify-flags.sh"; sb_merge_guard_red_ids "$2" "$3" main && echo HIT || echo MISS' _ "$ROOT/.claude/bin" "$TMP/timeout.full" "$WT")
+M6=$(cd "$WT" && HERE="$ROOT/.claude/bin" bash -c '. "$1/super-board-verify-flags.sh"; sb_merge_guard_red_ids "$2" "$3" main "python3 post-fix-gate.py --diff origin/main --scoped" && echo HIT || echo MISS' _ "$ROOT/.claude/bin" "$TMP/timeout.full" "$WT")
 [ "$M6" = MISS ] && ok "m6. TIMEOUT không vào đường chạy lại guard" || fail "m6. $M6"
+
+# m8
+M8=$(bash -c '. "$1/super-board-verify-flags.sh"; gate_masked_conditions_clean "$2"; a=$?; gate_masked_conditions_clean "$3"; echo "$a $?"' _ \
+  "$ROOT/.claude/bin" "$TMP/clean.json" "$TMP/masked.json" 2>&1)
+[ "$M8" = "0 1" ] && ok "m8. gate_masked_conditions_clean dùng chung từ verify-flags.sh" || fail "m8. $M8"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_guard_retry: PASS"; exit 0; } || { echo "test_merge_guard_retry: FAIL ($FAILS)"; exit 1; }

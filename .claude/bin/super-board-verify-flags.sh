@@ -106,18 +106,40 @@ from regression_checklist import redact_secrets
 sys.stdout.write(redact_secrets(sys.stdin.buffer.read().decode("utf-8", "replace")))' "$kit"
 }
 
+# #251 R1: post-fix-gate.py xét REJECT TRƯỚC các điều kiện CHƯA XÁC MINH (ma trận không tin được, test đã có bị sửa, file không đọc được, test
+# mới mồ côi, code chưa có test, không suite nào khớp): khi có suite đỏ, log chỉ còn REJECT và các điều kiện đó chưa từng được đánh giá. Dòng JSON
+# cuối của `--json` vẫn mang chúng. Chỉ khi JSON có mặt và mọi điều kiện sạch (trường thiếu = không sạch) mới coi REJECT là chỉ do suite đỏ.
+# Merge gate (red_only_on_base) và sb_merge_guard_red_ids (gate + train) cùng dùng.
+gate_masked_conditions_clean() {
+  local line
+  line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$1" 2>/dev/null | tail -1) || return 1
+  [ -n "$line" ] || return 1
+  printf '%s' "$line" | jq -e '(.matrix_problem // "x") == "" and ((.tests_touched // ["x"]) | length) == 0 and ((.unreadable // ["x"]) | length) == 0
+    and ((.uncovered // ["x"]) | length) == 0 and ((.orphan_tests // ["x"]) | length) == 0 and (.busy == false) and (.budget_exhausted == false)
+    and ((.regression_tests // []) | length) > 0' >/dev/null 2>&1
+}
+
+# sb_verify_single_pfg_cmd <cmd>: 0 khi lệnh verify là ĐÚNG MỘT lệnh post-fix-gate.py (tuỳ chọn VAR=x và python/python3 đứng trước), không
+# ghép (`; & | < >` hay xuống dòng: lệnh khác có thể chưa chạy hay đỏ vì PR), không phải script bọc (`./scripts/verify.sh`, `make verify` có thể
+# chạy post-fix-gate rồi bước khác cũng exit 1; R2). Chỉ khi đó đỏ của lệnh mới là đỏ của các suite trong log: red_only_on_base và chạy lại
+# guard (v26 mục 7) dựa vào điều này. Rỗng = không.
+sb_verify_single_pfg_cmd() {
+  local re='^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(python3?[[:space:]]+(-[A-Za-z]+[[:space:]]+)*)?[^[:space:]]*post-fix-gate[.]py([[:space:]]|$)'
+  case "$1" in ''|*[\;\&\|\<\>]*|*$'\n'*) return 1 ;; esac
+  [[ "$1" =~ $re ]]
+}
+
 # Gate speed v26 mục 7: guard của điểm gộp đỏ vì tải (watchdog 5–7 s) được chạy lại đúng một lần, ở merge gate VÀ merge train.
-# sb_merge_guard_red_ids <log> <scratch> <base-sha>: in id các suite đỏ (mỗi dòng một id) khi gate REJECT, lớp tĩnh "đạt", MỌI dòng suite đỏ là
+# sb_merge_guard_red_ids <log> <scratch> <base-sha> <verify-cmd>: in id các suite đỏ (mỗi dòng một id) khi lệnh verify là đúng một
+# post-fix-gate.py (sb_verify_single_pfg_cmd: `pfg … && npm test` đỏ ở guard thì npm test chưa chạy, chạy lại guard xanh sẽ bỏ qua nó), gate
+# REJECT, lớp tĩnh "đạt", MỌI dòng suite đỏ là
 # FAIL và id nằm trong mục [merge-guard] của gate-core.txt CỦA BASE (không phải của cây gộp: PR không tự cho test flaky của nó một lần chạy
 # lại), và dòng JSON cuối của --json sạch mọi điều kiện CHƯA XÁC MINH mà REJECT che (test sửa chưa duyệt, ma trận, mồ côi…: lần chạy lại xanh
 # không được mở đường cho chúng). Khác: thoát 1, không in gì.
 sb_merge_guard_red_ids() {
-  local log="$1" scratch="$2" base="$3" line ids guards id
-  line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$log" 2>/dev/null | tail -1) || return 1
-  [ -n "$line" ] || return 1
-  printf '%s' "$line" | jq -e '(.matrix_problem // "x") == "" and ((.tests_touched // ["x"]) | length) == 0 and ((.unreadable // ["x"]) | length) == 0
-    and ((.uncovered // ["x"]) | length) == 0 and ((.orphan_tests // ["x"]) | length) == 0 and (.busy == false) and (.budget_exhausted == false)
-    and ((.regression_tests // []) | length) > 0' >/dev/null 2>&1 || return 1
+  local log="$1" scratch="$2" base="$3" vcmd="${4:-}" ids guards id
+  sb_verify_single_pfg_cmd "$vcmd" || return 1
+  gate_masked_conditions_clean "$log" || return 1
   ids=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$log" 2>/dev/null | LC_ALL=C awk '
     /(KẾT LUẬN CỔNG POST-FIX AUDIT|POST-FIX AUDIT GATE VERDICT):.*REJECT/ { rej = 1 }
     /^[[:space:]]*• (Lớp tĩnh|Static checks) \(.*\): / { if (static != 2) static = ($0 ~ /: (đạt|passed)[[:space:]]*$/) ? 1 : 2 }

@@ -1656,17 +1656,7 @@ Tìm nguyên nhân gốc vì sao \`${id}\` đỏ trên ${BASE} và sửa tại �
   return 0
 }
 
-# #251 R1: post-fix-gate.py xét REJECT TRƯỚC các điều kiện CHƯA XÁC MINH (ma trận không tin được, test đã có bị sửa, file không đọc được, test
-# mới mồ côi, code chưa có test, không suite nào khớp): khi có suite đỏ, log chỉ còn REJECT và các điều kiện đó chưa từng được đánh giá. Dòng JSON
-# cuối của `--json` vẫn mang chúng. Chỉ khi JSON có mặt và mọi điều kiện sạch (trường thiếu = không sạch) mới coi REJECT là chỉ do suite đỏ.
-gate_masked_conditions_clean() {
-  local line
-  line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$1" 2>/dev/null | tail -1) || return 1
-  [ -n "$line" ] || return 1
-  printf '%s' "$line" | jq -e '(.matrix_problem // "x") == "" and ((.tests_touched // ["x"]) | length) == 0 and ((.unreadable // ["x"]) | length) == 0
-    and ((.uncovered // ["x"]) | length) == 0 and ((.orphan_tests // ["x"]) | length) == 0 and (.busy == false) and (.budget_exhausted == false)
-    and ((.regression_tests // []) | length) > 0' >/dev/null 2>&1
-}
+# gate_masked_conditions_clean (#251 R1) và sb_verify_single_pfg_cmd (R2): ở super-board-verify-flags.sh, dùng chung với chạy lại guard.
 
 # Verify đỏ (exit $1, log $2, lệnh $3): mọi suite đỏ cũng đỏ trên origin/<base> (scratch reset về BASE_SHA, chạy lệnh trong ma trận
 # CỦA BASE, rồi trả về MERGED_SHA)? Có → mở thẻ cho từng suite, return 0 (không REJECT PR). Mọi trường hợp khác → return 1: giữ kết quả
@@ -1674,17 +1664,14 @@ gate_masked_conditions_clean() {
 # không có trong ma trận của base hay có lệnh khác với cây gộp (PR thêm/sửa suite thì PR chịu); suite xanh, quá giờ hay không chạy
 # được trên base.
 red_only_on_base() {
-  local rc="$1" log_file="$2" vcmd="$3" ids id bcmd mcmd name p all_red=1 sr pfg_cmd_re
+  local rc="$1" log_file="$2" vcmd="$3" ids id bcmd mcmd name p all_red=1 sr
   local base_matrix="$SCRATCH/.red-on-base-matrix.json" merged_matrix="$SCRATCH/.agents/regression_matrix.active.json"
   local jqq='[.. | objects | select(.id? == $id and (.command? | type) == "string")] | first // empty'
-  local ids_list=() names=() cmds=() run_ids=() kt kts
+  local ids_list=() names=() cmds=() run_ids=() kt kts kp rel
   BASE_SUITE_BUSY=0   # #914: run_suite_on_base hết giờ chờ slot pool gate (75) ⇒ 1; chỗ gọi thoát 4, không đẩy thẻ về Build
   [ "$rc" -eq 1 ] || return 1
-  case "$vcmd" in *[\;\&\|\<\>]*|*$'\n'*) return 1 ;; esac
-  # R2: không ghép lệnh là chưa đủ: `./scripts/verify.sh`, `make verify` có thể chạy post-fix-gate rồi bước khác cũng exit 1. Phải là chính
-  # post-fix-gate.py (tuỳ chọn biến môi trường VAR=x và python/python3 đứng trước).
-  pfg_cmd_re='^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(python3?[[:space:]]+(-[A-Za-z]+[[:space:]]+)*)?[^[:space:]]*post-fix-gate[.]py([[:space:]]|$)'
-  [[ "$vcmd" =~ $pfg_cmd_re ]] || return 1
+  # Lệnh ghép hay script bọc (R2): lệnh khác có thể chưa chạy hay đỏ vì PR. Phải là đúng một post-fix-gate.py (verify-flags.sh).
+  sb_verify_single_pfg_cmd "$vcmd" || return 1
   gate_masked_conditions_clean "$log_file" || { say "the gate log carries no clean --json (or an UNVERIFIED condition hidden by REJECT); red stays red"; return 1; }
   [ -f "$merged_matrix" ] || return 1
   git -C "$SCRATCH" show "${BASE_SHA}:.agents/regression_matrix.active.json" >"$base_matrix" 2>/dev/null || { rm -f "$base_matrix"; return 1; }
@@ -1693,12 +1680,22 @@ red_only_on_base() {
     bcmd=$(jq -r --arg id "$id" "$jqq | .command" "$base_matrix" 2>/dev/null) || bcmd=""
     mcmd=$(jq -r --arg id "$id" "$jqq | .command" "$merged_matrix" 2>/dev/null) || mcmd=""
     if [[ "$mcmd" == *tests/run_impacted.sh* ]]; then
-      # Gate speed v26 mục 5a: runner kit ⇒ từng test đỏ của log chạy RIÊNG trên base (không qua runner, không kèm test consistency);
-      # lệnh của runner trên base không cần khớp: cái được kiểm là file test của base. Test PR mới thêm không có trên base: 127 ⇒ không dung thứ.
+      # Gate speed v26 mục 5a: runner kit ⇒ từng test đỏ của log chạy RIÊNG trên base, nhưng QUA CHÍNH runner của base
+      # (DEVKIT_SCOPED_TESTS=<test>, không test consistency): cùng cwd = kit, run_bounded, TMPDIR chuẩn, env DEVKIT_TEST_* như lượt gate. Chạy trần
+      # `bash <test>` từ gốc repo thì test phụ thuộc cwd/env đỏ vì môi trường và một đỏ do PR được dung thứ sai (fail-open). Chỉ dung thứ khi
+      # đầu ra runner có đúng dòng `✖ <test>` (exit của runner không đủ: nó đỏ vì lý do khác cũng được); test vắng trên base (PR mới thêm) hay
+      # PASS dùng lại (↺) không in dòng đó (run_impacted.sh: vòng in ✔/✖ bỏ qua file vắng, in ↺ rồi continue) ⇒ không dung thứ.
+      # DEVKIT_IMPACT_TEST_CHANGED rỗng: run_impacted.sh chỉ đọc DEVKIT_SCOPED_TESTS khi biến đó rỗng.
+      # Lệnh của runner trên base không cần khớp: cái được kiểm là file test của base. rel đã qua mẫu hẹp của gate_red_kit_tests (không nháy).
       kts=$(gate_red_kit_tests "$log_file" "$id") || { say "red runner suite ${id}: its red tests could not be listed exactly (none, odd line or possibly cut at ${SB_RED_TEST_CAP}); red stays red"; rm -f "$base_matrix"; return 1; }
       name=$(jq -r --arg id "$id" "$jqq | .name // \"\"" "$merged_matrix" 2>/dev/null) || name=""
       ids_list+=("$id"); names+=("$name")
-      while IFS= read -r kt; do cmds+=("bash $kt"); run_ids+=("${id} ${kt}"); done <<<"$kts"
+      while IFS= read -r kt; do
+        case "$kt" in universal-agent-devkit/*) kp=universal-agent-devkit/ ;; .agents/devkit/*) kp=.agents/devkit/ ;; *) kp="" ;; esac
+        rel="${kt#"$kp"}"
+        cmds+=("o=\$(DEVKIT_SCOPED_TESTS='${rel}' DEVKIT_SCOPED_NO_CONSISTENCY=1 DEVKIT_IMPACT_TEST_CHANGED= bash '${kp}tests/run_impacted.sh' 2>&1); r=\$?; case \$r in 126|127) exit 127 ;; esac; printf '%s\\n' \"\$o\" | LC_ALL=C grep -qxF -- '✖ ${rel}' && exit 1; exit 0")
+        run_ids+=("${id} ${kt}")
+      done <<<"$kts"
       continue
     fi
     if [ -z "$bcmd" ] || [ "$bcmd" != "$mcmd" ]; then
@@ -1763,7 +1760,7 @@ for cmd in "${VERIFY[@]}"; do
   fi
   # Gate speed v26 mục 7: đỏ CHỈ ở guard của điểm gộp ([merge-guard] của base) ⇒ chạy lại mỗi guard đỏ đúng một lần; guard nào vẫn đỏ thì
   # lượt vẫn đỏ. Đỏ rồi xanh: ghi comment PR, không ghi biên nhận cây (lượt sau kiểm lại).
-  if [ "$VRC" -eq 1 ] && GUARD_RED=$(sb_merge_guard_red_ids "$VERIFY_LOG" "$SCRATCH" "$BASE_SHA"); then
+  if [ "$VRC" -eq 1 ] && GUARD_RED=$(sb_merge_guard_red_ids "$VERIFY_LOG" "$SCRATCH" "$BASE_SHA" "$cmd"); then
     GUARD_STILL=""; GUARD_FLAKY=""
     for gid in $GUARD_RED; do
       git -C "$SCRATCH" reset -q --hard "$MERGED_SHA" 2>/dev/null && git -C "$SCRATCH" clean -fdq 2>/dev/null \

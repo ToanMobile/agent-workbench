@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Test hồi quy (gate speed v26 mục 5a): suite runner kit (REG-DK-ALL-KIT-01, `bash universal-agent-devkit/tests/run_impacted.sh`) đỏ ở merge gate
-# thì red-on-base chạy RIÊNG từng test `| ✖ tests/x.sh` của log trên base, không chạy lại lệnh runner (tập test khác, kèm test consistency).
+# thì red-on-base chạy RIÊNG từng test `| ✖ tests/x.sh` của log trên base, qua CHÍNH runner (DEVKIT_SCOPED_TESTS=<test>, không test
+# consistency: cùng cwd/TMPDIR/env như lượt gate), và chỉ dung thứ khi đầu ra runner có dòng `✖ <test>` (không theo exit code của runner).
 #   k1  test đỏ cả trên base: dung thứ, merge, mở thẻ (exit 0)
 #   k2  test đỏ trong log nhưng xanh trên base (runner trên base đỏ vì lý do khác): PR làm hỏng, exit 11
 #   k3  danh sách có thể bị cắt (40 dòng ✖): fail closed, exit 11
@@ -8,6 +9,7 @@
 #   k5  suite runner đỏ mà log không có dòng ✖ nào: exit 11
 #   k6  dòng ✖ không phải đường dẫn test (kit biến mất): exit 11
 #   k7  hai test, một đỏ một xanh trên base: exit 11
+#   k8  test xanh dưới runner (cwd = kit) nhưng đỏ khi chạy trần từ gốc repo: PR làm hỏng, exit 11 (không dung thứ vì lý do môi trường)
 set -u
 export LC_ALL=C LANG=C
 export SB_NOTIFY_SKIP=1
@@ -28,8 +30,12 @@ git -C "$R" config user.email t@example.invalid; git -C "$R" config user.name t
 printf '/.claude/worktrees/\n' > "$R/.gitignore"
 K="$R/universal-agent-devkit/tests"
 mkdir -p "$R/.agents" "$K/gates"
-# runner trên base luôn đỏ (giả lập test consistency đỏ sẵn): lệnh runner trên base không chứng minh được gì về test của PR
-printf 'exit 1\n' > "$K/run_impacted.sh"
+# runner THẬT của kit; test consistency của base đỏ sẵn (runner chạy đủ tập của nó trên base sẽ đỏ vì lý do khác, không chứng minh gì)
+mkdir -p "$K/verification"
+cp "$ROOT/universal-agent-devkit/tests/run_impacted.sh" "$K/run_impacted.sh"; : > "$K/impact_map.txt"
+printf 'exit 1\n' > "$K/verification/test_repo_consistency.sh"
+# k8: xanh khi cwd là thư mục kit (như runner chạy), đỏ khi chạy trần từ gốc repo
+printf '[ "$(basename "$PWD")" = universal-agent-devkit ] || exit 1\n' > "$K/gates/test_cwd.sh"
 printf 'exit 1\n' > "$K/gates/test_red.sh"
 printf 'exit 1\n' > "$K/gates/test_red2.sh"
 printf 'exit 0\n' > "$K/gates/test_green.sh"
@@ -94,6 +100,7 @@ kit() { row FAIL REG-DK-ALL-KIT-01 "kit tests"; tline "Lệnh chạy: bash unive
 { kit "failures: 1"; reject; } > "$TMP/k5.log"
 { kit "✖ run_impacted.sh: thư mục kit universal-agent-devkit biến mất giữa lượt"; reject; } > "$TMP/k6.log"
 { kit "✖ tests/gates/test_red.sh" "✖ tests/gates/test_green.sh"; reject; } > "$TMP/k7.log"
+{ kit "✖ tests/gates/test_cwd.sh"; reject; } > "$TMP/k8.log"
 echo '{"exit_code":1,"matrix_problem":"","regression_tests":[{"id":"REG-DK-ALL-KIT-01","status":"FAIL"}],"unreadable":[],"tests_touched":[],"uncovered":[],"orphan_tests":[],"busy":false,"budget_exhausted":false}' > "$TMP/clean.json"
 
 run_case() {  # $1 = PR, $2 = log verify giả (exit 1)
@@ -128,6 +135,8 @@ mkpr 46; run_case 46 "$TMP/k6.log"
 [ "$CASE_RC" -eq 11 ] && ok "k6. dòng ✖ không phải đường dẫn test: fail closed" || fail "k6. rc=$CASE_RC: $(why 46)"
 mkpr 47; run_case 47 "$TMP/k7.log"
 [ "$CASE_RC" -eq 11 ] && ok "k7. một test xanh trên base: exit 11" || fail "k7. rc=$CASE_RC: $(why 47)"
+mkpr 48; run_case 48 "$TMP/k8.log"
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_CREATED" -eq 0 ] && ok "k8. test xanh dưới runner, đỏ khi chạy trần: PR chịu, exit 11" || fail "k8. rc=$CASE_RC issues=$CASE_CREATED: $(why 48)"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_red_on_base_kit_tests: PASS"; exit 0; } || { echo "test_merge_gate_red_on_base_kit_tests: FAIL ($FAILS)"; exit 1; }

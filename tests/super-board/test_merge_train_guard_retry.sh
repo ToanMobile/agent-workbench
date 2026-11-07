@@ -6,6 +6,8 @@
 #   t2  guard đỏ cả lần chạy lại: red, exit 11
 #   t3  guard + suite thường đỏ: không chạy lại, red
 #   t4  JSON có điều kiện bị REJECT che: không chạy lại, red
+#   t5  lệnh verify ghép (`post-fix-gate.py … && npm test`): không chạy lại guard, red
+#   t6  hai PR: guard flaky ở lượt [81 82] (đỏ vì 82), [81] xanh sạch: merge 81 KHÔNG kèm ghi chú flaky của lượt đỏ
 set -u
 export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -101,7 +103,12 @@ mklog() {   # mklog <file> <json> <TRẠNG THÁI|id>...: log giả của post-fi
   printf '  • Lớp tĩnh (bí mật, lười biếng, dependency, hiệu năng, nuốt lỗi, log): đạt\n' >> "$f"
   printf '{"exit_code":1,"matrix_problem":"","tests_touched":%s,"regression_tests":[{"id":"REG-G1","status":"FAIL"}],"unreadable":[],"uncovered":[],"orphan_tests":[],"busy":false,"budget_exhausted":false}\n' "$j" >> "$f"
 }
-cfg_log() { printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["cat %s; exit 1"]}\n' "$2" > "$1"; }
+# cfg_log <cfg> <log> [nối thêm]: verify = một post-fix-gate.py giả in log đó và thoát 1 (bỏ qua mọi cờ train chèn)
+cfg_log() {
+  local d; d=$(mktemp -d "$TMP/pfg.XXXXXX")
+  printf 'import sys\nsys.stdout.write(open("%s").read())\nsys.exit(1)\n' "$2" > "$d/post-fix-gate.py"
+  printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["python3 %s/post-fix-gate.py%s"]}\n' "$d" "${3:+ $3}" > "$1"
+}
 git -C "$R" worktree add -q --detach "$W/review" origin/main
 
 # t1
@@ -134,6 +141,28 @@ cfg_log "$TMP/cfg4.json" "$TMP/masked.log"
 card_branch 74; reset_run
 ( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg4.json" --prs 74 ) >"$TMP/t4.log" 2>&1; rc=$?
 [ "$rc" -eq 11 ] && [ "$(reruns)" = 0 ] && ok "t4. điều kiện bị REJECT che: không chạy lại, red" || fail "t4. exit $rc reruns=$(reruns)"
+
+# t5
+cfg_log "$TMP/cfg5.json" "$TMP/g.log" "&& echo ran >> $TMP/npm.ran"
+card_branch 75; reset_run; rm -f "$TMP/npm.ran"
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg5.json" --prs 75 ) >"$TMP/t5.log" 2>&1; rc=$?
+[ "$rc" -eq 11 ] && [ "$(reruns)" = 0 ] && [ -z "$(merged_list)" ] && ok "t5. lệnh verify ghép: không chạy lại guard, red" \
+  || fail "t5. exit $rc reruns=$(reruns) merged=$(merged_list)"
+
+# t6: lệnh 1 = guard đỏ khi cây có f82 (chạy lại xanh); lệnh 2 = suite thường đỏ khi cây có f82. Không f82: cả hai xanh.
+mklog "$TMP/g6.log" '[]' "FAIL|REG-G1"
+mklog "$TMP/p6.log" '[]' "FAIL|REG-SB-01"
+mkdir -p "$TMP/c6a" "$TMP/c6b"
+for x in a:g6 b:p6; do
+  printf 'import os, sys\nif os.path.exists("f82"):\n    sys.stdout.write(open("%s").read()); sys.exit(1)\n' "$TMP/${x#*:}.log" > "$TMP/c6${x%%:*}/post-fix-gate.py"
+done
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["python3 %s","python3 %s"]}\n' \
+  "$TMP/c6a/post-fix-gate.py" "$TMP/c6b/post-fix-gate.py" > "$TMP/cfg6.json"
+card_branch 81; card_branch 82; reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg6.json" --prs 81,82 ) >"$TMP/t6.log" 2>&1; rc=$?
+[ "$(merged_list)" = "81 " ] && ! grep -q '^train-guard-flaky' "$TMP/t6.log" && ! grep -q 'merge-guard' "$TMP/gh.pr_comment" 2>/dev/null \
+  && ok "t6. merge 81 không kèm ghi chú flaky của lượt [81 82] đỏ" \
+  || fail "t6. exit $rc merged=$(merged_list): $(grep -E 'train-(guard-)?flaky|train-result' "$TMP/t6.log" | tr '\n' ';')"
 
 [ "$FAILS" -eq 0 ] && { echo "test_merge_train_guard_retry: PASS"; exit 0; }
 echo "test_merge_train_guard_retry: FAIL ($FAILS)"; exit 1
