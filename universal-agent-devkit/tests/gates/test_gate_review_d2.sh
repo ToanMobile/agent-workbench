@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Test hồi quy (gate speed v26, lane D2, review mới): các ca ở ranh giới chọn suite của post-fix-gate.py / scoped_gate.py.
-#   g1  điểm gộp, PR xoá id khỏi [merge-guard], `rev-parse <base>^{commit}` hỏng: base của guard vẫn phân giải (merge-base), guard vẫn chạy
-#   g2  như g1 mà cả merge-base cũng hỏng: fail closed, suite đỏ "merge-guard: base không phân giải", exit 1
+#   g1  điểm gộp, PR xoá id khỏi [merge-guard], `rev-parse <base>^{commit}` hỏng: fail closed, suite đỏ "merge-guard: base không phân giải",
+#       exit 1 (một lần rev-parse, không lùi về merge-base: review lane D2 mục 6)
+#   g2  như g1 mà cả merge-base cũng hỏng: như g1
 #   q   id [merge-guard] thiếu trong ma trận chứa ký tự shell: lệnh đỏ không chạy chuỗi đó như lệnh (shlex.quote)
 #   p1  DEVKIT_PRECOMMIT_TESTS=1 chạy như light
 #   p2  giá trị lạ (DEVKIT_PRECOMMIT_TESTS=bogus): không chạy suite, có cảnh báo nêu giá trị
@@ -81,14 +82,9 @@ for c in g1 g2; do
   R="$TMP/.merge-scratch-$c"; new_repo "$R" "REG-G1"; drop_guard "$R"; echo '# đổi' >> "$R/docs/a.md"; git -C "$R" commit -qam e
   B="$(git -C "$R" rev-parse main)"; rm -f "$TMP/ran.guard"
   if [ "$c" = g1 ]; then PATH="$TMP/shim:$PATH" BLOCK="$B" gate "$R"; else PATH="$TMP/shim:$PATH" BLOCK="$B" BLOCK_MB=1 gate "$R"; fi
-  if [ "$c" = g1 ]; then
-    [ "$(nfile ran.guard)" = 1 ] && ok "g1. rev-parse base hỏng: base guard lấy từ merge-base, guard vẫn chạy (rc=$RC)" \
-      || { fail "g1. rc=$RC guard=$(nfile ran.guard) (mong guard chạy 1 lần)"; LC_ALL=C grep -a "merge-guard" "$TMP/out" | head -3; }
-  else
-    [ "$RC" = 1 ] && LC_ALL=C grep -aq "merge-guard: base không phân giải" "$TMP/out" \
-      && ok "g2. base không phân giải được: suite đỏ, exit 1" \
-      || { fail "g2. rc=$RC guard=$(nfile ran.guard) (mong exit 1, 'merge-guard: base không phân giải')"; LC_ALL=C grep -a "merge-guard" "$TMP/out" | head -3; }
-  fi
+  [ "$RC" = 1 ] && LC_ALL=C grep -aq "merge-guard: base không phân giải" "$TMP/out" \
+    && ok "$c. base không rev-parse được: suite đỏ, exit 1 (không lùi về merge-base)" \
+    || { fail "$c. rc=$RC guard=$(nfile ran.guard) (mong exit 1, 'merge-guard: base không phân giải')"; LC_ALL=C grep -a "merge-guard" "$TMP/out" | head -3; }
 done
 
 # q: id thiếu trong ma trận mang ký tự shell

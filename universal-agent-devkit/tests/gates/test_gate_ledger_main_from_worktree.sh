@@ -44,10 +44,11 @@ open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
         {"type": "tool_use", "id": "e0", "name": "Edit", "input": {"file_path": os.path.join(repo, "src/Core.kt"), "old_string": "1", "new_string": "2"}}]}}]))
 PY
 ledger_main() {   # ledger_main <session> <start offset s> <end offset s> [...]: cửa sổ Bash, ghi ở main như bash_write_ledger.sh
+  # mốc = mtime của CoreTest.kt + 300 (lúc dựng fixture), không phải giờ hiện tại: các lượt gate trước không làm cửa sổ trôi khỏi mtime
   mkdir -p "$M/.claude/audit-gate"
-  python3 -I - "$M/.claude/audit-gate/bash_write_ledger.tsv" "$@" <<'PY'
-import sys, time
-now, a = time.time(), sys.argv[2:]
+  python3 -I - "$M/.claude/audit-gate/bash_write_ledger.tsv" "$W/src/test/CoreTest.kt" "$@" <<'PY'
+import os, sys
+now, a = os.stat(sys.argv[2]).st_mtime + 300, sys.argv[3:]
 with open(sys.argv[1], "w") as fh:
     for i in range(0, len(a), 3):
         fh.write("%s\tstart\t%.3f\tw%d\n%s\tend\t%.3f\tw%d\n" % (a[i], now + float(a[i + 1]), i, a[i], now + float(a[i + 2]), i))
@@ -64,9 +65,16 @@ DEVKIT_LEDGER_ROOT="$M" gate
   || fail "l1. rc=$RC (mong 0 kèm cảnh báo CoreTest.kt) $(show)"
 
 gate
-[ "$RC" = 0 ] && grep -q "src/test/CoreTest.kt" "$TMP/out" \
-  && ok "l2. không có DEVKIT_LEDGER_ROOT, chạy trong worktree: gate tự đọc ledger của main, exit 0 kèm cảnh báo" \
-  || fail "l2. rc=$RC (mong 0 như l1: gate phải tự tìm ledger của main) $(show)"
+[ "$RC" != 0 ] && grep -q "src/test/CoreTest.kt" "$TMP/out" \
+  && ok "l2. không có DEVKIT_LEDGER_ROOT: cửa sổ của phiên KHÁC trong ledger main (không cột worktree) không gỡ chặn (rc=$RC)" \
+  || fail "l2. rc=$RC (mong ≠0: ledger main không nói cửa sổ đó ở worktree nào, fail closed) $(show)"
+
+# l4. review P3: phiên này có một lệnh Bash dài không nêu tên file, phiên khác (worktree khác) có lệnh 2 s đúng lúc mtime ⇒ vẫn chặn
+ledger_main s63 -600 -10 s-y -301 -299
+gate
+[ "$RC" != 0 ] && grep -q "src/test/CoreTest.kt" "$TMP/out" \
+  && ok "l4. cửa sổ 2 s của phiên khác hẹp hơn cửa sổ của phiên này: vẫn chặn (rc=$RC)" \
+  || fail "l4. rc=$RC (mong ≠0: cửa sổ phiên khác từ ledger main không được xếp file là 'other') $(show)"
 
 ledger_main s63 -590 -589
 gate

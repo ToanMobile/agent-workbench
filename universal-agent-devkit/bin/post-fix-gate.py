@@ -577,13 +577,17 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
     # hides a change, but its cut window never takes a file from a wider window of this session
     # The ledger sits where bash_write_ledger.sh writes it, in main (CLAUDE_PROJECT_DIR); DEVKIT_LEDGER_ROOT names it when a caller sets it.
     # v26 (lane D2): at ae895f23 no hook or bin script sets it (grep of hooks/, bin/, .claude/bin, .claude/hooks): a gate in a linked worktree
-    # also reads main's ledger itself (and its own, when a hook rooted in the worktree wrote one).
+    # also reads main's ledger itself (and its own, when a hook rooted in the worktree wrote one). Main's ledger has no worktree column, so
+    # from it only THIS session's windows count: another session's window there may be in any worktree and must never clear an edit here.
     ledger_env = os.environ.get("DEVKIT_LEDGER_ROOT")
-    ledgers = [ledger_env] if ledger_env else list(dict.fromkeys(
-        os.path.realpath(str(p)) for p in (project, _main_checkout_root(project))))
-    old_windows = [w for lg in ledgers for w in session_authorship.bash_windows(lg)]
+    own = os.path.realpath(str(project))
+    ledgers = [ledger_env] if ledger_env else list(dict.fromkeys((own, os.path.realpath(str(_main_checkout_root(project))))))
+
+    def _trusted(lg, ws):
+        return ws if ledger_env or lg == own else [w for w in ws if w[2] == session]
+    old_windows = [w for lg in ledgers for w in _trusted(lg, session_authorship.bash_windows(lg))]
     try:
-        windows = [w for lg in ledgers for w in session_authorship.bash_windows(lg, session)]
+        windows = [w for lg in ledgers for w in _trusted(lg, session_authorship.bash_windows(lg, session))]
     except Exception as exc:   # the cut rule must never crash the gate (a crash reads as no verdict): the old rule decides
         print(f"post-fix-gate: cut ledger windows unavailable ({exc!r}); the old rule decides", file=sys.stderr)
         windows = old_windows
@@ -7366,13 +7370,10 @@ def main():
         # không bao giờ vào deferred_to_heavy, luôn chạy thật (merge_guard: không khoá, không biên nhận, không same-tree, không rerun-skip).
         # Danh sách = [merge-guard] của cây này ∪ của base; id có trong danh sách mà ma trận không có ⇒ một suite đỏ mang tên id đó.
         if at_merge_point(project):
-            # Lane D2 (review P2-2): base của guard phân giải riêng (rev-parse, rồi merge-base), không chỉ dựa vào scoped["base_sha"]; không
-            # phân giải được thì fail closed: chỉ danh sách của cây gộp thì PR xoá một id khỏi [merge-guard] tự gỡ được guard đó.
-            guard_base = scoped.get("base_sha") or ""
-            for cmd in (["rev-parse", "--verify", "-q", base_ref + "^{commit}"], ["merge-base", base_ref, "HEAD"]):
-                if guard_base:
-                    break
-                guard_base = subprocess.run(["git", "-C", project] + cmd, capture_output=True, text=True).stdout.strip()
+            # Lane D2 (review P2-2): base của guard phân giải riêng, không chỉ dựa vào scoped["base_sha"]; không phân giải được thì fail
+            # closed: chỉ danh sách của cây gộp thì PR xoá một id khỏi [merge-guard] tự gỡ được guard đó.
+            guard_base = scoped.get("base_sha") or subprocess.run(
+                ["git", "-C", project, "rev-parse", "--verify", "-q", base_ref + "^{commit}"], capture_output=True, text=True).stdout.strip()
             mg = scoped_gate.merge_guards(project, rules, guard_base)   # cùng một hàm với gate_full._scoped_pick
             guard_ids = mg["ids"]
             have = {t.get("id"): t for t in regression_tests}
@@ -7592,13 +7593,13 @@ def main():
     # REJECT tĩnh vẫn exit 1; một FAIL của suite không thể xảy ra vì suite không chạy — thứ tự kết luận giữ nguyên, lượt sau khi duyệt chạy
     # suite và bắt FAIL đó (exit 2 không bao giờ là PASS). Không áp cho:
     #   - merge check của `worktree finish` (DEVKIT_GATE_MERGE_CHECK=1): exit 2 ở đó không chặn gộp, suite phải chạy để bắt hồi quy;
-    #   - lượt kiểu Stop (--session, hay GATE_TOTAL_BUDGET_S đặt): hooks/regression_gate.sh chạy suite MỘT lần trên nội dung đang chờ duyệt,
-    #     ghi budget record rồi chỉ nhắc, không chạy lại (tests/gates/test_gate_stop_run_record.sh A1-A14 B1-B6,
-    #     test_regression_gate_repeat_cache.sh 5c);
+    #   - lượt có --session hay GATE_TOTAL_BUDGET_S: suite chạy MỘT lần trên nội dung đang chờ duyệt và ghi budget record. Từ v26 mục 1,
+    #     hooks/regression_gate.sh (Stop) không chạy gate nữa, chỉ đọc biên nhận / outcome rồi in lệnh gate cho agent; nhánh này còn cho
+    #     người gọi nào tự đặt các cờ đó;
     #   - lượt cưỡng bức (--full, CI, …): điểm gộp và các ca đo FLAKY/infra_retry trên script test đã sửa (test_gate_audit_holes.sh A7);
     #   - script lệnh suite bị sửa (runners_touched): FAIL của nó vẫn là REJECT như cũ (test_regression_checklist.sh ca 3).
-    # ponytail: chỉ lượt CLI impacted được rút ngắn; mở rộng sang lượt Stop khi runs.jsonl (source, exit_reason edited_test) cho thấy chúng
-    # chiếm phần lớn giờ máy phí — cần đổi thiết kế budget record của Stop hook cùng lúc.
+    # ponytail: chỉ lượt CLI impacted được rút ngắn; mở rộng sang lượt --session / budget khi runs.jsonl (source, exit_reason edited_test) cho
+    # thấy chúng chiếm phần lớn giờ máy phí.
     try:
         _stop_budget = float(os.environ.get("GATE_TOTAL_BUDGET_S") or 0) > 0
     except ValueError:
@@ -9462,8 +9463,14 @@ def main():
         _outcome = ("matrix" if exit_reason == "matrix" else "edited_test" if exit_reason == "edited_test"
                     else "device_untested" if exit_reason == "missing_tool"
                     else "env" if exit_reason == "fail" and static_ok and _failing and all(t.get("env_blocked") for t in _failing) else None)
-        if _outcome or exit_code in (0, 1):
-            write_gate_outcome(project_dir, budget_fp or tree_fp_of(project_dir), exit_code, _outcome, [verdict_text], base_ref)
+        _lines = [verdict_text]
+        if _outcome == "env":   # lane D2: như device_untested, nêu tên suite bị môi trường chặn (Stop hook nói lại nguyên các dòng này)
+            _env = ", ".join(t.get("id") or "?" for t in _failing)
+            _lines.append(tr(f"Suite bị môi trường chặn (không test nào chạy): {_env}",
+                             f"Suites blocked by the environment (no test ran): {_env}"))
+        # lane D2: STALE (PASS dùng lại không còn đứng vững) bỏ outcome cũ của cây, không ghi outcome mới: Stop hook chặn, bảo chạy lại
+        if _outcome or exit_code in (0, 1) or exit_reason == "stale":
+            write_gate_outcome(project_dir, budget_fp or tree_fp_of(project_dir), exit_code, _outcome, _lines, base_ref)
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
     # #154 (21/10): the merge gate of `worktree finish` (scripts/git/worktree.py _merge_gate sets DEVKIT_GATE_MERGE_CHECK=1) checks for
     # regressions only; its exit 2 (an edited test awaiting the session's approval, a suite that could not run) is the session's own
