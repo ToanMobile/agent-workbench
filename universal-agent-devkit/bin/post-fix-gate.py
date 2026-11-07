@@ -575,11 +575,15 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
     root = Path(os.path.realpath(project))
     # "other" needs both rules (session_authorship.block_owner): an open window of a session that is gone no longer
     # hides a change, but its cut window never takes a file from a wider window of this session
-    # The ledger sits where bash_write_ledger.sh writes it, in main; the hook that gates a session's worktree says so (DEVKIT_LEDGER_ROOT).
-    ledger = os.environ.get("DEVKIT_LEDGER_ROOT") or project
-    old_windows = session_authorship.bash_windows(ledger)
+    # The ledger sits where bash_write_ledger.sh writes it, in main (CLAUDE_PROJECT_DIR); DEVKIT_LEDGER_ROOT names it when a caller sets it.
+    # v26 (lane D2): at ae895f23 no hook or bin script sets it (grep of hooks/, bin/, .claude/bin, .claude/hooks): a gate in a linked worktree
+    # also reads main's ledger itself (and its own, when a hook rooted in the worktree wrote one).
+    ledger_env = os.environ.get("DEVKIT_LEDGER_ROOT")
+    ledgers = [ledger_env] if ledger_env else list(dict.fromkeys(
+        os.path.realpath(str(p)) for p in (project, _main_checkout_root(project))))
+    old_windows = [w for lg in ledgers for w in session_authorship.bash_windows(lg)]
     try:
-        windows = session_authorship.bash_windows(ledger, session)
+        windows = [w for lg in ledgers for w in session_authorship.bash_windows(lg, session)]
     except Exception as exc:   # the cut rule must never crash the gate (a crash reads as no verdict): the old rule decides
         print(f"post-fix-gate: cut ledger windows unavailable ({exc!r}); the old rule decides", file=sys.stderr)
         windows = old_windows
@@ -5892,22 +5896,23 @@ def _read_rerun_skip(path):
     return data if isinstance(data, dict) else None
 
 
-def rerun_skip_match(data, fp, mode, suites, local_sha):
-    """True khi fp, mode, suites, result_format, exit và local_sha cùng khớp bản ghi đã đọc."""
+def rerun_skip_match(data, fp, mode, suites, local_sha, base=""):
+    """True khi fp, mode, suites, result_format, exit, local_sha và base (sha đã phân giải của --diff, kèm --since) cùng khớp bản ghi đã đọc.
+    v26 (lane D2): cùng cây mà base rộng hơn là một lượt khác: phải chạy và ghi biên nhận của base đó."""
     if not isinstance(data, dict) or not fp or not local_sha or local_sha == "?":
         return False
     got = data.get("suites")
     return (data.get("exit") == 0 and data.get("result_format") == RESULT_FORMAT
             and _run_log_fp(data.get("fp")) == fp and data.get("mode") == mode
-            and data.get("local_sha") == local_sha
+            and data.get("local_sha") == local_sha and (data.get("base") or "") == (base or "")
             and isinstance(got, list) and got == list(suites))
 
 
-def write_rerun_skip(path, fp, mode, suites, local_sha):
-    """Ghi nguyên tử, sort_keys, xuống dòng cuối. Khoá ghi ra: exit, fp, mode, result_format, suites, local_sha."""
+def write_rerun_skip(path, fp, mode, suites, local_sha, base=""):
+    """Ghi nguyên tử, sort_keys, xuống dòng cuối. Khoá ghi ra: exit, fp, mode, result_format, suites, local_sha, base."""
     directory = os.path.dirname(path)
     os.makedirs(directory, exist_ok=True)
-    text = json.dumps({"exit": 0, "fp": fp, "local_sha": local_sha, "mode": mode,
+    text = json.dumps({"base": base or "", "exit": 0, "fp": fp, "local_sha": local_sha, "mode": mode,
                        "result_format": RESULT_FORMAT, "suites": list(suites)},
                       sort_keys=True, ensure_ascii=False) + "\n"
     fd, tmp = tempfile.mkstemp(prefix=".tmp_rerun_skip.", dir=directory)
@@ -8060,6 +8065,13 @@ def main():
     rerun_mode = _gate_run_mode(args, force_reason, deferred_by)
     rerun_path = _rerun_skip_path(project_dir) if run_tests else ""
     rerun_local_sha = local_state_sha(project_dir) if run_tests and rerun_path and rerun_fp else ""
+    # v26 (lane D2): khoá gồm base đã phân giải (sha) của --diff và --since: cùng cây mà base rộng hơn thì chạy và ghi biên nhận mới
+    rerun_base = ""
+    if rerun_local_sha:
+        def _commit_sha(ref):
+            return subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--verify", "-q", ref + "^{commit}"],
+                                  capture_output=True, text=True).stdout.strip() or ref
+        rerun_base = _commit_sha(base_ref) + ("|since:" + _commit_sha(args.since) if args.since else "")
     device_selected = any(HARD_DEVICE_SUITE.search(t.get("command") or "")
                           for t in regression_tests if t.get("command"))
     # #678: suite không có khoá (cache:false, run_impacted.sh, thiết bị…) chạy mỗi lượt; bản ghi skip không được bỏ qua chúng.
@@ -8074,7 +8086,7 @@ def main():
             and not edited_early and not tests_touched and not device_selected and not unkeyed_selected
             and not any(t.get("merge_guard") for t in regression_tests)   # mục 7: guard của điểm gộp không bỏ qua theo bản ghi skip
             and not _rerun_skip_expired(rerun_path)
-            and rerun_skip_match(_read_rerun_skip(rerun_path), rerun_fp, rerun_mode, selected_ids, rerun_local_sha)
+            and rerun_skip_match(_read_rerun_skip(rerun_path), rerun_fp, rerun_mode, selected_ids, rerun_local_sha, rerun_base)
             and not _rerun_cache_blocks(sc, regression_tests, lookup_key, rerun_path)
             and not _test_run_lock_busy(project_dir)
             and not _old_receipt_blocks_skip(project_dir)
@@ -9537,7 +9549,7 @@ def main():
                 and not tests_touched and ran_ids == selected_ids
                 and rerun_local_sha not in ("", "?")):
             try:
-                write_rerun_skip(rerun_path, rerun_fp, rerun_mode, ran_ids, rerun_local_sha)
+                write_rerun_skip(rerun_path, rerun_fp, rerun_mode, ran_ids, rerun_local_sha, rerun_base)
             except OSError as e:
                 # #678: không in str(e): mkstemp ghi tên file tạm ngẫu nhiên vào thông báo, hai lượt cùng đầu vào ra hai chuỗi byte khác nhau
                 # (test_gate_run_log: thư mục postfix-gate chỉ đọc phải cho cùng stdout như khi tắt log).
