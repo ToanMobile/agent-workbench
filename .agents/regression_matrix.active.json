@@ -4314,7 +4314,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-DK-MERGE-WIDTH-SLOTS-01",
-          "name": "Gate speed v26 mục 10: điểm gộp rộng 6 khi tải < 2 × lõi, sàn 2 slot ở ưu tiên merge, verify lạc quan hạn từ 2 × lõi, guard có hạn giờ chạy sau cùng",
+          "name": "Gate speed v26 mục 10: cần gạt độ rộng và sàn slot của điểm gộp mặc định tắt (đo tải 08/11 trượt ngưỡng), bật khi đặt biến; verify lạc quan hạn từ số lõi; guard có hạn giờ chạy sau cùng",
           "command": "bash universal-agent-devkit/tests/gates/test_gate_merge_width_slots.sh",
           "parallel_safe": true
         }
