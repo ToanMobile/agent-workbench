@@ -140,17 +140,44 @@ grep -qx "claude cfg=/x/.claude-max" "$TMP/launched" && grep -q "account=max" "w
 
 # ── 8. 05-07/11 (#974, #745): "You've hit your 5-hour limit · resets 12:40am" (dấu gạch ngang) không khớp mẫu cũ
 # `hit your (\w+ )?limit`, nên account không bị đánh dấu, runner giao lại 3 lần/24 h rồi chuyển thẻ sang Blocked 🔁.
+# 8a và 8b tách riêng hai mẫu để mỗi mẫu hồi quy là một ca đỏ; 8a còn khoá giờ reset 00:40 (Asia/Saigon).
 rm -f "$TMP/state/usage-"*.json
 cat > "$TMP/repo/wl/worker-build-41.log" <<'LOG'
 === dispatch lane=build issue=#41 at 2026-11-05T16:22:10Z ===
 account_pool: engine=claude account=finos_team config_dir=/Users/x/.claude-finos_team
-{"is_error":true,"api_error_status":429,"api_error":"usage_limit_reached","result":"You've hit your 5-hour limit · resets 12:40am (Asia/Saigon)","type":"result"}
+{"is_error":true,"api_error_status":429,"result":"You've hit your 5-hour limit · resets 12:40am (Asia/Saigon)","type":"result"}
 worker_exit: exit=1 signal=none elapsed=9s
 LOG
 note_worker_limit "wl/worker-build-41.log"
 r=$(paused_until finos_team); now=$(date +%s)
-[ -n "$r" ] && [ "$r" -gt "$now" ] && [ "$r" -le $((now + 86400)) ] \
-  && ok "5-hour limit text (hyphenated window name): finos_team marked paused" \
-  || fail "5-hour limit not recognised: finos_team resets_at='$r'"
+hm=$([ -n "$r" ] && python3 -c 'import sys,datetime,zoneinfo; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), zoneinfo.ZoneInfo("Asia/Saigon")).strftime("%H:%M"))' "$r")
+[ -n "$r" ] && [ "$r" -gt "$now" ] && [ "$r" -le $((now + 86400)) ] && [ "$hm" = "00:40" ] \
+  && ok "8a: '5-hour limit' text alone: finos_team paused until 00:40 Asia/Saigon" \
+  || fail "8a: 5-hour limit not recognised: finos_team resets_at='$r' local='$hm'"
+
+rm -f "$TMP/state/usage-"*.json
+cat > "$TMP/repo/wl/worker-build-42.log" <<'LOG'
+=== dispatch lane=build issue=#42 at 2026-11-05T16:22:10Z ===
+account_pool: engine=claude account=finos_team config_dir=/Users/x/.claude-finos_team
+{"is_error":true,"api_error_status":429,"api_error":"usage_limit_reached","type":"result"}
+worker_exit: exit=1 signal=none elapsed=9s
+LOG
+note_worker_limit "wl/worker-build-42.log"
+r=$(paused_until finos_team); now=$(date +%s)
+[ -n "$r" ] && [ "$r" -gt $((now + 3000)) ] && [ "$r" -le $((now + 3700)) ] \
+  && ok "8b: usage_limit_reached code alone: finos_team paused for about an hour" \
+  || fail "8b: usage_limit_reached not recognised (resets_at='$r')"
+
+# 8c. Worker sạch (exit=0, result success, is_error=false) mà báo cáo nhắc tới limit không được khoá account.
+rm -f "$TMP/state/usage-"*.json
+cat > "$TMP/repo/wl/worker-build-43.log" <<'LOG'
+=== dispatch lane=build issue=#43 at 2026-11-05T16:22:10Z ===
+account_pool: engine=claude account=finos_team config_dir=/Users/x/.claude-finos_team
+{"is_error":false,"subtype":"success","result":"Worker died on usage_limit_reached: You've hit your 5-hour limit earlier; fixed the regex.","type":"result"}
+worker_exit: exit=0 signal=none elapsed=300s
+LOG
+note_worker_limit "wl/worker-build-43.log"
+[ -z "$(paused_until finos_team)" ] && ok "8c: clean worker whose report mentions a limit does not pause the account" \
+  || fail "8c: clean worker report mentioning a limit paused finos_team"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_account_failover: all passed" || { echo "❌ test_account_failover: $FAILS failed"; exit 1; }
