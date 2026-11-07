@@ -152,6 +152,8 @@ class Run:
                     "- escape_rate: %s (%d/%d suite đỏ có ứng viên)" % (es["rate"], len(es["escaped"]), es["checked"])]
             out += ["- %s: %s — file đổi %s%s" % (e["id"], "PR #%s" % e["pr"] if e["pr"] else e["sha"][:12], ", ".join(e["files"][:5]) or "-",
                                                " — thẻ " + e["card"] if e.get("card") else "") for e in es["escaped"]]
+            out += ["- %s: deferred — gate scoped của %s chọn nhưng hoãn tới heavy gate (không phải lọt lưới)"
+                    % (e["id"], "PR #%s" % e["pr"] if e["pr"] else e["sha"][:12]) for e in es.get("deferred") or []]
         return "\n".join(out) + "\n"
 
     def finish(self) -> None:
@@ -731,7 +733,7 @@ def _pfg():
 
 
 def _scoped_pick(pfg, scratch: str, c: str, rules: list, matrix_rel: str = ""):
-    """(file test PR của c chạy thật, mã suite chạy cả lệnh, file đổi) — như post-fix-gate --scoped (~6815–6835) TẠI c, base = cha:
+    """(file test PR của c chạy thật, mã suite chạy cả lệnh, file đổi, deferred_to_heavy {"tests", "suites"}) — như post-fix-gate --scoped TẠI c, base = cha:
     decide + no_full; luật ma trận có watch_files khớp file đổi chạy cả lệnh (trừ runner kit: run_impacted.sh chỉ chạy file scoped chọn);
     test py/js không luật nào chạy (skip, #741) không chạy ở PR và kéo [core-smoke]. None khi c không có cha (commit gốc).
     Ma trận như gate PR: của cha + luật chỉ-thêm (load_active_matrix + trust_additive_matrix của post-fix-gate, không chép).
@@ -754,16 +756,28 @@ def _scoped_pick(pfg, scratch: str, c: str, rules: list, matrix_rel: str = ""):
     covers = pfg.checklist_covers()
     dec = scoped_gate.no_full(scoped_gate.decide(scratch, c + "^", needs_no_test=pfg.needs_no_test, matrix_rules=rules, changed=files),
                               scratch)
-    whole, selected = set(), []
+    selected = []
     for r in rules:
         if any(pfg.match_pattern(f, p) for f in files for p in pfg.rule_watch(r, covers)):
-            for t in r.get("mandatory_regression_tests") or []:
-                if isinstance(t, dict):
-                    selected.append(t)
-                    if not pfg._KIT_RUNNER.search(t.get("command") or ""):
-                        whole.add(t.get("id"))
+            selected += [t for t in r.get("mandatory_regression_tests") or [] if isinstance(t, dict)]
+    # như gate --scoped (post-fix-gate, khối scoped_turn): có hàng KIT thì bỏ ba shard; rồi scoped_gate.cap_selection (v26 mục 5b) thu hẹp
+    # về test trực tiếp — test / suite bị hoãn tới heavy gate KHÔNG chạy ở PR, escape_check báo chúng là "deferred", không phải lọt lưới
+    if any(t.get("id") == pfg.KIT_ROW_ID for r in rules for t in r.get("mandatory_regression_tests") or [] if isinstance(t, dict)):
+        selected = [t for t in selected if t.get("id") not in pfg.KIT_SHARD_IDS]
+    probe = []
+    added, _, _ = pfg.scoped_suites(dec, rules, selected, covers, skip=probe)
     skipped = []
-    added, _, _ = pfg.scoped_suites(dec, rules, selected, covers, skip=skipped)
+
+    def _rebuild(decision, sel):
+        skipped[:] = []
+        got, kit, _why = pfg.scoped_suites(decision, rules, sel, covers, skip=skipped)
+        return got, kit
+    diff_view = set(files) - set(dec.get("head_pinned") or [])
+    narrowed = scoped_gate.cap_selection(scratch, dec, selected, added, rules, diff_view, _rebuild, unrunnable=probe,
+                                         needs_no_test=pfg.needs_no_test)
+    selected, added = narrowed["selected"], narrowed["added"]
+    deferred = narrowed["deferred_to_heavy"]
+    whole = {t.get("id") for t in selected if not pfg._KIT_RUNNER.search(t.get("command") or "")}
     # luật watch khớp FILE TEST scoped chọn ⇒ gate thêm cả lệnh suite đó (scoped_suites); runner kit chỉ chạy file đã chọn
     whole |= {t.get("id") for _, t in added if not pfg._KIT_RUNNER.search(t.get("command") or "")}
     if skipped and not dec["core_smoke"]:   # như gate: thêm [core-smoke] rồi gọi lại scoped_suites (luật watch file core-smoke)
@@ -781,7 +795,17 @@ def _scoped_pick(pfg, scratch: str, c: str, rules: list, matrix_rel: str = ""):
                 except ValueError:
                     toks = (t.get("command") or "").split()
                 ran |= {p for p in toks if not os.path.isabs(p) and os.path.isfile(os.path.join(scratch, p))}
-    return ran, whole, files
+    # file test chỉ suite bị hoãn chạy (một file, nhiều mã suite): cũng là hoãn, không phải lọt
+    dfiles = set(deferred["tests"])
+    for r in rules:
+        for t in r.get("mandatory_regression_tests") or []:
+            if isinstance(t, dict) and t.get("id") in deferred["suites"]:
+                try:
+                    toks = shlex.split(t.get("command") or "")
+                except ValueError:
+                    toks = (t.get("command") or "").split()
+                dfiles |= {p for p in toks if not os.path.isabs(p) and os.path.isfile(os.path.join(scratch, p))}
+    return ran, whole, files, dict(deferred, files=sorted(dfiles - ran))
 
 
 def escape_check(run: Run, repo: str, scratch: str, sha: str, matrix_path, slug: str) -> None:
@@ -800,11 +824,12 @@ def escape_check(run: Run, repo: str, scratch: str, sha: str, matrix_path, slug:
     # đường ma trận tương đối gốc cây (gate báo đường trong scratch; người gọi khác có thể đưa đường trong repo)
     rels = [os.path.relpath(matrix_path, b) for b in (scratch, repo)] if matrix_path and os.path.isabs(matrix_path) else []
     matrix_rel = next((r for r in rels if not r.startswith("..")), "")
-    picks, checked, escaped, pfg = {}, 0, [], None
+    picks, checked, escaped, deferred, pfg = {}, 0, [], [], None
+    new_red = run.info.get("new_red")   # cmd_run đặt (chỉ đỏ MỚI so mốc); không có ⇒ mọi suite đỏ (người gọi cũ)
     try:
         for t in (run.info.get("trace") or {}).get("tests") or []:
-            if t.get("id") in group_b:
-                continue
+            if t.get("id") in group_b or (new_red is not None and t.get("id") not in new_red):
+                continue   # nhóm b, hoặc đỏ kinh niên (đã đỏ ở mốc): không phải lọt lưới
             cands = [c for c in t.get("candidates") or [] if c.get("sha")]
             cands = [c for c in cands if c.get("confidence") == "chắc"] or [c for c in cands if c.get("hit")]
             for c in cands:
@@ -821,14 +846,23 @@ def escape_check(run: Run, repo: str, scratch: str, sha: str, matrix_path, slug:
             checked += 1
             # suite không có file test (lệnh pytest / gradle …): chỉ luật ma trận chọn được cả lệnh
             if not any(set(t.get("files") or []) & picks[c["sha"]][0] or t["id"] in picks[c["sha"]][1] for c in cands):
+                # v26 mục 5b/6: gate --scoped CHỌN mà hoãn tới heavy gate (cap_selection) ⇒ "deferred", không phải lỗ của bộ chọn để nới
+                dfr = [c for c in cands if set(t.get("files") or []) & set(picks[c["sha"]][3]["files"])
+                       or t["id"] in picks[c["sha"]][3]["suites"]]
+                if dfr:
+                    c = dfr[0]
+                    deferred.append({"id": t["id"], "sha": c["sha"], "pr": c.get("pr"), "tests": t.get("files") or []})
+                    continue
                 c = cands[0]
                 escaped.append({"id": t["id"], "sha": c["sha"], "pr": c.get("pr"), "tests": t.get("files") or [], "files": picks[c["sha"]][2][:20],
                                 "others": ["PR #%s" % x["pr"] if x.get("pr") else x["sha"][:12] for x in cands[1:]]})
     finally:
         if git(scratch, "checkout", "-q", "-f", "--detach", sha)[0] != 0:
             run.info["notes"].append("đo lọt lưới: không trả scratch về %s" % sha[:12])
-    run.info["escape"] = {"checked": checked, "escaped": escaped, "rate": round(len(escaped) / checked, 3) if checked else None}
-    run.log("lọt lưới: %d/%d suite đỏ không được gate scoped của commit ứng viên chọn" % (len(escaped), checked))
+    run.info["escape"] = {"checked": checked, "escaped": escaped, "deferred": deferred,
+                          "rate": round(len(escaped) / checked, 3) if checked else None}
+    run.log("lọt lưới: %d/%d suite đỏ không được gate scoped của commit ứng viên chọn; %d đỏ là test hoãn tới heavy gate (deferred)"
+            % (len(escaped), checked, len(deferred)))
     for e in escaped:
         title = "%s: %s (%s)" % (ESCAPE_PREFIX, e["id"], "PR #%s" % e["pr"] if e["pr"] else e["sha"][:12])
         base = shlex.split(os.environ["DEVKIT_GATE_FULL_CARD_CMD"]) if os.environ.get("DEVKIT_GATE_FULL_CARD_CMD") \
@@ -964,6 +998,41 @@ def wait_load(run: Run, max_wait_s: int) -> None:
     run.log(run.info["wait_note"])
 
 
+def kit_tree_hash() -> str:
+    """Hash cây của kit đang chạy gate_full.py (thư mục KIT) tại HEAD của repo chứa nó; "" khi không đọc được (kit ngoài git…)."""
+    prefix = git_out(KIT, "rev-parse", "--show-prefix").rstrip("/")
+    return git_out(KIT, "rev-parse", "--verify", "-q", ("HEAD:" + prefix) if prefix else "HEAD^{tree}")
+
+
+def _read(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def same_as_last_green(pg: str, sha: str, kit: str, fetched: bool) -> bool:
+    """Gate speed v26 mục 6: bỏ lượt khi không có gì mới từ lượt xanh cuối — fetch thành công VÀ sha == last_full_green_sha VÀ hash cây kit
+    == last_full_green_kit. Một bên rỗng hoặc fetch lỗi ⇒ chạy."""
+    green, green_kit = _read(os.path.join(pg, "last_full_green_sha")), _read(os.path.join(pg, "last_full_green_kit"))
+    return bool(fetched and sha and kit and green and green_kit) and sha == green and kit == green_kit
+
+
+def history_row(pg: str, run: "Run") -> None:
+    """Một dòng nightly/history.jsonl cho lượt này (cả lượt skip: khoá bận, không commit mới — skip không bao giờ là mốc so đỏ mới)."""
+    i = run.info
+    hist = os.path.join(pg, "nightly")
+    os.makedirs(hist, exist_ok=True)
+    row = {"at": run.started.isoformat(timespec="seconds"), "result": i["result"], "ref": i["ref"], "sha": i["sha"], "red": i["red"],
+           "group_b": i["group_b"], "suspect": i["suspect"], "card": i["card"], "log": run.log_path, "escape": i.get("escape")}
+    for k in ("skip_reason", "kit"):
+        if i.get(k):
+            row[k] = i[k]
+    with open(os.path.join(hist, "history.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def cmd_run(args) -> int:
     repo = os.path.abspath(args.repo)
     common = git_out(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -984,24 +1053,45 @@ def cmd_run(args) -> int:
     run.info["ref"] = args.ref
     holder = acquire_lock(lock)
     if holder is not None:
-        run.info["result"] = "skip"
+        run.info["result"], run.info["skip_reason"] = "skip", "lock"
         run.info["notes"].append("skip: lượt trước đang chạy (pid %s giữ %s)" % (holder, lock))
         run.log("skip: lượt trước đang chạy (pid %s)" % holder)
+        history_row(pg, run)
         run.finish()
-        return 0
+        return 3 if args.force else 0   # --force: người gọi muốn một lượt thật, mất khoá thì không báo xanh
+    try:
+        # Gate speed v26 mục 6: fetch TRƯỚC khoá toàn máy — lượt không có gì mới không phải chờ hàng giờ sau lượt repo khác
+        frc, fout = git(repo, "fetch", "origin", "--quiet", timeout=FETCH_TIMEOUT_S)
+        pre_sha = git_out(repo, "rev-parse", "--verify", "-q", args.ref + "^{commit}")
+        run.info["kit"] = kit_tree_hash()
+        if not args.force and same_as_last_green(pg, pre_sha, run.info["kit"], frc == 0):
+            run.info["result"], run.info["skip_reason"], run.info["sha"] = "skip", "no-new-commit", pre_sha
+            run.info["notes"].append("skip: %s @ %s và cây kit %s trùng lượt xanh cuối (--force để chạy lại)"
+                                     % (args.ref, pre_sha[:12], run.info["kit"][:12]))
+            run.log(run.info["notes"][-1])
+            history_row(pg, run)
+            release_lock(lock)
+            run.finish()
+            return 0
+        if frc != 0:
+            run.log("git fetch origin (trước khoá) lỗi: " + fout.strip()[-300:])
+    except BaseException:
+        release_lock(lock)
+        raise
     try:
         got_global = acquire_global(run, repo)
     except BaseException:   # SIGTERM / Ctrl-C khi đang chờ: nhả khoá repo
         release_lock(lock)
         raise
     if not got_global:
-        run.info["result"] = "skip"
+        run.info["result"], run.info["skip_reason"] = "skip", "global-lock"
         run.info["notes"].append("skip: chờ khoá toàn máy %s quá %d giây (lượt gate-full khác chạy quá lâu: %s)"
                                  % (global_lock_path(), run.info.get("global_wait_s", 0), _global_holder(global_lock_path())))
         run.log(run.info["notes"][-1])
+        history_row(pg, run)
         release_lock(lock)
         run.finish()
-        return 0
+        return 3 if args.force else 0
     aborted = False
     completed = False
     scratch = ""
@@ -1090,6 +1180,11 @@ def cmd_run(args) -> int:
             else:
                 run.info["notes"].append("gate xanh nhưng scratch không có full_pass.json")
             _write(last_green_path, sha + "\n")
+            kit_path = os.path.join(pg, "last_full_green_kit")
+            if run.info.get("kit"):   # cùng lượt với last_full_green_sha: lượt sau so cả hai để bỏ lượt không có gì mới
+                _write(kit_path, run.info["kit"] + "\n")
+            elif os.path.exists(kit_path):
+                os.unlink(kit_path)
             rc_final = 0
         elif verdict == "red":
             mode = os.environ.get("DEVKIT_GATE_FULL_BISECT") or "auto"
@@ -1152,14 +1247,7 @@ def cmd_run(args) -> int:
             pending = os.path.join(pg, "nightly", ".full_pass.pending")
             if os.path.exists(pending):
                 os.unlink(pending)
-            hist = os.path.join(pg, "nightly")
-            os.makedirs(hist, exist_ok=True)
-            with open(os.path.join(hist, "history.jsonl"), "a", encoding="utf-8") as f:
-                f.write(json.dumps({"at": run.started.isoformat(timespec="seconds"), "result": run.info["result"], "ref": run.info["ref"],
-                                    "sha": run.info["sha"], "red": run.info["red"], "group_b": run.info["group_b"],
-                                    "suspect": run.info["suspect"],
-                                    "card": run.info["card"], "log": run.log_path,
-                                    "escape": run.info.get("escape")}, ensure_ascii=False) + "\n")
+            history_row(pg, run)
             run.finish()
         finally:
             release_global()
@@ -1176,6 +1264,8 @@ def main(argv=None) -> int:
     r.add_argument("--slug", default="", help="owner/repo cho thẻ P1 (mặc định suy từ origin)")
     r.add_argument("--timeout", type=int, default=900, help="giới hạn mỗi suite (giây), cũng dùng khi chia đôi")
     r.add_argument("--dry-run", action="store_true", help="chỉ in kế hoạch, không fetch, không scratch, không chạy")
+    r.add_argument("--force", action="store_true", help="chạy cả khi sha + cây kit trùng lượt xanh cuối (trước phát hành: `gate_full.py run "
+                   "--force`); khoá bận / chờ khoá toàn máy quá hạn ⇒ exit 3 thay vì 0")
     args = ap.parse_args(argv)
     return cmd_run(args)
 
