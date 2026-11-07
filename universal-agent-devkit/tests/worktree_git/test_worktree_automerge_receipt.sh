@@ -80,5 +80,16 @@ repo d nomatrix; wtadd d; work d
 am d
 [ "$AM" = 0 ] && [ "$(st)" = merged ] && [ -f "$TMP/d/app2.sh" ] && ok "6. không ma trận ⇒ gộp như cũ" || fail "6. rc=$AM status=$(st) $(tail -3 "$TMP/out")"
 
+# 7  biên nhận của worktree lấy với ma trận KHÁC ma trận mà main đang giữ (_gate_matrix của main, như _merge_gate): không thay được gate
+#    ⇒ needs_gate. Ở đây ma trận trên đĩa của main có thêm một test bắt buộc sau lượt gate của worktree.
+repo e; wtadd e; work e
+( cd "$TMP/e-w" && python3 "$GATE" --run-tests --scoped --brief ) > "$TMP/gout" 2>&1; g=$?
+printf '{"project":"t","rules":[{"component":"App","watch_files":["*.sh"],"mandatory_regression_tests":[{"id":"REG-APP-01","name":"apps","command":"bash check.sh"},{"id":"REG-APP-02","name":"more","command":"exit 1"}]}]}\n' \
+  > "$TMP/e/.agents/regression_matrix.active.json"
+M3="$(G "$TMP/e" rev-parse HEAD)"
+am e
+[ "$g" = 0 ] && [ "$AM" = 4 ] && [ "$(G "$TMP/e" rev-parse HEAD)" = "$M3" ] && ok "7. biên nhận lấy với ma trận khác ma trận của main ⇒ needs_gate" \
+  || fail "7. gate=$g rc=$AM status=$(st) main=$(G "$TMP/e" rev-parse HEAD) $(tail -3 "$TMP/out")"
+
 [ "$FAILS" -eq 0 ] && { echo "PASS"; exit 0; }
 echo "failures: $FAILS"; exit 1

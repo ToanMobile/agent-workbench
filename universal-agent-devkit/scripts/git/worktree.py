@@ -4026,15 +4026,16 @@ def automerge(cwd, wt, keep=False, run_gate=True):
         lock.close()
 
 
-def _receipt_merge_ok(wt, main_head):
+def _receipt_merge_ok(wt, main_head, matrix):
     """v26 mục 1: automerge ở Stop không chạy suite. True khi worktree có biên nhận full hoặc scoped (task thì không: T0061) của ĐÚNG cây
-    hiện tại, và base của biên nhận scoped là tổ tiên của HEAD main (lượt gate đã kiểm mọi thứ worktree mang thêm so với main)."""
+    hiện tại, và base của biên nhận scoped là tổ tiên của HEAD main (lượt gate đã kiểm mọi thứ worktree mang thêm so với main).
+    matrix: ma trận của MAIN (_gate_matrix, như _merge_gate): biên nhận lấy với ma trận khác (worktree sửa ma trận của nó) không được nhận."""
     try:
         bin_dir = os.path.join(DEVKIT, "bin")
         if bin_dir not in sys.path:
             sys.path.insert(0, bin_dir)
         import tree_fp  # noqa: PLC0415 - module anh em trong bin/
-        rec = tree_fp.receipt_for_tree(wt, gate=os.path.join(DEVKIT, "bin", "post-fix-gate.py"), kinds=("full", "scoped"),
+        rec = tree_fp.receipt_for_tree(wt, gate=os.path.join(DEVKIT, "bin", "post-fix-gate.py"), matrix=matrix, kinds=("full", "scoped"),
                                        covers=lambda base: base == "" or _is_ancestor(wt, base, main_head))
         return rec is not None
     except Exception as e:   # không đọc được biên nhận: như không có (needs_gate), không bao giờ gộp mà không gate
@@ -4078,12 +4079,13 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None, run_gate=True):
             return "blocked", tr("không kết thúc được merge đang mở trong worktree: ", "cannot conclude the merge open in the worktree: ") + (r.stdout + r.stderr).strip()[-400:], {}
     elif busy:
         return "blocked", tr(f"worktree đang dở một {busy}: hoàn tất hoặc huỷ nó trước", f"a {busy} is in progress in the worktree: finish or abort it first"), {}
-    no_gate = not run_gate and bool(_gate_matrix(main))   # None (matrix gone from main's HEAD) is refused below, as before
+    main_matrix = _gate_matrix(main) if not run_gate else ""
+    no_gate = not run_gate and bool(main_matrix)   # None (matrix gone from main's HEAD) is refused below, as before
     if no_gate:   # decided before anything is committed or merged: needs_gate leaves the worktree and main as they are
         main_head = git(main, "rev-parse", "HEAD").stdout.strip()
         w_head = git(wt, "rev-parse", "HEAD").stdout.strip()
         if not _is_ancestor(main, w_head, main_head) and not _squashed_on_origin(main, w_head) \
-                and not (_is_ancestor(main, main_head, w_head) and _receipt_merge_ok(wt, main_head)):
+                and not (_is_ancestor(main, main_head, w_head) and _receipt_merge_ok(wt, main_head, main_matrix)):
             return _needs_gate(wt)
     refusal = _commit_pending(wt, state)
     if refusal:
