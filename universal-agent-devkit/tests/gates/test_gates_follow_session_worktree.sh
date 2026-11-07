@@ -218,12 +218,13 @@ gate_wt; regression_stop s63; rc=$?
 [ "$GRC" = 2 ] && [ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" \
   && ok "regression_gate: the session-less gate run cannot tell whose the test edit is: it fails closed (exit 2) and the Stop blocks once, naming the file" \
   || fail "regression_gate fail-closed: gate=$GRC rc=$rc (want 2 and 2) out='$(head -c 300 "$TMP/out")' err='$(head -c 300 "$TMP/err")'"
-# The gate itself still reads main's ledger from a worktree when it is given the session (734ab234), with no DEVKIT_LEDGER_ROOT: the
-# change inside another session's window is that session's (a warning, exit 0); outside every window it stays this session's (exit 2).
+# The gate itself still reads main's ledger from a worktree when it is given the session (734ab234), with no DEVKIT_LEDGER_ROOT. Main's
+# ledger has no worktree column, so from it the gate trusts only THIS session's windows (d67aeb8b, as test_gate_ledger_main_from_worktree.sh
+# l2): a change inside another session's window there does not release the edited test, it stays blocked (exit 2), naming the file.
 gate_wt --session s63 --transcript "$TMP/y63.jsonl"
-[ "$GRC" = 0 ] && grep -q "src/test/CoreTest.kt" "$TMP/gate.out" \
-  && ok "  … the gate given the session reads main's ledger from the worktree: another session's window, a warning (exit 0)" \
-  || fail "gate ledger from a worktree: exit $GRC (want 0 and a warning) $(grep -m3 -E 'CoreTest|KẾT LUẬN' "$TMP/gate.out")"
+[ "$GRC" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/gate.out" \
+  && ok "  … the gate given the session reads main's ledger from the worktree: another session's window there does not release it (exit 2)" \
+  || fail "gate ledger from a worktree: exit $GRC (want 2, fail closed, naming CoreTest.kt) $(grep -m3 -E 'CoreTest|KẾT LUẬN' "$TMP/gate.out")"
 echo "fun ok() = 3" > "$W2/src/Core.kt"   # a new tree
 ledger_main s64 -590 -589
 # (a session-ful run starts the suites; the session-less one stops at the edited test) DEVKIT_LEDGER_ROOT set: it must not reach a suite

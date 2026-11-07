@@ -19,6 +19,9 @@ new_repo() {
   rm -rf "$TMP/repo" && mkdir -p "$TMP/repo/src/main" "$TMP/repo/src/test" && cd "$TMP/repo" || exit 1
   git init -q . && git config user.email t@t && git config user.name t
   echo "fun ok() = 1" > src/main/A.kt && git add -A && git commit -qm init --no-verify
+  # The installed stub runs <repo>/.agents/devkit first; without it a kit in a LINKED worktree (merge scratch, session worktree) writes
+  # main's copy (githooks.sh, #307) and this test would check main's hook instead of the kit under test. Untracked and excluded.
+  mkdir -p .agents && ln -s "$DEVKIT_DIR" .agents/devkit && echo ".agents/devkit" >> "$(git rev-parse --git-path info/exclude)"
   bash "$KIT" githooks install >/dev/null 2>&1
 }
 commits() { git rev-list --count HEAD; }
