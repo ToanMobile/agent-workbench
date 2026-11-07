@@ -18,6 +18,12 @@ for _v in GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_OBJ
 done
 for _v in $(env | grep -E '^GIT_CONFIG_(KEY|VALUE)_[0-9]+=' | cut -d= -f1); do unset "$_v"; done
 unset _v
+# The user's GLOBAL git config must not steer a test either: push.followTags=true in ~/.gitconfig turned 11 cases of
+# tests/gates/test_push_gate_hook.sh red (heavy gate 06/11). Set unconditionally (unset alone would read ~/.gitconfig again).
+# Identity: fixture repos set user.name/user.email in their own config; the rest fall back to EMAIL, which git ranks BELOW
+# user.email (GIT_AUTHOR_*/GIT_CONFIG_COUNT would override fixture identities), so a host name without a dot never leaves a
+# commit with no identity (INSTINCT-043). A test that wants a global config sets GIT_CONFIG_GLOBAL itself after sourcing.
+export GIT_CONFIG_GLOBAL=/dev/null EMAIL="${EMAIL:-devkit-test@localhost}"
 # Host policy a test must not inherit (W1 R5c): on a host under 10 GiB free every `worktree add` would run gc over the test's own
 # fixture siblings, and under 3 GiB refuse. tests/worktree_git/test_worktree_limits.sh sets these itself.
 export WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0
