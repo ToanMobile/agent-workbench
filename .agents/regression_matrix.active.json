@@ -4155,6 +4155,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-red-on-base-kit-tests",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_red_on_base_kit_tests.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RED-ON-BASE-KIT-TESTS-01",
+          "name": "Gate speed v26 mục 5a: runner kit đỏ ⇒ red-on-base chạy riêng từng test ✖ trên base; danh sách thiếu, lạ hay có thể bị cắt ⇒ đỏ",
+          "command": "bash tests/super-board/test_merge_gate_red_on_base_kit_tests.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

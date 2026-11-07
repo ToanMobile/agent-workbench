@@ -1502,6 +1502,31 @@ gate_red_suite_ids() {
     }
     END { if (!(rej && static == 1 && n > 0 && !odd)) exit 1; for (i = 1; i <= n; i++) print ids[i] }'
 }
+# Gate speed v26 mục 5a: suite runner kit (`…tests/run_impacted.sh`) đỏ ở lượt --scoped chỉ chạy danh sách đã chọn (DEVKIT_SCOPED_TESTS); chạy
+# lại lệnh ma trận trên base là một tập test KHÁC, không chứng minh gì. In đường dẫn (từ gốc repo) của từng dòng `| ✖ tests/x.sh` trong khối
+# của suite `$2` trong log `$1`, mỗi dòng một test. Fail closed (exit 1): không dòng ✖ nào, một dòng ✖ không phải đường dẫn test hẹp
+# (`✖ run_impacted.sh: thư mục kit … biến mất`), hay danh sách có thể đã bị cắt (fail_lines của post-fix-gate giữ tối đa 40 dòng test đỏ).
+SB_RED_TEST_CAP=40
+gate_red_kit_tests() {
+  local t out=""
+  t=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$1" 2>/dev/null | LC_ALL=C awk -v want="$2" -v cap="$SB_RED_TEST_CAP" '
+    /^[[:space:]]*\[[ x]\] [^|]*\|/ {
+      split($0, parts, "|"); id = parts[2]; sub(/^[[:space:]]+/, "", id); sub(/[[:space:]].*$/, "", id); inblk = (id == want); next
+    }
+    inblk && /^[[:space:]]*\| ✖ / {
+      line = $0; sub(/^[[:space:]]*\| ✖ /, "", line); sub(/[[:space:]]*$/, "", line)
+      if (line !~ /^(hooks\/)?tests\/[A-Za-z0-9_][A-Za-z0-9_.\/-]*\.sh$/ || line ~ /\.\./) { odd = 1; next }
+      if (!(line in seen)) { seen[line] = 1; o[++n] = line }
+    }
+    END { if (odd || n == 0 || n >= cap) exit 1; for (i = 1; i <= n; i++) print o[i] }') || return 1
+  while IFS= read -r t; do
+    # run_impacted.sh in đường dẫn tương đối kit; trong agent-workbench kit nằm dưới universal-agent-devkit/ (như merge-train single_red_test)
+    if [ -d "$SCRATCH/universal-agent-devkit/tests" ]; then out="${out}universal-agent-devkit/${t}"$'\n'
+    elif [ -d "$SCRATCH/.agents/devkit/tests" ]; then out="${out}.agents/devkit/${t}"$'\n'
+    else out="${out}${t}"$'\n'; fi
+  done <<<"$t"
+  printf '%s' "$out"
+}
 
 # Chạy lệnh suite trên cây base trong scratch, trong nhóm tiến trình riêng bị kill cả nhóm khi quá giờ, env không có GIT_* /
 # POSTFIX_GATE_FORCE_FULL: 1 = đỏ thật, 0 = xanh, 2 = không chạy được (126/127, hay exception), 124 = quá giờ, 75 = hết giờ chờ slot
@@ -1642,7 +1667,7 @@ red_only_on_base() {
   local rc="$1" log_file="$2" vcmd="$3" ids id bcmd mcmd name p all_red=1 sr pfg_cmd_re
   local base_matrix="$SCRATCH/.red-on-base-matrix.json" merged_matrix="$SCRATCH/.agents/regression_matrix.active.json"
   local jqq='[.. | objects | select(.id? == $id and (.command? | type) == "string")] | first // empty'
-  local ids_list=() names=() cmds=()
+  local ids_list=() names=() cmds=() run_ids=() kt kts
   BASE_SUITE_BUSY=0   # #914: run_suite_on_base hết giờ chờ slot pool gate (75) ⇒ 1; chỗ gọi thoát 4, không đẩy thẻ về Build
   [ "$rc" -eq 1 ] || return 1
   case "$vcmd" in *[\;\&\|\<\>]*|*$'\n'*) return 1 ;; esac
@@ -1657,21 +1682,30 @@ red_only_on_base() {
   while IFS= read -r id; do
     bcmd=$(jq -r --arg id "$id" "$jqq | .command" "$base_matrix" 2>/dev/null) || bcmd=""
     mcmd=$(jq -r --arg id "$id" "$jqq | .command" "$merged_matrix" 2>/dev/null) || mcmd=""
+    if [[ "$mcmd" == *tests/run_impacted.sh* ]]; then
+      # Gate speed v26 mục 5a: runner kit ⇒ từng test đỏ của log chạy RIÊNG trên base (không qua runner, không kèm test consistency);
+      # lệnh của runner trên base không cần khớp: cái được kiểm là file test của base. Test PR mới thêm không có trên base: 127 ⇒ không dung thứ.
+      kts=$(gate_red_kit_tests "$log_file" "$id") || { say "red runner suite ${id}: its red tests could not be listed exactly (none, odd line or possibly cut at ${SB_RED_TEST_CAP}); red stays red"; rm -f "$base_matrix"; return 1; }
+      name=$(jq -r --arg id "$id" "$jqq | .name // \"\"" "$merged_matrix" 2>/dev/null) || name=""
+      ids_list+=("$id"); names+=("$name")
+      while IFS= read -r kt; do cmds+=("bash $kt"); run_ids+=("${id} ${kt}"); done <<<"$kts"
+      continue
+    fi
     if [ -z "$bcmd" ] || [ "$bcmd" != "$mcmd" ]; then
       say "red suite ${id} is not the same suite in the matrix of origin/${BASE}; the PR owns it"; rm -f "$base_matrix"; return 1
     fi
     name=$(jq -r --arg id "$id" "$jqq | .name // \"\"" "$base_matrix" 2>/dev/null) || name=""
-    ids_list+=("$id"); names+=("$name"); cmds+=("$bcmd")
+    ids_list+=("$id"); names+=("$name"); cmds+=("$bcmd"); run_ids+=("$id")
   done <<<"$ids"
   rm -f "$base_matrix"
   git -C "$SCRATCH" reset -q --hard "$BASE_SHA" 2>/dev/null || return 1
-  for p in "${!ids_list[@]}"; do
-    sr=0; run_suite_on_base "${cmds[$p]}" "${ids_list[$p]}" || sr=$?
+  for p in "${!cmds[@]}"; do
+    sr=0; run_suite_on_base "${cmds[$p]}" "${run_ids[$p]%% *}" || sr=$?
     if [ "$sr" -ne 1 ]; then
       all_red=0
-      if [ "$sr" -eq 0 ]; then say "${ids_list[$p]} is green on origin/${BASE}: the PR broke it"
-      elif [ "$sr" -eq 75 ]; then BASE_SUITE_BUSY=1; say "${ids_list[$p]}: the gate pool stayed busy, the base check did not run (not the PR's fault)"
-      else say "${ids_list[$p]} did not run to a red result on origin/${BASE} (exit ${sr})"; fi
+      if [ "$sr" -eq 0 ]; then say "${run_ids[$p]} is green on origin/${BASE}: the PR broke it"
+      elif [ "$sr" -eq 75 ]; then BASE_SUITE_BUSY=1; say "${run_ids[$p]}: the gate pool stayed busy, the base check did not run (not the PR's fault)"
+      else say "${run_ids[$p]} did not run to a red result on origin/${BASE} (exit ${sr})"; fi
       break
     fi
   done
