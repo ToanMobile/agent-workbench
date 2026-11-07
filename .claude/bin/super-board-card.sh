@@ -233,22 +233,21 @@ items() {
 
 # 07/11: Board #1 chứa thẻ #91 của repo khác; runner đọc theo số trong repo mình, trúng PR #91 và dừng rc=79.
 # Có SB_CARD_HOME_REPO (runner hoặc --config đặt) thì chỉ trả thẻ repo nhà; số thẻ bị lọc nằm ở .skippedForeign.
-# Không còn thẻ nào của repo nhà: nhiều khả năng cấu hình sai repo, không lọc để board khỏi trống im lặng.
+# Không còn thẻ nào của repo nhà vẫn lọc (trả lại thẻ repo khác sẽ làm runner đọc nhầm theo số) và cảnh báo: có thể sai repo trong config.
 home_items() {  # stdout: JSON board
   local raw rc=0 home out
   raw=$(items) || rc=$?
   [ "$rc" -eq 0 ] || return "$rc"
   home=$(printf '%s' "${SB_CARD_HOME_REPO:-}" | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
   if [ -z "$home" ]; then printf '%s\n' "$raw"; return 0; fi
-  if ! out=$(printf '%s' "$raw" | jq -e --arg h "$home" '
+  out=$(printf '%s' "$raw" | jq --arg h "$home" '
       def repo: .content.repository // "" | ascii_downcase;
       ($h | ascii_downcase) as $home
       | [ .items[] | select(repo != "" and repo != $home) ] as $foreign
-      | if ($foreign | length) > 0 and ([ .items[] | select(repo == $home) ] | length) == 0 then empty
-        else (.items - $foreign) as $keep
-             | { items: $keep, totalCount: ($keep | length), skippedForeign: [ $foreign[].content.number ] } end'); then
-    echo "warning: no card of SB_CARD_HOME_REPO=$home on this board (wrong repo in config?); not filtering" >&2
-    printf '%s\n' "$raw"; return 0
+      | (.items - $foreign) as $keep
+      | { items: $keep, totalCount: ($keep | length), skippedForeign: [ $foreign[].content.number ] }') || return 69
+  if [ "$(printf '%s' "$out" | jq '([.items[] | select(.content.repository)] | length == 0) and ((.skippedForeign | length) > 0)' 2>/dev/null)" = true ]; then
+    echo "warning: no card of SB_CARD_HOME_REPO=$home on this board (wrong repo in config?); all cards skipped" >&2
   fi
   printf '%s\n' "$out"
 }

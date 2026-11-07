@@ -134,7 +134,7 @@ fi
 if [ -n "$ITEMS_FILE" ]; then
   ITEMS=$(cat "$ITEMS_FILE")
 else
-  ITEMS=$(SB_CARD_HOME_REPO=$(jq -r '.repo.remote // empty' "${CONFIG:-/dev/null}" 2>/dev/null) \
+  ITEMS=$(SB_CARD_HOME_REPO=$(printf '%s' "$CONFIG_JSON" | jq -r '.repo.remote // empty' 2>/dev/null) \
     "$HERE/super-board-card.sh" --owner "$OWNER" --number "$NUMBER" items)
 fi
 

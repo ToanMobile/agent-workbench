@@ -10,7 +10,7 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-card-home.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/bin" "$TMP/cache"
+mkdir -p "$TMP/bin"
 
 node() { printf '{"id":"I%s","fieldValueByName":{"name":"Ready"},"content":{"__typename":"Issue","number":%s,"title":"t","url":"u","repository":{"nameWithOwner":"%s"},"labels":{"nodes":[]}}}' "$1" "$1" "$2"; }
 draft='{"id":"D1","fieldValueByName":{"name":"Backlog"},"content":{"__typename":"DraftIssue","title":"d"}}'
@@ -53,8 +53,35 @@ check "không đặt env thì giữ nguyên board" "$(printf '%s' "$out" | nums)
 check "không đặt env thì totalCount giữ nguyên" "$(printf '%s' "$out" | jq .totalCount)" 3
 
 out=$(run foreign Own/Home)
-check "lọc xong còn 0 thì không lọc, tránh board trống im lặng" "$(printf '%s' "$out" | nums)" '[91,19]'
-grep -q 'SB_CARD_HOME_REPO' "$TMP/err" && ok "lọc xong còn 0 thì cảnh báo stderr" || fail "lọc xong còn 0 mà không cảnh báo"
+check "board chỉ có thẻ repo khác: vẫn lọc, không đọc lại theo số" "$(printf '%s' "$out" | nums)" '[]'
+check "board chỉ có thẻ repo khác: skippedForeign đủ" "$(printf '%s' "$out" | jq -c .skippedForeign)" '[91,19]'
+grep -q 'SB_CARD_HOME_REPO' "$TMP/err" && ok "không còn thẻ repo nhà thì cảnh báo stderr" || fail "không còn thẻ repo nhà mà không cảnh báo"
+
+# --config: mọi nơi gọi có config (waiting-on, watchdog) nhận luật lọc mà không truyền env.
+printf '{"project":{"owner":"Own","number":1},"repo":{"remote":"https://github.com/Own/Home"}}' > "$TMP/cfg.json"
+out=$(GH_PAGE="$TMP/mixed.json" SB_GITHUB_HALT_FILE="$TMP/halt.json" PATH="$TMP/bin:$PATH" "$CARD" --config "$TMP/cfg.json" items 2>/dev/null)
+check "--config tự lọc theo repo.remote" "$(printf '%s' "$out" | nums)" '[7,"draft"]'
+
+# fetch_project_items của runner thật: đây là chỗ đọc board trong sự cố rc=79 (super-board-run.sh).
+RUNNER="${SB_RUNNER:-$ROOT/.claude/bin/super-board-run.sh}"
+fetch() {  # $1 = chuỗi trang gh giả cho từng lần đọc; in "<số thẻ>" mỗi lần, log vào $TMP/log
+  rm -f "$TMP/log"
+  PAGES="$1" SB_LIB_ONLY=1 SB_GITHUB_HALT_FILE="$TMP/halt.json" PATH="$TMP/bin:$PATH" bash -c '
+    R="$1" B="$2" T="$3"; set --
+    . "$R" >/dev/null 2>&1
+    SB_GITHUB_READ="$B/super-board-github-read.py"; PROJECT_OWNER=Own; PROJECT_NUMBER=1; CONFIG_PATH="$T/cfg.json"; SB_FETCH_RETRY_DELAYS=""
+    log() { echo "$*" >> "$T/log"; }
+    for p in $PAGES; do
+      export GH_PAGE="$T/$p.json"
+      fetch_project_items || { echo "rc=$?"; continue; }
+      printf "%s\n" "$PROJECT_ITEMS_JSON" | jq -c "[.items[] | .content.number // \"draft\"]"
+    done' _ "$RUNNER" "$(dirname "$CARD")" "$TMP"
+}
+page 1 "$(node 7 Own/Home)" > "$TMP/home.json"
+out=$(fetch "mixed mixed home" | tr '\n' ' ')
+check "fetch_project_items bỏ thẻ repo khác" "$out" '[7,"draft"] [7,"draft"] [7] '
+check "log thẻ bị lọc một lần, không lặp mỗi tick" "$(grep -c 'skipped' "$TMP/log" 2>/dev/null)" 1
+grep -q 'skipped: \[\]' "$TMP/log" && fail "thẻ rời board mà log 'skipped: []'" || ok "thẻ rời board không log danh sách rỗng"
 
 # super-board-status.py gọi gh trực tiếp, không qua card.sh: cũng không được tính thẻ repo khác.
 STATUS="${SB_STATUS:-$ROOT/.claude/bin/super-board-status.py}"

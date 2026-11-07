@@ -757,7 +757,7 @@ def main() -> int:
         )
 
     # Thẻ của repo khác trên board không tính vào status (cùng luật với SB_CARD_HOME_REPO của card.sh).
-    home = re.sub(r"\.git$", "", re.sub(r"^(https?://github\.com/|git@github\.com:)", "", cfg.get("repo", {}).get("remote") or "")).lower()
+    home = re.sub(r"\.git$", "", re.sub(r"^(https?://github\.com/|git@github\.com:)", "", (cfg.get("repo") or {}).get("remote") or "")).lower()
     items: list[dict[str, Any]] = []
     for n in items_raw:
         c = n.get("content") or {}

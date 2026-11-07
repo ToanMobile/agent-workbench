@@ -254,7 +254,7 @@ fetch_project_items() {
     if [ "$rc" -eq 0 ]; then
       PROJECT_ITEMS_JSON="$fresh"; CARD_WRITE_BLOCKED=""   # board mới: thẻ đã Blocked nằm đúng cột
       foreign=$(printf '%s' "$fresh" | jq -c '.skippedForeign // []' 2>/dev/null) || foreign=""
-      if [ -n "$foreign" ] && [ "$foreign" != "${SKIPPED_FOREIGN:-[]}" ]; then log "⚠ board has cards of another repo, skipped: $foreign"; fi
+      if [ -n "$foreign" ] && [ "$foreign" != "[]" ] && [ "$foreign" != "${SKIPPED_FOREIGN:-[]}" ]; then log "⚠ board has cards of another repo, skipped: $foreign"; fi
       SKIPPED_FOREIGN="${foreign:-${SKIPPED_FOREIGN:-[]}}"
       return 0
     fi
