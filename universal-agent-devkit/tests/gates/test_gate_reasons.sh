@@ -2,7 +2,7 @@
 # Regression test (audit of 3 real repos, 2026-09-27): a Stop block must say WHY.
 #  1. post-fix-gate's proof-folder check did not _record() its findings, so the JSON summary had
 #     none and regression_gate blocked with "REJECT" and no reason (GeelyEx2: 10 blocks).
-#  2. A suite failed for vacuity (production diff reverted, test still green) was shown as a bare
+#  2. (gone with the Stop gate call, v26 mục 1) A suite failed for vacuity (production diff reverted, test still green) was shown as a bare
 #     "FAIL" whose command exits 0 (OfficeReader: 5 blocks, ~25 min).
 #  3. A crashed gate (Python traceback, exit 1, no JSON) read as REJECT with no reason.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
@@ -52,7 +52,10 @@ CLAUDE_PROJECT_DIR="$R" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests -
   || fail "similar retake: rc=$rc $(grep -E '98%|KẾT LUẬN|VERDICT' "$TMP/gate2.out" | head -3)"
 cmp -s reports/proof-c.png reports/proof-d.png && fail "test setup: images identical" || true
 
-# ── 2 + 3. the hook prints the reason (fake kit whose gate returns a canned result) ──
+# ── 2 + 3 (v26 mục 1): the Stop no longer runs the gate nor reads its JSON summary, so the cases that fed the hook a canned summary
+# (2: a VACUOUS suite named with its reason, a BUSY suite named as "run again" and not as a failure) left with that rendering; the agent
+# reads the reason in its own gate run. Case 3 keeps its point for what the hook still loads itself: a kit whose bin/tree_fp.py cannot be
+# loaded (no receipt can be read) is reported with that cause, never a reasonless block, and never traps the session.
 FK="$TMP/fakekit"; mkdir -p "$FK/hooks" "$FK/bin"
 cp "$DEVKIT_DIR/hooks/regression_gate.sh" "$FK/hooks/"
 for f in "$DEVKIT_DIR"/hooks/*.py; do ln -s "$f" "$FK/hooks/"; done
@@ -66,39 +69,12 @@ stop() { printf '{"session_id":"%s","hook_event_name":"Stop"}' "$1" \
   | CLAUDE_PROJECT_DIR="$H" bash "$FK/hooks/regression_gate.sh" >"$TMP/out" 2>"$TMP/err"; }
 
 cat > "$FK/bin/post-fix-gate.py" <<'PY'
-import json, sys
-print(json.dumps({"verdict": "REJECT", "exit_code": 1, "files": ["src/Core.kt"], "regression_tests": [
-    {"id": "REG-V", "name": "c", "status": "FAIL", "label": "VACUOUS", "exit_code": 0, "command": "true",
-     "output_tail": "Test rỗng: revert mã nguồn sản xuất mà test vẫn XANH — không có năng lực phát hiện lỗi"}],
-    "findings": [], "report": "r.md"}))
-sys.exit(1)
-PY
-echo "fun ok() = 2" > src/Core.kt
-stop s-v; rc=$?
-[ "$rc" = 2 ] && grep -q "VACUOUS" "$TMP/err" && grep -q "revert" "$TMP/err" \
-  && ok "a vacuous suite is named VACUOUS with the reason, not a bare FAIL" || fail "vacuity reason missing (rc=$rc): $(cat "$TMP/err")"
-
-# BUSY suites (another run holds the lock; the gate writes status UNTESTED, label BUSY) are not failures: nothing to fix, run again later
-# (2026-09-27: 6 BUSY suites listed as failing, with "fix code/test").
-cat > "$FK/bin/post-fix-gate.py" <<'PY'
-import json, sys
-print(json.dumps({"verdict": "UNVERIFIED", "exit_code": 2, "files": ["src/Core.kt"], "tests_touched": ["tests/t.sh"],
-    "regression_tests": [{"id": "REG-B", "name": "c", "status": "UNTESTED", "label": "BUSY", "command": "true",
-                          "output_tail": "Một lượt chạy test khác giữ khoá dự án"}], "findings": [], "report": "r.md"}))
-sys.exit(2)
-PY
-echo "fun ok() = 4" > src/Core.kt
-stop s-b; rc=$?
-grep -q "REG-B" "$TMP/err" && grep -q "chạy lại" "$TMP/err" && ! grep -q "Sửa code/test" "$TMP/err" \
-  && ok "BUSY suites are named as not run yet, never as failures to fix" || fail "BUSY shown as failure (rc=$rc): $(cat "$TMP/err")"
-
-cat > "$FK/bin/post-fix-gate.py" <<'PY'
 raise ValueError("boom in the gate")
 PY
 echo "fun ok() = 3" > src/Core.kt
 stop s-c; rc=$?
-[ "$rc" = 0 ] && grep -q "boom in the gate" "$TMP/out" \
-  && ok "a crashed gate (no JSON) is reported as a crash with its error, not a reasonless block" \
+[ "$rc" = 0 ] && grep -q "tree_fp" "$TMP/out" && grep -q "KHÔNG phải PASS" "$TMP/out" \
+  && ok "a kit whose tree_fp.py cannot be loaded is reported with that cause (not a PASS), not a reasonless block" \
   || fail "crash handled wrong (rc=$rc): out=$(cat "$TMP/out") err=$(cat "$TMP/err")"
 cd "$TMP" || exit 1
 

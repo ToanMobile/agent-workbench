@@ -84,8 +84,9 @@ V0="$(git -C "$R" rev-parse HEAD)"
 gate "$R" --diff HEAD~
 [ "$GRC" -eq 0 ] || { fail "d. gate --diff HEAD~ rc=$GRC"; tail -20 "$TMP/gout"; }
 stop "$R"
-[ "$RC" -eq 2 ] && grep -q -- "--diff $V0 --force" "$TMP/err" && ok "d. biên nhận không phủ c1 ⇒ chặn, lệnh nêu --diff <vh> --force" || fail "d. rc=$RC err=$(cat "$TMP/err")"
-gate "$R" --diff "$V0" --force
+# 734ab234 (lane D2): khoá rerun_skip gồm base của --diff, nên lượt base rộng hơn trên cùng cây tự chạy lại và ghi biên nhận: lệnh không cần --force
+[ "$RC" -eq 2 ] && grep -q -- "--diff $V0\`" "$TMP/err" && ! grep -q -- "--force" "$TMP/err" && ok "d. biên nhận không phủ c1 ⇒ chặn, lệnh nêu --diff <vh> (không --force)" || fail "d. rc=$RC err=$(cat "$TMP/err")"
+gate "$R" --diff "$V0"
 stop "$R"
 [ "$RC" -eq 0 ] && [ "$(vh_of "$R")" = "$(git -C "$R" rev-parse HEAD)" ] && ok "d. gate --diff <vh> ⇒ cho dừng, vh = HEAD" || fail "d2. rc=$RC err=$(cat "$TMP/err") vh=$(vh_of "$R")"
 

@@ -864,9 +864,8 @@ if pr_repo:
     cmd = ("commit việc đang dở rồi `git push`" if entries else "`git push`") + " (merge gate của PR chạy test)"
 else:
     diff = (" --diff " + vh) if (branch and branch == trunk_name and vh and vh != EMPTY and SHA.fullmatch(vh)) else ""
-    # --force when this tree already has a receipt from a later base: rerun_skip.json (same tree, same suites) would end the run at once and
-    # write no receipt for the wider base
-    cmd = "`python3 " + gate_disp + " --run-tests --scoped --brief" + diff + (" --force" if uncovered_range else "") + "`"
+    # no --force for a wider base: the rerun-skip key of the gate holds the resolved --diff base (734ab234), so that run writes its own receipt
+    cmd = "`python3 " + gate_disp + " --run-tests --scoped --brief" + diff + "`"
 lines = ["Regression gate CHƯA ĐẠT — chưa có biên nhận gate cho code hiện tại (Stop không chạy test; lượt gate của agent ghi biên nhận)"]
 if uncovered_range:
     lines.append("  - có biên nhận cho cây này, nhưng lượt gate bắt đầu sau verified_head %s: các commit giữa hai mốc chưa được kiểm "
