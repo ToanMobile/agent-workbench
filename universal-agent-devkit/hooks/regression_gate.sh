@@ -154,7 +154,7 @@ fi
 printf '%s' "${INPUT}" | REPO_ROOT="${REPO_ROOT}" LEDGER_ROOT="${BASE_ROOT}" GATE="${GATE}" LOG="${LOG}" PROBE="${PROBE}" \
   MAX_ATTEMPTS="${REGRESSION_GATE_MAX_ATTEMPTS:-2}" MAX_SESSION_BLOCKS="${REGRESSION_GATE_MAX_SESSION_BLOCKS:-3}" \
   HOOK_PPID="${PPID}" HOOK_DIRS="$(dirname "${SELF}"):$(dirname "$0")" HOOK_SELF="${SELF}" python3 -I -c '
-import contextlib, copy, errno, fcntl, fnmatch, hashlib, io, json, os, re, subprocess, sys, tempfile, time
+import contextlib, copy, errno, fcntl, fnmatch, glob, hashlib, io, json, os, re, subprocess, sys, tempfile, time
 
 repo, gate, log = os.environ["REPO_ROOT"], os.environ["GATE"], os.environ["LOG"]
 ledger_root = os.environ.get("LEDGER_ROOT") or repo   # main: where the Bash window ledger is written when repo is a worktree
@@ -267,11 +267,13 @@ if not probe:
         note("trunk-main check failed: %r" % e)
 
 # A reply that declares itself unfinished (CHƯA XONG / CHỜ DUYỆT …) or carries no status line at all, claims
-# no outcome and pushed nothing (unverified): no test run now — the handover turn runs it, over verified_head..HEAD (T0003,
+# no outcome and pushed nothing (unverified): nothing is checked now — the handover turn is, over verified_head..HEAD (T0003,
 # 2026-09-28; user 2026-10-09: 15 h of Stop-hook test runs in 3 days, "chỉ test khi bàn giao"). proof_gate
-# (XONG needs a --full exit 0 of the same turn), push_gate and pre-commit still hold every handover. DEVKIT_GATE_EVERY_STOP=1: old rule.
-# Claude, Gemini, Grok: lời giữa chừng không mở suite (Gemini/Grok không có transcript Claude: không đọc được push của lượt).
-# XONG hoặc câu nhận đã xong vẫn chạy suite. Commit đã đẩy mà chưa kiểm vẫn nợ tới lượt bàn giao.
+# (XONG needs a gate receipt of this turn for the current code: task, scoped or --full) and push_gate (a receipt that covers what is
+# pushed) still hold every handover; pre-commit runs static checks only unless DEVKIT_PRECOMMIT_TESTS sets a mode (v26 mục 2).
+# DEVKIT_GATE_EVERY_STOP=1: every Stop is judged as a handover.
+# Claude, Gemini, Grok: lời giữa chừng không xét biên nhận (Gemini/Grok không có transcript Claude: không đọc được push của lượt).
+# XONG hoặc câu nhận đã xong: Stop đòi biên nhận gate của cây hiện tại (v26: Stop không chạy suite). Commit đã đẩy mà chưa kiểm vẫn nợ tới lượt bàn giao.
 # Claude: một `git push` ngay trong lượt này vẫn là bàn giao, dù lời không nhận đã xong — khi không có lần sửa nào sau nó
 # (devkit_harness.push_after_last_edit, audit 25/10 A3; push_gate đã đòi biên nhận gate cho nội dung được push).
 # Một định nghĩa duy nhất: devkit_harness.mid_work (audit 25/10 A5: testsourceset_gate dùng chung, không chép lại).
@@ -492,43 +494,16 @@ def save_state():
         if lock is not None:
             lock.close()
 
-# Degraded mode: the last result of this session, reused while the tree is unchanged, and its
-# total block count (reset by a pass).
+# Degraded mode: the last result of a gate run is no longer kept (v26: the Stop runs no suite); the total block count of this
+# session (reset by an allow) and the session cap below stay.
 sess = state.setdefault("sessions", {}).setdefault(sid, {}) if degraded else {}
-# Its tree key also hashes untracked contents (a fix in a new test file is a new tree);
-# the per-fingerprint key above names untracked files only.
-tree_fp = devkit_harness.tree_fingerprint(repo) if degraded else fp
-# Claude session with its transcript: the last block of this session, keyed by fp (it carries the
-# unverified range) and the full tree fingerprint (a fix in an untracked file is new content).
-reuse_key = None
-_tree_part = ""   # the content half of reuse_key, kept apart so a miss can say which half moved (rparts below)
-if info is not None and not degraded and (data.get("session_id") or data.get("sessionId") or sid != "nosession"):
-    try:
-        _tree_part = devkit_harness.tree_fingerprint(repo)
-        reuse_key = hashlib.sha256((fp + ":" + _tree_part).encode()).hexdigest()[:20]
-    except Exception as e:
-        note("reuse key failed: %r" % e)
-repeat = state.get("repeat") if isinstance(state.get("repeat"), dict) else {}
-REUSED = "cùng nội dung với lần chặn trước — chưa chạy lại; sửa code hoặc chạy post-fix-gate --run-tests (biên nhận task)"
 
-def block(lines, cure, rc, reused=False, reusable=True, repeat_hit=False):
+
+def block(lines, cure, rc):
     attempts = state.setdefault("attempts", {})
     attempts[fp] = attempts.get(fp, 0) + 1
-    if degraded:
-        sess.update({"fp": tree_fp, "result": "block", "lines": lines, "cure": cure, "rc": rc})
-    if rkey:
-        state["repeat"] = repeat
-        if reusable:
-            # "at" is the time of the REAL run: a reuse keeps it, so the age limit counts from the run and not from the last Stop.
-            prev = repeat.get(sid)
-            at = prev.get("at") if reused and isinstance(prev, dict) and prev.get("key") == rkey else None
-            repeat[sid] = {"key": rkey, "lines": lines, "cure": cure, "rc": rc, "parts": rparts,
-                           "at": at if isinstance(at, (int, float)) and not isinstance(at, bool) else time.time()}
-        else:
-            repeat.pop(sid, None)
     save_state()
-    note("block fp=%s attempt=%d exit=%s%s%s" % (fp, attempts[fp], rc, " (reused result)" if reused else "",
-                                                (" sid=%s agent=%s" % (sid, info["agent"])) if degraded else ""))
+    note("block fp=%s attempt=%d exit=%s%s" % (fp, attempts[fp], rc, (" sid=%s agent=%s" % (sid, info["agent"])) if degraded else ""))
     if attempts[fp] > max_attempts:
         msg = "\n".join(lines + ["(Đã chặn %d lần cho cùng thay đổi — cho dừng để không kẹt phiên. Người dùng cần xem lại.)" % max_attempts])
         print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
@@ -545,45 +520,26 @@ def block(lines, cure, rc, reused=False, reusable=True, repeat_hit=False):
             sys.exit(0)
         sess["blocks"] = n + 1
         save_state()
-    # The same block again in this session (O4, 2026-09-28: 31 blocks, 32 k characters in one
-    # GeelyEx2 session): every item stays (id, status, exit, log — the first block may have been
-    # compacted away), only a long command is cut and the advice is not repeated.
+    # The same block again in this session (O4, 2026-09-28: 31 blocks, 32 k characters in one GeelyEx2 session): the advice is not repeated.
     shown = state.setdefault("shown", {})
-    # Each run writes a new evidence log (…/20260928-140109.log): compare without the stamp.
-    digest = hashlib.sha256(re.sub(r"\d{8}-\d{6}", "#", "\n".join(lines)).encode()).hexdigest()[:16]
+    digest = hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
     again = shown.get(sid) == digest
     shown[sid] = digest
     save_state()
-    if again:
-        def cut(l):
-            i = l.find("(lệnh: ")
-            if i < 0 or len(l) < 200:
-                return l
-            j = l.rfind(", exit ")
-            return l[:i + 7] + l[i + 7:i + 87] + "…" + (l[j:] if j > i else ")")
-        print("\n".join([cut(l) for l in lines if not l.startswith("Checklist: ")]
-                        + ["(Như lần chặn trước trong phiên: mục lỗi giữ nguyên; lệnh đầy đủ và hướng dẫn: %s)"
-                           % next((l.split("báo cáo: ", 1)[-1] for l in lines if l.startswith("Checklist: ")), "-")]
-                        + ([REUSED] if repeat_hit else [])),
-              file=sys.stderr)
-    else:
-        print("\n".join(lines + cure + ([REUSED] if repeat_hit else [])), file=sys.stderr)
+    print("\n".join(lines + ([] if again else cure)), file=sys.stderr)
     sys.exit(2)
 
 # pass_fp / untested_fp name the CONTENT too: fp hashes status + `git diff HEAD` only, so an edit
-# inside an untracked file kept the key and the next Stop skipped the suites (review 2026-09-29).
-# Same content hash as reuse_key (devkit_harness.tree_fingerprint). Without the helper (a hook
-# copied alone) the per-fingerprint key stays as it was.
-# tree_fingerprint leaves gitignored files out. A suite can read .env / local.properties, so the
-# key also hashes that ignored set (2026-10-07). None means the list failed: do not skip, and do
-# not store a key (a stored None matches a missing pass_fp and would skip the next Stop).
+# inside an untracked file kept the key and the next Stop skipped (review 2026-09-29).
+# Same content hash as devkit_harness.tree_fingerprint. Without the helper (a hook copied alone) the per-fingerprint key stays.
+# tree_fingerprint leaves gitignored files out; the key also hashes that ignored set (2026-10-07). None means the list failed:
+# do not skip, and do not store a key (a stored None matches a missing pass_fp and would skip the next Stop).
 content_fp = ""
 if info is not None:
     try:
         content_fp = devkit_harness.tree_fingerprint(repo)
     except Exception as e:
         note("content fingerprint failed: %r" % e)
-
 
 def _local_ignored_sha():
     """Hex sha of gitignored local config and build inputs. None if they cannot be listed."""
@@ -682,43 +638,6 @@ def _local_ignored_sha():
 _local_sha = _local_ignored_sha()
 
 
-def _stat_sig(*paths):
-    # size and mtime of the files whose logic produced a stored result: a fix of the hook or of the gate drops it
-    sig = []
-    for p in paths:
-        try:
-            st = os.stat(p)
-            sig.append("%d:%d" % (st.st_mtime_ns, st.st_size))
-        except OSError:
-            sig.append("-")
-    return ",".join(sig)
-
-
-# Key of the stored block (repeat): the content (reuse_key), the gitignored local config the suites read, and the hook
-# and the gate themselves. None (the local config could not be listed) stores and serves nothing, like skip_key.
-rkey = None
-rparts = {}   # a short hash of each part of the key (written next to the stored block): the log line of a miss names the parts that moved
-if reuse_key and _local_sha is not None:
-    _self = os.environ.get("HOOK_SELF", "")
-    _sig = _stat_sig(gate, _self, os.path.join(os.path.dirname(_self), "devkit_harness.py") if _self else "")
-    rkey = hashlib.sha256((reuse_key + ":" + _local_sha + ":" + _sig).encode()).hexdigest()[:20]
-    rparts = {"fp": fp[:8], "tree": _tree_part[:8], "local": _local_sha[:8], "sig": hashlib.sha256(_sig.encode()).hexdigest()[:8]}
-try:
-    _repeat_ttl = float(os.environ.get("REGRESSION_GATE_REPEAT_TTL_S", "1800"))
-except ValueError:
-    _repeat_ttl = 1800.0
-
-
-def _repeat_fresh(at):
-    # A stored block is served for REGRESSION_GATE_REPEAT_TTL_S seconds after the real run (0 = never serve one). A block
-    # stored without a time (written by the previous hook) is not served.
-    try:
-        age = time.time() - float(at)
-    except (TypeError, ValueError, OverflowError):
-        return False
-    return _repeat_ttl > 0 and 0 <= age < _repeat_ttl
-
-
 def skip_key(f):
     if _local_sha is None:
         return None
@@ -727,10 +646,6 @@ def skip_key(f):
 
 
 _sk_fp = skip_key(fp)
-# Per-session key of the stored "tests touched" reminder: the gate result depends on the session and its
-# transcript (an edit of another session is only a warning, the same edit of this one blocks), so the
-# reminder of one session is never shown to another. reuse_key is None without a real session id.
-_tkey = None if (reuse_key is None or _sk_fp is None) else reuse_key + "|" + _sk_fp
 
 
 def remind(lines):
@@ -740,230 +655,80 @@ def remind(lines):
 
 if _sk_fp is not None and state.get("pass_fp") == _sk_fp:
     sys.exit(0)
-# UNTESTED content (every suite that can run here passed; one says by its untested_exit that it
-# cannot run on this machine) was already said to the user and cannot give another result here.
-# 2026-09-29 (GeelyEx2: verified_head stuck, every Stop re-ran the --since range 4-5 min).
+# UNTESTED content (a suite cannot run on this machine) was already said to the user and cannot give another result here.
 if _sk_fp is not None and state.get("untested_fp") == _sk_fp:
     note(f"untested fp={fp} (reused result)")
     sys.exit(0)
-# An edited existing test that only a person can clear (the "tests-touched reminder" at the end): the
-# gate result of this session for this exact content is known, so a repeat Stop prints the stored
-# reminder and does not run the gate. 2026-10-08, OfficeReader (10 sessions in one checkout): 58 of 71
-# Stop gate runs in 17 h were this repeat, 31-37 s each. The gate runs again as soon as an approval source moves (approval_digest
-# below: the answer of the user, a ledger entry, a PM verdict that lands later), and at the latest after the ceiling
-# (REGRESSION_GATE_TOUCHED_RECHECK_S when set, else DEVKIT_GATE_CACHE_MAX_S, 21600 s; 0 = every stop). 03/11: the old fixed 300 s
-# window re-ran the gate 36 times a day on unchanged content and sources, ~47 s each. Runs again = judges again
-# (static audits, edited tests, the answer of the user), nothing more: since 2026-10-15 it starts no suite that already passed on this content (the
-# budget_pass.json record of bin/post-fix-gate.py, DEVKIT_GATE_CACHE_MAX_S, default 259200 s = 3 days), so REGRESSION_GATE_TOUCHED_RECHECK_S=0 does not
-# re-check suites either; DEVKIT_GATE_CACHE=0 does.
-# #992: the 21600 s fallback below stays 6 h on purpose: it bounds how long a stored REMINDER is replayed without judging the
-# static audits, edited tests and approval sources again, not how long a suite PASS is re-used (that is the 3-day budget_pass record).
-# Never reused: by another session, for other content or another commit range (the key holds fp, which
-# also names verified_head..HEAD, and the tree fingerprint), after a run that was not this outcome, or
-# when the reminder came with a BUSY suite. Limit: gitignored files the gate reads (proof images under
-# reports/ and .claude/audit-gate/) are outside the key, as they already are for pass_fp; the ceiling bounds it.
-# The approval digest is computed ONCE, before the run, and stored with the reminder: a source that moves while the gate runs
-# (the gate itself rewrites approved_hashes.json) costs one more run, never a reminder that hides a source the gate never judged.
-_cap_raw = os.environ.get("REGRESSION_GATE_TOUCHED_RECHECK_S")
+
+# ── Gate speed v26 mục 1: Stop KHÔNG chạy suite nào. Lượt gate của agent (post-fix-gate --run-tests --scoped, một lần trên cây cuối) ghi
+# biên nhận hay kết luận; hook này chỉ đọc chúng (tree_fp.receipt_for_tree, <git dir>/postfix-gate/outcomes/<fp>.json):
+#   cho dừng + ghi verified_head: biên nhận phủ cây VÀ các commit sau verified_head mà lượt đó không kiểm (vh..base) đều đã ở nhánh đích;
+#       hoặc mọi file đổi từ verified_head chỉ là tài liệu / trạng thái agent mà không luật ma trận nào theo dõi;
+#   cho dừng, không ghi gì: repo PR (super-board) với nhánh đã đẩy, cây sạch (merge gate của PR chạy test); hoặc biên nhận merge gate của HEAD;
+#   kết luận không biên nhận (outcome): như trước theo lý do (exit 3, thiếu thiết bị, môi trường, ma trận chưa commit: nói một lần rồi cho
+#       dừng; test có sẵn bị sửa: chặn một lần, sau đó nhắc);
+#   còn lại: chặn (MAX_ATTEMPTS), nêu lệnh đúng loại repo.
+EMPTY = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+sys.path.insert(0, os.path.dirname(gate))
+sys.path.insert(1, os.path.dirname(os.path.realpath(gate)))   # a linked post-fix-gate.py (copy-mode kit): its real bin/ holds tree_fp.py
 try:
-    _recheck_s = float(_cap_raw if _cap_raw is not None and _cap_raw.strip()
-                       else (os.environ.get("DEVKIT_GATE_CACHE_MAX_S") or "21600"))
-except ValueError:
-    _recheck_s = 0.0      # garbage: no reuse, the gate runs (nan compares False below: the same)
-_adig = None
-if _tkey is not None:
-    try:
-        sys.path.insert(0, os.path.dirname(gate))
-        import approval_digest
-        _hself = os.environ.get("HOOK_SELF", "")
-        _adig = approval_digest.digest(repo, str(data.get("transcript_path") or ""), status.decode("utf-8", "surrogateescape"), commit_base,
-                                       (gate, _hself, os.path.join(os.path.dirname(_hself), "devkit_harness.py") if _hself else ""))
-    except Exception as e:
-        note("approval digest failed (the reminder is not reused): %r" % e)
-        _adig = None
-_t = state["touched"].get(sid) if isinstance(state.get("touched"), dict) else None
-if _recheck_s > 0 and _tkey is not None and isinstance(_t, dict) and _t.get("key") == _tkey \
-        and isinstance(_t.get("lines"), list):
-    try:
-        _age = time.time() - float(_t.get("at"))
-    except (TypeError, ValueError, OverflowError):
-        _age = -1.0
-    if not (0 <= _age < _recheck_s):
-        note(f"tests-touched reminder fp={fp}: past the ceiling ({_recheck_s:.0f} s), the gate runs")
-    elif _adig is None or _t.get("adig") != _adig:
-        note(f"tests-touched reminder fp={fp}: approval sources moved or unknown, the gate runs")
-    else:
-        note(f"tests-touched reminder fp={fp} (reused, no run)")
-        remind(_t["lines"])
-        sys.exit(0)
-# A full PASS of this exact content is reused inside the gate run below (post-fix-gate
-# cached_full_pass: ~1 s, with its format/matrix/local-config/age checks and --session/--since);
-# never end the Stop here on a bare full_pass.json.
-if degraded and sess.get("fp") == tree_fp:
-    # Same tree as the last run of this session: the result cannot have changed. Re-use it
-    # instead of re-running the whole suite on every stop.
-    if sess.get("result") == "block" and isinstance(sess.get("lines"), list):
-        block(sess["lines"], sess.get("cure") or [], sess.get("rc", 1), reused=True)
-    if sess.get("result") in ("untested", "matrix", "env"):
-        note("%s fp=%s (reused result) sid=%s" % (sess["result"], fp, sid))
-        sys.exit(0)
-last = repeat.get(sid) if rkey else None
-if isinstance(last, dict) and last.get("key") == rkey and isinstance(last.get("lines"), list) and _repeat_fresh(last.get("at")):
-    # This session already blocked on exactly this content: the gate would say the same (a flaky
-    # suite is no reason to re-run every Stop). Same reason, no run.
-    block(last["lines"], last.get("cure") or [], last.get("rc", 1), reused=True, repeat_hit=True)
-if isinstance(last, dict) and last.get("key") != rkey and _repeat_fresh(last.get("at")):
-    # This session stored a block for the content before, it is still inside the TTL, and the key moved: the gate runs again below. Say which part of
-    # the key moved (a second session never lands here: its own entry is empty). Log only: no decision depends on it.
-    _old = last.get("parts") if isinstance(last.get("parts"), dict) else {}
-    note("repeat miss sid=%s differs=%s" % (sid[:8], ",".join(k for k in ("fp", "tree", "local", "sig") if _old.get(k) != rparts.get(k)) or "none") if _old
-         else "repeat miss sid=%s differs=unknown" % sid[:8])
-
-# --session/--transcript: an existing test edited by ANOTHER session (or a person) is a warning,
-# only the test edits of THIS session block (post-fix-gate split_tests_by_author).
-# TEST_RUN_LOCK_WAIT_S: a short wait for the test_run.lock another run holds (the CLI default 900 plus
-# the suites could pass the 1800 s timeout of this hook); past it the gate reports "busy" (UNTESTED, never a PASS,
-# nothing cached: the next stop runs the suites). Default 45 s, env overrides. Measured 2026-09-26..10-04 on 4 repos:
-# 73 BUSY outcomes in the hook logs, each a full 120 s wait that ran nothing (the holder is a full matrix run, minutes
-# long); in workbench about 5 waits ended in a run (12-90 s, 33.8 and 41.4 s among them) against about 33 BUSY, so 120 s
-# buys few runs. Trade-off: a stop that would have run after a 45-120 s wait now ends BUSY and runs at the next stop.
-# Total time for the suites of one Stop run: 45 s lock wait + this budget stay well inside the 1800 s hook timeout, so the
-# hook is never cut silently (2026-10-02: 27 min). REGRESSION_GATE_BUDGET_S=0 turns it off.
-budget_s = os.environ.get("REGRESSION_GATE_BUDGET_S", "900")
-res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "session-" + sid[:12],
-                      "--timeout", os.environ.get("REGRESSION_GATE_TEST_TIMEOUT", "600"),
-                      "--session", str(data.get("session_id") or ""), "--transcript", str(data.get("transcript_path") or "")]
-                     + (["--since", commit_base] if commit_base else []),
-                     cwd=repo, capture_output=True, text=True, errors="replace",
-                     # #472 mục A: POSTFIX_GATE_FULL đặt toàn cục (shell của người dùng) không biến lượt Stop thành --full — ngoài điểm gộp
-                     # lượt Stop là impacted. CI và POSTFIX_GATE_FORCE_FULL vẫn truyền xuống như cũ.
-                     env={**{k: v for k, v in os.environ.items() if k != "POSTFIX_GATE_FULL"},
-                          "CLAUDE_PROJECT_DIR": repo, "DEVKIT_LEDGER_ROOT": ledger_root,
-                          "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "45"),
-                          "DEVKIT_GATE_SLOT_WAIT_S": os.environ.get("DEVKIT_GATE_SLOT_WAIT_S", "45"),
-                          # B5 (audit 25/10): khoá do một lượt gate CÒN SỐNG giữ thì chỉ chờ DEVKIT_REUSE_LOCK_WAIT_S (3 s) rồi BUSY
-                          "TEST_RUN_LOCK_BUSY_FAST": os.environ.get("TEST_RUN_LOCK_BUSY_FAST", "1"),
-                          "GATE_TOTAL_BUDGET_S": budget_s,
-                          # P1 (20/10): lượt Stop xếp sau merge/push/interactive ở hàng đợi khoá Unity; P1b: tải máy
-                          # cao thì chỉ chờ ngắn rồi vẫn chạy (hook có hạn 1800 s, ngân sách suite 900 s). Tổng giây chờ tải của
-                          # cả lượt 120 s: tải ≥ 100 kéo dài từng ăn tới 600 s của 900 s ngân sách, suite sau thành BUDGET (exit 4)
-                          "DEVKIT_SLOT_PRIORITY": os.environ.get("DEVKIT_SLOT_PRIORITY", "stop"),
-                          "DEVKIT_SLOT_LOAD_WAIT_S": os.environ.get("DEVKIT_SLOT_LOAD_WAIT_S", "60"),
-                          "DEVKIT_SLOT_ADVISORY_BUDGET_S": os.environ.get("DEVKIT_SLOT_ADVISORY_BUDGET_S", "120")})
-if not os.path.isdir(repo):   # W1 R5a: the project (a worktree) went away while its suites ran — nothing to hold or record here
+    import tree_fp as _tfp
+except Exception as e:
+    note("tree_fp not importable: %r" % e)
+    emit({"systemMessage": "Regression gate LỖI: không nạp được bin/tree_fp.py — KHÔNG phải PASS, chưa xét được biên nhận gate"})
     sys.exit(0)
-if isinstance(state.get("touched"), dict) and state["touched"].pop(sid, None) is not None:
-    save_state()      # this run decides again; the touched branch below stores a new reminder
-summary = {}
-for line in reversed(res.stdout.splitlines()):
-    if line.startswith("{"):
-        try:
-            summary = json.loads(line)
-            break
-        except ValueError:
-            pass
-def range_verified():
-    # HEAD is verified: the next stop computes fp_plain (no --since range) for the same content.
-    state["verified_head"] = head or state.get("verified_head")
-    if isinstance(state.get("attempts"), dict):
-        state["attempts"].pop(fp, None)
-    if isinstance(state.get("repeat"), dict):
-        state["repeat"].pop(sid, None)
 
-if res.returncode in (0, 3):
-    sk_plain = skip_key(fp_plain)
-    if sk_plain is not None:
-        state["pass_fp"] = sk_plain
-    range_verified()
+
+def gtext(*args):
+    return git(*args).decode("utf-8", "replace").strip()
+
+
+branch = gtext("symbolic-ref", "-q", "--short", "HEAD")
+_oh = gtext("symbolic-ref", "-q", "refs/remotes/origin/HEAD")
+trunk_name = _oh[len("refs/remotes/origin/"):] if _oh.startswith("refs/remotes/origin/") else ""
+if not trunk_name:
+    trunk_name = next((n for n in ("main", "master", "trunk") if gtext("rev-parse", "--verify", "-q", "refs/remotes/origin/" + n)
+                       or gtext("rev-parse", "--verify", "-q", "refs/heads/" + n)), "")
+# The trunk the range rule excludes: origin/<trunk> first; the LOCAL trunk branch only when this is not that branch (on it, its own
+# unpushed commits are exactly what the run has to cover).
+trunk = ""
+if trunk_name:
+    if gtext("rev-parse", "--verify", "-q", "refs/remotes/origin/" + trunk_name):
+        trunk = "refs/remotes/origin/" + trunk_name
+    elif branch != trunk_name and gtext("rev-parse", "--verify", "-q", "refs/heads/" + trunk_name):
+        trunk = "refs/heads/" + trunk_name
+
+
+def covered(base, full_ok=True):
+    """True when the commits after verified_head that a run from `base` did not check (vh..base, or base itself when nothing is verified)
+    are all on the trunk. base "" = a full receipt (the whole tree), only when full_ok."""
+    if base == "":
+        return full_ok
+    if not isinstance(base, str) or not SHA.fullmatch(base):
+        return False
+    rng = [base] if (not vh or vh == EMPTY) else [vh + ".." + base]
+    res = subprocess.run(["git", "-C", repo, "rev-list", "-n", "1"] + rng + (["--not", trunk] if trunk else []),
+                         capture_output=True, text=True)
+    return res.returncode == 0 and not res.stdout.strip()
+
+
+def allow(why, verified=True, said=None):
+    if verified:
+        sk_plain = skip_key(fp_plain)
+        if sk_plain is not None:
+            state["pass_fp"] = sk_plain
+        state["verified_head"] = head or state.get("verified_head")
+        if isinstance(state.get("attempts"), dict):
+            state["attempts"].pop(fp, None)
     if degraded:
-        sess.update({"fp": tree_fp, "result": "pass", "blocks": 0, "lines": None, "cure": None})
+        sess["blocks"] = 0
     save_state()
-    note(f"pass fp={fp} exit={res.returncode}")
-    other = summary.get("tests_touched_other") or []
-    if other:   # once per change (pass_fp): not an edit of this session, still someone must review it
-        emit({"systemMessage": "⚠ Test đã có bị phiên khác / người khác sửa (không chặn phiên này): " + ", ".join(other[:10])
-              + " — cần người review diff test (`git diff HEAD -- " + " ".join(other[:3]) + "`) trước khi commit."})
-    sys.exit(0)
-if res.returncode == 4 and summary.get("busy"):
-    # BUSY: another test run held the project lock, no test ran. Transient, not this machine
-    # lacking a tool: say the real cause every time and cache nothing (the next stop runs it).
-    note(f"busy fp={fp}")
-    suites = summary.get("regression_tests") or []
-    stale = [str(t.get("id") or "?") for t in suites if t.get("label") == "STALE"]
-    if stale and not any(t.get("label") == "BUSY" for t in suites):
-        # the "busy" flag is also set for a re-used PASS whose file another run replaced or deleted (STALE): the lock is not the reason then
-        print(json.dumps({"systemMessage": "Regression gate UNTESTED — một lượt chạy khác đã đổi/xoá kết quả PASS dùng lại của %s — chạy lại sau; "
-                          "test hồi quy đó CHƯA chạy lại, KHÔNG phải PASS." % ", ".join(stale)}, ensure_ascii=False))
-        sys.exit(0)
-    # T0056: giữ nguyên từng chữ câu gốc; khi bận vì hàng đợi gate toàn máy thì nối thêm 1 dòng bên trong chuỗi systemMessage (print 1 lần).
-    msg = ("Regression gate UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau "
-           "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS.")
-    if summary.get("busy_reason") == "gate_queue":
-        msg += "\nHàng đợi gate toàn máy đang đầy (pool gate, DEVKIT_GATE_SLOT_WAIT_S) — chờ lượt chạy test khác trên máy xong rồi thử lại."
-    print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
-    sys.exit(0)
-if res.returncode == 4 and summary.get("budget_exhausted"):
-    # Time budget spent: some suites did not start. Nothing to fix in the change and no verdict to remember HERE: say it every
-    # time, store no state of this hook (no pass_fp / untested_fp / session result), do not advance verified_head. The GATE keeps
-    # what the suites that did finish proved (.git/postfix-gate/budget_pass.json, same keys as its receipt, never a PASS of the
-    # whole): the next stop on the SAME content re-uses those suites and spends its budget on the ones left (2026-10-14, Goods:
-    # two 900 s Unity suites ran again at every Stop and the third suite never started).
-    left = [str(t.get("id") or "?") for t in summary.get("regression_tests", []) if t.get("label") == "BUDGET"]
-    note("budget fp=%s left=%s" % (fp, ",".join(left)))
-    print(json.dumps({"systemMessage": "Regression gate UNTESTED — hết ngân sách thời gian (%ss): %s chưa chạy — KHÔNG phải PASS; "
-                      "chạy `post-fix-gate.py --run-tests` (biên nhận task; --full chỉ ở điểm gộp) trước khi bàn giao. (REGRESSION_GATE_BUDGET_S) "
-                      "Suite đã PASS giữ lại cho lần Stop sau nếu code không đổi."
-                      % (budget_s, ", ".join(left))}, ensure_ascii=False))
-    sys.exit(0)
-if res.returncode == 4 and summary:
-    # UNTESTED: every test that could run passed, but one cannot run on this machine
-    # (its matrix untested_exit, e.g. unity-batch.sh without a Unity Editor). Blocking
-    # would stop every session on that machine; passing would claim a PASS nobody saw.
-    # Say it once per change and let the stop through. The range counts as verified for what
-    # can run here (never pass_fp): 2026-09-29 (GeelyEx2: verified_head stuck, every Stop
-    # re-ran the --since range 4-5 min); untested_fp = fp_plain ends the next stop of this content.
-    if degraded:
-        sess.update({"fp": tree_fp, "result": "untested"})
-    sk_now, sk_plain = skip_key(fp), skip_key(fp_plain)
-    if sk_plain is None:
-        first = True
-    else:
-        first = state.get("untested_fp") != sk_now
-        state["untested_fp"] = sk_plain
-    range_verified()
-    save_state()
-    if first:
-        names = ["%s (%s)" % (t.get("id"), t.get("command")) for t in summary.get("regression_tests", [])
-                 if t.get("status") == "UNTESTED"]
-        print(json.dumps({"systemMessage": "Regression gate UNTESTED — không chạy được trên máy này, KHÔNG phải PASS: "
-                          + "; ".join(names or ["?"]) + ". Chạy lại trên máy có công cụ đó trước khi báo xong."},
-                         ensure_ascii=False))
-    note(f"untested fp={fp}")
-    sys.exit(0)
-if res.returncode not in (1, 2) or not summary:
-    # A crash (a Python traceback also exits 1) prints no JSON: there is nothing to fix in the
-    # change, so do not block with a reasonless "exit 1" (OfficeReader 2026-09-26) — say it.
-    note("fail-open: gate crashed exit=%s: %r" % (res.returncode, res.stderr[-400:]))
-    tail = "\n".join((res.stderr or res.stdout or "").strip().splitlines()[-6:])
-    emit({"systemMessage": "Regression gate LỖI (exit %s, không có kết quả) — KHÔNG phải PASS, test hồi quy chưa được xác nhận:\n%s"
-          % (res.returncode, tail)})
+    note("allow fp=%s (%s) sid=%s" % (fp, why, sid))
+    if said:
+        emit({"systemMessage": said})
     sys.exit(0)
 
-strip = lambda s: re.sub(r"\x1b\[[0-9;]*m", "", s or "")
-verdict = strip(summary.get("verdict")) or ("exit " + str(res.returncode))
-problem = strip(summary.get("matrix_problem"))
-touched = summary.get("tests_touched") or []
-# Not run: BUSY (another run held the test lock; the gate writes status UNTESTED, label BUSY) or
-# UNTESTED (cannot run on this machine). Nothing to fix in the change (2026-09-27: 6 BUSY suites
-# were listed as failures, with "fix code/test").
-busy = [t for t in summary.get("regression_tests", []) if t.get("status") in ("UNTESTED", "BUSY")]
-failing = [t for t in summary.get("regression_tests", []) if t.get("status") != "PASS" and t not in busy]
-
-def in_head(path):
-    # candidates may not exist in the tree (deleted): map through the real repo path
-    rel_top = os.path.relpath(os.path.join(os.path.realpath(repo), os.path.relpath(path, repo)), toplevel)
-    return subprocess.run(["git", "-C", toplevel, "cat-file", "-e", "HEAD:" + rel_top.replace(os.sep, "/")],
-                          capture_output=True).returncode == 0
 
 def watch_patterns():
     pats = []
@@ -975,123 +740,119 @@ def watch_patterns():
             pass
     return pats
 
+
 def watched(f, pats):
     # = post-fix-gate match_pattern: fnmatch, and "**/x" also matches a root-level x
     f = f.replace("\\", "/")
     return any(fnmatch.fnmatch(f, p) or (p.startswith("**/") and fnmatch.fnmatch(f, p[3:])) for p in pats)
 
-# With an untrusted matrix the gate computed UNCOVERED against no rule at all (every
-# changed source file). List only files that no matrix of the project watches.
-pats = watch_patterns()
-uncovered = [f for f in summary.get("uncovered", []) if not watched(f, pats)]
-cure_commit = ("commit " + rel + " (the gate trusts only a committed matrix, or one byte-identical to `agent-kit matrix`)")
-uncommitted = bool(problem) and not in_head(matrix)
-shadowed = [os.path.relpath(c, repo) for c in candidates[candidates.index(matrix) + 1:] if in_head(c)] if uncommitted else []
 
-if res.returncode == 2 and uncommitted and not shadowed and not touched and not failing \
-        and not summary.get("findings") and not summary.get("unreadable"):
-    # The matrix is the only problem and it is uncommitted: no test ran, and only a commit
-    # (a human decision) makes it trusted. Blocking would stop every turn until then; say
-    # it to the user once per change, like UNTESTED, and let the stop through.
-    if degraded:
-        sess.update({"fp": tree_fp, "result": "matrix"})
-        save_state()
-    if state.get("matrix_fp") != fp:
-        state["matrix_fp"] = fp
-        save_state()
-        msg = ("⚠ Regression gate KHÔNG chạy test hồi quy: `" + rel + "` chưa commit nên gate chưa tin nó. "
-               "Cần làm: " + cure_commit + ".")
-        if uncovered:
-            msg += (" Ngoài ra %d file code đổi mà ma trận này không theo dõi (thêm vào watch_files): %s."
-                    % (len(uncovered), ", ".join(uncovered[:10])))
-        print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
-    note(f"matrix uncommitted fp={fp}")
-    sys.exit(0)
+def no_test_needed(p):
+    # a subset of post-fix-gate needs_no_test (documentation, agent state): a narrower list only blocks more, never lets code through
+    p = p.replace("\\", "/")
+    name = p.rsplit("/", 1)[-1]
+    return (p.lower().endswith((".md", ".rst", ".adoc", ".log")) or name in ("LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS", ".gitignore")
+            or p in (".antigravity-pm.json", ".adb-denylist", ".claude/settings.json", ".claude/settings.local.json")
+            or p.startswith(".agents/local/memory/") or re.fullmatch(r"reports/proof-[^/]+\.png", p) is not None)
 
-if res.returncode == 1 and failing and all(t.get("env_blocked") for t in failing) and not touched \
-        and not problem and not uncovered and not summary.get("findings") and not summary.get("unreadable"):
-    # Every failing test failed because this machine cannot provision its tools (toolchain,
-    # SDK, network): no test ran and no code change fixes it. Blocking again only loops the
-    # session; say it once per change, like UNTESTED, and let the stop through (still REJECT).
-    if degraded:
-        sess.update({"fp": tree_fp, "result": "env"})
-        save_state()
-    if state.get("env_fp") != fp:
-        state["env_fp"] = fp
-        save_state()
-        names = ["%s (%s)" % (t.get("id"), t.get("command")) for t in failing]
-        print(json.dumps({"systemMessage": "Regression gate REJECT vì môi trường — máy này thiếu công cụ/SDK/mạng, hoặc suite "
-                          "bị kill từ ngoài (exit 137/143) nên test không chạy đến kết luận, KHÔNG phải PASS: " + "; ".join(names)
-                          + ". Chạy lại trên máy có đủ công cụ trước khi báo xong."}, ensure_ascii=False))
-    note(f"env-blocked fp={fp}")
-    sys.exit(0)
 
-lines = ["Regression gate CHƯA ĐẠT — " + verdict]
-if problem and uncommitted:
-    lines.append("  - MATRIX: %s — `%s` che mất ma trận đã commit %s: %s, hoặc xoá nó."
-                 % (problem, rel, ", ".join(shadowed), cure_commit))
-elif problem:
-    lines.append("  - MATRIX: %s — cần người review sửa đổi ở `%s` rồi commit, hoặc hoàn tác nó; KHÔNG sửa ma trận "
-                 "để lách test (have a human review the matrix edit and commit it, or revert it)." % (problem, rel))
-for t in failing:
-    # The label says what failed (VACUOUS: the command exits 0, the test caught nothing when the
-    # production diff was reverted — OfficeReader 2026-09-26); the reason and the log follow.
-    what = t.get("label") if t.get("label") not in (None, "", t.get("status")) else t.get("status")
-    extra = "" if t.get("exit_code") in (None, "") else ", exit %s" % t.get("exit_code")
-    lines.append("  - %s %s: %s (lệnh: %s%s)" % (t.get("id"), t.get("name"), what, t.get("command"), extra))
-    why = [l.strip() for l in strip(t.get("output_tail") or "").splitlines() if l.strip()]
-    if what != "FAIL" and why:
-        lines.append("      lý do: " + why[0][:300])
-    if t.get("log"):
-        lines.append("      log: " + str(t.get("log")))
-for t in busy:
-    lines.append("  - %s %s: %s — chưa chạy (%s); KHÔNG phải PASS" % (
-        t.get("id"), t.get("name"), t.get("label") or t.get("status"),
-        "một lượt khác giữ khoá test, chạy lại sau" if t.get("label") == "BUSY"
-        else "hết ngân sách thời gian, chạy lại sau" if t.get("label") == "BUDGET"
-        else "một lượt khác đã đổi/xoá kết quả PASS dùng lại của nó, chạy lại sau" if t.get("label") == "STALE" else "không chạy được trên máy này"))
-for f in summary.get("findings", [])[:10]:
-    # static findings (secrets, placeholders, dependencies …) with the exact place to fix
-    lines.append("  - %s %s:%s: %s" % (f.get("category"), f.get("file"), f.get("line") or "?", f.get("message")))
-for f in touched[:10]:
-    lines.append("  - TEST ĐÃ CÓ BỊ SỬA/XOÁ: %s — đối chiếu diff (`git diff HEAD -- %s`): cần duyệt chéo bởi agent khác "
-                 "(commit, rồi antigravity-pm `pm_dispatch kind=audit agent=grok` trên head PR: PM tự ghi biên bản kèm phạm vi, gate "
-                 "tra thẳng, không json / comment / trailer cho %s); agent sửa test "
-                 "KHÔNG tự duyệt (--auto-approve-tests / AUTO-APPROVE: bị từ chối), KHÔNG hỏi người dùng. Không sửa test cũ để lách" % (f, f, f))
-for f in uncovered[:10]:
-    lines.append("  - UNCOVERED:%s — file code đổi nhưng chưa test hồi quy nào theo dõi" % f)
-lines.append("Checklist: %s · báo cáo: %s" % (summary.get("checklist", ".agents/CHECKLIST.md"), summary.get("report", "-")))
+rfp, rwhy = "", []
+try:
+    rfp = _tfp.tree_fingerprint(repo)
+    rec = _tfp.receipt_for_tree(repo, gate=gate, fp=rfp, why=rwhy, covers=covered) if rfp else None
+except Exception as e:
+    note("receipt check failed: %r" % e)
+    rec = None
+if rec is not None:
+    allow("receipt %s base=%s" % (rec["_kind"], str(rec.get("_base"))[:12]))
+uncovered_range = any(": covers base " in w for w in rwhy)
+if rwhy:
+    note("no receipt: %s" % "; ".join(os.path.basename(w) for w in rwhy)[:400])
 
-# The cure matches what is actually wrong: a matrix or an edited test needs a person,
-# a failing test / finding needs a code fix, an uncovered file needs a test mapping.
-cure = []
-if failing or summary.get("findings") or summary.get("unreadable") or not (problem or touched or uncovered):
-    cure.append("Sửa code/test cho các mục trên rồi dừng lại. Không sửa test cũ để lách.")
-if uncovered:
-    cure.append("File chưa có test: thêm test vào regression_matrix.json "
-                "hoặc `python3 bin/regression_checklist.py link UNCOVERED:<file> <TEST-ID>`.")
-cure.append("Nếu thực sự không làm được, dừng và nói rõ cho người dùng.")
-
-if res.returncode == 2 and touched and not failing and not problem and not uncovered \
-        and not summary.get("findings") and not summary.get("unreadable"):
-    # Only a person clears an edited existing test (review the diff, or commit it). Block ONCE per
-    # change so the agent tells the user; later stops of the same change go through with a
-    # reminder instead of blocking every turn (2026-09-25: 6 consecutive stops blocked).
-    if _tkey is not None and not busy:     # a BUSY suite has not run: its line must not outlive the lock
-        if not isinstance(state.get("touched"), dict):
-            state["touched"] = {}
-        state["touched"][sid] = {"key": _tkey, "lines": lines[1:], "at": time.time(), "adig": _adig}
+# What the run decided when it wrote no receipt (post-fix-gate write_gate_outcome).
+out = None
+if rfp:
+    try:
+        out = _tfp._load_receipt(os.path.join(os.path.dirname(_tfp.receipt_path(repo)), "outcomes", rfp + ".json"))
+    except Exception as e:
+        note("outcome read failed: %r" % e)
+if out is not None:
+    olines = [str(l) for l in out.get("lines") or [] if isinstance(l, str)] if isinstance(out.get("lines"), list) else []
+    reason = out.get("reason")
+    # exit 3 and device UNTESTED say the RANGE is fine: only when the run started at a base that covers what verified_head left
+    if reason in ("nothing", "device_untested") and not covered(out.get("base"), full_ok=False):
+        note("outcome %s base=%s does not cover %s..HEAD: no outcome" % (reason, str(out.get("base"))[:12], vh[:12]))
+        out = None
+    elif reason not in ("nothing", "device_untested", "env", "matrix", "edited_test"):
+        out = None
+if out is not None:
+    once = state.get("outcome_said") != rfp + ":" + reason
+    state["outcome_said"] = rfp + ":" + reason
+    text = "\n".join(olines)[:1500]
+    if reason == "nothing":
+        allow("outcome nothing", said=("ℹ Regression gate: không có thay đổi nào để kiểm (exit 3). " + text) if once else None)
+    if reason == "device_untested":
+        sk_plain = skip_key(fp_plain)
+        if sk_plain is not None:
+            state["untested_fp"] = sk_plain
+        allow("outcome device_untested", said=("Regression gate UNTESTED — không chạy được trên máy này, KHÔNG phải PASS: " + text
+                                               + " Chạy lại trên máy có công cụ đó trước khi báo xong.") if once else None)
+    if reason == "env":
+        allow("outcome env", verified=False, said=("Regression gate REJECT vì môi trường — máy này thiếu công cụ/SDK/mạng, hoặc suite bị kill "
+                                                   "từ ngoài, KHÔNG phải PASS: " + text + " Chạy lại trên máy có đủ công cụ trước khi báo xong.") if once else None)
+    if reason == "matrix":
+        allow("outcome matrix", verified=False, said=("⚠ Regression gate KHÔNG chạy test hồi quy: ma trận chưa commit nên gate chưa tin nó. "
+                                                      "Cần làm: commit " + rel + ". " + text) if once else None)
+    # edited_test: only another agent clears it (cross-review). Block ONCE per change so the agent says it; later stops only remind.
+    lines = ["Regression gate CHƯA ĐẠT — test có sẵn bị sửa/xoá, chờ duyệt chéo"] + olines
     if state.get("touched_fp") == fp:
         save_state()
         note(f"tests-touched reminder fp={fp}")
         remind(lines[1:])
         sys.exit(0)
     state["touched_fp"] = fp
-    save_state()
-# An edited existing test is cleared by the answer of the user in the transcript, a BUSY or BUDGET item by the lock
-# going free or a new time budget, a STALE one (the file its re-used PASS came from was replaced or deleted by a concurrent
-# run) by the next run, which runs it — none of them by the tree: such a block is never re-used. An item that cannot run on
-# this machine at all (UNTESTED, untested_exit) is permanent here and does not keep the FAIL block from being stored.
-block(lines, cure, res.returncode,
-      reusable=not touched and not any(t.get("label") in ("BUSY", "BUDGET", "STALE") for t in busy))
+    block(lines, ["Cần duyệt chéo bởi agent khác: commit, rồi antigravity-pm `pm_dispatch kind=audit agent=grok` trên head PR (PM tự ghi biên "
+                  "bản, gate tra thẳng); agent sửa test KHÔNG tự duyệt, KHÔNG hỏi người dùng. Không sửa test cũ để lách."], 2)
+
+# A PR repo (super-board): the merge gate of the PR runs the tests. HEAD of a pushed branch that is not the trunk, clean tree: nothing to do here.
+pr_repo = bool(glob.glob(os.path.join(repo, ".claude", "super-board", "configs", "*.json")))
+if pr_repo and branch and branch != trunk_name and not entries:
+    others = [r for r in gtext("for-each-ref", "--contains", "HEAD", "--format=%(refname)", "refs/remotes").splitlines()
+              if r and not r.endswith("/HEAD") and r != "refs/remotes/origin/" + trunk_name]
+    if others:
+        allow("PR branch pushed (%s)" % others[0], verified=False)
+# The merge gate of a PR verified this HEAD (super-board-merge-gate.sh: <common>/postfix-gate/merge_receipts/<PR>-<head>.json).
+if not entries and head:
+    try:
+        for mp in glob.glob(os.path.join(os.path.dirname(_tfp.tree_receipt_dir(repo) or ""), "merge_receipts", "*.json")):
+            mr = _tfp._load_receipt(mp)
+            if mr and head in (mr.get("head"), mr.get("squash")):
+                allow("merge receipt %s" % os.path.basename(mp), verified=False)
+    except Exception as e:
+        note("merge receipt check failed: %r" % e)
+
+# Only documentation / agent state changed since verified_head, and no matrix rule watches it: nothing a test could catch.
+changed = {e[3:] for e in entries}
+if vh and vh != EMPTY and unverified:
+    changed |= {p for p in gtext("diff", "--name-only", "--relative", vh, "HEAD").splitlines() if p}
+if (not vh or vh == EMPTY) and unverified:
+    changed = set()
+if changed and all(no_test_needed(p) for p in changed) and not any(watched(p, watch_patterns()) for p in changed):
+    allow("needs no test: %s" % ",".join(sorted(changed)[:5]))
+
+# No receipt for this code: block, with the command for this kind of repo.
+gate_disp = os.path.relpath(gate, repo) if os.path.realpath(gate).startswith(os.path.realpath(repo) + os.sep) else gate
+if pr_repo:
+    cmd = ("commit việc đang dở rồi `git push`" if entries else "`git push`") + " (merge gate của PR chạy test)"
+else:
+    diff = (" --diff " + vh) if (branch and branch == trunk_name and vh and vh != EMPTY and SHA.fullmatch(vh)) else ""
+    # --force when this tree already has a receipt from a later base: rerun_skip.json (same tree, same suites) would end the run at once and
+    # write no receipt for the wider base
+    cmd = "`python3 " + gate_disp + " --run-tests --scoped --brief" + diff + (" --force" if uncovered_range else "") + "`"
+lines = ["Regression gate CHƯA ĐẠT — chưa có biên nhận gate cho code hiện tại (Stop không chạy test; lượt gate của agent ghi biên nhận)"]
+if uncovered_range:
+    lines.append("  - có biên nhận cho cây này, nhưng lượt gate bắt đầu sau verified_head %s: các commit giữa hai mốc chưa được kiểm "
+                 "và chưa ở nhánh đích" % vh[:12])
+lines.append("  - cần làm: " + cmd + " một lần trên cây cuối (exit 0 ghi biên nhận), rồi dừng lại")
+block(lines, ["Không sửa test cũ để lách. Nếu thực sự không làm được, dừng và nói rõ cho người dùng."], 1)
 ' || exit $?

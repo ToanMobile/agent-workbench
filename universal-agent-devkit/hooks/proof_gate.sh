@@ -420,7 +420,10 @@ def receipt_gate_problem(tree_fp, rp, kind):
         # UNTESTED, 25/10). ponytail: no age cap and no gate_sha / matrix_sha check: a DevKit linked from outside the tree that changes
         # between turns does not void the receipt; add the receipt's gate_sha check when such a stale pass is seen in proof_gate.log.
         tests = rec.get("tests")
-        if isinstance(rec.get("exit"), bool) or not isinstance(tests, list) or not tests:
+        # v26 mục 1: biên nhận scoped của lượt không có test liên quan (scoped_tests, smoke, core_smoke đều rỗng) ghi tests: [] — nó vẫn là
+        # lượt exit 0 trọn vẹn của cây đó (tree_fp.receipt_for_tree nhận nó theo cùng luật)
+        empty_scoped = (kind == "scoped" and tests == [] and not any(rec.get(k) for k in ("scoped_tests", "smoke", "core_smoke")))
+        if isinstance(rec.get("exit"), bool) or not isinstance(tests, list) or (not tests and not empty_scoped):
             return "lần exit 0 là từ trước lượt này (biên nhận không ghi suite nào: chỉ dùng được trong lượt của nó)"
         not_pass = ["%s=%s" % (str(t.get("id"))[:40], str(t.get("status"))[:16]) if isinstance(t, dict) else "?"
                     for t in tests if not isinstance(t, dict) or t.get("status") != "PASS"]

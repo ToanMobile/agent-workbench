@@ -118,7 +118,8 @@ for e in NONE POSTFIX_GATE_FULL=1; do
   printf '{"session_id":"s-1","hook_event_name":"Stop"}' | (cd "$R" || exit 1; [ "$e" = NONE ] || export "$e"
     WORKTREE_TRUNK_MODE=0 CLAUDE_PROJECT_DIR="$R" bash "$STOP_HOOK" >"$TMP/stop.out" 2>"$TMP/stop.err"); RC=$?
   m="$(last_mode "$R")"
-  if [ "$RC" = 0 ] && [ -f "$R.ran" ] && [ -n "$m" ] && [ "$m" != full ]; then ok "Stop hook ($e): suite chạy, mode=$m (không full), Stop không bị chặn"
+  # v26 mục 1: Stop không chạy suite nào (nên không bao giờ full), chặn vì chưa có biên nhận và nêu lệnh gate --scoped
+  if [ "$RC" = 2 ] && [ ! -f "$R.ran" ] && [ "$m" != full ] && grep -q -- "--run-tests --scoped" "$TMP/stop.err"; then ok "Stop hook ($e): không suite, không full, chặn nêu lệnh gate --scoped"
   else fail "Stop hook ($e): rc=$RC, suite chạy: $([ -f "$R.ran" ] && echo có || echo không), mode='$m': $(tail -c 300 "$TMP/stop.err")"; fi
 done
 
@@ -134,7 +135,7 @@ for e in NONE POSTFIX_GATE_FULL=1; do
   printf '{"session_id":"s-1","hook_event_name":"Stop"}' | (cd "$W" || exit 1; [ "$e" = NONE ] || export "$e"
     WORKTREE_TRUNK_MODE=1 CLAUDE_PROJECT_DIR="$W" bash "$STOP_HOOK" >"$TMP/stop.out" 2>"$TMP/stop.err"); RC=$?
   m="$(last_mode "$W")"; [ -n "$m" ] || m="$(last_mode "$R")"
-  if [ "$RC" = 0 ] && [ -f "$R.ran" ] && [ -n "$m" ] && [ "$m" != full ]; then ok "Stop hook trunk mode ($e): suite chạy, mode=$m (không full), Stop không bị chặn"
+  if [ "$RC" = 2 ] && [ ! -f "$R.ran" ] && [ "$m" != full ] && grep -q -- "--run-tests --scoped" "$TMP/stop.err"; then ok "Stop hook trunk mode ($e): không suite, không full, chặn nêu lệnh gate --scoped"
   else fail "Stop hook trunk mode ($e): rc=$RC, suite chạy: $([ -f "$R.ran" ] && echo có || echo không), mode='$m': $(tail -c 300 "$TMP/stop.err")"; fi
 done
 

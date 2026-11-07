@@ -324,13 +324,15 @@ def _load_receipt(path):
     return data if isinstance(data, dict) else None
 
 
-def receipt_for_tree(project_dir, gate=None, matrix=None, fp=None, max_age_s=None, why=None):
+def receipt_for_tree(project_dir, gate=None, matrix=None, fp=None, max_age_s=None, why=None, covers=None, kinds=("full", "scoped", "task")):
     """Biên nhận exit 0 của post-fix-gate cho CÂY hiện tại của project_dir (full, scoped hay task), hoặc None. Trả bản sao dict của biên
     nhận, thêm "_kind" (full | scoped | task), "_path" và "_base" (sha mà lượt gate kiểm từ đó tới cây; "" với full: cả cây).
     Kiểm: exit 0, dấu vân tay = fp của cây, result_format = RESULT_FORMAT của `gate`, gate_sha = sha256(gate) (khi có gate), matrix_sha =
     sha256 ma trận của dự án (matrix, hoặc cùng thứ tự dò như post-fix-gate), local_sha = local_state_sha (trừ local_regen được phép),
     tested_at trong DEVKIT_GATE_CACHE_MAX_S, không suite FAIL / TIMEOUT. tests rỗng chỉ nhận ở biên nhận scoped không có test liên quan
-    (scoped_tests, smoke, core_smoke đều rỗng) và ở biên nhận task (lượt không có suite nào). why: list nhận lý do từ chối (log)."""
+    (scoped_tests, smoke, core_smoke đều rỗng) và ở biên nhận task (lượt không có suite nào). why: list nhận lý do từ chối (log).
+    covers: hàm(base) -> bool; biên nhận hợp lệ mà base không đạt thì xét biên nhận kế tiếp (nhiều biên nhận cùng cây, base khác nhau).
+    kinds: loại biên nhận được xét (automerge của worktree không nhận biên nhận task: T0061)."""
     import time
     def no(msg):
         if isinstance(why, list):
@@ -360,6 +362,8 @@ def receipt_for_tree(project_dir, gate=None, matrix=None, fp=None, max_age_s=Non
              ("task", os.path.join(own_dir, TASK_RECEIPT)), ("task", os.path.join(store, TASK_STORE_DIR, fp + ".json")))
     now = time.time()
     for kind, path in cands:
+        if kind not in kinds:
+            continue
         r = _load_receipt(path)
         if r is None:
             continue
@@ -416,6 +420,9 @@ def receipt_for_tree(project_dir, gate=None, matrix=None, fp=None, max_age_s=Non
         base = "" if kind == "full" else r.get("diff_base" if kind == "task" else "base")
         if kind != "full" and not (isinstance(base, str) and base):
             no("%s: base" % path)
+            continue
+        if covers is not None and not covers(base):
+            no("%s: covers base %s" % (path, str(base)[:12]))
             continue
         return dict(r, _kind=kind, _path=path, _base=base)
     return no("none")
