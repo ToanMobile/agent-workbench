@@ -59,7 +59,7 @@ case "$RC:$STATE" in
     exit 0 ;;  # nothing of the user's staged (only DevKit links)
   2:clean)
     case "$DEVKIT_PRECOMMIT_TESTS" in
-      light|all)
+      light|all|1)   # 1 = light (post-fix-gate run_precommit_tests)
         printf '%s\n' "$REPORT" | grep -E "Suite (nhẹ|không)|Light suites|Suites (not|that)" || true
         echo "✔ DevKit pre-commit: $(L "kiểm tĩnh sạch + suite của file đã stage XANH (còn lại: gate của task / merge gate / heavy gate)" "static checks clean + suites of the staged files green (the rest: task gate / merge gate / heavy gate)")" ;;
       *)

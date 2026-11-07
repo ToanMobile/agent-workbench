@@ -169,6 +169,10 @@ DEVKIT_PRECOMMIT_TESTS=0 try_commit -m "feat: change the core function" && ok "D
   || fail "=0 still blocked: $(cat "$TMP/out")"
 echo "fun ok() = 2" > src/main/A.kt && git add -A
 DEVKIT_PRECOMMIT_TESTS=light try_commit -m "feat: fix the core function again" && ok "code that passes the light suite commits" || fail "green code blocked: $(cat "$TMP/out")"
+# =1 is an alias of light (the gate runs the suites): the hook must say they ran green, not "no suites run" (audit 38d28674)
+echo "fun ok() = 4" > src/main/A.kt && git add -A
+DEVKIT_PRECOMMIT_TESTS=1 try_commit -m "feat: tune the core function" && grep -q "suites of the staged files green" "$TMP/out" && ! grep -q "no suites run" "$TMP/out" \
+  && ok "DEVKIT_PRECOMMIT_TESTS=1 reports the suites it ran green" || fail "=1 report: $(cat "$TMP/out")"
 echo "# readme" > README.md && git add -A
 DEVKIT_PRECOMMIT_TESTS=light try_commit -m "docs: explain the core function" && ! grep -q "REG-LIGHT" "$TMP/out" && ok "no suite runs when no watched file is staged" \
   || fail "docs commit ran suites / blocked: $(cat "$TMP/out")"

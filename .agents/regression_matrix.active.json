@@ -4319,6 +4319,36 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-verify-single-pfg",
+      "watch_files": [
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_verify_single_pfg_cmd.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-VERIFY-SINGLE-PFG-01",
+          "name": "Gate speed v26 mục 7: guard chỉ chạy lại khi lệnh verify là một post-fix-gate đơn (từ chối $( ), backtick, tên giả kiểu xpost-fix-gate.py)",
+          "command": "bash tests/super-board/test_verify_single_pfg_cmd.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "agent-office-gate-full-weekdays",
+      "watch_files": [
+        "mcp-servers/agent-office/gate_full_runner.py",
+        "mcp-servers/agent-office/tests/test_gate_full_runner_weekdays.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AGENT-OFFICE-GATE-FULL-WEEKDAYS-01",
+          "name": "Gate speed v26 mục 6: agent-office đọc lịch heavy gate thứ Hai + thứ Năm (dict hoặc list StartCalendarInterval)",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest discover -s tests -p test_gate_full_runner_weekdays.py",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
