@@ -723,7 +723,14 @@ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != 
                 owed.add(real_path)
                 pr_notes.append(f"⚠ {r['path']}: worktree của phiên đã hết còn file chưa commit ({', '.join(str(f) for f in res['files'][:3])}) — "
                                 "không phiên nào commit nó; cần người xem: `agent-kit worktree status`")
-            else:
+            elif res.get("status") == "needs_gate" and real_path in adopted:
+                # v26 mục 1: automerge ở Stop không chạy suite; worktree của phiên đã hết chưa có biên nhận phủ main thì chỉ là ghi chú (vẫn nợ):
+                # giữ Stop của phiên này không làm phiên đã hết chạy gate được
+                pending.remove(r)
+                owed.add(real_path)
+                pr_notes.append(f"⚠ {r['path']}: worktree của phiên đã hết chưa có biên nhận gate phủ main — `agent-kit worktree finish {shlex.quote(r['path'])}` "
+                                "(gộp, gate, fast-forward main)")
+            else:   # needs_gate of a worktree this session owns: held below with its `agent-kit worktree finish` line, like any other refusal
                 r["am"] = str(res.get("message") or res.get("status"))
                 r["am_status"] = res.get("status")
 
@@ -778,9 +785,12 @@ def merge_own(path):
         return "✔ đã gộp worktree phiên vào main (worktree giữ lại cho phiên): " + path
     if res.get("status") == "nothing" or res.get("running"):
         return ""
+    if res.get("status") == "needs_gate":   # v26 mục 1: no receipt covers main, the Stop ran no suite; held once below (a handover only)
+        own_needs_gate.append(head)
+        return "⚠ worktree phiên chưa vào main: " + str(res.get("message") or "needs_gate")[:400]
     return "⚠ chưa gộp được worktree phiên vào main (" + str(res.get("message") or res.get("status"))[:400] + "): sửa trong worktree, lần dừng sau gộp lại"
 
-own_note = ""
+own_note, own_needs_gate = "", []
 if trunk and own and own in live:
     own_guard = True
     try:
@@ -797,17 +807,40 @@ if sw_mod is not None:
     except Exception as e:  # noqa: BLE001 - housekeeping only: never a reason to hold or fail the Stop
         sys.stderr.write(f"worktree_merge_gate: session records not pruned ({type(e).__name__}: {e})\n")
 
+needs_gate_said = state.get("needs_gate_said") if isinstance(state.get("needs_gate_said"), str) else ""
+
 def save():
     try:
         os.makedirs(os.path.dirname(state_path), exist_ok=True)
         tmp = f"{state_path}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"owed": sorted(owed), "sessions": dict(list(sessions.items())[-50:]),
-                       "owners": {p: o for p, o in owners.items() if p in owed}}, f)
+                       "owners": {p: o for p, o in owners.items() if p in owed}, "needs_gate_said": needs_gate_said}, f)
         os.replace(tmp, state_path)
         return True
     except OSError:
         return False
+
+# v26 mục 1: the session's OWN worktree has no receipt that covers main (needs_gate): the Stop ran no suite, so the session is told ONCE per
+# (session, worktree HEAD) to run `agent-kit worktree finish`, and only at a handover (devkit_harness.mid_work: a CHƯA XONG / mid-work reply is not
+# interrupted). Never another session's: own is this session's worktree only. Any error: a note, never a hold.
+if own_needs_gate and not pending and not d.get("stop_hook_active"):
+    try:
+        sys.path.insert(0, os.path.join(devkit, "hooks"))
+        import devkit_harness
+        mid = devkit_harness.mid_work(d, None, None, repo=own)
+    except Exception as e:  # noqa: BLE001 - cannot tell: never hold on it
+        mid = "error: " + type(e).__name__
+    key = sid + ":" + own_needs_gate[0]
+    if not mid and needs_gate_said != key:
+        needs_gate_said = key
+        if save():
+            logline(f"BLOCK needs_gate own={own} head={own_needs_gate[0][:12]} sid={sid[:36]}")
+            sys.stderr.write("⛔ WORKTREE-MERGE GATE: worktree của phiên chưa vào main — Stop không chạy suite (v26) và chưa có biên nhận gate "
+                             "(full / scoped) của worktree phủ main hiện tại. Từ main checkout:\n"
+                             f"  agent-kit worktree finish {shlex.quote(own)} --keep\n"
+                             "(gộp main vào, gate --scoped, fast-forward main). Chỉ nhắc một lần cho HEAD này.\n")
+            sys.exit(2)
 
 testing_notes = ["… một lần chạy test đang giữ worktree, chưa gộp (lần dừng sau gộp): " + p for p in am_testing] + ([own_note] if own_note else []) + pr_notes
 if not pending:
