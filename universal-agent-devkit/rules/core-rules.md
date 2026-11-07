@@ -241,8 +241,9 @@ The essentials keep the obligation; this section keeps how the tools carry it ou
   without the test lock, unless `--force`, `--no-cache` or `DEVKIT_GATE_CACHE=0`. A merge guard is never reused.
 - **Step 3 load**: suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores (`bin/capacity.py`;
   `DEVKIT_SLOT_LOAD_MAX` / `DEVKIT_CAPACITY` override) they start at once, above it they wait up to 600 s and run anyway; only
-  Unity and device suites hold an exclusive lock. At a merge point under 2 × cores the parallel group is at least
-  `DEVKIT_MERGE_PARALLEL` (6) wide and a merge-priority run sees at least `DEVKIT_MERGE_GATE_SLOTS` (2) gate slots.
+  Unity and device suites hold an exclusive lock. Merge-point levers are off by default (load test 2026-11-08 missed its thresholds):
+  `DEVKIT_MERGE_WIDE_LOAD_MAX=<load>` widens the parallel group to `DEVKIT_MERGE_PARALLEL` (6) under that load, and
+  `DEVKIT_MERGE_GATE_SLOTS=2` gives a merge-priority run at least 2 gate slots.
 - **Step 4 waiver**: the profile was backend when the turn started (committed, or an uncommitted profile file written before the
   turn), or every file changed since HEAD at the turn start (commits, merges, pulls included; new files too) is under a
   top-level `.agents/ .claude/ .gemini/ .github/ .githooks/ .codebase-memory/ docs/ reports/ scripts/ bin/ tools/`, a top-level

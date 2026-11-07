@@ -17,7 +17,8 @@ FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
-OUT="$(DEVKIT_CAPACITY_LOAD=0 python3 - "$GATE" <<'PY'
+# độ rộng bật tường minh (mặc định tắt từ lượt đo tải 08/11): ca a vẫn chứng minh thiếu dấu thì không rộng ra
+OUT="$(DEVKIT_CAPACITY_LOAD=0 DEVKIT_MERGE_WIDE_LOAD_MAX=24 python3 - "$GATE" <<'PY'
 import importlib.util, os, sys
 spec = importlib.util.spec_from_file_location("pfg_mp", sys.argv[1]); m = importlib.util.module_from_spec(spec)
 sys.modules["pfg_mp"] = m; spec.loader.exec_module(m)
