@@ -138,4 +138,19 @@ grep -qx "claude cfg=/x/.claude-max" "$TMP/launched" && grep -q "account=max" "w
   && ok "pool account max: worker launched with its config dir and logged" \
   || fail "pool account max: launched='$(cat "$TMP/launched")'"
 
+# ── 8. 05-07/11 (#974, #745): "You've hit your 5-hour limit · resets 12:40am" (dấu gạch ngang) không khớp mẫu cũ
+# `hit your (\w+ )?limit`, nên account không bị đánh dấu, runner giao lại 3 lần/24 h rồi chuyển thẻ sang Blocked 🔁.
+rm -f "$TMP/state/usage-"*.json
+cat > "$TMP/repo/wl/worker-build-41.log" <<'LOG'
+=== dispatch lane=build issue=#41 at 2026-11-05T16:22:10Z ===
+account_pool: engine=claude account=finos_team config_dir=/Users/x/.claude-finos_team
+{"is_error":true,"api_error_status":429,"api_error":"usage_limit_reached","result":"You've hit your 5-hour limit · resets 12:40am (Asia/Saigon)","type":"result"}
+worker_exit: exit=1 signal=none elapsed=9s
+LOG
+note_worker_limit "wl/worker-build-41.log"
+r=$(paused_until finos_team); now=$(date +%s)
+[ -n "$r" ] && [ "$r" -gt "$now" ] && [ "$r" -le $((now + 86400)) ] \
+  && ok "5-hour limit text (hyphenated window name): finos_team marked paused" \
+  || fail "5-hour limit not recognised: finos_team resets_at='$r'"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_account_failover: all passed" || { echo "❌ test_account_failover: $FAILS failed"; exit 1; }

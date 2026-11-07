@@ -972,7 +972,7 @@ acct = re.search(r'^account_pool: engine=\S+ account=([A-Za-z0-9_.-]+)', section
 tail = '\n'.join([l for l in section.splitlines() if l.strip() and not l.startswith('worker_exit:')][-3:])
 # Claude Code: "You've hit your session limit · resets 10:50pm (Asia/Saigon)" (đo 16/10). Ba mẫu sau là mã quota của
 # Gemini/xAI, chưa đo trên agy/grok thật.
-hit = re.search(r"hit your (?:\w+ )?limit|usage limit reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded", tail, re.I)
+hit = re.search(r"hit your (?:[\w-]+ )?limit|usage[ _]limit[ _]reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded", tail, re.I)
 if not acct or not hit:
     sys.exit(0)
 now = int(time.time())

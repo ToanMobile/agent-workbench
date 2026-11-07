@@ -124,8 +124,7 @@ two complete builds. In order, no shortcuts:
    `pm_task_create` (project = config `repo.path`), `pm_dispatch kind=audit`, read its `audit-agent.json`, and only on Antigravity's
    pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR as its own comment `approved-head:<sha40>`
    with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}` and a third line `edited-tests:` (JSON array of objects `{path, sha256, reviewer, author, task_id, reason}`, one per edited test; schema and example: run.md pipeline step 3; omit the line only when none were edited). `gate_receipt` as above (empty fp: do not comment).
-   Antigravity unavailable (MCP absent, `pm_dispatch` errors, verdict not pass): no approval, the card stays in **Review** with a
-   `[reviewer]` comment whose last line is `blocked-by: -` (a bare `approved-head` is the owner's hand approval; the guard blocks it). Add
+   Antigravity unavailable (MCP absent, `pm_dispatch` errors, verdict not pass): try `agent=grok` once; else no approval, card stays in **Review**, `[reviewer]` comment ending `blocked-by: antigravity` for an outage (`-` Blocks at once; a bare `approved-head` is the owner's hand approval). Add
    the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, write
    the report (`merge-ready`) and leave the card in **Review**: the queue merges it in one train (run.md → Merge
    protocol). Queue off inside the board (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`,
