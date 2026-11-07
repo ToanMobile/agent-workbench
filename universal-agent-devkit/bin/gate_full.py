@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Lượt --full đêm (#644): gate mặc định là scoped, merge/push không còn chạy --full; lượt THẬT SỰ full trên main chạy ở đây — tay
-(skill gate-full) hoặc 00:00 mỗi đêm (bin/gate-full-schedule.sh cài LaunchAgent).
+"""Heavy gate (#644, gate speed v26 mục 6): gate mặc định là scoped (chỉ test kit trực tiếp chặn; phần còn lại deferred_to_heavy), lượt
+THẬT SỰ full trên main chạy ở đây — tay (skill gate-full) hoặc 00:00 thứ Hai + thứ Năm (bin/gate-full-schedule.sh --weekdays cài LaunchAgent).
 
-  gate_full.py run [--repo PATH] [--ref origin/main] [--max-wait-s 7200] [--slug owner/repo] [--timeout 900] [--dry-run]
+  gate_full.py run [--repo PATH] [--ref origin/main] [--max-wait-s 7200] [--slug owner/repo] [--timeout 900] [--dry-run] [--force]
+
+v26 mục 6: fetch trước khoá toàn máy; KHÔNG có gì mới (fetch ổn VÀ sha == last_full_green_sha VÀ hash cây kit == last_full_green_kit) ⇒
+skip, exit 0, dòng history skip_reason no-new-commit; --force luôn chạy (trước phát hành: `gate_full.py run --force` — không có cổng
+phát hành nào ép, chỉ là quy ước) và khi mất khoá thì exit 3. Đỏ chỉ báo đỏ MỚI so mốc (dòng history cuối green/red/red-env là tổ tiên;
+so đường test + dòng ✖ chuẩn hoá): chia đôi riêng từng đỏ mới (≤ 5, từ sha của mốc, ≤ 128 commit), thẻ riêng mỗi suite mới, ca mới của
+suite kinh niên ⇒ comment vào thẻ mở; thẻ / comment / gh lỗi ⇒ `unreported`, lượt sau báo lại; dòng history dạng cũ chỉ gieo mốc.
+Các bước 7 dưới đây là mô tả trước v26 (chia đôi chung, ≤ 16), giữ khi không có mốc history.
 
 Một lượt:
-  1. khoá <common>/postfix-gate/gate-full.lock (pid + lúc bắt đầu, O_EXCL): pid còn sống ⇒ "skip", exit 0; pid chết ⇒ chiếm lại;
+  1. khoá <common>/postfix-gate/gate-full.lock (pid + lúc bắt đầu, O_EXCL): pid còn sống ⇒ "skip", exit 0 (--force: 3); pid chết ⇒ chiếm lại;
   1b. khoá TOÀN MÁY DEVKIT_GATE_FULL_GLOBAL_LOCK (mặc định ~/Library/Caches/devkit-gate-full/global.lock, flock + pid/repo): mỗi lúc
      chỉ MỘT lượt gate-full trên cả máy, mọi repo (lịch đêm 00:00 của nhiều repo cùng nổ, nút "Chạy gate full" của Agent Office);
      bận ⇒ chờ, kiểm mỗi DEVKIT_GATE_FULL_GLOBAL_POLL_S (5 s), tối đa DEVKIT_GATE_FULL_GLOBAL_WAIT_S (21600 s) rồi "skip" (nhả khoá repo);
@@ -97,7 +104,7 @@ class Run:
         self.log_f = open(self.log_path, "a", encoding="utf-8")
         self.info = {"result": "?", "ref": "", "sha": "", "load_start": None, "hold_load": None, "waited_s": 0,
                      "wait_note": "", "red": [], "env_red": [], "group_b": [], "suspect": "", "suspect_note": "", "card": "",
-                     "notes": [], "trace": None}
+                     "notes": [], "trace": None, "red_tests": {}, "suspects": {}, "unreported": []}
 
     def log(self, msg: str) -> None:
         line = "[gate-full %s] %s" % (dt.datetime.now().strftime("%H:%M:%S"), msg)
@@ -126,8 +133,17 @@ class Run:
             out.append("- Suite đỏ nhóm b (thời gian thực / môi trường): " + ", ".join(i["group_b"]))
         if i["env_red"]:
             out.append("- Đỏ do môi trường (không tính): " + ", ".join(i["env_red"]))
-        if i["suspect"] or i["suspect_note"]:
+        if i.get("new_red") is not None:
+            chronic = [x for x in i["red"] if x not in i["new_red"]]
+            out.append("- Đỏ mới (so mốc %s): %s%s" % ((i.get("baseline") or {}).get("sha", "")[:12] or "không có",
+                                                     ", ".join(i["new_red"]) or "không",
+                                                     "; đỏ kinh niên (không thẻ mới): " + ", ".join(chronic) if chronic else ""))
+        for sid, sp in (i.get("suspects") or {}).items():   # mỗi đỏ mới một commit nghi vấn riêng (v26 mục 6)
+            out.append("- Commit nghi vấn: %s %s — đỏ mới %s" % (sp.get("sha") or "-", sp.get("note") or "", sid))
+        if not i.get("suspects") and (i["suspect"] or i["suspect_note"]):
             out.append("- Commit nghi vấn: %s %s" % (i["suspect"] or "-", i["suspect_note"]))
+        if i.get("unreported"):
+            out.append("- Chưa báo được (thẻ / comment lỗi, lượt sau báo lại): " + ", ".join(i["unreported"]))
         if i["card"]:
             out.append("- Thẻ: " + i["card"])
         for n in i["notes"]:
@@ -498,6 +514,7 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
     data = last_json(gate_out)
     kit_dir = os.path.join(scratch, kit_rel) if kit_rel else ""
     timing = timing_ids(data.get("matrix_path"))
+    run.info["red_tests"] = {}
     checks, red, env_red, group_b = [], [], [], []
     for t in data.get("regression_tests") or []:
         if not isinstance(t, dict):
@@ -514,7 +531,9 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
                 checks += [("%s:%s" % (sid, p), "bash " + shlex.quote(p), kit_rel) for p in paths]
             elif cmd:
                 checks.append((sid, cmd, "."))
-            if sid in timing or group_b_text(suite_output(run, scratch, t, text)):
+            full = suite_output(run, scratch, t, text)
+            run.info["red_tests"][sid] = {"paths": paths, "cases": case_lines(full)}
+            if sid in timing or group_b_text(full):
                 group_b.append(sid)
         elif st in ("TIMEOUT", "UNTESTED"):
             env_red.append("%s (%s)" % (sid, st))
@@ -528,6 +547,8 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
         else:
             red.append("agent-kit test")
             checks.append(("agent-kit test", "bash %s/bin/agent-kit test" % shlex.quote(kit_rel), "."))
+        if "agent-kit test" in red:
+            run.info["red_tests"]["agent-kit test"] = {"paths": paths, "cases": case_lines(kit_out)}
         if kit_rc != 124 and group_b_text(kit_out):
             group_b.append("agent-kit test")
     run.info["red"], run.info["env_red"], run.info["group_b"] = red, env_red, group_b
@@ -545,6 +566,70 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
     return "inconclusive", []
 
 
+# --- đỏ mới so mốc (gate speed v26 mục 6) --------------------------------------------------------------------------------------
+
+_NORM = ((re.compile(r"(?:/private)?/var/folders/\S*|/tmp/\S*|\$TMPDIR\S*|\S*\.[A-Za-z0-9]{6}(?=/|\s|$)"), "<tmp>"),
+         (re.compile(r"\b[0-9a-f]{7,40}\b"), "<sha>"),
+         (re.compile(r"\b(?:pid|PID)[ =:]*\d+"), "pid <n>"),
+         (re.compile(r"(?<![A-Za-z_])\d+(?:[.,]\d+)?(?![A-Za-z_])"), "<n>"))   # số đứng riêng; tên ca (t11, A2, 1c.) giữ nguyên
+
+
+def norm_line(line: str) -> str:
+    """Dòng ✖ đã chuẩn hoá: đường dẫn tạm, sha hex, pid, số ⇒ chỗ giữ — so đỏ mới giữa hai lượt không lệch vì giá trị thay đổi mỗi lần chạy."""
+    out = line.strip()
+    for rx, rep in _NORM:
+        out = rx.sub(rep, out)
+    return out
+
+
+def case_lines(text: str) -> list:
+    """Các dòng hỏng (FAIL_HEAD: ✖ ✘ ✗ ❌ FAIL not ok) đã chuẩn hoá, không trùng, theo thứ tự gặp."""
+    seen = []
+    for line in (text or "").splitlines():
+        if FAIL_HEAD.match(line):
+            n = norm_line(line)
+            if n and n not in seen:
+                seen.append(n)
+    return seen
+
+
+def baseline_row(pg: str, repo: str, sha: str):
+    """Mốc so đỏ mới: dòng CUỐI của nightly/history.jsonl có result green / red / red-env và sha là tổ tiên (hoặc chính) sha hiện tại;
+    không bao giờ dòng skip, inconclusive, aborted, error. None khi không có."""
+    try:
+        with open(os.path.join(pg, "nightly", "history.jsonl"), encoding="utf-8") as f:
+            rows = [r for r in (json.loads(l) for l in f if l.strip().startswith("{")) if isinstance(r, dict)]
+    except (OSError, ValueError):
+        return None
+    for r in reversed(rows):
+        if r.get("result") in ("green", "red", "red-env") and isinstance(r.get("sha"), str) and r["sha"] \
+                and git(repo, "merge-base", "--is-ancestor", r["sha"], sha)[0] == 0:
+            return r
+    return None
+
+
+def new_reds(run: "Run", base) -> dict:
+    """{suite đỏ MỚI: {"paths": đường test mới hoặc mọi đường, "cases": dòng ✖ mới (chuẩn hoá) — rỗng khi cả suite mới}}.
+    Không mốc ⇒ mọi đỏ mới. Mốc xanh ⇒ mọi đỏ mới. Mốc đỏ dạng cũ (không có red_tests) ⇒ chỉ gieo mốc: không đỏ mới, không thẻ.
+    Mốc đỏ: suite không có trong red_tests của mốc (trừ suite mốc chưa báo được — unreported), có đường test mới, hay có dòng ✖ mới."""
+    cur = run.info.get("red_tests") or {}
+    if base is None or base.get("result") == "green":
+        return {sid: {"paths": list(sig.get("paths") or []), "cases": []} for sid, sig in cur.items()}
+    if not isinstance(base.get("red_tests"), dict):
+        return {}
+    old = {k: v for k, v in base["red_tests"].items() if k not in (base.get("unreported") or []) and isinstance(v, dict)}
+    out = {}
+    for sid, sig in cur.items():
+        if sid not in old:
+            out[sid] = {"paths": list(sig.get("paths") or []), "cases": []}
+            continue
+        paths = [p for p in sig.get("paths") or [] if p not in (old[sid].get("paths") or [])]
+        cases = [c for c in sig.get("cases") or [] if c not in (old[sid].get("cases") or [])]
+        if paths or cases:
+            out[sid] = {"paths": paths, "cases": [] if paths else cases}
+    return out
+
+
 # --- chia đôi -----------------------------------------------------------------------------------------------------------------
 
 FAIL_HEAD = re.compile(r"^[ \t]*(?:✖|✘|✗|❌|FAIL|not ok)")   # #721: cùng mẫu dk_fail_lines của tests/run_impacted.sh
@@ -559,8 +644,9 @@ def red_excerpt(out: str, tail: int = 15, cap: int = 40) -> str:
     return "\n".join(early[:cap] + more + (["… (%d dòng cuối)" % tail] if early else []) + lines[-tail:])
 
 
-def checks_fail(run: Run, scratch: str, checks: list, timeout: int) -> str:
-    """"bad" (một phần đỏ chạy lại vẫn đỏ), "good", hay "timeout" (hết giờ: không kết luận được commit này)."""
+def checks_fail(run: Run, scratch: str, checks: list, timeout: int, match=None) -> str:
+    """"bad" (một phần đỏ chạy lại vẫn đỏ), "good", hay "timeout" (hết giờ: không kết luận được commit này).
+    `match` (dòng ✖ chuẩn hoá): ca MỚI trong file test vốn đỏ kinh niên — chỉ "bad" khi output đỏ có một trong các dòng đó."""
     for label, cmd, cwd in checks:
         d = os.path.join(scratch, cwd)
         if cwd != "." and not os.path.isdir(d):
@@ -572,7 +658,7 @@ def checks_fail(run: Run, scratch: str, checks: list, timeout: int) -> str:
         run.raw("$ (%s) %s -> %d\n%s" % (label, cmd, rc, red_excerpt(out) if rc else "\n".join(out.splitlines()[-15:])))
         if rc == 124:
             return "timeout"
-        if rc != 0:
+        if rc != 0 and (not match or set(case_lines(out)) & set(match)):
             return "bad"
     return "good"
 
@@ -580,10 +666,16 @@ def checks_fail(run: Run, scratch: str, checks: list, timeout: int) -> str:
 TIP_GOOD = "(không tái hiện khi chạy lại ở đỉnh: flaky?)"
 
 
-def bisect(run: Run, repo: str, scratch: str, sha: str, last_green: str, checks: list, timeout: int):
+BISECT_CAP = 128      # commit first-parent tối đa từ mốc (v26 mục 6; trước là 16)
+BISECT_MAX_TESTS = 5  # đỏ mới chia đôi mỗi lượt; còn lại chỉ liệt kê
+
+
+def bisect(run: Run, repo: str, scratch: str, sha: str, last_green: str, checks: list, timeout: int, match=None, tip=None):
     """(commit nghi vấn, ghi chú). Đỉnh không tái hiện thì không nghi ai (flaky); hết giờ giữa chừng thì chỉ báo khoảng còn lại —
-    một lần chạy lại hết giờ không phải "đỏ", tính nó là đỏ thì mọi điểm giữa đều đỏ và thẻ đổ oan cho merge cũ nhất."""
-    tip = checks_fail(run, scratch, checks, timeout)
+    một lần chạy lại hết giờ không phải "đỏ", tính nó là đỏ thì mọi điểm giữa đều đỏ và thẻ đổ oan cho merge cũ nhất.
+    `last_green` = sha của mốc (dòng history) hoặc last_full_green_sha; mốc == đỉnh ⇒ khoảng rỗng, không nghi ai (kit đổi hoặc flaky).
+    `match`: ca mới của file kinh niên (checks_fail); `tip`: kết quả chạy lại ở đỉnh đã có (không chạy lại lần nữa)."""
+    tip = tip or checks_fail(run, scratch, checks, timeout, match)
     if tip == "good":
         return "", TIP_GOOD
     if tip == "timeout":
@@ -592,9 +684,11 @@ def bisect(run: Run, repo: str, scratch: str, sha: str, last_green: str, checks:
     # mọi commit first-parent (không chỉ merge): repo land bằng squash / fast-forward không có merge nào, `--merges` rỗng thì luôn đổ cho đỉnh
     # ponytail: tối đa 16 commit từ last_green (8 khi không có), main đi > 16 commit một đêm thì commit cũ nhất trong cửa sổ có thể bị đổ oan
     if known_good:
-        merges = git_out(repo, "rev-list", "--first-parent", "--reverse", "%s..%s" % (last_green, sha)).split()[-16:]
+        merges = git_out(repo, "rev-list", "--first-parent", "--reverse", "%s..%s" % (last_green, sha)).split()[-BISECT_CAP:]
     else:
         merges = list(reversed(git_out(repo, "rev-list", "--first-parent", "-n", "8", sha).split()))
+    if not merges and known_good:
+        return "", "(mốc %s chính là đỉnh: không commit nào để nghi — kit đổi hoặc flaky)" % last_green[:12]
     if not merges:
         return sha, "(không có commit trong phạm vi: chính đỉnh)"
     run.log("chia đôi %d commit first-parent (%s)" % (len(merges), "từ last_green" if known_good else "8 commit gần nhất, không có last_green"))
@@ -602,7 +696,7 @@ def bisect(run: Run, repo: str, scratch: str, sha: str, last_green: str, checks:
     while lo < hi:
         mid = (lo + hi) // 2
         git(scratch, "checkout", "-q", "-f", "--detach", merges[mid])
-        state = checks_fail(run, scratch, checks, timeout)
+        state = checks_fail(run, scratch, checks, timeout, match)
         run.log("  %s %s" % (merges[mid][:12], {"bad": "đỏ", "good": "xanh"}.get(state, "hết giờ")))
         if state == "timeout":
             end = merges[hi][:12] if hi < len(merges) else sha[:12]
@@ -611,6 +705,7 @@ def bisect(run: Run, repo: str, scratch: str, sha: str, last_green: str, checks:
             hi = mid
         else:
             lo = mid + 1
+    git(scratch, "checkout", "-q", "-f", "--detach", sha)   # đỏ mới kế tiếp chia đôi từ đỉnh
     if lo == len(merges):
         return sha, "(sau merge cuối: commit trên first-parent tới đỉnh)"
     if not known_good and lo == 0:   # không có mốc xanh: chưa chứng minh merge cũ nhất là chỗ vỡ đầu tiên
@@ -698,9 +793,11 @@ def trace(run: Run, repo: str, scratch: str, sha: str, last_green: str, checks: 
         related = set(files) | {f for f, ts in (tm or {}).items() if set(ts) & set(files)}
         globs = _watch_globs(matrix_path, sid)
         cands = []
+        sps = run.info.get("suspects") or {}
+        own = (sps.get(sid) or {}).get("sha", "") if sps else run.info["suspect"]   # nghi vấn của CHÍNH suite này (v26 mục 6)
         for c in commits:
             hit = [f for f in c["files"] if f in related or any(scoped_gate.match_pattern(f, g) for g in globs)]
-            suspect = c["sha"] == run.info["suspect"]
+            suspect = bool(own) and c["sha"] == own
             if not hit and not suspect:
                 continue
             why = ("commit nghi vấn của chia đôi" if suspect else "") + (", " if suspect and hit else "") + \
@@ -907,8 +1004,9 @@ CARD_PREFIX = "🐛 [fix] P1 gate-full đêm"
 SUITE_ID = re.compile(r"^(?:REG|BUG)-[A-Za-z0-9_-]+$")
 
 
-def open_issue_for(slug: str, first: str) -> str:
-    """URL của thẻ còn mở cho cùng suite đỏ đầu tiên, "" khi không có. Hai nguồn khớp, thẻ CARD_PREFIX trước:
+def open_issue_for(slug: str, first: str):
+    """URL của thẻ còn mở cho cùng suite đỏ, "" khi không có, None khi gh lỗi (không biết đã có thẻ chưa: người gọi KHÔNG mở thẻ, như
+    escape_check — tránh trùng; v26 mục 6). Hai nguồn khớp, thẻ CARD_PREFIX trước:
     thẻ gate-full đêm (tiêu đề CARD_PREFIX + suite, đêm nào cũng được: phản biện #644 finding 9) rồi thẻ mở tay có đúng mã suite
     trong tiêu đề HOẶC body (#662: #659/#660 tiêu đề khác mẫu ⇒ lượt đêm mở thẻ P1 trùng). Mã suite so như một token, không khớp lỏng.
     `first` không phải mã REG-/BUG- (vd. "agent-kit test") thì chỉ khớp thẻ CARD_PREFIX: một lệnh nhắc trong body thẻ thường
@@ -920,11 +1018,11 @@ def open_issue_for(slug: str, first: str) -> str:
     rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "open", "--search", query,
                   "--json", "title,url,body", "--limit", "50"], timeout=60)
     if rc != 0:
-        return ""
+        return None
     try:
         items = json.loads(out.strip().splitlines()[-1]) if out.strip() else []
     except ValueError:
-        return ""
+        return None
     items = [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
     titles = [it.get("title") if isinstance(it.get("title"), str) else "" for it in items]
     for it, t in zip(items, titles):
@@ -941,39 +1039,56 @@ def open_issue_for(slug: str, first: str) -> str:
 
 
 def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
+    """Thẻ theo TỪNG đỏ mới (v26 mục 6): suite mới ⇒ thẻ riêng mang tên nó (đã có thẻ mở cùng suite ⇒ comment); ca mới trong suite đỏ
+    kinh niên ⇒ comment vào thẻ mở của suite đó, nêu đúng các ca. Đỏ kinh niên không ca mới ⇒ không thẻ, không comment. gh lỗi khi tìm
+    thẻ trùng, comment lỗi hay tạo thẻ lỗi ⇒ suite vào `unreported`: dòng history không đưa nó vào mốc, lượt sau báo lại."""
     i = run.info
-    first = i["red"][0].split(":")[0] if i["red"] else "?"
-    more = " (+%d)" % (len(i["red"]) - 1) if len(i["red"]) > 1 else ""
-    title = "%s %s: %s%s đỏ" % (CARD_PREFIX, run.started.strftime("%Y-%m-%d"), first, more)
-    subj = git_out(repo, "log", "-1", "--format=%s", i["suspect"]) if i["suspect"] else ""
+    new = i.get("new_red_detail")
+    if new is None:   # người gọi cũ (không tính đỏ mới): mọi suite đỏ
+        new = {sid: {"paths": [], "cases": []} for sid in i["red"]}
     env = i["result"] == "red-env"
-    problem = ("Lượt --full đêm trên %s @ %s đỏ: %s. %sCommit nghi vấn: %s %s %s. Log: %s"
-               % (i["ref"], sha[:12], ", ".join(i["red"]),
-                  # #748: có chia đôi hay không do suspect_note nói (BISECT=1 vẫn chia đôi lượt red-env)
-                  "Mọi suite đỏ đều nhóm b (thời gian thực / môi trường: %s). " % ", ".join(i["group_b"]) if env else "",
-                  i["suspect"] or "-", subj, i["suspect_note"], run.log_path))
-    dup = open_issue_for(slug, first)
-    if dup:
-        # đêm sau vẫn đỏ cùng suite: ghi thêm vào thẻ đang mở, không mở thẻ mới (lỗi comment chỉ ghi log)
-        rc, out = sh(["gh", "issue", "comment", dup, "--body", "[gate-full] đêm %s vẫn đỏ. %s"
-                      % (run.started.strftime("%Y-%m-%d"), problem)], cwd=repo, timeout=60) if shutil.which("gh") else (1, "")
-        i["card"] = dup + " (đã có, ghi thêm kết quả đêm nay)"
-        run.log("thẻ mở cùng suite đã có: %s (comment exit %d)" % (dup, rc))
-        return
-    base = shlex.split(os.environ["DEVKIT_GATE_FULL_CARD_CMD"]) if os.environ.get("DEVKIT_GATE_FULL_CARD_CMD") \
-        else [sys.executable, os.path.join(KIT, "scripts", "governance", "create_task.py")]
-    cmd = base + (["--repo", slug] if slug else []) + [
-        "--new-card", "gate-full đêm", "--labels", "bug", "--title", title, "--problem", problem,
-        "--fix", "Sửa hoặc revert commit nghi vấn %s cho các suite/test đỏ chạy lại PASS trên main." % (i["suspect"][:12] or "-"),
-        "--ac", "Các suite/test đỏ (%s) chạy lại PASS trên origin/main" % ", ".join(i["red"]),
-        "--ac", "Lượt gate_full.py run kế tiếp XANH, last_full_green_sha trỏ tới main mới",
-        "--risk", "🟡 Medium — nhóm b (thời gian thực / môi trường), chưa chứng minh main đỏ" if env else "🔴 High — main đỏ",
-        "--blocked-by", "None."]
-    rc, out = sh(cmd, cwd=repo, timeout=300)
-    run.raw(out)
-    m = ISSUE_URL.search(out or "")
-    i["card"] = m.group(0) if m else ("tạo thẻ lỗi (exit %d), xem log" % rc)
-    run.log("thẻ: " + i["card"])
+    cards = []
+    for sid, d in new.items():
+        sp = (i.get("suspects") or {}).get(sid) or {"sha": i["suspect"], "note": i["suspect_note"]}
+        subj = git_out(repo, "log", "-1", "--format=%s", sp["sha"]) if sp.get("sha") else ""
+        what = ("ca mới: " + "; ".join(d["cases"][:8])) if d.get("cases") else ("test: " + ", ".join(d["paths"])) if d.get("paths") else ""
+        problem = ("Lượt heavy gate trên %s @ %s đỏ MỚI: %s%s. Mọi suite đỏ: %s. %sCommit nghi vấn của %s: %s %s %s. Log: %s"
+                   % (i["ref"], sha[:12], sid, " (%s)" % what if what else "", ", ".join(i["red"]),
+                      "Mọi suite đỏ đều nhóm b (thời gian thực / môi trường: %s). " % ", ".join(i["group_b"]) if env else "",
+                      sid, sp.get("sha") or "-", subj, sp.get("note") or "", run.log_path))
+        dup = open_issue_for(slug, sid)
+        if dup is None:
+            i["unreported"].append(sid)
+            cards.append("%s: không kiểm được thẻ trùng (gh lỗi), chưa mở" % sid)
+            run.log("thẻ %s: gh lỗi khi tìm thẻ trùng — chưa mở, lượt sau báo lại" % sid)
+            continue
+        if dup:
+            body = "[gate-full] %s %s đỏ%s. %s" % (run.started.strftime("%Y-%m-%d"), sid,
+                                                   " — ca mới: " + "; ".join(d["cases"][:8]) if d.get("cases") else "", problem)
+            rc, out = sh(["gh", "issue", "comment", dup, "--body", body], cwd=repo, timeout=60) if shutil.which("gh") else (1, "")
+            if rc != 0:
+                i["unreported"].append(sid)
+            cards.append(dup + (" (đã có, ghi thêm)" if rc == 0 else " (comment lỗi exit %d, lượt sau báo lại)" % rc))
+            run.log("thẻ mở cùng suite %s đã có: %s (comment exit %d)" % (sid, dup, rc))
+            continue
+        base = shlex.split(os.environ["DEVKIT_GATE_FULL_CARD_CMD"]) if os.environ.get("DEVKIT_GATE_FULL_CARD_CMD") \
+            else [sys.executable, os.path.join(KIT, "scripts", "governance", "create_task.py")]
+        cmd = base + (["--repo", slug] if slug else []) + [
+            "--new-card", "gate-full đêm", "--labels", "bug",
+            "--title", "%s %s: %s đỏ" % (CARD_PREFIX, run.started.strftime("%Y-%m-%d"), sid), "--problem", problem,
+            "--fix", "Sửa hoặc revert commit nghi vấn %s cho %s chạy lại PASS trên main." % ((sp.get("sha") or "-")[:12], sid),
+            "--ac", "%s chạy lại PASS trên origin/main" % sid,
+            "--ac", "Lượt gate_full.py run kế tiếp không còn %s đỏ" % sid,
+            "--risk", "🟡 Medium — nhóm b (thời gian thực / môi trường), chưa chứng minh main đỏ" if env else "🔴 High — main đỏ",
+            "--blocked-by", "None."]
+        rc, out = sh(cmd, cwd=repo, timeout=300)
+        run.raw(out)
+        m = ISSUE_URL.search(out or "")
+        if not m:
+            i["unreported"].append(sid)
+        cards.append(m.group(0) if m else "%s: tạo thẻ lỗi (exit %d), lượt sau báo lại" % (sid, rc))
+        run.log("thẻ %s: %s" % (sid, cards[-1]))
+    i["card"] = "; ".join(cards)
 
 
 # --- lượt chính ---------------------------------------------------------------------------------------------------------------
@@ -1026,9 +1141,13 @@ def history_row(pg: str, run: "Run") -> None:
     os.makedirs(hist, exist_ok=True)
     row = {"at": run.started.isoformat(timespec="seconds"), "result": i["result"], "ref": i["ref"], "sha": i["sha"], "red": i["red"],
            "group_b": i["group_b"], "suspect": i["suspect"], "card": i["card"], "log": run.log_path, "escape": i.get("escape")}
-    for k in ("skip_reason", "kit"):
+    for k in ("skip_reason", "kit", "suspects", "unreported", "baseline"):
         if i.get(k):
             row[k] = i[k]
+    if i["result"] in ("green", "red", "red-env"):   # mốc so đỏ mới của lượt sau; suite chưa báo được không vào mốc
+        row["red_tests"] = {k: v for k, v in (i.get("red_tests") or {}).items() if k not in (i.get("unreported") or [])}
+    if i.get("new_red") is not None:
+        row["new_red"] = i["new_red"]
     with open(os.path.join(hist, "history.jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -1196,25 +1315,54 @@ def cmd_run(args) -> int:
                 last_green = open(last_green_path, encoding="utf-8").read().strip()
             except OSError:
                 last_green = ""
-            if mode == "0" or (mode == "auto" and all_b):
+            # v26 mục 6: đỏ MỚI so mốc (dòng history cuối green/red/red-env là tổ tiên); chia đôi, truy vết, thẻ, lọt lưới chỉ cho đỏ mới
+            base = baseline_row(pg, repo, sha)
+            run.info["baseline"] = {"sha": base.get("sha"), "result": base.get("result"), "at": base.get("at")} if base else None
+            detail = new_reds(run, base)
+            run.info["new_red_detail"], run.info["new_red"] = detail, list(detail)
+            if base is not None and not isinstance(base.get("red_tests"), dict) and base.get("result") != "green":
+                run.info["notes"].append("mốc %s là dòng history dạng cũ (không có red_tests): chỉ gieo mốc, không thẻ đỏ mới" % base["sha"][:12])
+            start = base["sha"] if base else last_green   # đầu khoảng chia đôi + truy vết
+            if not detail:
+                run.info["suspect_note"] = "(không chia đôi: không có đỏ mới so mốc — đỏ kinh niên)"
+                run.log(run.info["suspect_note"])
+            elif mode == "0" or (mode == "auto" and all_b):
                 run.info["suspect_note"] = "(không chia đôi: %s)" % (
                     "DEVKIT_GATE_FULL_BISECT=0" if mode == "0" else "mọi suite đỏ đều nhóm b — thời gian thực / môi trường")
                 run.log("không chia đôi " + run.info["suspect_note"])
             else:
-                run.info["suspect"], run.info["suspect_note"] = bisect(run, repo, scratch, sha, last_green, checks, args.timeout)
-                # chạy lại ở đỉnh xanh hết (khác lần đầu): mọi suite đỏ là nhóm b — chỉ khi suite nào cũng có lệnh đã chạy lại; suite
-                # không có command (ma trận thiếu) thì "xanh" là rỗng, giữ red như cũ
+                # chạy lại MỌI đỏ ở đỉnh một lần: xanh hết (khác lần đầu) ⇒ mọi suite đỏ là nhóm b — chỉ khi suite nào cũng có lệnh đã
+                # chạy lại; suite không có command (ma trận thiếu) thì "xanh" là rỗng, giữ red như cũ
+                tip = {c[0]: checks_fail(run, scratch, [c], args.timeout) for c in checks}
                 rerun = {c[0].split(":")[0] for c in checks}
-                if run.info["suspect_note"] == TIP_GOOD and set(run.info["red"]) <= rerun:
+                if tip and all(v == "good" for v in tip.values()) and set(run.info["red"]) <= rerun:
                     all_b, run.info["group_b"] = True, list(run.info["red"])
-                elif run.info["suspect"] and not run.info["suspect_note"]:
+                for n, (sid, d) in enumerate(detail.items()):
+                    if n >= BISECT_MAX_TESTS:
+                        run.info["suspects"][sid] = {"sha": "", "note": "(không chia đôi: quá %d đỏ mới một lượt)" % BISECT_MAX_TESTS}
+                        continue
+                    own = [c for c in checks if c[0].split(":")[0] == sid
+                           and (not d["paths"] or ":" not in c[0] or c[0].split(":", 1)[1] in d["paths"])]
+                    match = d["cases"] or None
+                    states = [tip.get(c[0], "good") for c in own]
+                    pre = "timeout" if "timeout" in states else "bad" if "bad" in states else "good"
+                    if match and pre == "bad":   # ca mới trong file kinh niên: đỉnh phải có đúng ca đó
+                        pre = checks_fail(run, scratch, own, args.timeout, match)
+                    run.log("chia đôi đỏ mới %s (%d lệnh%s)" % (sid, len(own), ", ca mới %d" % len(match) if match else ""))
+                    s_sha, s_note = bisect(run, repo, scratch, sha, start, own, args.timeout, match, tip=pre) if own \
+                        else ("", "(không có lệnh chạy lại được)")
+                    run.info["suspects"][sid] = {"sha": s_sha, "note": s_note}
+                first = next(iter(run.info["suspects"].values()), {"sha": "", "note": ""})
+                run.info["suspect"], run.info["suspect_note"] = first["sha"], first["note"]
+                if any(sp["sha"] and not sp["note"] for sp in run.info["suspects"].values()):
                     # #748: chia đôi (BISECT=1) THẤY commit trước nghi vấn xanh ở lượt này và nghi vấn đỏ: tái hiện được, main đỏ. Mọi
                     # suspect có ghi chú (commit đầu sau mốc xanh cũ, chính đỉnh, đỉnh chạy lại xanh) chưa là bằng chứng ⇒ giữ red-env
                     all_b = False
+                git(scratch, "checkout", "-q", "-f", "--detach", sha)
             if all_b:
                 run.info["result"] = "red-env"
             try:   # truy vết chỉ để đọc: lỗi của nó không đổi kết luận, thẻ hay exit của lượt
-                run.info["trace"] = trace(run, repo, scratch, sha, last_green, checks, last_json(gate_out_full).get("matrix_path"))
+                run.info["trace"] = trace(run, repo, scratch, sha, start, checks, last_json(gate_out_full).get("matrix_path"))
             except Exception as exc:
                 run.log("truy vết lỗi: %r" % exc)
                 run.info["notes"].append("truy vết lỗi: %r" % exc)

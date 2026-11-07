@@ -142,6 +142,7 @@ open(sys.argv[1], "w").write('#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho %s\n'
 PY
 chmod +x "$T/bin/gh"
 rm -f "$T/card.args"
+rm -f "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: thẻ chỉ cho đỏ MỚI — ca này cần REG-FAKE-01 là đỏ mới
 rc=$(run_gf --slug fake/repo)
 chk "b8. đã có issue mở cùng tiêu đề: không gọi lệnh tạo thẻ, summary dẫn issue cũ" \
   '[ ! -e "$T/card.args" ] && grep -q "issues/7" "$T/logs/summary-latest.md"' "$(tail -5 "$T/out")"
@@ -157,12 +158,14 @@ PY
 }
 gh_returns "🐛 [fix] gate: thẻ mở tay" "https://github.com/fake/repo/issues/659" "Suite đỏ: REG-FAKE-01 trên main"
 rm -f "$T/card.args" "$T/gh.calls"
+rm -f "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: thẻ chỉ cho đỏ MỚI — ca này cần REG-FAKE-01 là đỏ mới
 rc=$(run_gf --slug fake/repo)
 chk "b9. thẻ mở tay có mã suite trong body: không gọi lệnh tạo thẻ, summary dẫn thẻ đó" \
   '[ ! -e "$T/card.args" ] && grep -q "issues/659" "$T/logs/summary-latest.md"' "$(tail -5 "$T/out")"
 chk "b9b. gh issue comment được gọi vào đúng thẻ mở tay" 'grep -q "issue comment https://github.com/fake/repo/issues/659" "$T/gh.calls"'
 gh_returns "🐛 [fix] gate: thẻ mở tay" "https://github.com/fake/repo/issues/659" "Suite đỏ: REG-FAKE-011 và REG-OTHER-01"
 rm -f "$T/card.args"
+rm -f "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: thẻ chỉ cho đỏ MỚI — ca này cần REG-FAKE-01 là đỏ mới
 rc=$(run_gf --slug fake/repo)
 chk "b10. body chỉ chứa mã suite dài hơn (REG-FAKE-011): không khớp lỏng, vẫn mở thẻ mới" '[ -e "$T/card.args" ]' "$(tail -5 "$T/out")"
 chk "b10b. gh được gọi với --search \"<suite>\" in:title,body và --json title,url,body" \
@@ -170,6 +173,7 @@ chk "b10b. gh được gọi với --search \"<suite>\" in:title,body và --json
 # b11. mã suite chỉ ở tiêu đề (body rỗng) ⇒ vẫn nhận thẻ đó
 gh_returns "🐛 [fix] gate: REG-FAKE-01 đỏ trên main" "https://github.com/fake/repo/issues/660" ""
 rm -f "$T/card.args" "$T/gh.calls"
+rm -f "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: thẻ chỉ cho đỏ MỚI — ca này cần REG-FAKE-01 là đỏ mới
 rc=$(run_gf --slug fake/repo)
 chk "b11. mã suite chỉ ở tiêu đề: nhận thẻ, không mở thẻ mới" \
   '[ ! -e "$T/card.args" ] && grep -q "issue comment https://github.com/fake/repo/issues/660" "$T/gh.calls"' "$(tail -5 "$T/out")"
@@ -182,6 +186,7 @@ open(sys.argv[1], "w").write('#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho %s\n' %
 PY
 chmod +x "$T/bin/gh"
 rm -f "$T/card.args" "$T/gh.calls"
+rm -f "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: thẻ chỉ cho đỏ MỚI — ca này cần REG-FAKE-01 là đỏ mới
 rc=$(run_gf --slug fake/repo)
 chk "b12. có cả thẻ body-only (mới) và thẻ CARD_PREFIX (cũ): ưu tiên thẻ CARD_PREFIX" \
   '[ ! -e "$T/card.args" ] && grep -q "issue comment https://github.com/fake/repo/issues/5 " "$T/gh.calls"' "$(cat "$T/gh.calls" 2>/dev/null)"
