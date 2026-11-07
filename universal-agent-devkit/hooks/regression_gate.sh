@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# regression_gate.sh — Stop hook: the living regression checklist must be green
-# for everything the current change touches before the agent may finish.
+# regression_gate.sh — Stop hook: a handover needs a gate receipt for the current code.
 #
-# Runs `post-fix-gate.py --run-tests --task <session>` when there are uncommitted
-# changes. The gate re-runs every regression test whose watch_files match the
-# change, records real PASS/FAIL into .agents/CHECKLIST.md (via the checklist JSON), and refuses
-# PASS for changed source files no test watches (UNCOVERED).
-#
-# BLOCK (exit 2, reason → Claude) when the gate says REJECT (exit 1) or
-# UNVERIFIED (exit 2): a related test fails, a changed file has no test, …
+# Gate speed v26 mục 1: the Stop runs NO suite and starts no gate. The agent's own gate turn
+# (`post-fix-gate.py --run-tests --scoped --brief`, once on the final tree) writes a receipt
+# (exit 0) or, for a result no code change can cure, an outcome (<git dir>/postfix-gate/
+# outcomes/<fp>.json); this hook only reads them (bin/tree_fp.py receipt_for_tree):
+#   - allow, recording verified_head: a full/scoped/task receipt of this tree whose base leaves
+#     no unverified commit off the trunk (rev-list <verified_head>..<base> --not <trunk> empty);
+#     or only documentation / agent state changed and no matrix rule watches it;
+#   - allow, recording nothing: a PR repo (super-board) on a pushed non-trunk branch with a clean
+#     tree (its merge gate runs the tests), or a merge-gate receipt of HEAD;
+#   - outcomes, per reason: exit 3 (nothing to check), device UNTESTED, environment-blocked suites
+#     and a NEW uncommitted matrix are said once and allowed (exit 3 / UNTESTED only when their
+#     stored base passes the same range rule); an edited existing test blocks ONCE with the cure,
+#     later stops of that content only remind; an edited COMMITTED matrix, or an uncommitted one
+#     that shadows a committed one, still blocks (a person reviews the matrix edit);
+#   - anything else blocks (exit 2) with the command for this kind of repo: a PR repo `git push`
+#     (commit first when the tree is dirty), else the gate command above, `--diff <verified_head>`
+#     on the trunk branch. No `--session`: an edited test the gate cannot attribute fails closed.
 #
 # Enforced for a project that has adopted a matrix: .agents/regression_matrix.active.json
 # (what `agent-kit profile` writes) or a legacy templates/ matrix, whose content differs
@@ -19,49 +28,24 @@
 # A profile matrix marked "enforce_as_is": true (web, backend: they auto-detect the
 # project's own runner) is enforced as installed. Without an adopted matrix the hook
 # does not block: a sample matrix (e.g. no runner detected: Unity) and a DevKit gate it
-# cannot find are each reported once per session (systemMessage) and logged.
-#
-# An adopted matrix the gate does not trust because it is UNCOMMITTED (and shadows no
-# committed matrix), with nothing else wrong: no test ran and only a commit (a human
-# decision, not the agent's) can make it trusted, so the stop is allowed with a
-# systemMessage once per change — the same deal as UNTESTED. An edited COMMITTED
-# matrix still blocks: that is the `exit 1` -> `true` shape.
+# cannot find are each reported once per session (systemMessage) and logged. A committed
+# matrix deleted in the working tree blocks once per session, then warns.
 #
 # REGRESSION_GATE_PROBE=1: print one JSON line with the matrix state the Stop gate would
 # see ({"state": none|sample|outside|untrusted|trusted|nogate|disabled, …}) and exit 0 —
 # read-only, runs no test. session_context.sh reports it at session start.
 #
-# Cheap when nothing changed: the result is cached per working-tree fingerprint,
-# so a second Stop on the same diff does not re-run the tests. A block is re-used too: when
-# this session's previous Stop blocked on the same content (tree incl. untracked contents +
-# unverified range), the stored reason is returned without running the gate (GeelyEx2,
-# 2026-09-28: 100 of 214 blocks re-ran the suites on unchanged content). Not re-used: a block
-# with an edited existing test (cleared by the user's answer, not by the tree) or a BUSY item.
-# The reminder that follows such an edit ("waiting for a person to review the test diff", never a block)
-# is re-used by the SAME session on the same content AND the same approval sources (bin/approval_digest.py: the
-# ledger, approved_hashes.json, the antigravity-pm audit records the ledger and trailers name, the answers of the user
-# that name a changed file, the trunk tip), without running the gate (OfficeReader 2026-10-08: 58 of 71 Stop runs,
-# 31-37 s each; 03/11: 36 repeats a day after the old 300 s window ran out, ~47 s each). Ceiling: REGRESSION_GATE_TOUCHED_RECHECK_S
-# when set, else DEVKIT_GATE_CACHE_MAX_S (default 21600 s); 0 = run the gate on every Stop. A BUSY suite, another session,
-# other content, a new commit, a moved approval source or a digest that cannot be computed never re-use it.
-# REGRESSION_GATE_TOUCHED_RECHECK_S=0 runs the GATE on every Stop (the answer of the user and the verdict are judged again) but it does not start a
-# suite that already passed on the same content: the gate keeps the suites a Stop run passed (budget_pass.json, bin/post-fix-gate.py) and the next
-# run on identical inputs re-uses them, for DEVKIT_GATE_CACHE_MAX_S seconds (default 259200, i.e. 3 days, as the receipt). A suite that starts to fail on unchanged
-# content is therefore not seen until that record ages out or the content changes; only DEVKIT_GATE_CACHE=0 (the gate's own switch, not this hook's)
-# makes every run start every suite again.
+# Not judged at all: a mid-work reply (CHƯA XONG / no status line, nothing pushed:
+# devkit_harness.mid_work), a checkout held by another live session, the merge-only main of
+# trunk mode, a board worker on main (SB_BOARD_WORKER), Grok's session-end Stop.
 # Loop-guard: MAX_ATTEMPTS blocks per fingerprint, then the stop is allowed with a
-# visible warning (systemMessage) — a broken test can never trap the session.
+# visible warning (systemMessage) — a missing receipt can never trap the session.
 # Non-Claude agent or no usable Claude transcript ("degraded", hooks/devkit_harness.py:
-# Grok, a bridged agent, a caller that sends no transcript): the diff of such an agent
-# changes every turn, so the per-fingerprint guard alone never released it (Grok,
-# 2026-09-25: 11 blocks in one morning). There the guard is also keyed per SESSION
-# (session_id / sessionId / GROK_SESSION_ID; else harness pid + transcript path or cwd):
-# at most REGRESSION_GATE_MAX_SESSION_BLOCKS (default 3) blocks per session — a pass
-# resets it — then every stop is allowed with a systemMessage that says the gate is still
-# not green; and the suite runs once per unchanged tree per session (its last result is
-# re-used). Grok's observe-only session-end Stop (reason ≠ end_turn) runs nothing. A
-# Claude session with its transcript keeps the per-fingerprint guard only. State is
-# written atomically (sessions share regression_gate.state.json).
+# Grok, a bridged agent, a caller that sends no transcript): its diff changes every turn, so
+# the guard is also keyed per SESSION: at most REGRESSION_GATE_MAX_SESSION_BLOCKS (default 3)
+# blocks per session — an allow resets it — then every stop is allowed with a systemMessage
+# that says the gate is still not green. State is written atomically and merged (sessions
+# share regression_gate.state.json).
 # Escape hatch: REGRESSION_GATE=0 (logged). Fail-open on internal error.
 #
 # Stop hook protocol: stdin JSON; exit 2 blocks (stderr→Claude); exit 0 allows.

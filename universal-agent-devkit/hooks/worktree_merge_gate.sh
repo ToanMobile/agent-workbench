@@ -21,7 +21,9 @@
 # (it outlives the alarm below): the worktree's uncommitted work is committed in the worktree, main is merged INTO the worktree, main
 # only fast-forwards (another session's uncommitted or staged files are never touched), the worktree is removed. It holds only when
 # that cannot finish: a CONFLICT (left open in the worktree, a folder of its own: the agent resolves it there, the next Stop finishes
-# the job), main edited uncommitted on the same files, a pre-commit refusal. Not when another live session holds the main checkout
+# the job), main edited uncommitted on the same files, a pre-commit refusal, or (gate speed v26 mục 1: automerge here runs no suite) a
+# worktree whose tree has no full or scoped gate receipt covering main: `needs_gate`, said once to the owning session with the
+# `agent-kit worktree finish` command (finish keeps its own gate). Not when another live session holds the main checkout
 # (their Stop does it), nor with WORKTREE_AUTO_MERGE=0. A worktree is owed to every later session of the repo - but never while the
 # session that owns it (made, named or was last held on it: state "owners") is alive and working; once it has ended the next session adopts it.
 # The rule is MERGE, THEN REMOVE: a worktree whose work is integrated but that still exists also
