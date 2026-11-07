@@ -46,9 +46,11 @@ f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); open(sys.argv[2], "w"
 for _ in $(seq 50); do [ -f "$TMP/c.ready" ] && break; sleep 0.1; done
 [ -f "$TMP/c.ready" ] || fail "2 setup: tiến trình giữ khoá không lên"
 t0=$SECONDS
-(cd "$TMP/c" && env GATE_RUNS="$TMP/runs" WORKTREE_MERGE_GATE_LOCK_WAIT_S=1 python3 "$WT" automerge "$TMP/c-w" > "$TMP/out" 2> "$TMP/err"); rc=$?
+# v26 mục 1: `automerge` (đường Stop) không chạy gate nữa; `finish` giữ gate và khoá gate gộp, nên ca này chạy qua finish. Lời "running"
+# của khoá là câu nêu WORKTREE_MERGE_GATE_LOCK_WAIT_S; không "moved" (finish không thử lại: took < 20 s).
+(cd "$TMP/c" && env GATE_RUNS="$TMP/runs" WORKTREE_MERGE_GATE_LOCK_WAIT_S=1 python3 "$WT" finish "$TMP/c-w" > "$TMP/out" 2> "$TMP/err"); rc=$?
 took=$((SECONDS - t0))
-python3 -c 'import json,sys; d = json.loads(sys.argv[1]); sys.exit(0 if d.get("status") == "blocked" and d.get("running") is True and not d.get("moved") else 1)' "$(tail -1 "$TMP/out")" 2>/dev/null; js=$?
+grep -q "blocked" "$TMP/out" && grep -q "WORKTREE_MERGE_GATE_LOCK_WAIT_S" "$TMP/out" && ! grep -q "main đi tiếp\|main moved on" "$TMP/out"; js=$?
 [ "$rc" = 1 ] && [ "$js" = 0 ] && [ "$took" -lt 20 ] && [ "$(G "$TMP/c" rev-parse HEAD)" = "$cb" ] && [ ! -s "$TMP/runs" ] && [ -d "$TMP/c-w" ] \
   && ok "2 khoá gate gộp bị giữ quá WORKTREE_MERGE_GATE_LOCK_WAIT_S: từ chối sau ${took} s (running, không moved), main đứng yên, không chạy suite" \
   || fail "2 rc=$rc json=$js took=${took}s runs=$(wc -l < "$TMP/runs" | tr -d ' '): $(tail -1 "$TMP/out" | cut -c1-200)"

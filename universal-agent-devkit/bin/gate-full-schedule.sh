@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# gate-full-schedule.sh install|uninstall|status [--repo PATH [--allow-worktree]] [--hour 0] [--minute 0]
-# Lịch lượt --full đêm (#644): LaunchAgent com.toanmobile.devkit.gate-full.<slug> chạy bin/gate_full.py run --repo <repo> lúc
-# <hour>:<minute> giờ máy (máy đặt Asia/Ho_Chi_Minh; TZ cũng đặt trong EnvironmentVariables để ngày trong log/summary đúng).
+# gate-full-schedule.sh install|uninstall|status [--repo PATH [--allow-worktree]] [--hour 0] [--minute 0] [--weekdays 1,4]
+# Lịch heavy gate (#644, gate speed v26 mục 6): LaunchAgent com.toanmobile.devkit.gate-full.<slug> chạy bin/gate_full.py run --repo <repo> lúc
+# <hour>:<minute> giờ máy các thứ trong --weekdays (mặc định 1,4 = thứ Hai + thứ Năm; số của launchd: 0 hoặc 7 = Chủ nhật, 1 = thứ Hai;
+# StartCalendarInterval là mảng {Weekday, Hour, Minute}) (máy đặt Asia/Ho_Chi_Minh; TZ cũng đặt trong EnvironmentVariables để ngày trong log/summary đúng).
 # Mỗi repo một lịch: slug = tên thư mục repo (chỉ [A-Za-z0-9-]) + 8 ký tự sha1 của đường dẫn vật lý (pwd -P) của repo; plist và thư mục log
 # <log>/<slug>/ riêng (plist đặt DEVKIT_GATE_FULL_LOG_DIR = thư mục đó cho gate_full.py) ⇒ cài repo B không gỡ lịch repo A, summary không đè.
 # --repo mặc định gốc git của thư mục hiện tại (cả status / uninstall). install từ một LINKED worktree (trunk mode) không --repo ⇒ neo
@@ -20,21 +21,23 @@ LOG_ROOT="${DEVKIT_GATE_FULL_LOG_DIR:-$HOME/Library/Logs/devkit-gate-full}"
 LAUNCHCTL="${DEVKIT_LAUNCHCTL:-launchctl}"
 DOMAIN="gui/$(id -u)"
 
-usage() { echo "usage: gate-full-schedule.sh install|uninstall|status [--repo PATH [--allow-worktree]] [--hour 0] [--minute 0]" >&2; exit 2; }
+usage() { echo "usage: gate-full-schedule.sh install|uninstall|status [--repo PATH [--allow-worktree]] [--hour 0] [--minute 0] [--weekdays 1,4]" >&2; exit 2; }
 ACTION="${1:-}"; [ -n "$ACTION" ] || usage; shift
-REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; HOUR=0; MINUTE=0; REPO_GIVEN=0; ALLOW_WT=0
+REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; HOUR=0; MINUTE=0; REPO_GIVEN=0; ALLOW_WT=0; WEEKDAYS=1,4
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) REPO="${2:?--repo cần đường dẫn}"; REPO_GIVEN=1; shift 2 ;;
     --allow-worktree) ALLOW_WT=1; shift ;;
     --hour) HOUR="${2:?--hour cần số}"; shift 2 ;;
     --minute) MINUTE="${2:?--minute cần số}"; shift 2 ;;
+    --weekdays) [ $# -ge 2 ] || usage; WEEKDAYS="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
 case "$HOUR" in ''|*[!0-9]*) usage ;; esac
 case "$MINUTE" in ''|*[!0-9]*) usage ;; esac
 [ "$((10#$HOUR))" -le 23 ] && [ "$((10#$MINUTE))" -le 59 ] || usage
+case "$WEEKDAYS" in ''|,*|*,|*,,*|*[!0-7,]*) usage ;; esac   # chỉ số 0–7 cách nhau bằng dấu phẩy
 
 # In main checkout khi $1 nằm trong một linked worktree (git-dir ≠ git-common-dir, so đường dẫn vật lý); rỗng khi không (main checkout,
 # không phải git, thư mục không còn)
@@ -106,14 +109,15 @@ case "$ACTION" in
     IFS="$OLD_IFS"
     mkdir -p "$LA_DIR" "$LOG_DIR" || exit 2
     # plistlib viết XML: không tự escape chuỗi trong heredoc
-    "$PY" - "$PLIST" "$LABEL" "$PY" "$GF" "$REPO" "$HOUR" "$MINUTE" "$JOB_PATH" "$LOG_DIR" <<'PY' || exit 2
+    "$PY" - "$PLIST" "$LABEL" "$PY" "$GF" "$REPO" "$HOUR" "$MINUTE" "$JOB_PATH" "$LOG_DIR" "$WEEKDAYS" <<'PY' || exit 2
 import os, plistlib, sys
-plist, label, py, gf, repo, hour, minute, path, log_dir = sys.argv[1:]
+plist, label, py, gf, repo, hour, minute, path, log_dir, weekdays = sys.argv[1:]
+days = sorted({int(d) % 7 for d in weekdays.split(",")})   # 7 và 0 cùng là Chủ nhật: một mục
 data = {
     "Label": label,
     "ProgramArguments": ["/usr/bin/nice", "-n", "10", py, gf, "run", "--repo", repo],
     "WorkingDirectory": repo,
-    "StartCalendarInterval": {"Hour": int(hour, 10), "Minute": int(minute, 10)},
+    "StartCalendarInterval": [{"Weekday": d, "Hour": int(hour, 10), "Minute": int(minute, 10)} for d in days],
     "EnvironmentVariables": {"PATH": path, "TZ": "Asia/Ho_Chi_Minh", "DEVKIT_GATE_FULL_LOG_DIR": log_dir},
     "StandardOutPath": os.path.join(log_dir, "launchd.out.log"),
     "StandardErrorPath": os.path.join(log_dir, "launchd.err.log"),
@@ -127,7 +131,7 @@ PY
     plutil -lint "$PLIST" >/dev/null || { echo "gate-full-schedule: plist không hợp lệ: $PLIST" >&2; exit 2; }
     "$LAUNCHCTL" bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true   # chưa nạp thì lỗi: bỏ qua
     "$LAUNCHCTL" bootstrap "$DOMAIN" "$PLIST" || { echo "gate-full-schedule: launchctl bootstrap $DOMAIN $PLIST lỗi" >&2; exit 1; }
-    echo "gate-full: đã cài $PLIST — chạy $(printf '%02d:%02d' "$((10#$HOUR))" "$((10#$MINUTE))") mỗi ngày cho $REPO; tóm tắt: $LOG_DIR/summary-latest.md"
+    echo "gate-full: đã cài $PLIST — chạy $(printf '%02d:%02d' "$((10#$HOUR))" "$((10#$MINUTE))") các thứ $WEEKDAYS (launchd: 1 = thứ Hai, 0/7 = Chủ nhật) cho $REPO; tóm tắt: $LOG_DIR/summary-latest.md"
     ;;
   uninstall)
     # Repo đã mất (worktree gỡ trước lịch) thì slug tính lại theo đường dẫn nhập, không phải đường dẫn vật lý lúc cài: tìm plist của kit có
@@ -147,7 +151,7 @@ PY
   status)
     if [ -f "$PLIST" ]; then echo "plist: $PLIST"; else echo "plist: chưa cài ($PLIST)"; fi
     if P="$("$LAUNCHCTL" print "$DOMAIN/$LABEL" 2>/dev/null)"; then
-      printf '%s\n' "$P" | grep -E '^[[:space:]]*(state|last exit code|runs|pid|program|path) =|Hour|Minute' | head -20
+      printf '%s\n' "$P" | grep -E '^[[:space:]]*(state|last exit code|runs|pid|program|path) =|Weekday|Hour|Minute' | head -24
     else
       echo "launchd: chưa nạp $DOMAIN/$LABEL"
     fi
