@@ -6092,8 +6092,8 @@ def _emit_rerun_skip(path, selected_ids, rerun_mode, deferred_by, args, tests_to
 def run_precommit_tests(modified_files) -> tuple:
     """(ran, failed, skipped, untested): the matrix suites whose watch_files match the staged
     files, run at commit. A commit with a clear subject could still carry code that turns the
-    checklist red (Goods 2026-09-25); tests only ran in agent sessions. Light suites only
-    unless DEVKIT_PRECOMMIT_TESTS=all; =0 turns it off. Commands come from the matrix at HEAD.
+    checklist red (Goods 2026-09-25); tests only ran in agent sessions. Only DEVKIT_PRECOMMIT_TESTS=light or =all run
+    suites (unset, a direct --staged caller: light; git-pre-commit.sh defaults it to 0). Commands come from the matrix at HEAD.
     A commit must stay quick: a suite whose last recorded run took over DEVKIT_PRECOMMIT_MAX_S
     (30 s) is skipped, the run stops starting suites past DEVKIT_PRECOMMIT_BUDGET_S (120 s), and
     a suite past DEVKIT_PRECOMMIT_TEST_TIMEOUT (60 s) is a warning, not a block — the DevKit's own
@@ -6104,7 +6104,7 @@ def run_precommit_tests(modified_files) -> tuple:
     ponytail: runs on the working tree (unstaged edits included), not the staged blobs alone;
     run from a `git stash --keep-index` copy if unstaged edits ever mask a failure."""
     mode = os.environ.get("DEVKIT_PRECOMMIT_TESTS", "light")
-    if mode == "0" or not modified_files:
+    if mode not in ("light", "all") or not modified_files:
         return [], [], [], []
     matrix, _problem = load_active_matrix(None, "HEAD")
     matrix, _problem = follow_matrix_renames(matrix, _problem, None, "HEAD", staged=True)
@@ -6221,8 +6221,8 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
                     f"Suites that cannot run on this machine (untested_exit): {', '.join(untested)}"))
     if skipped:
         shown = ", ".join(f"{sid} ({why})" for sid, why in skipped)
-        log_warn(tr(f"Suite không chạy ở pre-commit (cổng Stop hoặc nightly chạy; DEVKIT_PRECOMMIT_TESTS=all để chạy): {shown}",
-                    f"Suites not run at pre-commit (the Stop gate or nightly runs them; DEVKIT_PRECOMMIT_TESTS=all to run them): {shown}"))
+        log_warn(tr(f"Suite không chạy ở pre-commit (gate của task, merge gate hay heavy gate chạy; DEVKIT_PRECOMMIT_TESTS=all để chạy): {shown}",
+                    f"Suites not run at pre-commit (the task gate, merge gate or heavy gate runs them; DEVKIT_PRECOMMIT_TESTS=all to run them): {shown}"))
     if not static_ok:
         verdict, color, exit_code = tr("REJECT — sửa các điểm trên rồi commit lại", "REJECT — fix the findings above, then commit again"), RED, 1
     elif failed:
@@ -6231,8 +6231,8 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
     elif unreadable:
         verdict, color, exit_code = tr(f"CHƯA XÁC MINH — {len(unreadable)} file đã stage không đọc được", f"UNVERIFIED — {len(unreadable)} staged files could not be read"), YELLOW, 2
     else:
-        verdict, color, exit_code = tr("TĨNH SẠCH — test hồi quy KHÔNG chạy ở pre-commit (postfix-gate --run-tests để nghiệm thu)",
-                                       "STATIC CLEAN — regression tests are NOT run in pre-commit (postfix-gate --run-tests to accept)"), GREEN, 2
+        verdict, color, exit_code = tr("TĨNH SẠCH — pre-commit không phải nghiệm thu (postfix-gate --run-tests --scoped để nghiệm thu)",
+                                       "STATIC CLEAN — pre-commit is not an acceptance (postfix-gate --run-tests --scoped to accept)"), GREEN, 2
     print(f"  {BOLD}{tr('KẾT LUẬN', 'VERDICT')}:{RESET} {color}{BOLD}{verdict}{RESET}\n")
     if args.json:
         print(json.dumps({"mode": "staged", "exit_code": exit_code, "static_ok": static_ok,
