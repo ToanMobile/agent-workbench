@@ -5856,6 +5856,8 @@ def suite_env():
             "DEVKIT_PER_TEST_CACHE",   # B2: chỉ run_in_group đặt nó, cho lệnh run_impacted.sh chuẩn của lượt này
             # #644: danh sách --scoped chỉ cho runner kit (run_in_group gắn lại): suite khác chép runner thật rồi hỏi --list thì thấy nó
             "DEVKIT_SCOPED_TESTS", "DEVKIT_SCOPED_NO_CONSISTENCY",
+            # gate speed v26 mục 10: núm độ rộng / slot của điểm gộp là của lượt gate này; gate lồng trong một suite (test) không thừa hưởng
+            "DEVKIT_MERGE_PARALLEL", "DEVKIT_MERGE_WIDE_LOAD_MAX", "DEVKIT_MERGE_GATE_SLOTS",
             "DEVKIT_IMPACTED_DIRS",   # #616: shard do tiền tố của lệnh ma trận đặt; biến có sẵn trong môi trường không được thu hẹp suite không tiền tố
             # 04/11: bể test chung của nhóm shard (tests/lib/job_pool.py) là của MỘT lượt gate: nhóm tự đặt lại sau suite_env(), suite khác không vào bể
             "DEVKIT_TEST_POOL_DIR", "DEVKIT_JOB_POOL",
@@ -6290,6 +6292,9 @@ _GATE_SLOT_REC = {}
 # #472: worktree scratch của điểm gộp (scripts/git/integrate.py, .claude/bin/super-board-merge-gate.sh, super-board-merge-train.sh);
 # cùng tiền tố với scripts/governance/gate_speed_report.py MERGE_POINT_PREFIXES và bin/batch_canary.py
 MERGE_POINT_PREFIXES = (".integrate-scratch-", ".merge-scratch-", ".train-scratch-")
+# Gate speed v26 mục 10: guard có hạn giờ cứng trong test (test_agent_kit_integrate.sh, kill 5 s của test_guard_protected_push_wrappers.sh,
+# test_session_lock.sh): ở điểm gộp chạy tuần tự sau cùng, không trong nhóm parallel_safe rộng
+TIMED_GUARD_IDS = ("REG-DK-INTEGRATE-01", "REG-742-A1-GUARD-PUSH-WRAPPERS-01", "REG-DK-SESSION-01")
 RUN_LOG_CHANGED_MAX = 50          # đường dẫn tối đa trong changed_files của một dòng runs.jsonl (n_changed vẫn là số thật)
 
 
@@ -6617,10 +6622,40 @@ def default_gate_slots() -> int:
         value = _capacity.gate_max()
         if type(value) is not int or value < 1:
             raise ValueError(f"gate_max trả {value!r}")
-        return value
+        return max(value, merge_gate_slots_floor())
     except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì cũng không làm chết gate
         log_warn(f"capacity: {exc!r}; DEVKIT_GATE_SLOTS mặc định 3")
-        return 3
+        return max(3, merge_gate_slots_floor())
+
+
+def merge_wide_parallel(cap, project_dir) -> int:
+    """Gate speed v26 mục 10: ở điểm gộp (scratch merge gate / train / integrate) khi tải 1 phút dưới DEVKIT_MERGE_WIDE_LOAD_MAX (mặc định 2 × số lõi
+    của capacity) thì nhóm suite parallel_safe rộng ít nhất DEVKIT_MERGE_PARALLEL (mặc định 6). Ngoài điểm gộp, tải cao hơn hay đọc lỗi: `cap` như cũ.
+    Chỉ gọi khi DEVKIT_GATE_PARALLEL không đặt (số đã đặt vẫn là công tắc tường minh)."""
+    if not at_merge_point(project_dir):
+        return cap
+    try:
+        _bin = str(Path(__file__).resolve().parent)
+        if _bin not in sys.path:
+            sys.path.insert(0, _bin)
+        import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+        raw = (os.environ.get("DEVKIT_MERGE_WIDE_LOAD_MAX") or "").strip()
+        lmax = float(raw) if raw else 2.0 * float(_capacity.cores())
+        load = _capacity.load()   # DEVKIT_CAPACITY_LOAD rồi os.getloadavg()
+        want = int((os.environ.get("DEVKIT_MERGE_PARALLEL") or "6").strip())
+    except Exception as exc:   # noqa: BLE001 - đọc tải / lõi lỗi: giữ độ rộng cũ
+        log_warn(f"merge width: {exc!r}; giữ {cap}")
+        return cap
+    return max(cap, want) if load is not None and load < lmax else cap
+
+
+def merge_gate_slots_floor() -> int:
+    """Gate speed v26 mục 10: lượt ưu tiên merge (DEVKIT_SLOT_PRIORITY=merge) thấy ít nhất DEVKIT_MERGE_GATE_SLOTS (mặc định 2) slot pool gate khi
+    DEVKIT_GATE_SLOTS không đặt (DEVKIT_CAPACITY=0,5 cho gate_max 1). Lượt khác, hay số không phải nguyên ≥ 1: 0 (không sàn)."""
+    if (os.environ.get("DEVKIT_SLOT_PRIORITY") or "").strip().lower() != "merge":
+        return 0
+    raw = (os.environ.get("DEVKIT_MERGE_GATE_SLOTS") or "2").strip()
+    return int(raw) if raw.isdigit() and int(raw) >= 1 else 0
 
 
 def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
@@ -7468,6 +7503,12 @@ def main():
         regression_tests[:] = [t for t in regression_tests if t.get("id") not in added_set] + tail
         print(f"  • {tr('Ma trận chỉ THÊM rule so với', 'The matrix only ADDS rules relative to')} {base_ref}: "
               f"{tr('chạy test mới sau cùng', 'running the new tests last')} {', '.join(matrix_added[:10])}{' …' if len(matrix_added) > 10 else ''}")
+    # Gate speed v26 mục 10: guard có hạn giờ cứng bên trong (kill 5 s, chờ tiến trình) chạy tuần tự SAU CÙNG, không chung nhóm rộng của điểm gộp
+    timed = [t for t in regression_tests if t.get("merge_guard") and t.get("id") in TIMED_GUARD_IDS]
+    if timed:
+        for t in timed:
+            t["parallel_safe"] = False
+        regression_tests[:] = [t for t in regression_tests if t not in timed] + timed
 
     print(f"  • {tr('Dự án kích hoạt', 'Project')}: {CYAN}{matrix.get('project') or active_profile_name()}{RESET}")
     if matrix_problem:
@@ -8191,7 +8232,7 @@ def main():
     try:
         parallel_cap = int(os.environ.get("DEVKIT_GATE_PARALLEL", "").strip())
     except ValueError:
-        parallel_cap = default_gate_parallel()
+        parallel_cap = merge_wide_parallel(default_gate_parallel(), project_dir)
     slots = threading.BoundedSemaphore(max(parallel_cap, 1))
     group, group_ts, deferred = [], set(), []
     # 04/11 (Việc 2): the #616 shards of the kit runner (a leading DEVKIT_IMPACTED_DIRS=, disjoint by directory) ran one after another, though
