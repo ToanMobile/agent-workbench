@@ -1865,14 +1865,18 @@ def _task_paths(project_dir):
     return os.path.join(os.path.dirname(own), TASK_RECEIPT), os.path.join(os.path.dirname(shared), TASK_STORE_DIR)
 
 
-def write_task_receipt(project_dir, fp, diff_base, session, tests=None):
+def write_task_receipt(project_dir, fp, diff_base, session, tests=None, matrix_arg=None):
     """Ghi biên nhận task khi cây vẫn là cây đã kiểm (fp lấy trước khi suite chạy). Lỗi ghi chỉ là cảnh báo: không đổi kết luận.
-    tests (#645): suite của lượt — status/mode ghi rõ suite nào dùng lại PASS (mode "cached") và suite nào chạy thật."""
+    tests (#645): suite của lượt — status/mode ghi rõ suite nào dùng lại PASS (mode "cached") và suite nào chạy thật.
+    Gate speed v14 mục 1: exit, result_format, gate_sha, matrix_sha, local_sha, local_regen cùng tên với biên nhận full / scoped, để
+    tree_fp.receipt_for_tree (Stop hook) kiểm mọi loại biên nhận bằng một hàm."""
     import tree_fp  # noqa: PLC0415 - sibling module in bin/ (_task_paths đã đưa bin/ vào sys.path)
     own, _ = _task_paths(project_dir)
     if not own or not re.fullmatch(r"[0-9a-f]{24}", fp or "") or tree_fp.tree_fingerprint(project_dir) != fp:
         return False
-    data = {"scope": "task", "fp": fp, "tested_at": time.time(), "diff_base": diff_base, "session": session}
+    data = {"scope": "task", "fp": fp, "tested_at": time.time(), "diff_base": diff_base, "session": session,
+            "exit": 0, "result_format": RESULT_FORMAT, "gate_sha": _sha_file(__file__), "matrix_sha": _sha_file(find_matrix_path(matrix_arg)),
+            "local_sha": local_state_sha(project_dir), "local_regen": []}
     if tests:   # proof_gate đọc tối đa 64 KiB của biên nhận: giữ gọn (id, status, mode), tối đa 300 suite
         data["tests"] = [{"id": t.get("id"), "status": t.get("status"), "mode": t.get("mode")} for t in tests if t.get("command")][:300]
     try:
@@ -1891,6 +1895,32 @@ def write_task_receipt(project_dir, fp, diff_base, session, tests=None):
         return False
     _tree_store(tree_fp, project_dir, fp, data, kind=TASK_STORE_DIR)
     return True
+
+
+def write_gate_outcome(project_dir, fp, exit_code, reason, lines, base):
+    """Gate speed v14 mục 1: kết luận KHÔNG có biên nhận mà Stop hook vẫn phải nói lại một lần cho mỗi thay đổi (reason: nothing, device_untested,
+    matrix, edited_test, env): <git dir>/postfix-gate/outcomes/<fp>.json {exit, reason, lines, base, at}. reason None: bỏ outcome cũ của cây fp.
+    base là sha commit (rỗng khi không phân giải được): Stop hook đối chiếu rev-list trên nó. Lỗi ghi chỉ là cảnh báo: không đổi kết luận."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    own = tree_fp.receipt_path(project_dir)
+    if not own or not re.fullmatch(r"[0-9a-f]{24}", fp or ""):
+        return
+    path = os.path.join(os.path.dirname(own), "outcomes", fp + ".json")
+    try:
+        if reason is None:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(path)
+            return
+        sha = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--verify", "-q", str(base) + "^{commit}"],
+                             capture_output=True, text=True, timeout=30).stdout.strip()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".tmp_outcome.", dir=os.path.dirname(path))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"exit": exit_code, "reason": reason, "lines": list(lines), "base": sha, "at": time.time()}, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except (OSError, subprocess.SubprocessError) as e:
+        log_warn(f"gate outcome ({path}): {e}")
 
 
 def drop_task_receipt(project_dir, fp):
@@ -7051,6 +7081,9 @@ def main():
                     "Clean working tree and no matching --diff: NOTHING to audit."))
         log_warn(tr("Gate không kết luận PASS khi không có gì để kiểm. Dùng --diff <ref> để kiểm một commit.",
                     "The gate never reports PASS for nothing. Use --diff <ref> to audit a commit."))
+        if run_tests:
+            write_gate_outcome(get_project_dir(), tree_fp_of(get_project_dir()), 3, "nothing",
+                               [tr("Không có thay đổi nào để kiểm (exit 3): gate không kết luận PASS.", "Nothing to audit (exit 3): the gate never reports PASS for nothing.")], base_ref)
         return 3
 
     # A listed path that can't be read is NOT clean — it is unverified.
@@ -9273,6 +9306,14 @@ def main():
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     _lap("verdict")
+    if run_tests and not project_gone:
+        # Gate speed v14 mục 1: kết luận không có biên nhận mà đổi code không chữa được; đỏ thật, BUSY, BUDGET không ghi outcome. Exit 0 / đỏ thật bỏ outcome cũ của cây.
+        _failing = [t for t in regression_tests if t.get("status") in ("FAIL", "TIMEOUT")]
+        _outcome = ("matrix" if exit_reason == "matrix" else "edited_test" if exit_reason == "edited_test"
+                    else "device_untested" if exit_reason == "missing_tool"
+                    else "env" if exit_reason == "fail" and static_ok and _failing and all(t.get("env_blocked") for t in _failing) else None)
+        if _outcome or exit_code in (0, 1):
+            write_gate_outcome(project_dir, budget_fp or tree_fp_of(project_dir), exit_code, _outcome, [verdict_text], base_ref)
     partial = not force_reason or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)
     # #154 (21/10): the merge gate of `worktree finish` (scripts/git/worktree.py _merge_gate sets DEVKIT_GATE_MERGE_CHECK=1) checks for
     # regressions only; its exit 2 (an edited test awaiting the session's approval, a suite that could not run) is the session's own
@@ -9368,7 +9409,7 @@ def main():
                 and subprocess.run(["git", "-C", str(project_dir), "merge-base", "--is-ancestor", base_ref, task_mb],
                                    capture_output=True).returncode == 0):
             if write_task_receipt(project_dir, task_fp, task_mb, args.session or os.environ.get("DEVKIT_SESSION_ID")
-                                  or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID"), regression_tests):
+                                  or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID"), regression_tests, args.matrix):
                 print(f"  • {GREEN}{tr('Biên nhận task đã ghi (XONG của task trong lượt này; push nhánh đích vẫn cần --full)', 'Task receipt written (XONG for this task in this turn; a push to the trunk still needs --full)')}{RESET}")
         elif exit_code == 1 and run_tests and not project_gone:
             drop_task_receipt(project_dir, task_fp or tested_fp or budget_fp or tree_fp_of(project_dir))
