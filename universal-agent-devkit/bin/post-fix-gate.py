@@ -6117,6 +6117,11 @@ def run_precommit_tests(modified_files) -> tuple:
     ponytail: runs on the working tree (unstaged edits included), not the staged blobs alone;
     run from a `git stash --keep-index` copy if unstaged edits ever mask a failure."""
     mode = os.environ.get("DEVKIT_PRECOMMIT_TESTS", "light")
+    if mode == "1":   # lane D2 (review P3): =1 từng nghĩa là light; giữ như vậy
+        mode = "light"
+    elif mode not in ("light", "all", "0"):
+        log_warn(tr(f"DEVKIT_PRECOMMIT_TESTS={mode} không hợp lệ (light / all / 1 / 0): không chạy suite",
+                    f"DEVKIT_PRECOMMIT_TESTS={mode} is not valid (light / all / 1 / 0): no suites run"))
     if mode not in ("light", "all") or not modified_files:
         return [], [], [], []
     matrix, _problem = load_active_matrix(None, "HEAD")
@@ -7324,6 +7329,9 @@ def main():
                 # [core-smoke] thêm sau cap chạy ở lượt này: test nào cap đã hoãn mà nay chạy thì không còn là deferred_to_heavy
                 _cs = set(scoped.get("core_smoke") or [])
                 scoped["deferred_to_heavy"]["tests"] = [p for p in scoped["deferred_to_heavy"]["tests"] if p not in _cs]
+                # lane D2 (review P3): suite cap đã hoãn mà scoped_suites thêm lại để chạy [core-smoke] cũng không còn là deferred_to_heavy
+                _now = {t.get("id") for _, t in added} | {t.get("id") for t in regression_tests}
+                scoped["deferred_to_heavy"]["suites"] = [s for s in scoped["deferred_to_heavy"]["suites"] if s not in _now]
         _deferred = scoped["deferred_to_heavy"]
         if _deferred["tests"] or _deferred["suites"]:
             print(f"  • {YELLOW}deferred_to_heavy: {len(_deferred['tests'])} test, {len(_deferred['suites'])} suite "
@@ -7353,12 +7361,22 @@ def main():
         # không bao giờ vào deferred_to_heavy, luôn chạy thật (merge_guard: không khoá, không biên nhận, không same-tree, không rerun-skip).
         # Danh sách = [merge-guard] của cây này ∪ của base; id có trong danh sách mà ma trận không có ⇒ một suite đỏ mang tên id đó.
         if at_merge_point(project):
-            mg = scoped_gate.merge_guards(project, rules, scoped.get("base_sha") or "")   # cùng một hàm với gate_full._scoped_pick
+            # Lane D2 (review P2-2): base của guard phân giải riêng (rev-parse, rồi merge-base), không chỉ dựa vào scoped["base_sha"]; không
+            # phân giải được thì fail closed: chỉ danh sách của cây gộp thì PR xoá một id khỏi [merge-guard] tự gỡ được guard đó.
+            guard_base = scoped.get("base_sha") or ""
+            for cmd in (["rev-parse", "--verify", "-q", base_ref + "^{commit}"], ["merge-base", base_ref, "HEAD"]):
+                if guard_base:
+                    break
+                guard_base = subprocess.run(["git", "-C", project] + cmd, capture_output=True, text=True).stdout.strip()
+            mg = scoped_gate.merge_guards(project, rules, guard_base)   # cùng một hàm với gate_full._scoped_pick
             guard_ids = mg["ids"]
             have = {t.get("id"): t for t in regression_tests}
-            for gid in mg["missing"]:
+            red = [(gid, f"merge-guard {gid}: id có trong [merge-guard] nhưng không có trong ma trận") for gid in mg["missing"]]
+            if not guard_base:
+                red.append(("MERGE-GUARD-BASE", f"merge-guard: base không phân giải ({base_ref}): không hợp được [merge-guard] của base"))
+            for gid, msg in red:
                 regression_tests.append({"component": "merge-guard", "id": gid, "name": "merge-guard thiếu trong ma trận",
-                                         "command": f"echo '✖ merge-guard {gid}: id có trong [merge-guard] nhưng không có trong ma trận'; exit 1",
+                                         "command": f"echo {shlex.quote('✖ ' + msg)}; exit 1",
                                          "files": [], "parallel_safe": False, "status": "NOT_RUN", "duration": "-", "merge_guard": True})
             for comp, _t in mg["rows"]:
                 gid = _t.get("id")

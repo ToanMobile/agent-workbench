@@ -979,7 +979,7 @@ def _is_code_file(project, path, nnt):
             or ("." not in os.path.basename(path) and _shebang(os.path.join(project, path))))
 
 
-def cap_selection(project, decision, selected, added, rules, changed, rebuild, unrunnable=(), needs_no_test=None, guards=()):
+def cap_selection(project, decision, selected, added, rules, changed, rebuild, unrunnable=(), needs_no_test=None):
     """Gate speed v16 mục 5b: chỉ test kit trực tiếp chặn merge. Ở lại: test đổi trong diff và suite nêu tên nó; test hạng đầu của MỖI file code đổi (kit hay không,
     cả file bị xoá mà test nêu tên); [core-smoke]; suite có watch_files khớp file đổi ngoài kit, .claude/super-board/configs/ hay .claude/settings*.json; suite không phải kit; guard. File code không
     test nào, không suite nào ở lại phủ ⇒ [core-smoke]. [smoke] rời lượt --scoped. Còn lại vào deferred_to_heavy và không chạy.
@@ -1023,9 +1023,8 @@ def cap_selection(project, decision, selected, added, rules, changed, rebuild, u
         named = _named_tests(cmd)
         if not any(p.startswith(KIT_TEST_PREFIXES) for p in named):
             return True                                     # suite không phải kit (app, mcp-server, Gradle, Unity), shard của ma trận cũ
-        # guard của điểm gộp không qua đây: gate tiêm nó SAU cap (mục 7), nên `guards` chỉ còn để giữ chữ ký cho người gọi cũ
-        return (t.get("id") == "SCOPED-EXTRA" or any(p in keep or p in core_smoke for p in named)
-                or watches(t.get("id"), outer))
+        # guard của điểm gộp không qua đây: gate tiêm nó SAU cap (mục 7)
+        return t.get("id") == "SCOPED-EXTRA" or any(p in keep or p in core_smoke for p in named)
     gone = [t for t in selected if t.get("command") and not stays(t)]
     gone_ids = {t.get("id") for t in gone}
     kept_sel = [t for t in selected if t.get("id") not in gone_ids]

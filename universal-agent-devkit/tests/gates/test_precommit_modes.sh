@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test hồi quy (gate speed v14, mục 2 phần PFG): run_precommit_tests chỉ chạy suite ở DEVKIT_PRECOMMIT_TESTS=light / all; biến vắng (người gọi trực tiếp
-# --staged, không qua git-pre-commit.sh) vẫn là light; giá trị khác không chạy gì. Lời gate không còn nói Stop chạy suite, không nói "KHÔNG chạy" khi suite nhẹ đã chạy.
+# --staged, không qua git-pre-commit.sh) vẫn là light; =1 là light; giá trị khác không chạy gì. Lời gate không còn nói Stop chạy suite, không nói "KHÔNG chạy" khi suite nhẹ đã chạy.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 unset DEVKIT_PRECOMMIT_TESTS DEVKIT_GATE_CACHE DEVKIT_SUITE_CACHE CI DEVKIT_SCOPED_TESTS GATE_TOTAL_BUDGET_S
@@ -34,7 +34,7 @@ DEVKIT_PRECOMMIT_TESTS=light staged; ran && ok "light chạy" || fail "light kh�
 DEVKIT_PRECOMMIT_TESTS=all staged; ran && ok "all chạy" || fail "all không chạy"
 DEVKIT_PRECOMMIT_TESTS=0 staged; ran && fail "0 vẫn chạy" || ok "0 không chạy"
 DEVKIT_PRECOMMIT_TESTS=off staged; ran && fail "giá trị lạ vẫn chạy suite" || ok "giá trị lạ không chạy suite"
-DEVKIT_PRECOMMIT_TESTS=1 staged; ran && fail "=1 vẫn chạy suite" || ok "=1 không chạy suite"
+DEVKIT_PRECOMMIT_TESTS=1 staged; ran && ok "=1 chạy như light (lane D2)" || fail "=1 không chạy suite"
 
 staged
 if LC_ALL=C grep -aqE "cổng Stop|Stop gate|the Stop" "$TMP/out"; then fail "lời bỏ qua suite vẫn nói Stop chạy: $(LC_ALL=C grep -aE 'cổng Stop|Stop gate' "$TMP/out" | cut -c1-160)"; else ok "lời bỏ qua suite không nhắc Stop"; fi
