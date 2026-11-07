@@ -881,8 +881,16 @@ def _scoped_pick(pfg, scratch: str, c: str, rules: list, matrix_rel: str = ""):
         scoped_gate.add_core_smoke(dec, scratch)
         added, _, _ = pfg.scoped_suites(dec, rules, selected, covers, skip=skipped)   # py/js của core-smoke cũng không chạy ở PR
         whole |= {t.get("id") for _, t in added if not pfg._KIT_RUNNER.search(t.get("command") or "")}
+    # v26 mục 7: commit lên main đều qua điểm gộp (merge gate / train / integrate), nơi gate tiêm guard SAU cap bằng cùng hàm này
+    # (base = cha như ở trên): guard và test nó nêu tên đã chạy thật, không bao giờ deferred. Repo không có [merge-guard] ⇒ rỗng.
+    # Không xét at_merge_point(scratch): scratch của heavy gate không phải điểm gộp, còn commit được dựng lại thì đã qua một điểm gộp.
+    mg = scoped_gate.merge_guards(scratch, rules, git_out(scratch, "rev-parse", "--verify", "-q", c + "^"))
+    gids = {t.get("id") for _, t in mg["rows"]} | set(mg["missing"])   # id thiếu: gate chạy một suite đỏ mang tên đó
+    whole |= gids
+    deferred = dict(deferred, suites=[s for s in deferred["suites"] if s not in gids],
+                    tests=[p for p in deferred["tests"] if p not in set(mg["tests"])])
     # bỏ skipped TRƯỚC: file py/js bị bỏ chỉ khỏi SCOPED-EXTRA, lệnh suite chạy cả lệnh có nhắc nó thì nó vẫn chạy (thêm ở dưới)
-    ran = (set(dec.get("tests") or []) | set(dec.get("smoke") or []) | set(dec.get("core_smoke") or [])) - set(skipped)
+    ran = (set(dec.get("tests") or []) | set(dec.get("smoke") or []) | set(dec.get("core_smoke") or [])) - set(skipped) | set(mg["tests"])
     # suite chạy cả lệnh: file trong lệnh của nó cũng đã chạy, dù file đó thuộc mã suite khác (một file test, nhiều mã)
     for r in rules:
         for t in r.get("mandatory_regression_tests") or []:
