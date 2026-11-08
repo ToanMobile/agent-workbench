@@ -60,9 +60,9 @@ P=.claude/bin/super-board-merge-policy.py
 S=.claude/skills/super-board/references/config-schema.json
 check "danh sách từ khoá trong merge-policy.py (PR #86/#300)" auto "$P|$P" "$KW"
 OLD="        \"keywords\": [\"$J\", \"$BC\", \"$PH\", \"$SR\"],"
-check "kit-sync đổi dạng danh sách, cùng tập luật khớp (c45755c9)" auto "$P|$P" "$OLD⇒$KW        \"patterns\": [r\"$BC(?!o)\"],"
+check "kit-sync đổi dạng danh sách, cùng tập luật khớp (c45755c9)" auto "$P|$P" "${OLD}⇒${KW}        \"patterns\": [r\"$BC(?!o)\"],"
 # Chủ repo 08/11 "mọi thứ auto merge": sửa chính file luật, kể cả bớt luật hay tinh chỉnh pattern, vẫn auto.
-check "bớt một từ khoá auth khỏi danh sách luật vẫn auto" auto "$P|$P" "$KW⇒        \"keywords\": [\"$PH\", \"$SR\"],"
+check "bớt một từ khoá auth khỏi danh sách luật vẫn auto" auto "$P|$P" "${KW}⇒        \"keywords\": [\"$PH\", \"$SR\"],"
 check "kit-sync tinh chỉnh pattern vẫn auto" auto "$P|$P" "                     r\"\\b[sp]k_live_\", r\"\\b$ST\\(\",⇒                     r\"\\b[sp]k_live_\", r\"\\b$ST(?:client)?\\(\","
 check "danh sách từ khoá trong config-schema.json" auto "$S|$S" "\"keywords\": [\"$J\", \"$BC\", \"$PH\"] },"
 check "đối chứng âm: cùng dòng trong file app" auth "app/x.ts|app/x.ts" "$KW"
