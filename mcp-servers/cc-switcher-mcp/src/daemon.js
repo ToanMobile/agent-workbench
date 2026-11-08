@@ -143,13 +143,13 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
             text: `${cbq.message.text}\n\n✅ Đã duyệt lúc ${at} (đã ghi done)`,
             reply_markup: { inline_keyboard: [] },
           });
+          continue;
         } catch (err) {
           // Bam hai lan cung phut: Telegram tra "message is not modified", khong phai loi.
-          if (!/not modified/i.test(String(err?.message || ''))) {
-            logStructured('warn', 'telegram_mark_approved_failed', { error: err?.message });
-          }
+          if (/not modified/i.test(String(err?.message || ''))) continue;
+          // Loi khac (mang, 429): roi xuong nhanh duoi de van bo nut, tin khong con trong nhu dang cho.
+          logStructured('warn', 'telegram_mark_approved_failed', { error: err?.message });
         }
-        continue;
       }
       // Nut cua bang dieu khien cu (clearButtons), hay tin duyet khong co text: go hang nut khoi tin nhan.
       if (msgId && (cbResult.clearButtons || cbResult.approved)) {

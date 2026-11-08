@@ -12,7 +12,7 @@ const HEAD = 'cd'.repeat(20);
 const ID = 'fedcba9876543210';
 const TEXT = '🙋 PR #12 cần duyệt · head cdcdcdc';
 
-async function press({ request, message = { chat: { id: 111 }, message_id: 7, text: TEXT } }) {
+async function press({ request, message = { chat: { id: 111 }, message_id: 7, text: TEXT }, failEdit = false }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-approve-mark-'));
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos_toan' }));
   const approvals = path.join(dir, 'approvals');
@@ -26,7 +26,10 @@ async function press({ request, message = { chat: { id: 111 }, message_id: 7, te
       callback_query: { id: 'cb', data: `sb:ap:${ID}`, from: { id: 111 }, message },
     }], {
       stateDir: dir,
-      apiCaller: async (bot, method, body) => { apiCalls.push({ method, body }); },
+      apiCaller: async (bot, method, body) => {
+        apiCalls.push({ method, body });
+        if (failEdit && method === 'editMessageText') throw new Error('Too Many Requests: retry after 5');
+      },
       callbackOpts: {
         approvalsDir: approvals,
         ghRead: async (args) => (args.join(' ').includes('/permission')
@@ -62,6 +65,14 @@ test('duyệt thành công: tin đổi sang "đã duyệt", giữ nội dung cũ
 test('duyệt thành công trên tin không có text: chỉ bỏ nút, không editMessageText', async () => {
   const calls = await press({ request: HEAD, message: { chat: { id: 111 }, message_id: 7, date: 0 } });
   assert.equal(calls.some((c) => c.method === 'editMessageText'), false);
+  const clear = calls.find((c) => c.method === 'editMessageReplyMarkup');
+  assert.ok(clear, JSON.stringify(calls.map((c) => c.method)));
+  assert.deepEqual(clear.body.reply_markup, { inline_keyboard: [] });
+});
+
+// Review PR #1059: sửa tin lỗi (mạng, 429) thì vẫn bỏ nút, tin không còn trông như đang chờ.
+test('duyệt thành công nhưng sửa tin lỗi: vẫn bỏ nút', async () => {
+  const calls = await press({ request: HEAD, failEdit: true });
   const clear = calls.find((c) => c.method === 'editMessageReplyMarkup');
   assert.ok(clear, JSON.stringify(calls.map((c) => c.method)));
   assert.deepEqual(clear.body.reply_markup, { inline_keyboard: [] });
