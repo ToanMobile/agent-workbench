@@ -12,7 +12,7 @@ const HEAD = 'cd'.repeat(20);
 const ID = 'fedcba9876543210';
 const TEXT = '🙋 PR #12 cần duyệt · head cdcdcdc';
 
-async function press({ request }) {
+async function press({ request, message = { chat: { id: 111 }, message_id: 7, text: TEXT } }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-approve-mark-'));
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos_toan' }));
   const approvals = path.join(dir, 'approvals');
@@ -23,7 +23,7 @@ async function press({ request }) {
   try {
     await processIncomingTelegramUpdates([{
       update_id: 1,
-      callback_query: { id: 'cb', data: `sb:ap:${ID}`, from: { id: 111 }, message: { chat: { id: 111 }, message_id: 7, text: TEXT } },
+      callback_query: { id: 'cb', data: `sb:ap:${ID}`, from: { id: 111 }, message },
     }], {
       stateDir: dir,
       apiCaller: async (bot, method, body) => { apiCalls.push({ method, body }); },
@@ -55,6 +55,16 @@ test('duyệt thành công: tin đổi sang "đã duyệt", giữ nội dung cũ
   assert.ok(edit.body.text.startsWith(TEXT), edit.body.text);
   assert.match(edit.body.text, /✅ Đã duyệt/);
   assert.deepEqual(edit.body.reply_markup, { inline_keyboard: [] });
+});
+
+// Review PR #1059 (P3): tin không còn truy cập được (MaybeInaccessibleMessage) hay tin caption không có `text`: chỉ bỏ nút,
+// không ghi đè nội dung gốc bằng mỗi dòng "đã duyệt".
+test('duyệt thành công trên tin không có text: chỉ bỏ nút, không editMessageText', async () => {
+  const calls = await press({ request: HEAD, message: { chat: { id: 111 }, message_id: 7, date: 0 } });
+  assert.equal(calls.some((c) => c.method === 'editMessageText'), false);
+  const clear = calls.find((c) => c.method === 'editMessageReplyMarkup');
+  assert.ok(clear, JSON.stringify(calls.map((c) => c.method)));
+  assert.deepEqual(clear.body.reply_markup, { inline_keyboard: [] });
 });
 
 test('duyệt bị từ chối (request của head khác): tin giữ nguyên, không sửa', async () => {

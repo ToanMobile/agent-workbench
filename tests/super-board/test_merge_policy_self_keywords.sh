@@ -49,7 +49,6 @@ PY
   plan="$(python3 "$POLICY" --config "$TMP/cfg.json" --meta "$TMP/meta.json" --diff "$TMP/out.diff" 2>&1)"
   case "$want:$plan" in
     auth:*'"auth"'*) ok "$name: cần người duyệt (auth)" ;;
-    money:*'"money"'*) ok "$name: cần người duyệt (money)" ;;
     auto:*'"human": []'*) ok "$name: auto" ;;
     *) fail "$name: muốn $want, được: $plan" ;;
   esac
