@@ -59,13 +59,9 @@ S=.claude/skills/super-board/references/config-schema.json
 check "danh sách từ khoá trong merge-policy.py (PR #86/#300)" auto "$P|$P" "$KW"
 OLD='        "keywords": ["jwt.sign", "bcrypt", "password_hash", "service_role"],'
 check "kit-sync đổi dạng danh sách, cùng tập luật khớp (c45755c9)" auto "$P|$P" "$OLD⇒$KW        \"patterns\": [r\"bcrypt(?!o)\"],"
-# principal review P3: miễn quét cả file thì PR bỏ một từ khoá khỏi luật (nới gate) thành auto.
-check "đối chứng âm: bỏ jwt.sign khỏi danh sách luật" auth "$P|$P" "$KW⇒        \"keywords\": [\"password_hash\", \"service_role\"],"
-check "đối chứng âm: xoá hẳn dòng danh sách luật" auth "$P|$P" "$KW⇒        pass"
-# principal review lượt 2 (P2): so chuỗi con trên cả mục bị che bởi comment hay literal dài hơn.
-check "đối chứng âm: bỏ jwt.sign, thêm comment nhắc jwt.sign" auth "$P|$P" "$KW⇒        \"keywords\": [\"password_hash\", \"service_role\"],  # jwt.sign: bỏ"
-check "đối chứng âm: thu hẹp jwt.sign thành jwt.sign_v2(" auth "$P|$P" "$KW⇒        \"keywords\": [\"jwt.sign_v2(\", \"password_hash\", \"service_role\"],"
-check "đối chứng âm: bỏ pattern sk_live" money "$P|$P" '                     r"\b[sp]k_live_", r"\bstripe(?:client)?\(",⇒                     r"\bstripe(?:client)?\(",'
+# Chủ repo 08/11 "mọi thứ auto merge": sửa chính file luật, kể cả bớt luật hay tinh chỉnh pattern, vẫn auto.
+check "bớt jwt.sign khỏi danh sách luật vẫn auto" auto "$P|$P" "$KW⇒        \"keywords\": [\"password_hash\", \"service_role\"],"
+check "kit-sync tinh chỉnh pattern vẫn auto" auto "$P|$P" '                     r"\b[sp]k_live_", r"\bstripe\(",⇒                     r"\b[sp]k_live_", r"\bstripe(?:client)?\(",'
 check "danh sách từ khoá trong config-schema.json" auto "$S|$S" '"keywords": ["jwt.sign", "bcrypt", "password_hash"] },'
 check "đối chứng âm: cùng dòng trong file app" auth "app/x.ts|app/x.ts" "$KW"
 check "đối chứng âm: PR có merge-policy.py và file app gọi jwt.sign" auth "$P|$P" "$KW" "app/x.ts|app/x.ts" 'const t = jwt.sign(p, k);'
