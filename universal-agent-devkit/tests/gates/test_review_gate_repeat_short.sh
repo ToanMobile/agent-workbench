@@ -61,5 +61,13 @@ else fail "R2. rc $rc2, $n2 dòng (lần đầu $n1): $(cat "$TMP/e2" | head -6 
 [ "$rc3" = 2 ] && grep -q 'hai bên tìm ra lỗi khác nhau' "$TMP/e3" \
   && ok "R3. phiên khác: đủ giải thích ($n3 dòng)" || fail "R3. rc $rc3, $n3 dòng"
 
+# R4 (review PR #1059, P2): đường chặn thường (chưa có review nào): bản ngắn vẫn giữ các lựa chọn A–D (lệnh cần chạy).
+: > "$TR"; ev edit t1 "$P/app.py"
+stop c "$TMP/e4"; stop c "$TMP/e5"; rc5=$?
+n4=$(wc -l < "$TMP/e4" | tr -d ' '); n5=$(wc -l < "$TMP/e5" | tr -d ' ')
+if [ "$rc5" = 2 ] && [ "$n5" -lt "$n4" ] && grep -q 'A) Agent principal-code-reviewer' "$TMP/e5" && grep -q 'Như lần chặn trước' "$TMP/e5"; then
+  ok "R4. chặn thường lặp lại: ngắn ($n5 < $n4 dòng), còn lựa chọn A–D"
+else fail "R4. rc $rc5, $n5 dòng (lần đầu $n4): $(cat "$TMP/e5" | tr '\n' '|')"; fi
+
 [ "$FAILS" = 0 ] && { echo "test_review_gate_repeat_short: PASS"; exit 0; }
 echo "test_review_gate_repeat_short: FAIL ($FAILS)"; exit 1

@@ -1203,7 +1203,9 @@ try:
 except OSError:
     pass
 if _again:
-    lines = [l for l in lines if l.startswith(("⛔", "OCR")) or l.lstrip().startswith(("•", "… +", "python3 ", "→"))] + \
+    # Giữ cả các lựa chọn A–D của đường chặn thường: đó là lệnh cần chạy (review PR #1059).
+    lines = [l for l in lines if l.startswith(("⛔", "OCR")) or l.lstrip().startswith(("•", "… +", "python3 ", "→"))
+             or re.match(r"\s+[A-D]\) ", l)] + \
             ["(Như lần chặn trước trong phiên — phần giải thích không lặp lại.)"]
 sys.stderr.write("\n".join(lines) + "\n")
 sys.exit(2)
