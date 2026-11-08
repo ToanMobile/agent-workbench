@@ -31,7 +31,8 @@
         "@mobilenext/mobile-mcp@1.0.16"
       ],
       "env": {
-        "ANDROID_HOME": "${ANDROID_HOME:-}"
+        "ANDROID_HOME": "${ANDROID_HOME:-}",
+        "MOBILEMCP_DISABLE_TELEMETRY": "1"
       }
     },
     "play-store": {

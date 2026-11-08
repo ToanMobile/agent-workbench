@@ -14,12 +14,13 @@ GG="${GG_HOOK:-$DEVKIT_DIR/hooks/block-dangerous-git.sh}"
 
 # mm <want rc> <tool name without prefix> <tool_input json>: DENIED1 is on the device denylist, nothing else is.
 mm() {
-  local want="$1" name="$2" inp="$3" tool="mcp__mobile-mcp__$2"
+  local want="$1" name="$2" inp="$3" why="${4:-}" tool="mcp__mobile-mcp__$2"
   python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[3],"hook_event_name":"PreToolUse",
     "tool_name":sys.argv[1],"tool_input":json.loads(sys.argv[2])}))' "$tool" "$inp" "$P" > "$TMP/in.json"
   ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" ADB_DENY_SERIALS=DENIED1 ADB_ALLOW_SERIALS= ANDROID_SERIAL= \
       bash "$HW" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
   local rc=$?
+  if [ -n "$why" ] && ! grep -q -F -- "$why" "$TMP/err"; then rc="$rc but stderr lacks '$why'"; fi
   if [ "$rc" = "$want" ] && ! crashed; then ok "mm rc $rc: $name $inp"; else fail "mm rc $rc (want $want): $name $inp — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
 }
 
@@ -108,5 +109,25 @@ mmf 2 allowlist mobile_list_elements_on_screen '{"device":"8"}' "Toan's Pixel 8"
 mmf 0 allowlist mobile_list_elements_on_screen '{"device":"emulator-5554"}' "emulator-5554,Pixel 7 API 34"
 mmf 0 allowlist mobile_list_elements_on_screen '{"device":"Pixel 7 API 34"}' "emulator-5554,Pixel 7 API 34"
 mmf 2 allowlist mobile_list_elements_on_screen '{"device":"API"}' "emulator-5554,Pixel 7 API 34"
+
+echo "── mobile-mcp: the four kit configs pin 1.0.16 and switch the vendor telemetry off (review 09/11)"
+# Without MOBILEMCP_DISABLE_TELEMETRY every tool call is posted to us.i.posthog.com (tool name, device count, hashed host id) and
+# get_more_tools sends the agent's free text to the vendor (server.js L142-194, L268-276).
+for cfg in .mcp.json mcp_config.json mcp/.mcp.json mcp/mcp_config.json; do
+  if python3 -I -c 'import json,sys; s=json.load(open(sys.argv[1]))["mcpServers"]["mobile-mcp"]; sys.exit(0 if "@mobilenext/mobile-mcp@1.0.16" in s["args"] and s.get("env",{}).get("MOBILEMCP_DISABLE_TELEMETRY")=="1" and "replicant-mcp" not in json.load(open(sys.argv[1]))["mcpServers"] else 1)' "$DEVKIT_DIR/$cfg"; then
+    ok "config $cfg: mobile-mcp@1.0.16, telemetry off"; else fail "config $cfg: mobile-mcp@1.0.16 with MOBILEMCP_DISABLE_TELEMETRY=1 missing"; fi
+done
+
+echo "── mobile-mcp: an allowlist line is ONE name; several serials on a line are not read as a list any more (fail closed)"
+mmf 2 allowlist mobile_list_elements_on_screen '{"device":"emulator-5554"}' "emulator-5554 emulator-5556"
+mmf 0 allowlist mobile_list_elements_on_screen '{"device":"emulator-5556"}' "emulator-5554
+emulator-5556"
+mmf 0 allowlist mobile_list_elements_on_screen '{"device":"emulator-5554"}' "emulator-5554, emulator-5556"
+
+echo "── mobile-mcp: the refusal says why"
+mm 2 mobile_login_to_cloud_provider '{}' 'mobile-mcp cloud'
+mm 2 mobile_clear_app_data '{"packageName":"com.example.app"}' 'không nêu rõ thiết bị'
+mm 2 mobile_clear_app_data '{"device":"DENIED1","packageName":"com.example.app"}' 'denylist'
+mm 2 mobile_uninstall_app '{"device":"OK1","packageName":"com.android.systemui"}' 'app hệ thống'
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }
