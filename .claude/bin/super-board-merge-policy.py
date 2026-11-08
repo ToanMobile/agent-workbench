@@ -259,6 +259,23 @@ def deleted_paths(diff: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+# File định nghĩa chính luật này: dòng danh sách từ khoá của nó (`"jwt.sign", …`) tự khớp, mọi PR đồng bộ kit đổi dòng
+# đó bị gắn human-gate auth (Idle-Plaza-3D PR #86, OfficeReader PR #300). Chỉ bỏ khỏi quét từ khoá/pattern, khi cả tên
+# cũ lẫn tên mới đúng đường dẫn này (đổi tên file khác vào đây vẫn bị quét); nhãn, path và xoá file vẫn xét như cũ.
+# ponytail: danh sách cứng 2 file; test merge-policy mang dữ liệu từ khoá vẫn cần người, thêm khi kit đồng bộ chúng sang app.
+SELF_POLICY_PATHS = (".claude/bin/super-board-merge-policy.py", ".claude/skills/super-board/references/config-schema.json")
+
+
+def scanned_diff(diff: str) -> str:
+    """Diff bỏ các mục chỉ chạm SELF_POLICY_PATHS; header không đọc được thì giữ (fail-closed)."""
+    keep = []
+    for sec in re.split(r"(?m)^(?=diff --git )", diff):
+        p = diff_git_paths(sec.split("\n", 1)[0]) if sec.startswith("diff --git ") else None
+        if not (p and p[0] in SELF_POLICY_PATHS and p[1] in SELF_POLICY_PATHS):
+            keep.append(sec)
+    return "".join(keep)
+
+
 def comment_free(text: str) -> str:
     """`DROP/**/TABLE` is a valid DROP TABLE (SQL treats a comment as whitespace): blank `/*...*/` out."""
     return " ".join(re.sub(r"/\*.*?\*/", " ", text).split())
@@ -286,7 +303,7 @@ def main() -> int:
 
     labels = {(l.get("name") or "").lower() for l in meta.get("labels") or []}
     paths = [f.get("path") or "" for f in meta.get("files") or []]
-    added = added_text(diff)
+    added = added_text(scanned_diff(diff))
     added_nc = comment_free(added)
     body = meta.get("body") or ""
 
