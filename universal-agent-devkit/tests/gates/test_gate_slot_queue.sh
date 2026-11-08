@@ -485,76 +485,30 @@ git -C "$H_REPO" add -A && git -C "$H_REPO" commit -qm init
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix"},"uuid":"u1","sessionId":"s-h1"}' > "$TMP/h.jsonl"
 PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"session_id":"s-h1","hook_event_name":"Stop","transcript_path":sys.argv[1]}))' "$TMP/h.jsonl")"
 
-# (h1) Khi slot rảnh và không truyền DEVKIT_GATE_SLOT_WAIT_S -> hook truyền mặc định 45 xuống gate. Quan sát ở CHÍNH gate (suite_env
-# bỏ biến này khỏi suite, INSTINCT-046): bản chép của hook trong một kit tạm tìm gate ở <kit>/bin/post-fix-gate.py = trình bọc ghi
-# biến rồi exec gate thật.
+# (h) v26 mục 1: Stop hook KHÔNG chạy gate nữa, nên không còn truyền DEVKIT_GATE_SLOT_WAIT_S / chờ slot / in câu BUSY. Thay bằng: kit tạm có
+# post-fix-gate.py là trình bọc ghi dấu khi bị gọi; Stop (slot gate đang bị giữ) không gọi nó, không chờ, chặn và nêu lệnh gate --scoped.
 mkdir -p "$TMP/kit/hooks" "$TMP/kit/bin"
 cp "$HOOK" "$TMP/kit/hooks/regression_gate.sh"
 [ -f "$DEVKIT_DIR/hooks/devkit_harness.py" ] && cp "$DEVKIT_DIR/hooks/devkit_harness.py" "$TMP/kit/hooks/"
+[ -f "$DEVKIT_DIR/hooks/session_worktree.py" ] && cp "$DEVKIT_DIR/hooks/session_worktree.py" "$TMP/kit/hooks/"
 cat > "$TMP/kit/bin/post-fix-gate.py" <<PY
 import os, sys
 open("$TMP/hook_wait_gate", "w").write(os.environ.get("DEVKIT_GATE_SLOT_WAIT_S", "unset"))
 os.execv(sys.executable, [sys.executable, "$GATE"] + sys.argv[1:])
 PY
+cp "$DEVKIT_DIR/bin/tree_fp.py" "$TMP/kit/bin/"
 printf 'z = 2\n' > "$H_REPO/src/Core.kt"
 rm -f "$TMP/hook_wait_seen" "$TMP/hook_wait_gate"
-printf '%s' "$PAYLOAD" | ( unset DEVKIT_GATE_SLOT_WAIT_S; CLAUDE_PROJECT_DIR="$H_REPO" bash "$TMP/kit/hooks/regression_gate.sh" ) >"$TMP/h1.out" 2>"$TMP/h1.err"
-h1_rc=$?
-if [ "$h1_rc" -eq 0 ] && [ "$(cat "$TMP/hook_wait_gate" 2>/dev/null)" = "45" ] && [ "$(cat "$TMP/hook_wait_seen" 2>/dev/null)" = "unset" ]; then
-  ok "ca (h1): Stop hook truyền mặc định DEVKIT_GATE_SLOT_WAIT_S=45 xuống gate, và biến không lọt xuống suite"
-else
-  fail "ca (h1): rc=$h1_rc gate='$(cat "$TMP/hook_wait_gate" 2>/dev/null)' suite='$(cat "$TMP/hook_wait_seen" 2>/dev/null)' err='$(cat "$TMP/h1.err")'"
-fi
-
-# (h2) Khi hàng đợi gate bận (busy_reason == gate_queue) -> exit 0, không cache pass_fp/untested_fp, stdout đúng 1 JSON object chứa nguyên văn câu gốc + dòng nối thêm
-printf 'z = 3\n' > "$H_REPO/src/Core.kt"
-rm -f "$TMP/hook_wait_seen"
 hold_flock "$SB_HEAVY_SLOT_DIR/gate-1.lock" "$TMP/held" "$TMP/release" 30
-printf '%s' "$PAYLOAD" | DEVKIT_GATE_SLOT_WAIT_S=1 CLAUDE_PROJECT_DIR="$H_REPO" bash "$HOOK" >"$TMP/h2.out" 2>"$TMP/h2.err"
-h2_rc=$?
+t0=$SECONDS
+printf '%s' "$PAYLOAD" | DEVKIT_GATE_SLOT_WAIT_S=20 CLAUDE_PROJECT_DIR="$H_REPO" bash "$TMP/kit/hooks/regression_gate.sh" >"$TMP/h1.out" 2>"$TMP/h1.err"
+h1_rc=$?; took=$((SECONDS - t0))
 release_flock "$TMP/release" "$LAST_HOLDER"
-python3 - "$TMP/h2.out" "$TMP/h2.err" "$H_REPO/.claude/audit-gate/regression_gate.state.json" "$h2_rc" <<'PY' \
-  && [ ! -f "$TMP/hook_wait_seen" ] \
-  && ok "ca (h2): Stop hook gặp gate_queue -> exit 0, đúng 1 JSON object, giữ nguyên câu gốc + dòng hàng đợi, không cache PASS giả" \
-  || fail "ca (h2): rc=$h2_rc out='$(cat "$TMP/h2.out")' err='$(cat "$TMP/h2.err")'"
-import json, os, sys
-raw_out = open(sys.argv[1], encoding="utf-8").read()
-raw_err = open(sys.argv[2], encoding="utf-8").read()
-state_path = sys.argv[3]
-rc = int(sys.argv[4])
-assert rc == 0 and raw_err == "", (rc, raw_err)
-non_empty = [l for l in raw_out.splitlines() if l.strip()]
-assert len(non_empty) == 1, f"stdout phải là đúng 1 dòng JSON, nhận {len(non_empty)}: {non_empty!r}"
-obj = json.loads(non_empty[0])
-msg = obj.get("systemMessage", "")
-orig = ("Regression gate UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau "
-        "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS.")
-assert msg.startswith(orig + "\n"), f"systemMessage thiếu câu gốc hoặc dòng nối: {msg!r}"
-extra_line = msg[len(orig) + 1:]
-assert extra_line and "\n" not in extra_line and ("gate" in extra_line.lower()), f"dòng nối thêm không hợp lệ: {extra_line!r}"
-if os.path.exists(state_path):
-    st = json.load(open(state_path, encoding="utf-8"))
-    # Cây z=3 mới sửa chưa được phép lưu vào pass_fp hay untested_fp
-    sess = (st.get("sessions") or {}).get("s-h1") or {}
-    assert sess.get("result") not in ("pass", "untested"), st
-PY
-
-# (h3) Đối chứng: khi khoá dự án test_run.lock bận (busy_reason == project_lock) -> systemMessage giữ nguyên đúng câu gốc 1 dòng (không nối dòng hàng đợi)
-printf 'z = 4\n' > "$H_REPO/src/Core.kt"
-hold_flock "$H_REPO/.claude/audit-gate/test_run.lock" "$TMP/hp_held" "$TMP/hp_release" 30
-printf '%s' "$PAYLOAD" | TEST_RUN_LOCK_WAIT_S=0.5 CLAUDE_PROJECT_DIR="$H_REPO" bash "$HOOK" >"$TMP/h3.out" 2>"$TMP/h3.err"
-h3_rc=$?
-release_flock "$TMP/hp_release" "$LAST_HOLDER"
-python3 - "$TMP/h3.out" "$h3_rc" <<'PY' \
-  && ok "ca (h3): Stop hook gặp project_lock -> systemMessage đúng nguyên bản không thêm dòng hàng đợi" \
-  || fail "ca (h3): rc=$h3_rc out='$(cat "$TMP/h3.out")'"
-import json, sys
-lines = [l for l in open(sys.argv[1], encoding="utf-8").read().splitlines() if l.strip()]
-assert int(sys.argv[2]) == 0 and len(lines) == 1
-orig = ("Regression gate UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau "
-        "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS.")
-assert json.loads(lines[0]).get("systemMessage") == orig, lines[0]
-PY
+if [ "$h1_rc" -eq 2 ] && [ ! -f "$TMP/hook_wait_gate" ] && [ ! -f "$TMP/hook_wait_seen" ] && [ "$took" -lt 15 ] && grep -q -- "--run-tests --scoped" "$TMP/h1.err"; then
+  ok "ca (h): Stop hook không gọi gate, không chờ slot gate (${took} s), chặn và nêu lệnh gate --scoped"
+else
+  fail "ca (h): rc=$h1_rc took=${took}s gate='$(cat "$TMP/hook_wait_gate" 2>/dev/null)' suite='$(cat "$TMP/hook_wait_seen" 2>/dev/null)' err='$(cat "$TMP/h1.err")'"
+fi
 
 echo
 if [ "$FAILS" -eq 0 ]; then

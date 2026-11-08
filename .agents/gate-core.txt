@@ -187,3 +187,34 @@ universal-agent-devkit/tests/gates/test_proof_gate.sh            # Stop hook XON
 universal-agent-devkit/tests/context_memory/test_session_lock.sh # khoá checkout / trunk mode
 universal-agent-devkit/hooks/tests/test_git_guard_bypass.sh      # git guard
 universal-agent-devkit/tests/gates/test_capacity.sh              # sức chứa máy của gate
+
+[merge-guard]
+# Gate speed v26 mục 7: id hàng ma trận chạy THẬT ở mọi điểm gộp (scratch merge gate / train / integrate), kể cả PR không chạm kit; tiêm sau
+# cap của --scoped, không vào deferred_to_heavy, không dùng lại PASS cũ. Gate dùng mục này ∪ mục của base: xoá id ở PR không gỡ được guard;
+# id có ở đây mà ma trận không có ⇒ merge gate đỏ. Đỏ chỉ ở guard ⇒ merge gate / train chạy lại mỗi guard đỏ đúng một lần (ghi comment PR).
+# bảo mật
+REG-DK-GUARD-SECRETS-01
+REG-DK-GUARD-PROTECTED-DELETE-01
+REG-742-A1-GUARD-PUSH-WRAPPERS-01
+REG-742-A1-PUSH-GATE-DEVKIT-NO-MATRIX-01
+REG-DK-GUARD-SELF-APPROVAL-01
+REG-DK-GATE-CROSS-REVIEW-605-01
+REG-DK-AUDITED-HEAD-BASE-01
+REG-SB-MERGE-POLICY-NL-01
+REG-742-A3-MERGE-POLICY-DIFF-PATHS-01
+REG-SB-REVIEW-APPROVED-HEAD-01
+REG-SB-APPROVAL-CROSS-REVIEW-605-01
+REG-SB-MERGE-GATE-QUEUE-GUARD-01
+REG-DK-GUARD-CHECKLIST-JOURNAL-01
+REG-DK-GUARD-HARDWARE-RM-01
+REG-DK-GUARD-PUSH-GATE-INTEGRITY-01
+REG-SB-GUARD-MERGE-POLICY-SQL-01
+REG-DK-GUARD-GIT-BYPASS-01
+REG-DK-GUARD-GATE-AUDIT-HOLES-01
+# mất dữ liệu
+REG-DK-SANDBOX-01
+REG-DK-DISCARD-SQUASH-01
+REG-DK-WT-PRUNE-MERGED-ANCESTOR-01
+REG-DK-INTEGRATE-01
+REG-SB-MERGE-GATE-NO-PUSH-PR-01
+REG-DK-SESSION-01

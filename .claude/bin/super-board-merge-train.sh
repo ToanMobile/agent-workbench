@@ -391,7 +391,17 @@ rerun_one_test() {
       DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
       && python3 "$HERE/super-board-heavy-slot.py" -- bash "$1" ) >>"$VLOG" 2>&1 8>&-
 }
+# FLAKY / GUARD_FLAKY: test (#578) / guard (v26 mục 7) đỏ rồi xanh khi chạy lại ở lượt verify_set XANH gần nhất — đúng chuỗi GOOD sẽ merge.
+# verify_set gom vào danh sách riêng của lượt và chỉ chép (ghi đè) sang đây khi lượt đó xanh: lượt đỏ của chia đôi (thường là lượt cuối) hay
+# lượt của tập PR khác không gán ghi chú flaky cho PR được merge.
 FLAKY=()
+GUARD_FLAKY=()
+# note_guard_flaky <PR> <guard id>: ghi vào PR (comment) guard đỏ rồi xanh khi chạy lại. Lỗi gh chỉ cảnh báo: PR đã xanh.
+note_guard_flaky() {
+  echo "train-guard-flaky: $1 $2"
+  gh pr comment "$1" ${REPO:+--repo "$REPO"} --body "[reviewer] [flaky] Merge-train: merge-guard \`$2\` đỏ ở lượt verify đầu, xanh khi chạy lại riêng đúng một lần; các kiểm khác đều đạt. Ghi nhận flaky (nhạy tải), PR không bị gán red." >/dev/null 2>&1 \
+    || say "could not comment the merge-guard re-run on PR #${1}"
+}
 # note_flaky <PR> <test>: ghi rõ flaky vào PR (comment) và vào thẻ riêng của test (một thẻ bug mở, không trùng). Lỗi gh chỉ cảnh báo: PR đã xanh.
 note_flaky() {
   local p="$1" t="$2" found
@@ -423,7 +433,7 @@ Làm test ổn định (bỏ phụ thuộc thời gian/tải) thay vì để mer
 # verify_set <PR...>: 0 chuỗi dựng được và mọi verify_commands xanh · 1 đỏ · 2 chuỗi không dựng được (không phải lỗi đỏ của PR)
 #                     · 3 hết giờ sau một lần chạy lại (máy quá tải, không quy lỗi cho PR nào).
 verify_set() {
-  local cmd run_cmd busy_line rc try merged p emeta
+  local cmd run_cmd busy_line rc try merged p emeta set_flaky=() set_guard_flaky=()
   build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]: ${CHAIN_WHY}"; return 2; }
   # #643: clean -qfd giữ file ignore. Xoá rồi cài lại theo đúng các PR của lượt này, kẻo nửa chuỗi trước còn sót.
   rm -f "$SCRATCH/.claude/audit-gate/approved_tests.json"
@@ -460,7 +470,7 @@ verify_set() {
       # DEVKIT_SLOT_ADVISORY_HELD=1 nên post-fix-gate bỏ qua pool heavy — nhiều train song song sẽ lách trần suite nặng. Lệnh khác vẫn qua slot.
       local slot_wrap=(python3 "$HERE/super-board-heavy-slot.py" --)
       [[ "$run_cmd" != *"post-fix-gate.py"* ]] || slot_wrap=()
-      ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+      ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" DEVKIT_MERGE_POINT=1 \
           DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
           && DEVKIT_LANG="${DEVKIT_LANG:-vi}" ${slot_wrap[@]+"${slot_wrap[@]}"} bash -c "$run_cmd" ) >"$VLOG" 2>&1 8>&- || rc=$?
       [ "$rc" -ne 0 ] || break
@@ -485,14 +495,32 @@ verify_set() {
       if flaky_test=$(single_red_test "$VLOG"); then
         say "verify red only by ${flaky_test} (REG-DK-ALL-01); re-running that test once"
         if rerun_one_test "$flaky_test"; then
-          case " ${FLAKY[*]-} " in *" $flaky_test "*) ;; *) FLAKY+=("$flaky_test") ;; esac; say "${flaky_test} passed on re-run: flaky, not blaming any PR"; break
+          case " ${set_flaky[*]-} " in *" $flaky_test "*) ;; *) set_flaky+=("$flaky_test") ;; esac; say "${flaky_test} passed on re-run: flaky, not blaming any PR"; break
         fi
         say "${flaky_test} red on re-run too"; echo "[merge-train] re-ran ${flaky_test}: red again" >>"$VLOG"
+      fi
+      # Gate speed v26 mục 7: đỏ CHỈ ở guard của điểm gộp ([merge-guard] của base, kiểm `rows == 1` ở trên không áp cho id guard) ⇒ chạy lại
+      # mỗi guard đỏ đúng một lần như merge gate; guard nào vẫn đỏ thì lượt đỏ. Xanh hết: ghi comment cho PR khi merge (note_guard_flaky).
+      local gid guard_red guard_still=""
+      if [ "$rc" -eq 1 ] && guard_red=$(sb_merge_guard_red_ids "$VLOG" "$SCRATCH" "$BASE_SHA" "$cmd"); then
+        for gid in $guard_red; do
+          git -C "$SCRATCH" reset -q --hard "$merged" 2>/dev/null && git -C "$SCRATCH" clean -fdq 2>/dev/null || { guard_still="$guard_still $gid"; continue; }
+          say "merge-guard ${gid} red; re-running it once"
+          echo "[merge-train] merge-guard re-run: ${gid}" >>"$VLOG"
+          sb_merge_guard_rerun "$SCRATCH" "$gid" >>"$VLOG" 2>&1 || guard_still="$guard_still $gid"
+        done
+        git -C "$SCRATCH" reset -q --hard "$merged" 2>/dev/null && git -C "$SCRATCH" clean -fdq 2>/dev/null || guard_still="${guard_still:- restore}"
+        if [ -z "$guard_still" ]; then
+          for gid in $guard_red; do case " ${set_guard_flaky[*]-} " in *" $gid "*) ;; *) set_guard_flaky+=("$gid") ;; esac; done
+          say "merge-guard(s) $(echo $guard_red) passed on re-run: flaky, not blaming any PR"; break
+        fi
+        say "merge-guard(s) red on re-run too:${guard_still}"
       fi
       say "red [$*]: $(tail -3 "$VLOG" | tr '\n' ' ' | cut -c1-300)"
       return 1
     done
   done
+  FLAKY=(${set_flaky[@]+"${set_flaky[@]}"}); GUARD_FLAKY=(${set_guard_flaky[@]+"${set_guard_flaky[@]}"})
   return 0
 }
 
@@ -627,7 +655,8 @@ while [ "${#TODO[@]}" -gt 0 ]; do
         run_gate "$p" 1 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" ${PASS[@]+"${PASS[@]}"}
       fi
       case "$GRC" in
-        0)     MERGED_OK+=("$p"); echo "train-result: $p merged"; for t in ${FLAKY[@]+"${FLAKY[@]}"}; do note_flaky "$p" "$t"; done ;;
+        0)     MERGED_OK+=("$p"); echo "train-result: $p merged"; for t in ${FLAKY[@]+"${FLAKY[@]}"}; do note_flaky "$p" "$t"; done
+               for t in ${GUARD_FLAKY[@]+"${GUARD_FLAKY[@]}"}; do note_guard_flaky "$p" "$t"; done ;;
         79|9)  early_results; echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;   # R7: halt / readiness của gate đi thẳng tới caller
         11)    echo "train-result: $p red"; echo "train-red: $p"; GATERED+=("$p")   # R7: verify riêng của gate đỏ = PR về Build, có dòng train-red
                detail_tail "$p" "$GATE_ERR" ;;   # gate in đuôi log verify đỏ ra stderr

@@ -488,12 +488,15 @@ import heavy_slot
 h = heavy_slot.acquire_pool("gate", heavy_slot.pool_paths("gate", 1), wait_s=10.0, label="hold-5b")
 open(ready_f, "w").write("1")
 t0 = time.monotonic()
-while not os.path.exists(rel_f) and time.monotonic() - t0 < 15.0:
+while not os.path.exists(rel_f) and os.path.isdir(os.path.dirname(rel_f)) and time.monotonic() - t0 < 300.0:
     time.sleep(0.05)
 heavy_slot.release_pool(h)
 PY
 HOLD_PID=$!
-for _ in $(seq 1 100); do [ -f "$TMP/slot_ready" ] && break; sleep 0.05; done
+# Trần dài (giữ slot tới khi test thả, tối đa 300 s; chờ sẵn sàng 30 s; chờ B xếp hàng 60 s): trần 15 s / 5 s / 10 s cũ đổi kịch bản
+# dưới tải mà không báo (holder nhả slot trước khi B xếp hàng ⇒ B chạy suite: gate-full đêm 05/11 "5b … delta=0 1 0 0").
+for _ in $(seq 1 600); do [ -f "$TMP/slot_ready" ] && break; sleep 0.05; done
+[ -f "$TMP/slot_ready" ] || fail "5b. tiền đề: holder không giữ được gate slot trong 30 s"
 add_wt wt-5b feat
 b5b="$(snap)"
 (
@@ -503,7 +506,13 @@ b5b="$(snap)"
   echo $? > "$TMP/wt5b.rc"
 ) &
 WT5B_PID=$!
-for _ in $(seq 1 200); do [ -n "$(ls "$SB_HEAVY_SLOT_DIR/queue/gate" 2>/dev/null)" ] && break; sleep 0.05; done
+Q5B=0
+for _ in $(seq 1 1200); do
+  [ -n "$(ls "$SB_HEAVY_SLOT_DIR/queue/gate" 2>/dev/null)" ] && { Q5B=1; break; }
+  kill -0 "$WT5B_PID" 2>/dev/null || break
+  sleep 0.05
+done
+[ "$Q5B" = 1 ] || fail "5b. tiền đề: B không xếp hàng chờ gate slot đang bị giữ (kịch bản 5b không xảy ra)"
 mv "$TMP/saved_fp0.json" "$SSTORE/$FP0.json"
 touch "$TMP/release_slot"
 wait "$WT5B_PID" 2>/dev/null || true
