@@ -138,7 +138,7 @@ p = sys.argv[1]
 d = json.load(open(p))
 for x in d["tests"]:
     if x.get("id") == "REG-K":
-        x["ran_at"] = time.time() - 30000   # > 21600 s mặc định
+        x["ran_at"] = time.time() - 300000   # > 259200 s mặc định (3 ngày, #994)
 open(p + ".tmp", "w").write(json.dumps(d)); os.replace(p + ".tmp", p)
 PY
 scratch wt-h2

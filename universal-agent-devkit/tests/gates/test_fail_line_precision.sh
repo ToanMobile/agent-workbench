@@ -4,12 +4,12 @@
 #   b. `…Error:` giữa dòng INFO hoặc dòng ✔ không khớp: chúng chiếm chỗ trong 8 dòng đầu của fail_lines, đẩy dòng lỗi thật ra.
 #   c. Mỗi nhánh mới của #899 có một mẫu: MSBuild, clang/swiftc `file:N:N: error`, `fatal error`, Bus error, Abort trap.
 #   d. Neo đầu dòng vẫn nhận lớp lồng `$` (Espresso) và dòng logcat `… AndroidRuntime: …Error:`.
-#   e. Không ReDoS trên dòng 1 MB.
+#   e. Không ReDoS trên dòng 1 MB: dưới 1 s CPU (CPU tiến trình con qua tests/lib/cpu_probe.py, không đo đồng hồ tường: #1010).
 # Tương thích bash 3.2.
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
-OUT="$(python3 -I - "$GATE" 2>&1 <<'PY'
+OUT="$(python3 -I - "$GATE" "$DEVKIT_DIR/tests/lib" 2>&1 <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("pfg", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
@@ -40,11 +40,10 @@ for k, lines in hit.items():
 for k, lines in miss.items():
     bad.setdefault(k, []).extend("(nhiễu) " + l for l in lines if mod.FAIL_LINE.search(l))
 # e. ReDoS: dòng 1 MB không có `Error:` ở cuối (tên gói lồng `.`/`$`, chuỗi chữ hoa) phải xong nhanh
-import time
-worst = 0.0
-for line in ("a.b$" * 250000, "A$" * 500000, "\tcom." * 200000 + "x", "AndroidRuntime: " + "a." * 500000):
-    t0 = time.perf_counter(); mod.FAIL_LINE.search(line); worst = max(worst, time.perf_counter() - t0)
-bad["e"] = [] if worst < 1.0 else ["dòng 1 MB mất %.2f s" % worst]
+sys.path.insert(0, sys.argv[2]); import cpu_probe   # tests/lib
+worst, why = cpu_probe.worst_cpu(mod.FAIL_LINE.search, ("a.b$" * 250000, "A$" * 500000, "\tcom." * 200000 + "x",
+                                                       "AndroidRuntime: " + "a." * 500000), 1.0)
+bad["e"] = [] if worst < 1.0 else ["dòng 1 MB tốn %.2f s CPU (%s)" % (worst, why)]
 for k in sorted(bad):
     print(("%s_ok" % k) if not bad[k] else ("%s_bad %s" % (k, " | ".join(bad[k]))))
 PY
@@ -58,7 +57,7 @@ check a "job-report của bash 'line N: PID Killed: 9' khớp"
 check b "'…Error:' giữa dòng INFO / dòng ✔ không khớp"
 check c "MSBuild, clang/swiftc file:N:N: error, fatal error, Bus error, Abort trap, Caused by …Error: khớp"
 check d "lớp lồng \$ (Espresso) và dòng logcat AndroidRuntime …Error: khớp"
-check e "không ReDoS: dòng 1 MB xong dưới 1 s"
+check e "không ReDoS: dòng 1 MB xong dưới 1 s CPU"
 [ "$FAILS" -eq 0 ] && { echo "test_fail_line_precision: PASS"; exit 0; }
 echo "test_fail_line_precision: FAIL ($FAILS)"
 exit 1

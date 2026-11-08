@@ -63,11 +63,11 @@ calibration, the paired oracle and the gate (core-rules §4).
 - **Protect working code**: touch it only for a real error, a real necessity or an explicit
   instruction. Surgical diffs; no drive-by refactors, formatting sweeps or placeholder code
   (`// ... existing code ...`); keep public signatures backward compatible.
-- **Git — commit and push yourself** (a project or user rule that forbids it wins: stop and wait for the order). A finished task
+- **Git — commit and push yourself** (a project or user rule forbidding it wins: stop, wait for the order). A finished task
   is committed and pushed without asking, only your own paths (`git commit -m … -- <paths>`, never
   `git add -A`/`commit -a`). Before a push: `git fetch`, then alone `git pull --ff-only` (or
   `--no-rebase --no-edit` when both moved; check exit code; a conflict → skill conflict, ask only for a
-  business decision), re-run the step 3 gate after any pull, merge or conflict fix,
+  business decision), re-run the step 3 gate after any pull, merge or conflict fix (not in a PR repo),
   then `git push origin <branch>`, never `<sha>:<branch>`. A trunk push and every XONG need the latest gate on that content at exit 0, or
   exit 2 whose only reason is an edited test an Antigravity audit passed; a trunk-push repo moves
   main only through `agent-kit integrate`. Never commit secrets (`.env`, keystores,
@@ -82,8 +82,8 @@ calibration, the paired oracle and the gate (core-rules §4).
   (main still held → finish once the holder idles). A task that session dispatched to you (`/giao`)
   is done in its checkout. Exit 5 = trunk mode (default): main is merge-only, every session works
   in its own worktree (Claude Code: EnterWorktree; others: `agent-kit worktree add`) and only `agent-kit worktree finish` moves main.
-- **Done means verified**: step 3 at exit 0 on the current code and, when step 4 applies, this
-  turn's proof PNG before XONG; Stop hooks enforce it where they exist, but no hook takes the screenshot.
+- **Done means verified**: step 3 on the current code and this turn's step 4 PNG, if due, before XONG;
+  no hook takes the screenshot.
 
 ## Every prompt (standing law)
 Applies to Claude Code, Gemini CLI, Antigravity, Codex, Cursor and Grok, to every turn that changes
@@ -98,6 +98,7 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 3. Once per handover, on the final tree after review fixes (large task: gate, audit, fix, gate), from the repo
    root: `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`. Exit 0 is required; it writes
    the task receipt. PR repo: the merge gate is that gate (no pre-push gate); XONG waits for its merge receipt.
+   PR repo (`.claude/super-board/configs/`): no local scoped run; push, merge gate `--dry-run` in background.
    Mid-task: only the step 2 oracle and changed tests (`bash <test>`), reply CHƯA XONG. Nobody runs `--full` by hand for a task.
    Other exit: paste the last 30 log lines, fix, repeat.
 4. A proof image blocks like exit 0, unless the change surely cannot show on a screen: a backend
@@ -109,7 +110,7 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
    or substitute a test XML; no device → CHƯA XONG with the command's error. A UI or gesture bug
    also needs BEFORE evidence from the unfixed build (`reports/before-<stamp>.png`) or `before: không cần — <reason>`.
 5. The reply may open with XONG only when this turn has step 2 RED→GREEN (code or bug prompt), exit 0
-   from step 3 (its task receipt), the step 4 PNG when it applies, and the work handed to the merge
+   from step 3 (task receipt; PR repo: merge receipt), the step 4 PNG when it applies, and the work handed to the merge
    point: PR opened, worktree finished or main pushed. Line 1: XONG, CHƯA XONG or CHỜ DUYỆT (English:
    DONE / NOT DONE / AWAITING APPROVAL). Line 2: what the user gets. Line 3: gate exit code, then
    image path and serial, or "ảnh: không cần — <reason>"; then the next step. Stay short.
@@ -118,7 +119,7 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
    cũ (test hồi quy / immutable_guards chạy lại PASS) · 3. Nguy cơ bug mới (caller, module liên đới
    đã rà) · 4. An toàn mã nguồn (secret, placeholder, OCR); kèm điểm chất lượng Agent trên thang 100
    (ngưỡng ≥ 95/100, core-rules §18). `proof_gate.sh` refuses the reply without all four.
-   A Markdown or LICENSE-type-only change needs no regression test: the gate passes it.
+   A Markdown or LICENSE-type-only change needs no regression test.
 
 ## Engineering musts (details: `.agents/devkit/rules/core-rules.md` §6, §8–12, §14)
 - No O(N²) where a map/set does, no allocations in hot loops, no I/O/network/DB/heavy parsing on
@@ -167,7 +168,7 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
   are Vietnamese; replies match the user's language; identifiers, commands and paths stay English (core-rules §2.3).
-- Long session or a big refactor ahead: checkpoint and compact instead of filling the window. Read code
+- Long session or big refactor ahead: checkpoint and compact, don't fill the window. Read code
   by range (Read offset/limit, codebase-memory); never `cat` a big file.
 - Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.
 <!-- devkit-essentials:end -->

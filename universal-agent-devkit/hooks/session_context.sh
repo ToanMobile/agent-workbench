@@ -341,7 +341,7 @@ try:
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
                "GIT_SSH_COMMAND": ssh + " -o BatchMode=yes -o ConnectTimeout=4"}
         try:
-            p = subprocess.Popen(["git", "-C", root, "fetch", "--quiet", "--no-tags", up.split("/", 1)[0]],
+            p = subprocess.Popen(["git", "-C", root, "fetch", "--quiet", "--no-tags", "--prune", up.split("/", 1)[0]],
                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  env=env, start_new_session=True)
             try:
@@ -404,8 +404,25 @@ try:
     merged = set((git_out("branch", "--format=%(refname:short)", "--merged", "HEAD") or "").splitlines())
     done = [b for b in extra if b in merged]
     unmerged = [b for b in extra if b not in merged]
+    squashed = []
+    if unmerged:
+        # A squash PR leaves one single-parent commit on trunk, so `--merged` never lists its task branch: ask the kit's own
+        # content check (trial merge adds nothing) before calling it unmerged (agent-workbench 2026-11-08). Any trouble: stays unmerged.
+        try:
+            sys.path.insert(0, os.path.dirname(os.environ.get("WT_SCRIPT") or ""))
+            import worktree as _wtq
+            signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError()))
+            signal.alarm(4)
+            squashed = [b for b in unmerged if _wtq._content_in_trunk(root, f"refs/heads/{b}")]
+        except (Exception, SystemExit):
+            squashed = []
+        finally:
+            signal.alarm(0)
+        unmerged = [b for b in unmerged if b not in squashed]
     if done:
         drift.append(f"{len(done)} nhánh thừa đã merge — `git branch -d {' '.join(done[:5])}`")
+    if squashed:
+        drift.append(f"{len(squashed)} nhánh đã squash-merge (trunk có đủ nội dung) — `git branch -D {' '.join(squashed[:5])}`")
     if unmerged:
         drift.append(f"{len(unmerged)} nhánh chưa merge vào {cur or 'HEAD'}: {', '.join(unmerged[:5])} — "
                      "merge về hoặc hỏi User")

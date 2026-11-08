@@ -8,7 +8,7 @@ import {
   discardProofs, anhTrung, hashFile, ackWarning, locCanhBaoDaXem, ghiMocGiao, chupThemCam, headCommitOf } from './tasks.js';
 import {
   newConversation, sendMessage, getConversationMetadata, conversationProgress, transcriptErrors, MODELS, isAgyModel, agyPath, agyTurnStatus, agyTurnStatusSafe, agyRegistryProblem, agyPermissionPolicy,
-  sameProcess, reapTurnLeftovers, grokPath, runGrokAudit, grokVerdictOf, GROK_MODEL,
+  sameProcess, reapTurnLeftovers, grokPath, runGrokAudit, grokVerdictOf, grokTimeoutMs, GROK_MODEL,
 } from './agentapi.js';
 import { discover, agentapiPath } from './discover.js';
 import { requireProjectId, resolveProject } from './projects.js';
@@ -28,7 +28,7 @@ import { soiThayDoi } from './lint-diff.js';
 import { gitSnapshot, changedFilesOf, baseCommitOf, gateCtx, dongBangCay, goWorktree, auditWorktree, thuMucTrangThai } from './worktree.js';
 import { hashOf, deltaKeHoach, tinhTrangPhanBien, projectIdFor } from './plan-review.js';
 import { cacTaskDangChayKhac, canhBaoTruocKhiGiao } from './dispatch-guard.js';
-import { run, runShell, writeFileAtomic, ensureDir, exists, tail, truncate, nowIso, readJsonIfExists, killGroup } from './util.js';
+import { run, runShell, writeFileAtomic, ensureDir, exists, tail, truncate, nowIso, readJsonIfExists, killGroup, logStderr } from './util.js';
 
 // ---------------------------------------------------------------- kiem tra tham so
 
@@ -180,6 +180,38 @@ async function auditRange(cfg, head) {
     return { base, trunk, edited };
   }
   return { base: null };
+}
+
+/**
+ * Han grok cua lan audit (04/11): kich thuoc diff ma prompt grok dan doc — cung goc nhu buildGrokAuditPrompt (merge-base, khong thi goc
+ * cua task; goc = head hoac khong co thi `git show head`). git loi / qua han -> log stderr kem ngu canh, tinh theo so file cua range.
+ * { ms, label } — label ghi o dong dau log grok va trong thong bao de do duoc han da dung.
+ */
+async function grokDeadline(cfg, task, head, range) {
+  const t = Number(process.env.ANTIGRAVITY_PM_GROK_TIMEOUT_MS);
+  const envSet = Number.isFinite(t) && t > 0;   // cung dieu kien voi grokTimeoutMs: env hop le thang
+  let lines = null;
+  let files = null;
+  let src;
+  if (envSet) src = 'env ANTIGRAVITY_PM_GROK_TIMEOUT_MS';
+  else {
+    const base = range.base || task.implementBaseCommit || task.baseCommit;
+    const args = base && base !== head ? ['diff', '--shortstat', base, head] : ['show', '--shortstat', '--format=', head];
+    const r = await run('git', args, { cwd: cfg.projectRoot, timeoutMs: 15000, maxBytes: 64_000 });
+    if (r.spawnFailed || r.timedOut || r.code !== 0) {
+      files = range.base ? range.edited.length : null;
+      logStderr(`grok audit ${task.id}: khong dem duoc dong doi (git ${args.join(' ')}: exit ${r.code}${r.timedOut ? ', qua han' : ''}`
+        + ` ${tail(r.stderr, 3).trim()}) — han theo ${files ?? '?'} file`);
+      src = files === null ? 'khong dem duoc diff' : `git loi, theo ${files} file`;
+    } else {
+      const num = (re) => Number((String(r.stdout).match(re) || [])[1] || 0);
+      files = num(/(\d+) files? changed/);
+      lines = num(/(\d+) insertions?\(\+\)/) + num(/(\d+) deletions?\(-\)/);
+      src = `${lines} dong doi, ${files} file`;
+    }
+  }
+  const ms = grokTimeoutMs({ lines, files });
+  return { ms, label: `Han grok: ${ms} ms (${+(ms / 60000).toFixed(1)} phut; ${src})` };
 }
 
 /** Dong cuoi ket qua pm_dispatch audit grok: da tu ghi verdict, hay vi sao khong. */
@@ -861,7 +893,7 @@ export const TOOLS = [
         let auditDir = cfg.projectRoot;
         let wtTam = null;
         let hookDaChep = [];
-        let promptFile; let at; let r; let stAfter; let headAfter;
+        let promptFile; let at; let r; let stAfter; let headAfter; let deadline;
         try {
           if (wantCommit !== undefined) {
             const w = await auditWorktree(cfg, head);
@@ -893,9 +925,10 @@ export const TOOLS = [
           const coSan = new Set(wtTam ? [] : cand.filter((p) => fs.existsSync(path.join(auditDir, p))));
           const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '', range, independent: scoped, workdir: auditDir });
           promptFile = saveOutgoing(cfg, task, `prompt-audit-grok-r${task.round}`, prompt);
+          deadline = await grokDeadline(cfg, task, head, range);
           // Moc giao chot TRUOC khi chay: bao cao PM ghi sau moc nay (pm_verdict tu choi bao cao cu hon lan giao audit gan nhat).
           at = nowIso();
-          r = await runGrokAudit({ grok, cwd: auditDir, prompt });
+          r = await runGrokAudit({ grok, cwd: auditDir, prompt, timeoutMs: deadline.ms });
           // H5 (TOCTOU cua F5): cung lenh git status ngay sau grok; cay doi trong luc audit (hoac khong doc duoc) -> bao cao fail kem ly do.
           // chi SAU khi chay moi bo qua file DevKit tu sinh (hook cua phien grok sinh lai chung); TRUOC khi chay cay phai sach that su.
           stAfter = await trackedChanges(cfg, auditDir, { ignoreGenerated: changeSet !== null, changeSet });
@@ -919,11 +952,11 @@ export const TOOLS = [
         }
         const pd = contractPaths(cfg, task);
         const logFile = path.join(ensureDir(pd.logsDir), `audit-grok-r${task.round}-${Date.now()}.log`);
-        writeFileAtomic(logFile, `${r.stdout}\n--- stderr ---\n${r.stderr}`);
+        writeFileAtomic(logFile, `--- ${deadline.label} ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`);
         const v = grokVerdictOf(r.stdout);
         const why = [];
         if (r.spawnFailed) why.push('khong chay duoc grok');
-        if (r.timedOut) why.push('qua han');
+        if (r.timedOut) why.push(`qua han (${deadline.label})`);
         if (r.code !== 0) why.push(`exit ${r.code}`);
         if (!v.lines.length) why.push('khong co dong VERDICT');
         if (headAfter !== head) why.push(`HEAD doi trong luc audit (${head} -> ${headAfter || '?'})`);
@@ -967,6 +1000,7 @@ export const TOOLS = [
           ...(range.base ? [] : ['CANH BAO: khong tinh duoc merge-base voi nhanh dich — prompt so voi commit goc cua task.']),
           `Bao cao: ${repFile} (sha256 ${reportSha256})`,
           `Log grok: ${logFile}`,
+          deadline.label,
           verdictLine(autoVerdict, verdict, head, args.message),
         ].join('\n');
       }

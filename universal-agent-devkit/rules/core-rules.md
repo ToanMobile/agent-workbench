@@ -1,7 +1,7 @@
 # Core Engineering Rules & Solo-Dev Workflow Baseline
 
 ## 1. Quyền hạn AI & Bảo mật Tối cao (BẮT BUỘC)
-- Việc xong (gate scoped `post-fix-gate.py --run-tests --scoped` exit 0 trong lượt, tức biên nhận task; ảnh khi cần; báo cáo nghiệm thu) thì TỰ commit đúng các file của mình và push nhánh hiện tại, không hỏi (quy trình pull/test lại/push: `rules/essentials.md` mục Git). Chỉ hỏi người dùng trước: force-push hoặc viết lại lịch sử đã chia sẻ, xoá file hoặc dữ liệu cực kỳ quan trọng không khôi phục được từ origin (dữ liệu người dùng thật, migration phá LIVE, nhánh/tag còn commit chưa có trên remote), và việc cực kỳ nguy hiểm (phát hành store / deploy production, đổi hoặc in secret đang dùng, thao tác billing, cấp quyền camera/location/danh bạ/PII, phá API công khai đã phát hành, làm yếu gate bảo mật khi lượt này chưa được yêu cầu). Commit, push fast-forward kể cả main, PR thường, sửa test và sửa code: tự làm, không hỏi.
+- Việc xong (gate scoped `post-fix-gate.py --run-tests --scoped` exit 0 trong lượt, tức biên nhận task — repo đi PR: biên nhận merge gate, không chạy gate local; ảnh khi cần; báo cáo nghiệm thu) thì TỰ commit đúng các file của mình và push nhánh hiện tại, không hỏi (quy trình pull/test lại/push: `rules/essentials.md` mục Git). Chỉ hỏi người dùng trước: force-push hoặc viết lại lịch sử đã chia sẻ, xoá file hoặc dữ liệu cực kỳ quan trọng không khôi phục được từ origin (dữ liệu người dùng thật, migration phá LIVE, nhánh/tag còn commit chưa có trên remote), và việc cực kỳ nguy hiểm (phát hành store / deploy production, đổi hoặc in secret đang dùng, thao tác billing, cấp quyền camera/location/danh bạ/PII, phá API công khai đã phát hành, làm yếu gate bảo mật khi lượt này chưa được yêu cầu). Commit, push fast-forward kể cả main, PR thường, sửa test và sửa code: tự làm, không hỏi.
 - Tuyệt đối KHÔNG commit bí mật / Credentials: `.env`, `*.keystore`, `keystore.properties`, `local.properties`, `google-services.json`, token, cookie.
 - Che/mask thông tin nhạy cảm (mật khẩu, access token, OTP, thông tin định danh thật) trước khi chụp ảnh minh chứng.
 - Tài khoản kiểm thử (email, mật khẩu, token) phải nạp qua biến môi trường hoặc file cấu hình cục bộ (đã vào `.gitignore`), tuyệt đối không hardcode dạng chuỗi trần.
@@ -17,7 +17,7 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
    - Giữ nguyên 2 chế độ DEMO / LIVE (mọi bảng nghiệp vụ mới phải có cột mode nếu hệ thống hỗ trợ dual mode).
    - Chạy đủ bộ test cục bộ (`npm test`, `gradlew test`). Thử nghiệm trên các chế độ tương ứng.
 3. **Bằng chứng nghiệm thu & Báo cáo Tự nhiên Súc tích (BẮT BUỘC):**
-   - MỌI báo cáo kiểm thử / nghiệm thu BẮT BUỘC có **bằng chứng thật của trạng thái THÀNH CÔNG (Pass / Success State)**. Luật đứng nằm ở `rules/essentials.md` mục "Every prompt": cùng lượt phải có `post-fix-gate.py --run-tests --scoped` exit 0 — biên nhận scoped (và biên nhận task); task không chạy tay `--full`: scoped tự leo `--full` khi đụng file lõi, điểm gộp (merge queue / merge train của repo đi PR, `agent-kit integrate` của repo trunk-push) chạy cùng `--scoped`, `--full` đêm do skill `gate-full`; push nhận biên nhận scoped hoặc `--full` của đúng cây đó — và, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4), một PNG chụp trong lượt (`reports/proof-<yyyyMMdd-HHmmss>.png`), gắn vào câu trả lời. Serial trong `.adb-denylist` hoặc bị luật dự án cấm thì không chụp. Ảnh chụp bằng `python3 .agents/devkit/bin/proof-capture.py`: serial đã khai mà offline thì lệnh không screencap vào địa chỉ đó và không đổi sang máy khác đang cắm — nó mở AVD rồi chụp. Lệnh thoát khác 0 thì CHƯA XONG. Cấm vẽ ảnh hoặc lấy XML test thay ảnh. Kèm **Báo Cáo Nghiệm Thu 4 Mục**, mỗi mục 1–2 dòng (vừa giới hạn 12 dòng ở §13):
+   - MỌI báo cáo kiểm thử / nghiệm thu BẮT BUỘC có **bằng chứng thật của trạng thái THÀNH CÔNG (Pass / Success State)**. Luật đứng nằm ở `rules/essentials.md` mục "Every prompt": cùng lượt phải có `post-fix-gate.py --run-tests --scoped` exit 0 — biên nhận scoped (và biên nhận task; repo đi PR: biên nhận merge gate thay cho nó, không chạy gate local); task không chạy tay `--full`: scoped tự leo `--full` khi đụng file lõi, điểm gộp (merge queue / merge train của repo đi PR, `agent-kit integrate` của repo trunk-push) chạy cùng `--scoped`, `--full` đêm do skill `gate-full`; push nhận biên nhận scoped hoặc `--full` của đúng cây đó — và, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4), một PNG chụp trong lượt (`reports/proof-<yyyyMMdd-HHmmss>.png`), gắn vào câu trả lời. Serial trong `.adb-denylist` hoặc bị luật dự án cấm thì không chụp. Ảnh chụp bằng `python3 .agents/devkit/bin/proof-capture.py`: serial đã khai mà offline thì lệnh không screencap vào địa chỉ đó và không đổi sang máy khác đang cắm — nó mở AVD rồi chụp. Lệnh thoát khác 0 thì CHƯA XONG. Cấm vẽ ảnh hoặc lấy XML test thay ảnh. Kèm **Báo Cáo Nghiệm Thu 4 Mục**, mỗi mục 1–2 dòng (vừa giới hạn 12 dòng ở §13):
      1. **Đã fix được gì (What Was Fixed):** Tên lỗi, nguyên nhân gốc, cơ chế lỗi, bằng chứng đối lập (RED ➔ GREEN).
      2. **Đã chặn đứng bug cũ nào (Zero Reopened Bugs):** Danh sách các rào chắn bất biến lịch sử (`immutable_guards`) và test hồi quy được chạy lại đạt `[x] PASS`.
      3. **Nguy cơ bug mới nào đã triệt tiêu (Zero Collateral Damage):** Kết quả rà soát điểm gọi ngược (inbound callers) và module liên đới, xác nhận không có tác dụng phụ.
@@ -157,7 +157,7 @@ Mọi dòng mã sinh ra hoặc sửa đổi BẮT BUỘC phải tuân thủ 5 ng
    - AI Agent BẮT BUỘC phải chủ động phân tích ngữ cảnh, yêu cầu và phạm vi ảnh hưởng của tác vụ để nạp và thực thi các Kỹ năng chuyên biệt (`skills/`) phù hợp.
    - TUYỆT ĐỐI KHÔNG bắt người dùng phải gõ lệnh slash command (như `/fix`, `/qc`, `/ocr`, `/giao`) hay chạy thủ công bằng tay.
 2. **Tự Động Chuỗi Hóa Quy Trình (Autonomous Skill Chaining):**
-   - **Mọi yêu cầu đầu vào:** **[hook]** `prompt_context.sh` tự chèn ngữ cảnh `context-enricher` (loại việc, yêu cầu ngầm định, bẫy instincts khớp kèm số dòng, luật RED→GREEN) — đọc và làm theo; tự dò AST/Graph cho vùng code liên quan trước khi viết dòng code đầu tiên.
+   - **Mọi yêu cầu đầu vào:** **[hook]** `prompt_context.sh` tự chèn ngữ cảnh `context-enricher` (loại việc, ngõ cụt phần cứng đã đo, bẫy instincts khớp kèm số dòng, luật RED→GREEN) — đọc và làm theo; tự dò AST/Graph cho vùng code liên quan trước khi viết dòng code đầu tiên.
    - **Khi sửa bug:** Tự động kết hợp `fixbugs` (Paired Executable Oracle RED ➔ GREEN) ➔ `observability-instrumentation` (log audit) ➔ `verification-before-completion`.
    - **Khi thiết kế / refactor:** Tự động kết hợp `grill-plan` (stress-test) ➔ `deep-module-design` (interface seam) / `deprecation-migration` ➔ `documentation-and-adrs` (ghi ADR).
    - **Khi làm việc với Android:** Tự động kích hoạt `android-real-device-qa` (đo FPS SurfaceFlinger, dump view hierarchy, ANR logcat triage, DEX scan).
@@ -227,18 +227,28 @@ lệnh và số dòng vào PROGRESS và file duyệt.
 
 ## 19. Gate, proof and Git mechanics (moved from the essentials, 2026-11-02)
 The essentials keep the obligation; this section keeps how the tools carry it out.
-- **Step 3 scope**: `bin/scoped_gate.py` maps the branch's diff since the trunk to its tests through the import graph, plus the
-  fixed smoke group; never `--full` (#741): a `.agents/gate-core.txt` file runs the tests that reach it (`core-touched`), a file
-  no test reaches or a graph error adds `[core-smoke]`. The merge queue / train runs one `--scoped` for the union of the batch's
-  diffs; push and XONG accept its receipt for that tree. The `gate-full` skill runs `--full` on main every night at 00:00
-  (launchd) and bisects a red one into a P1 card.
+- **Step 3 scope**: `bin/scoped_gate.py` maps the branch's diff since the trunk to its tests through the import graph; never
+  `--full` (#741). Only direct tests block (gate speed v26): the top-ranked test of each changed code file, tests changed in the
+  diff, non-kit suites and suites watching a changed non-kit path; a `.agents/gate-core.txt` file runs the tests that reach it
+  (`core-touched`), a file no test reaches or a graph error adds `[core-smoke]`; every other selected test is `deferred_to_heavy`
+  (printed, in the receipt, not run). At a merge point the `[merge-guard]` ids of `.agents/gate-core.txt` (∪ the base's) always
+  run for real, last for the timed ones; a run red only on guards re-runs each once. The Stop and commit hooks run no suite.
+  The merge queue / train runs one `--scoped` for the union of the batch's diffs; push and XONG accept its receipt for that
+  tree. The `gate-full` skill (heavy gate) runs `--full` on main Monday and Thursday at 00:00 (launchd) and bisects each new red.
 - **Step 3 cache**: a suite whose content key (its inputs + environment, `bin/suite_cache.py`, shared by every worktree) already
   PASSed is reused, the rest run; Gradle/Unity/device suites, network commands and `"cache": false` always run; `--no-cache` runs
   them all. A later gate run on the same tree, mode and suite list reuses `<git-dir>/postfix-gate/rerun_skip.json` and returns 0
-  without the test lock, unless `--force`, `--no-cache` or `DEVKIT_GATE_CACHE=0`.
+  without the test lock, unless `--force`, `--no-cache` or `DEVKIT_GATE_CACHE=0`. A merge guard is never reused.
 - **Step 3 load**: suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores (`bin/capacity.py`;
   `DEVKIT_SLOT_LOAD_MAX` / `DEVKIT_CAPACITY` override) they start at once, above it they wait up to 600 s and run anyway; only
-  Unity and device suites hold an exclusive lock.
+  Unity and device suites hold an exclusive lock. Merge-point levers are on by default (load test 2026-11-08, both levers together, met its thresholds):
+  under a 1-minute load of 2 × cores the parallel group widens to `DEVKIT_MERGE_PARALLEL` (6), a merge-priority run gets at least
+  2 gate slots, and the optimistic merge verify leaves the last gate slot to the locked verify only at or above that load.
+  `DEVKIT_MERGE_WIDE_LOAD_MAX=0` and `DEVKIT_MERGE_GATE_SLOTS=0` turn the first two off; `SB_MERGE_OPT_LOAD_MAX=<cores>` restores
+  the earlier 1 × cores reserve (0 removes the reserve entirely, which reopens the 2026-11-05 locked-verify starvation).
+  Rollback: when a week of `runs.jsonl` shows merge-priority `gate_slot.waited_s` p90 above 300 s or merge-point load1 p90
+  above 24 (the load-test thresholds), set the first two to 0 and `SB_MERGE_OPT_LOAD_MAX` to the core count, then file the
+  numbers on the gate-speed issue.
 - **Step 4 waiver**: the profile was backend when the turn started (committed, or an uncommitted profile file written before the
   turn), or every file changed since HEAD at the turn start (commits, merges, pulls included; new files too) is under a
   top-level `.agents/ .claude/ .gemini/ .github/ .githooks/ .codebase-memory/ docs/ reports/ scripts/ bin/ tools/`, a top-level
@@ -254,10 +264,11 @@ The essentials keep the obligation; this section keeps how the tools carry it ou
   `reports/proof-<yyyyMMdd-HHmmss>.png`. It does not screencap a dead address and does not substitute another plugged-in phone.
 - **UI files** (Zero-Slop applies): `*.kt`/`*.java`/`*.xml`, `*.swift`, `*.dart`, `*.tsx`/`*.jsx`/`*.vue`/`*.css`, `*.prefab`,
   `*UI*.cs`.
-- **Git**: a finished task means the task receipt of step 3, the proof when required and the acceptance report. On a PR branch
-  re-run `post-fix-gate.py --run-tests --scoped` after any pull, merge or conflict fix — except a clean merge of the base into the
-  PR branch only to clear GitHub CONFLICTING (owner 02/11): push it plainly with no new gate, the merge gate verifies base + PR
-  in its own scratch (a merge with a conflict fix still re-gates). A trunk-push repo pushes main only
+- **Git**: a finished task means the task receipt of step 3 (PR repo: the merge receipt), the proof when required and the acceptance
+  report. A PR repo (`.claude/super-board/configs/`) re-runs no local gate after a pull, merge or conflict fix (#997): run the changed
+  tests and the paired oracle, push the PR branch plainly; the merge gate is the gate and verifies base + PR in its own scratch (a clean
+  merge of the base only to clear GitHub CONFLICTING included, owner 02/11). A trunk-push repo re-gates after any pull, merge or
+  conflict fix and pushes main only
   through `agent-kit integrate` (one `--scoped` run in a scratch worktree, then the push); never a `--full` in the main checkout.
   An edited existing test is approved by the antigravity-pm audit record alone: the agent commits, then in the PR's worktree
   (under the main checkout) runs `pm_task_create` and `pm_dispatch kind=audit agent=grok` on the PR head; the PM runs grok on

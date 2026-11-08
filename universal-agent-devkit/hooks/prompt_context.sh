@@ -5,18 +5,19 @@
 #
 # For each prompt, scripts/enrich_context.py --compact prints a few lines that are
 # added to the model's context: the kind of work detected (bug fix, UI, network…),
-# the paired RED→GREEN requirement for bug fixes, intent-specific non-functional
-# requirements, and the project's own recorded traps (.agents/instincts.md) that
+# the paired RED→GREEN requirement for bug fixes, measured hardware dead-ends
+# (.agents/context/hardware-boundaries.json), and the project's own recorded traps (.agents/instincts.md) that
 # match the request — with the `sed -n` line range to read each one; then the
 # project-rule sections whose title matches (scripts/rule_context.py).
 #
 # Silent (adds nothing) for slash commands, very short prompts, and requests that
-# match no intent and no trap — questions and chit-chat pay no context cost. Not on an app
+# match no intent, no trap and no measured hardware dead-end — questions and chit-chat pay no context cost. Not on an app
 # profile (android / game / ios / web): its UI door always matches, so every prompt there
 # carries at least the "Loại việc" line (enrich_context.py APP_PROFILES).
 #
 # Once per session (enrich_context.py dedupe_session, state .claude/audit-gate/prompt_seen_<id>):
-# the "Yêu cầu ngầm định", "Bẫy đã gặp" and "Skill phù hợp" lines and the ZERO-SLOP UI MANDATE
+# the "Bẫy đã gặp" and "Ngõ cụt phần cứng" lines and the ZERO-SLOP UI MANDATE ("Yêu cầu ngầm định" / "Skill phù hợp":
+# not printed since 08/11)
 # block are sent only the first time (under Codex / Gemini / Cursor too: hooks/agent_bridge.sh hands on
 # session_id / conversation_id);
 # an unchanged injection becomes "(ngữ cảnh DevKit như lượt trước)" (+ the RED→GREEN rule).

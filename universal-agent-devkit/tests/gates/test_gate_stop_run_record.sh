@@ -23,7 +23,7 @@
 #      A11 only the matrix changed (the matrix file sits in a folder the tree fingerprint leaves out): every suite runs again
 #      A9 exit 4 (a suite exits with its untested_exit): the suites that can run are recorded, the manual one runs again every time
 #      A10 a key that cannot be computed (no tree fingerprint, no HEAD, a local sha "?") re-uses nothing and writes nothing (the unit under the gate)
-#   B  the Stop hook end to end: after the 300 s window of the reminder the gate runs again, and starts no suite; another session on the same content
+#   B  (gone with the Stop gate call, v26 mục 1) the Stop hook end to end: after the 300 s window of the reminder the gate ran again, and started no suite; another session on the same content
 #      starts none either; a changed source byte starts all of them
 # The fake suites count their runs in $MARK (outside the repo: a file inside would change the code fingerprint).
 # bash 3.2 and Python 3.9 compatible; STOPREC_KIT=<kit dir> tests another copy of the kit (a mutant must go red).
@@ -445,78 +445,10 @@ finally:
     tree_fp.tree_fingerprint, m.local_state_sha, m._head_sha = real_fp, real_local, real_head
 PY
 
-# B the Stop hook end to end. The first Stop blocks on the edited test (this session wrote it); after the 300 s window the gate runs again.
-H="$TMP/hookrepo"
-make_hook_repo() {
-  rm -rf "$H" "$MARK"; mkdir -p "$H/app/src/main/kotlin/pkg" "$H/app/src/test/kotlin/pkg" "$H/tests" "$H/.agents" "$MARK" && cd "$H" || exit 1
-  git init -q . && git config user.email t@t && git config user.name t
-  printf 'package pkg\n\nclass Lonely {\n    fun value() = 4\n}\n' > app/src/main/kotlin/pkg/Lonely.kt
-  printf 'package pkg\n\nimport org.junit.Test\nimport org.junit.Assert.assertEquals\n\nclass OtherTest {\n    @Test fun works() { assertEquals(4, Lonely().value()) }\n}\n' > app/src/test/kotlin/pkg/OtherTest.kt
-  cp "$R/tests/s1.sh" "$R/tests/s2.sh" tests/
-  cat > .agents/regression_matrix.active.json <<JSON
-{"project":"t","adopted":true,"rules":[{"component":"App","watch_files":["app/*"],
- "mandatory_regression_tests":[$(suite REG-1 "$S1"),$(suite REG-2 "$S2")]}]}
-JSON
-  git add -A && git commit -qm init
-  printf 'package pkg\n\nimport org.junit.Test\nimport org.junit.Assert.assertEquals\n\nclass OtherTest {\n    @Test fun works() { assertEquals(8, Lonely().value() * 2) }\n}\n' > app/src/test/kotlin/pkg/OtherTest.kt
-  echo "// tweak" >> app/src/main/kotlin/pkg/Lonely.kt
-  python3 -I - "$H" "$TMP/sA.jsonl" "$TMP/sB.jsonl" <<'PY'
-import json, sys, time
-repo, tpa, tpb = sys.argv[1:4]
-past = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 600))
-a = [{"type": "user", "timestamp": past, "message": {"role": "user", "content": "fix it"}},
-     {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "e1", "name": "Edit",
-        "input": {"file_path": repo + "/app/src/test/kotlin/pkg/OtherTest.kt", "old_string": "a", "new_string": "b"}}]}}]
-b = [{"type": "user", "timestamp": past, "message": {"role": "user", "content": "other work"}}]
-open(tpa, "w").write("".join(json.dumps(r) + "\n" for r in a))
-open(tpb, "w").write("".join(json.dumps(r) + "\n" for r in b))
-PY
-}
-hookstop() { # $1 = session id, $2 = transcript, then NAME=value words for the hook's environment
-  local sid="$1" tp="$2"; shift 2
-  printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$sid" "$tp" | env "$@" CLAUDE_PROJECT_DIR="$H" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"
-}
-LOGH="$H/.claude/audit-gate/regression_gate.log"
-real_runs() { grep -c 'tests-touched reminder fp=[0-9a-f]*$' "$LOGH" 2>/dev/null | tr -d ' '; }   # a gate run that ended in the reminder (a reuse says "(reused, no run)")
-STATE="$H/.claude/audit-gate/regression_gate.state.json"
-age_reminder() { python3 -I -c 'import json,sys,time
-p = sys.argv[1]; d = json.load(open(p)); d["touched"]["s-a"]["at"] = time.time() - float(sys.argv[2]); json.dump(d, open(p, "w"))' "$STATE" "$1"; }
-
-make_hook_repo; LAST="0:0"
-hookstop s-a "$TMP/sA.jsonl"; rc=$?; delta; d="$D"
-if [ "$rc" = 2 ] && [ "$d" = "1:1" ] && grep -q "OtherTest.kt" "$TMP/err"; then ok "B1: first Stop of the session: the gate ran both suites and blocked on the edited test (runs $d)"
-else bad "B1: rc=$rc runs=$d err='$(head -3 "$TMP/err")'"; fi
-age_reminder 400
-hookstop s-a "$TMP/sA.jsonl"; rc=$?; delta; d="$D"
-if [ "$rc" = 0 ] && [ "$d" = "0:0" ] && grep -q "OtherTest.kt" "$TMP/out"; then ok "B2: after the 300 s window the gate runs again, starts no suite (runs $d), and the reminder is still printed"
-else bad "B2: rc=$rc runs=$d (want 0 and 0:0) out='$(head -c 250 "$TMP/out")' err='$(head -3 "$TMP/err")'"; fi
-hookstop s-b "$TMP/sB.jsonl"; rc=$?; delta; d="$D"
-[ "$d" = "0:0" ] && ok "B3: another session on the same content starts no suite either (runs $d)" || bad "B3: session B ran suites: $d (want 0:0)"
-# B5 the two documented consequences of the record, each with a control that behaves the other way. A suite that starts to fail on UNCHANGED content
-# after an exit-2 reminder is not started again while the record stands; with the gate cache off it is, and the failure is reported.
-age_reminder 400
-hookstop s-a "$TMP/sA.jsonl" FAIL1=1; rc=$?; delta; d="$D"
-if [ "$rc" = 0 ] && [ "$d" = "0:0" ] && grep -q "OtherTest.kt" "$TMP/out" && ! cat "$TMP/out" "$TMP/err" | grep -q "FAIL"; then
-  ok "B5: REG-1 would fail now but the content did not change: the record stands, no suite starts (runs $d), only the reminder is printed"
-else bad "B5: rc=$rc runs=$d out='$(head -c 200 "$TMP/out")' err='$(head -c 200 "$TMP/err")'"; fi
-# B6 REGRESSION_GATE_TOUCHED_RECHECK_S=0 runs the gate on every Stop but starts no suite that already passed on this content
-before=$(real_runs)
-hookstop s-a "$TMP/sA.jsonl" REGRESSION_GATE_TOUCHED_RECHECK_S=0; rc=$?; delta; d="$D"
-if [ "$rc" = 0 ] && [ "$d" = "0:0" ] && [ "$(real_runs)" -gt "$before" ]; then
-  ok "B6: RECHECK_S=0: the gate ran again (a real run in the log) and started no suite (runs $d)"
-else bad "B6: rc=$rc runs=$d real gate runs $before -> $(real_runs) (want a new real run and 0:0)"; fi
-# the controls: the gate cache off brings back the old behaviour of both
-age_reminder 400
-hookstop s-a "$TMP/sA.jsonl" FAIL1=1 DEVKIT_GATE_CACHE=0; delta; d="$D"
-# #647 (fail-fast): REG-1 fails, so REG-2 is not started (UNTESTED): runs 1:0, not 1:1. The control still shows the cache-off run starts REG-1 and reports the FAIL.
-if [ "$d" = "1:0" ] && cat "$TMP/out" "$TMP/err" | grep -q "FAIL"; then
-  ok "B5 control: DEVKIT_GATE_CACHE=0: REG-1 starts (runs $d, REG-2 stopped by fail-fast #647) and the failure is reported"
-else bad "B5 control: runs=$d out='$(head -c 200 "$TMP/out")' err='$(head -c 200 "$TMP/err")' (want 1:0 and a FAIL line)"; fi
-hookstop s-a "$TMP/sA.jsonl" REGRESSION_GATE_TOUCHED_RECHECK_S=0 DEVKIT_GATE_CACHE=0; delta; d="$D"
-[ "$d" = "1:1" ] && ok "B6 control: RECHECK_S=0 with the gate cache off starts the suites again (runs $d)" || bad "B6 control: runs=$d (want 1:1)"
-echo "// one more byte" >> "$H/app/src/main/kotlin/pkg/Lonely.kt"
-hookstop s-b "$TMP/sB.jsonl"; delta; d="$D"
-[ "$d" = "1:1" ] && ok "B4: a changed source byte starts both suites (runs $d)" || bad "B4: runs $d (want 1:1)"
+# B (the Stop hook end to end: the Stop's gate run after the 300 s reminder window, another session's Stop, RECHECK_S=0) is gone with the Stop
+# gate call (plan v26 mục 1: "Remove the gate call RG:833 and result branches RG:855-1096"): no Stop starts a suite, so there is nothing to
+# re-use there. The record itself (part A) is still read by any non-forced run with a time budget; a session-less gate run on an edited
+# test starts no suite at all (post-fix-gate #472 B).
 cd "$TMP" || exit 1
 
 echo

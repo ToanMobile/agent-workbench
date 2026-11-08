@@ -776,7 +776,7 @@ universal-agent-devkit/
 ├── rules/                       # Core rules & dynamic profile rules symlinks
 ├── skills/                      # 36 Curated Skills
 ├── commands/                    # Slash commands & aliases (links into skills/, plus audit-gate & profile)
-├── agents/                      # Subagents (.md), 10 Specialized Audit Agents, and 10 Councils (agents/councils/)
+├── agents/                      # Subagents (.md), 5 Specialized Audit Agents, and 10 Councils (agents/councils/)
 ├── hooks/                       # Lifecycle hooks (hooks.json) and their contract tests (hooks/tests/)
 ├── workflows/                   # Workflow engines (Claude Code Workflow harness) and their tests
 ├── scripts/                     # Installer helpers, worktree_sandbox.py (APFS CoW), token_cost_tracker.py, regex linters

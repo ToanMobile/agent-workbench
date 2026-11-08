@@ -21,7 +21,11 @@
 # With `ocr` installed (REVIEW_GATE_REQUIRE_OCR=0: off) an OCR review after the last
 # edit is REQUIRED (user, 13/10: OCR always runs again after principal-code-reviewer;
 # the two find different defects); with no LLM endpoint, `ocr-review` falling back to
-# its delegation spec plus an agent review after the edit stands in for it.
+# its delegation spec plus an agent review after it stands in for it (in one message: the
+# `ocr-review` call before the Agent call — calls are indexed in the order listed).
+# A progress reply (CHƯA XONG, no status line) is reviewed at the handover: a turn that ran
+# git push, `gh pr create`, `agent-kit worktree finish|integrate` or super-board-merge-gate.sh
+# (also under `timeout N`; not its --dry-run / --preflight) is one unless what it handed over was reviewed.
 #
 # Loop-guard: per-session attempts file, MAX_ATTEMPTS — release with a logged
 # warning if the environment genuinely can't run reviews (avoid infinite block).
@@ -147,6 +151,81 @@ except Exception as e:
 # Audit 2026-10-25 A3: a push this turn that more edits followed is no handover (devkit_harness.push_after_last_edit), but the code it
 # carried must have been reviewed: such a Stop skips only after the scan below finds no push of code edited since the last review.
 wip_push_start = None
+_HANDOVER_KEYS = ("push", "pr create", "agent-kit", "super-board-merge-gate")   # cheap prefilter: a line with none is no handover
+_INTERP = {"python", "python3", "bash", "sh", "zsh"}
+
+
+# options of .claude/bin/super-board-merge-gate.sh that take a value (its `case "$1"` loop: `shift 2`)
+_MG_VALUE_OPTS = {"--config", "--pr", "--expect-head", "--subject", "--body-file", "--lock-timeout", "--stale-after", "--train-receipt"}
+
+
+def _merge_gate_check_only(args):
+    """#992: the merge gate words carry its own --dry-run / --preflight FLAG, read as its arg loop reads them: the word after a value
+    option is that option's value (`--subject --dry-run` merges for real). ponytail: a new value option of the merge gate needs adding to
+    _MG_VALUE_OPTS; until then its value is read as a flag (the old reading)."""
+    i = 0
+    while i < len(args):
+        if args[i] in ("--dry-run", "--preflight"):
+            return True
+        i += 2 if args[i] in _MG_VALUE_OPTS else 1
+    return False
+
+
+def _handover_cmd(cmd):
+    """The Bash command line hands the work over (04/11): a git push (devkit_harness.git_writes), `gh pr create`, `agent-kit worktree
+    finish`, `agent-kit integrate`, super-board-merge-gate.sh — as a command word, read like git_writes (devkit_harness._shell_code: quoted
+    text, comments and heredoc bodies are data). ponytail: `bash -c '…'`, eval and aliases are not seen, as in git_writes."""
+    if not isinstance(cmd, str) or not any(k in cmd for k in _HANDOVER_KEYS):
+        return False
+    if "push" in devkit_harness.git_writes(cmd):
+        return True
+    for seg in devkit_harness._CMD_SPLIT.split(devkit_harness._shell_code(cmd)[0]):
+        w = devkit_harness._command_words(seg)
+        if w and os.path.basename(w[0]) in ("timeout", "gtimeout"):   # #992: `[g]timeout [-k N|-s SIG|--opt=…] DURATION <cmd>` (merge gate có trần giờ; gtimeout: coreutils macOS)
+            w = w[1:]
+            while w and w[0].startswith("-"):
+                w = w[2:] if w[0] in ("-k", "-s", "--kill-after", "--signal") else w[1:]
+            w = w[1:]   # DURATION
+        if w and os.path.basename(w[0]) in _INTERP:   # python3 …/agent-kit, bash …/super-board-merge-gate.sh
+            w = w[1:]
+            while w and w[0].startswith("-"):
+                w = w[1:]
+        if not w:
+            continue
+        c, rest = os.path.basename(w[0]), [x for x in w[1:] if not x.startswith("-")]
+        if c == "super-board-merge-gate.sh":
+            if not _merge_gate_check_only(w[1:]):   # #992: --dry-run / --preflight chỉ kiểm, không merge: không bàn giao
+                return True
+        elif (c == "agent-kit" and (rest[:2] == ["worktree", "finish"] or rest[:1] == ["integrate"])) \
+                or (c == "gh" and any(w[k] == "pr" and w[k + 1] == "create" for k in range(1, len(w) - 1))):
+            return True
+    return False
+
+
+def _handover_in_turn(tp, start):
+    """A tool call of the turn (after `start`, epoch) ran a _handover_cmd — devkit_harness.git_writes_in_turn's turn filter. Unreadable:
+    True (fail closed: the gate then looks for the handover itself and holds when it cannot find it)."""
+    import datetime
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                if '"command"' not in raw or not any(k in raw for k in _HANDOVER_KEYS):
+                    continue
+                try:
+                    e = json.loads(raw)
+                    t = datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp()
+                except (ValueError, AttributeError):
+                    continue
+                if t < start or e.get("type") != "assistant":
+                    continue
+                for c in (e.get("message") or {}).get("content") or []:
+                    if isinstance(c, dict) and c.get("type") == "tool_use" and _handover_cmd((c.get("input") or {}).get("command", "")):
+                        return True
+    except OSError:
+        return True
+    return False
+
+
 for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             os.path.dirname(os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "review_gate.sh"))),
             os.path.join(repo, ".agents", "devkit", "hooks")):
@@ -158,7 +237,7 @@ for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             if devkit_harness.work_in_progress(d, status_optional=True, repo=repo):
                 _tp0 = d.get("transcript_path")
                 _st0 = devkit_harness.turn_start(_tp0)
-                if _st0 is None or "push" not in devkit_harness.git_writes_in_turn(_tp0, _st0):
+                if _st0 is None or not _handover_in_turn(_tp0, _st0):   # no push, PR, finish, integrate or merge gate this turn
                     logline(f"[{ts}] skip: work in progress — review at the handover turn")
                     sys.exit(0)
                 wip_push_start = _st0
@@ -344,7 +423,7 @@ def in_diff(fp):
 tp = d.get("transcript_path")
 last_edit_idx = -1
 last_review_idx = -1
-edit_marks, review_marks, push_marks = [], [], []   # every edit / review index, and this turn's pushes (wip_push_start only)
+edit_marks, review_marks, push_marks = [], [], []   # every edit / review index, and this turn's handovers (wip_push_start only)
 session_unreviewed = set()   # diff paths edited by me this session
 idx = 0
 # OpenCodeReview (2026-10-13): a FULL review that succeeded counts as the fresh review. The command must START a command segment
@@ -531,7 +610,7 @@ if tp and os.path.exists(tp):
                 elif name == "Bash":
                     _bts = _tt
                     if wip_push_start is not None and _tt is not None and _tt >= wip_push_start \
-                            and "push" in devkit_harness.git_writes(str(inp.get("command") or "")):
+                            and _handover_cmd(str(inp.get("command") or "")):
                         push_marks.append(idx)
                     if _bts is not None:
                         bash_runs.append([idx, _bts, None, str(inp.get("command") or "")])
@@ -824,9 +903,10 @@ if wip_push_start is not None:
             _unreviewed_push = _p
             break
     if _unreviewed_push is None:
-        logline(f"[{ts}] skip: work in progress — this turn pushed reviewed code, then went on editing; review at the handover turn")
+        logline(f"[{ts}] skip: work in progress — this turn's handover (push / PR / finish / integrate / merge gate) carried reviewed code; "
+                "review at the handover turn")
         sys.exit(0)
-    logline(f"[{ts}] work in progress, but push #{_unreviewed_push} of this turn carried code edited after the last review — gated")
+    logline(f"[{ts}] work in progress, but handover #{_unreviewed_push} of this turn carried code edited after the last review — gated")
 
 # No .kt edited by me this session (the dirty files are pre-existing /
 # someone else's) → nothing of mine to gate.
@@ -997,7 +1077,10 @@ lines += [
     "  B) Hoặc Skill code-review / open-code-review trên diff.",
     "  C) Nếu đổi test/CI: thêm test-architect-seti; Android đổi kiến trúc/API: android-principal-architect.",
     "  D) Hoặc Workflow 'multi-lens-audit' nếu môi trường hỗ trợ workflow.",
-    "Gom finding → fix theo CLASS (không chỉ instance) → rồi mới stop.",
+    "Finding P0..P3: sửa ngay trong PR này (theo CLASS, không chỉ instance) rồi review lại; không hạ thành thẻ Backlog",
+    "  (chủ repo 06/11). Bug thật ngoài phạm vi PR thì tạo thẻ (skill createTask) rồi ghi số thẻ vào báo cáo.",
+    "`ocr-review` ra mode delegate (không có LLM endpoint): không cần giao spec cho agent thứ hai — gọi `ocr-review` TRƯỚC",
+    "  lời gọi Agent review (cùng một tin nhắn được, lệnh OCR đứng trước); một agent review sau nó là đủ.",
 ]
 if ocr_missing:   # the agent review is done: say exactly what is left
     lines = [
@@ -1007,8 +1090,13 @@ if ocr_missing:   # the agent review is done: say exactly what is left
         *(['  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm>'] if need_ws else []),
         *([f'  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm khác> --from {since_base[:12]}'
            "   (phần đã commit sau lần xác minh cuối: lệnh không --from chỉ xem phần chưa commit)"] if since else []),
-        "rồi xử lý từng phát hiện (sửa, hoặc nói vì sao không); sửa code thì review lại. Máy chưa có LLM endpoint thì lệnh tự rơi về",
-        "spec delegation: giao spec đó cho một reviewer agent SAU lần chạy đó. Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
+        "rồi xử lý phát hiện: P0..P3 sửa ngay trong PR (sửa code thì review lại), không hạ thành thẻ Backlog; bug thật ngoài PR thì",
+        "tạo thẻ (skill createTask) và ghi số thẻ vào báo cáo. Máy chưa có LLM endpoint thì lệnh tự rơi về spec delegation (mode delegate): không cần",
+        "giao spec cho agent thứ hai — gọi `ocr-review` đúng phạm vi trên TRƯỚC lời gọi Agent review (cùng một tin nhắn được, lệnh OCR",
+        "đứng trước), một agent review sau nó là đủ. Đừng cắt output của lệnh (| tail, | head): gate nhận fallback qua dòng đầu",
+        "'no valid LLM endpoint' / 'LLM endpoint unusable'.",
+        "`--out` viết thẳng đường dẫn (không `$BIẾN`): gate so thư mục của dòng `spec:` với chữ sau --out trong lệnh (#992).",
+        "Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
         *([f"OCR theo nội dung đã phủ {len(ws_mapped) + len(range_mapped)} file; còn lệch: {', '.join(ocr_delta[:10])}"]
           if (ws_mapped or range_mapped) and ocr_delta else []),
         "",
@@ -1099,6 +1187,38 @@ if os.environ.get("REVIEW_GATE_OCR", "1") != "0" and not ocr_missing and not any
             logline(f"[{ts}] ocr-review --delegate-only rc={_r.returncode} spec={_spec or '-'}")
     except Exception as _e:   # OCR is an aid here, never a reason to fail the gate
         logline(f"[{ts}] ocr-review failed: {_e!r}")
+# Cùng thông điệp lần nữa trong phiên (chủ repo 08/11: "spam lắm và dài"): giữ dòng ⛔ (yêu cầu), lệnh cần chạy và danh sách
+# file, bỏ phần giải thích — như test_evidence_gate.sh O4. So không tính số đếm lần chặn.
+# Mọi lỗi ở bước rút gọn (file trạng thái hỏng, surrogate lẻ trong thông điệp…) rơi về in nguyên thông điệp và vẫn chặn:
+# một ngoại lệ ở đây làm python thoát 1 và wrapper bên dưới thoát 0 = cho Stop qua (fail-open, Antigravity audit PR #1059).
+def _shorten(full):
+    import hashlib
+    shown = os.path.join(logdir, f"review_gate_shown_{sid}")
+    digest = hashlib.sha256("\n".join(full).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    try:
+        with open(shown, encoding="utf-8", errors="replace") as fh:
+            again = fh.read().strip() == digest
+    except Exception:
+        again = False
+    try:
+        with open(shown, "w", encoding="utf-8") as fh:
+            fh.write(digest)
+    except OSError:
+        pass
+    if not again:
+        return full
+    # Giữ cả các lựa chọn A–D của đường chặn thường: đó là lệnh cần chạy (review PR #1059).
+    short = [l for l in full if l.startswith(("⛔", "OCR")) or l.lstrip().startswith(("•", "… +", "python3 ", "→"))
+             or re.match(r"\s+[A-D]\) ", l)]
+    # Ràng buộc cách chạy OCR (không phải giải thích): chỉ thông điệp "thiếu OCR" mang chúng; thiếu thì lượt OCR không được tính.
+    if ocr_missing:
+        short.append("Nhắc: OCR trước Agent review; --out viết thẳng đường dẫn (không $BIẾN); không cắt output (| tail, | head).")
+    short.append("(Như lần chặn trước trong phiên — phần giải thích không lặp lại.)")
+    return short
+try:
+    lines = _shorten(lines)
+except Exception as _e:
+    logline(f"[{ts}] review_gate shorten failed, full message kept: {_e!r}")
 sys.stderr.write("\n".join(lines) + "\n")
 sys.exit(2)
 PY

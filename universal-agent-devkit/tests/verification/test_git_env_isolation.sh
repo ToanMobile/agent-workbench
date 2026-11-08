@@ -16,7 +16,7 @@ FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); 
 left="$(env GIT_INDEX_FILE=/x GIT_DIR=/x GIT_WORK_TREE=/x GIT_PREFIX=x GIT_COMMON_DIR=/x GIT_OBJECT_DIRECTORY=/x \
   GIT_ALTERNATE_OBJECT_DIRECTORIES=/x GIT_NAMESPACE=x GIT_AUTHOR_NAME=a GIT_AUTHOR_EMAIL=a@a GIT_AUTHOR_DATE=1 \
   GIT_COMMITTER_NAME=c GIT_COMMITTER_EMAIL=c@c GIT_COMMITTER_DATE=1 GIT_CONFIG_PARAMETERS="'k=v'" GIT_CONFIG_COUNT=1 \
-  GIT_CONFIG_KEY_0=k GIT_CONFIG_VALUE_0=v KEEP_ME=1 bash -c '. "$1"; env | grep -E "^(GIT_(INDEX_FILE|DIR|WORK_TREE|PREFIX|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|AUTHOR_[A-Z]+|COMMITTER_[A-Z]+|CONFIG_[A-Z_0-9]+)|KEEP_ME)=" | cut -d= -f1' _ "$LIB")"
+  GIT_CONFIG_KEY_0=k GIT_CONFIG_VALUE_0=v GIT_CONFIG_GLOBAL=/x KEEP_ME=1 bash -c '. "$1"; env | grep -vx "GIT_CONFIG_GLOBAL=/dev/null" | grep -E "^(GIT_(INDEX_FILE|DIR|WORK_TREE|PREFIX|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|AUTHOR_[A-Z]+|COMMITTER_[A-Z]+|CONFIG_[A-Z_0-9]+)|KEEP_ME)=" | cut -d= -f1' _ "$LIB")"
 [ "$left" = "KEEP_ME" ] && ok "the library clears every GIT_* variable a hook run hands on and keeps the rest" || fail "survivors after sourcing: $(printf '%s' "$left" | tr '\n' ' ')"
 
 # 1b. output language is pinned, not inherited: tests assert Vietnamese tr() messages and the DevKit default is now en.

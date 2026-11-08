@@ -97,7 +97,11 @@ DEFAULT_ALWAYS_HUMAN = {
     "auth": {
         "labels": ["auth", "security"],
         "paths": ["**/auth/**", "**/authz/**", "**/permissions/**"],
-        "keywords": ["jwt.sign", "bcrypt", "password_hash", "service_role"],
+        "keywords": ["jwt.sign", "password_hash", "service_role"],
+        # #1028: `bcrypt` không đứng trước `o`: chuỗi con bắt nhầm `libcrypto` (li-BCRYPT-o, GeelyEx2 PR #143) và `subcrypto`.
+        # `jbcrypt`, `pybcrypt`, `mybcrypt`, `_bcrypt`, `bcryptjs`, `bcrypt.hash(` vẫn khớp (Grok review: tiền tố chữ cái là thư viện thật).
+        # ponytail: chỉ loại `bcrypto…`, thư viện tên đó (npm bcrypto) thành auto; thêm khi gặp.
+        "patterns": [r"bcrypt(?!o)"],
     },
     "schema": {
         "labels": ["schema", "destructive"],
@@ -255,6 +259,25 @@ def deleted_paths(diff: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+# File định nghĩa chính luật này: dòng danh sách từ khoá của nó (`"jwt.sign", …`) tự khớp, mọi PR đồng bộ kit đổi dòng
+# đó bị gắn human-gate auth (Idle-Plaza-3D PR #86, OfficeReader PR #300). Chỉ bỏ khỏi quét từ khoá/pattern, khi cả tên
+# cũ lẫn tên mới đúng đường dẫn này (đổi tên file khác vào đây vẫn bị quét); nhãn, path và xoá file vẫn xét như cũ.
+# Sửa chính file luật (kể cả bớt luật) auto-merge như mọi PR thường: chủ repo 08/11 "tôi muốn mọi thứ auto merge thật";
+# bản dò nới luật theo literal bị gỡ vì bắt nhầm kit-sync tinh chỉnh pattern và vẫn còn kẽ (review PR #1059).
+# ponytail: danh sách cứng 2 file; test merge-policy mang dữ liệu từ khoá vẫn cần người, thêm khi kit đồng bộ chúng sang app.
+SELF_POLICY_PATHS = (".claude/bin/super-board-merge-policy.py", ".claude/skills/super-board/references/config-schema.json")
+
+
+def scanned_diff(diff: str) -> str:
+    """Diff bỏ các mục chỉ chạm SELF_POLICY_PATHS; header không đọc được thì giữ (fail-closed)."""
+    keep = []
+    for sec in re.split(r"(?m)^(?=diff --git )", diff):
+        p = diff_git_paths(sec.split("\n", 1)[0]) if sec.startswith("diff --git ") else None
+        if not (p and p[0] in SELF_POLICY_PATHS and p[1] in SELF_POLICY_PATHS):
+            keep.append(sec)
+    return "".join(keep)
+
+
 def comment_free(text: str) -> str:
     """`DROP/**/TABLE` is a valid DROP TABLE (SQL treats a comment as whitespace): blank `/*...*/` out."""
     return " ".join(re.sub(r"/\*.*?\*/", " ", text).split())
@@ -282,7 +305,7 @@ def main() -> int:
 
     labels = {(l.get("name") or "").lower() for l in meta.get("labels") or []}
     paths = [f.get("path") or "" for f in meta.get("files") or []]
-    added = added_text(diff)
+    added = added_text(scanned_diff(diff))
     added_nc = comment_free(added)
     body = meta.get("body") or ""
 
