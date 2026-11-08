@@ -100,6 +100,12 @@ if refused && has 'pm_dispatch kind=audit` (mặc định Antigravity' && has 'p
    && has 'chỉ khi Antigravity bị giới hạn mới dùng `pm_dispatch kind=audit agent=grok`'; then ok "P3b: thông điệp gợi ý Antigravity trước, grok khi bị giới hạn"
 else bad "P3b: thông điệp vẫn gợi ý grok trước: rc=$RC, $(tailout)"; fi
 
+# P3c. cùng thứ tự gợi ý ở hook regression_gate.sh (nhánh edited_test): Antigravity trước, grok chỉ khi bị giới hạn
+HOOK_SRC="$DEVKIT_DIR/hooks/regression_gate.sh"
+if grep -qF 'pm_dispatch kind=audit` (mặc định Antigravity)' "$HOOK_SRC" && grep -qF 'agent-kit approve-tests <task-id>' "$HOOK_SRC" \
+   && grep -qF 'chỉ khi Antigravity bị giới hạn mới dùng `pm_dispatch kind=audit agent=grok`' "$HOOK_SRC"; then ok "P3c: hook regression_gate gợi ý Antigravity trước, grok khi bị giới hạn"
+else bad "P3c: hook regression_gate vẫn gợi ý grok trước"; fi
+
 # N1. phiên là grok (GROK_SESSION_ID) -> không duyệt (tự duyệt); DEVKIT_AGENT_ID=grok-build cũng vậy
 mk "$TMP/n1"; X="$(pr_commit "$V1" "PR sửa test")"; pm_grok T1011-n1 "$TMP/n1" "$X"
 run_gate "$TMP/n1" GROK_SESSION_ID=g-1
