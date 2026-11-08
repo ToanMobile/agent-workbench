@@ -69,6 +69,9 @@ MOBILE_APP = {"mobile_uninstall_app": "shell pm uninstall", "mobile_clear_app_da
 # What PATTERNS (below, MCP calls only) refuse: a marker only this mapping writes, never a command a user types.
 MM_CLOUD, MM_INVALID = "@@mobile-mcp-cloud@@", "@@mobile-mcp-invalid@@"
 
+def _q(v):
+    return shlex.quote(v) if isinstance(v, str) and v else ""
+
 def mobile_cmd(name, args, device):
     """The adb command a mobile-mcp tool amounts to ("" = no device touched; a marker = refused whatever the device is)."""
     if name in MOBILE_CLOUD:
@@ -78,11 +81,10 @@ def mobile_cmd(name, args, device):
     if not isinstance(device, str) or not device.strip():
         return MM_INVALID + " " + name + ": no device"
     adb = "adb -s " + shlex.quote(device)
-    q = lambda v: shlex.quote(v) if isinstance(v, str) and v else ""
     if name == "mobile_install_app":
-        return adb + " install " + q(args.get("path"))
+        return adb + " install " + _q(args.get("path"))
     if name in MOBILE_APP:
-        return " ".join((adb, MOBILE_APP[name], q(args.get("packageName"))))
+        return " ".join((adb, MOBILE_APP[name], _q(args.get("packageName"))))
     return adb + " get-state"
 
 def mobile_as_adb(name, inp):
@@ -115,7 +117,7 @@ def mcp_as_adb(tool, inp):
                    and re.search(r"serial|device_?id", k, re.I)), "")
     adb = "adb -s " + shlex.quote(serial) if serial else "adb"
     op = inp.get("operation") or ""
-    q = lambda v: shlex.quote(v) if isinstance(v, str) and v else ""
+    q = _q
     if name in REPLICANT_HOST_ONLY:
         return ""
     if name == "adb-shell":
