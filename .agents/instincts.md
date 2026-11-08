@@ -833,6 +833,12 @@ Mẫu ghi nhận:
 
 ---
 
+### [INSTINCT-109] Allowlist file tự sinh áp cả kiểm tra trước audit
+- **Ngày phát hiện:** 2026-11-04
+- **Hiện tượng lỗi:** Allowlist file tự sinh áp cả kiểm tra trước audit
+- **Nguyên nhân:** Bỏ qua AGENTS.md/.agents/CHECKLIST.md trong trackedChanges cho mọi caller: bản sửa tay chưa commit của AGENTS.md (rule thật) được audit và PASS gắn vào sha HEAD (#988 review P2)
+- **Quy tắc phòng ngừa & Cách fix:** Danh sách bỏ qua chỉ áp cho kiểm tra SAU khi agent chạy (ignoreGenerated); trước khi chạy cây phải sạch thật; muốn audit cây bẩn thì audit commit cụ thể trong worktree tạm; ghi file đã bỏ qua vào notes
+
 ### [INSTINCT-106] Luồng tự động qua agent ngoài (PM/grok) xanh trên fixture nhưng hỏng khi chạy thật
 - **Ngày phát hiện:** 2026-11-04
 - **Hiện tượng lỗi:** Luồng tự động qua agent ngoài (PM/grok) xanh trên fixture nhưng hỏng khi chạy thật
