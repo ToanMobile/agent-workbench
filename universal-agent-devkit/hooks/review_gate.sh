@@ -1189,28 +1189,36 @@ if os.environ.get("REVIEW_GATE_OCR", "1") != "0" and not ocr_missing and not any
         logline(f"[{ts}] ocr-review failed: {_e!r}")
 # Cùng thông điệp lần nữa trong phiên (chủ repo 08/11: "spam lắm và dài"): giữ dòng ⛔ (yêu cầu), lệnh cần chạy và danh sách
 # file, bỏ phần giải thích — như test_evidence_gate.sh O4. So không tính số đếm lần chặn.
-import hashlib as _hl
-_shown = os.path.join(logdir, f"review_gate_shown_{sid}")
-_digest = _hl.sha256("\n".join(lines).encode()).hexdigest()[:16]
-try:
-    with open(_shown) as fh:
-        _again = fh.read().strip() == _digest
-except OSError:
-    _again = False
-try:
-    with open(_shown, "w") as fh:
-        fh.write(_digest)
-except OSError:
-    pass
-if _again:
+# Mọi lỗi ở bước rút gọn (file trạng thái hỏng, surrogate lẻ trong thông điệp…) rơi về in nguyên thông điệp và vẫn chặn:
+# một ngoại lệ ở đây làm python thoát 1 và wrapper bên dưới thoát 0 = cho Stop qua (fail-open, Antigravity audit PR #1059).
+def _shorten(full):
+    import hashlib
+    shown = os.path.join(logdir, f"review_gate_shown_{sid}")
+    digest = hashlib.sha256("\n".join(full).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    try:
+        with open(shown, encoding="utf-8", errors="replace") as fh:
+            again = fh.read().strip() == digest
+    except Exception:
+        again = False
+    try:
+        with open(shown, "w", encoding="utf-8") as fh:
+            fh.write(digest)
+    except OSError:
+        pass
+    if not again:
+        return full
     # Giữ cả các lựa chọn A–D của đường chặn thường: đó là lệnh cần chạy (review PR #1059).
-    _ocr_rule = ocr_missing   # chỉ thông điệp "thiếu OCR" mang các ràng buộc này
-    lines = [l for l in lines if l.startswith(("⛔", "OCR")) or l.lstrip().startswith(("•", "… +", "python3 ", "→"))
+    short = [l for l in full if l.startswith(("⛔", "OCR")) or l.lstrip().startswith(("•", "… +", "python3 ", "→"))
              or re.match(r"\s+[A-D]\) ", l)]
-    # Ràng buộc cách chạy OCR (không phải giải thích): thiếu thì lượt OCR không được tính (review PR #1059).
-    if _ocr_rule:
-        lines.append("Nhắc: OCR trước Agent review; --out viết thẳng đường dẫn (không $BIẾN); không cắt output (| tail, | head).")
-    lines.append("(Như lần chặn trước trong phiên — phần giải thích không lặp lại.)")
+    # Ràng buộc cách chạy OCR (không phải giải thích): chỉ thông điệp "thiếu OCR" mang chúng; thiếu thì lượt OCR không được tính.
+    if ocr_missing:
+        short.append("Nhắc: OCR trước Agent review; --out viết thẳng đường dẫn (không $BIẾN); không cắt output (| tail, | head).")
+    short.append("(Như lần chặn trước trong phiên — phần giải thích không lặp lại.)")
+    return short
+try:
+    lines = _shorten(lines)
+except Exception as _e:
+    logline(f"[{ts}] review_gate shorten failed, full message kept: {_e!r}")
 sys.stderr.write("\n".join(lines) + "\n")
 sys.exit(2)
 PY

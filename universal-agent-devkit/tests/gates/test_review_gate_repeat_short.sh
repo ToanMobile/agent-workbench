@@ -43,7 +43,7 @@ open(tr, "a").write(json.dumps(e) + "\n")
 PY
 ev() { python3 "$TMP/ev.py" "$1" "$TR" "${@:2}"; }
 stop() { printf '{"session_id":"s-%s","transcript_path":"%s","hook_event_name":"Stop"}' "$1" "$TR" \
-  | PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$P" CLAIM_MAX=9 bash "$DEVKIT_DIR/hooks/review_gate.sh" >"$TMP/out" 2>"$2"; }
+  | PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$P" REVIEW_GATE_MAX_ATTEMPTS=9 bash "$DEVKIT_DIR/hooks/review_gate.sh" >"$TMP/out" 2>"$2"; }
 
 : > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer   # agent review, thiếu OCR
 stop a "$TMP/e1"; rc1=$?
@@ -69,6 +69,12 @@ if [ "$rc5" = 2 ] && [ "$n5" -lt "$n4" ] && grep -q 'A) Agent principal-code-rev
    && ! grep -q '^Nhắc: OCR' "$TMP/e5"; then
   ok "R4. chặn thường lặp lại: ngắn ($n5 < $n4 dòng), còn lựa chọn A–D"
 else fail "R4. rc $rc5, $n5 dòng (lần đầu $n4): $(cat "$TMP/e5" | tr '\n' '|')"; fi
+
+# R5 (Antigravity audit PR #1059): file trạng thái hỏng (byte không phải UTF-8) không được làm hook crash rồi thoát 0 (fail-open).
+printf '\377\376garbage' > "$P/.claude/audit-gate/review_gate_shown_s-c"
+stop c "$TMP/e6"; rc6=$?
+[ "$rc6" = 2 ] && grep -q '^⛔ REVIEW-GATE' "$TMP/e6" \
+  && ok "R5. file trạng thái hỏng: vẫn chặn (rc 2)" || fail "R5. rc $rc6 (mong 2): $(tail -3 "$TMP/e6" | tr '\n' '|')"
 
 [ "$FAILS" = 0 ] && { echo "test_review_gate_repeat_short: PASS"; exit 0; }
 echo "test_review_gate_repeat_short: FAIL ($FAILS)"; exit 1
