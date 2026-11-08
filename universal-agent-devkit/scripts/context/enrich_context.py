@@ -631,7 +631,8 @@ def compact(dossier, project_root, limit=4):
     refs = shown_refs(dossier, limit)
     notices = dossier.get("notices") or []
     orders = dossier.get("orders") or []
-    if not intents and not refs and not notices and not orders:
+    hw = dossier.get("hardware_warnings") or []   # lưới an toàn: prompt chỉ khớp triệu chứng phần cứng vẫn có cảnh báo
+    if not intents and not refs and not notices and not orders and not hw:
         return ""
     out = [f"[DevKit] Ngữ cảnh tự động cho yêu cầu này (profile: {dossier['active_profile']}):"]
     out.extend("- ⚠ " + n for n in notices)
@@ -642,7 +643,6 @@ def compact(dossier, project_root, limit=4):
         out.append("- Bắt buộc: chạy test tái hiện lỗi thấy ĐỎ trước khi sửa, XANH sau khi sửa "
                    "(Stop hook chỉ chấp nhận 'đã fix' khi thấy cặp RED→GREEN này).")
     specific = dossier["injected_nfrs"][:-GENERIC_NFRS]
-    hw = dossier.get("hardware_warnings") or []
     out.extend("- Ngõ cụt phần cứng: " + w for w in hw)
     short = [n for n in specific if "\n" not in n and n not in hw]
     if short:

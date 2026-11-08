@@ -65,4 +65,17 @@ o2="$(printf '{"prompt":"%s","session_id":"%s"}' "vẫn lỗi PEPS không hoạt
 printf '%s\n' "$o2" | grep -q 'ECU-ML\|lệnh trực tiếp bị bỏ' && fail "3b: mảnh cảnh báo gửi lại trong cùng phiên: $o2" || ok "3b: cùng phiên không gửi lại mảnh nào"
 rm -f .agents/context/hardware-boundaries.json
 
+# 3c. Prompt chỉ khớp triệu chứng phần cứng, không khớp intent nào, trên profile không phải app (automotive, GeelyEx2):
+#     compact() từng trả rỗng trước khi xét cảnh báo (Antigravity audit PR #1057). Cảnh báo phải có.
+printf '{"profile": "automotive"}\n' > .agents/active-profile.json
+cat > .agents/context/hardware-boundaries.json <<'EOF'
+{"boundaries": [{"id": "BLINK-HW", "title": "Xi nhan do BCM điều khiển", "symptoms": ["xi nhan nhấp nháy"],
+  "measured": "Đo: app không đổi được nhịp.", "rescue": "đọc tài liệu BCM."}]}
+EOF
+o="$(run "đèn xi nhan nhấp nháy")"
+printf '%s\n' "$o" | grep -q '^- Ngõ cụt phần cứng: DỪNG: BLINK-HW' \
+  && ok "3c: không intent nào vẫn có cảnh báo phần cứng (automotive)" || fail "3c: mất cảnh báo khi không có intent: '$o'"
+rm -f .agents/context/hardware-boundaries.json
+printf '{"profile": "android"}\n' > .agents/active-profile.json
+
 [ "$FAILS" = 0 ] && echo "PASS test_prompt_hook_dead_hints" || { echo "FAIL test_prompt_hook_dead_hints ($FAILS)"; exit 1; }
