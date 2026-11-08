@@ -34,6 +34,8 @@ printf '%s\n' "$o" | grep -qF 'ZERO-SLOP UI MANDATE' && ok "1: khối ZERO-SLOP 
 
 # 2. Prompt mạng (trước đây mang dòng NFR timeout/backoff): dòng đó không quay lại.
 o="$(run "thêm timeout và retry có backoff cho lời gọi mạng")"
+printf '%s\n' "$o" | grep -q '^- Loại việc: .*NETWORK_AND_RESILIENCE' && ok "2: hook vẫn nói, có Loại việc NETWORK" \
+  || fail "2: hook im lặng hoặc mất Loại việc: $o"
 printf '%s\n' "$o" | grep -q 'Yêu cầu ngầm định\|Skill phù hợp' && fail "2: còn dòng đã gỡ: $o" || ok "2: không còn dòng đã gỡ"
 
 [ "$FAILS" = 0 ] && echo "PASS test_prompt_hook_dead_hints" || { echo "FAIL test_prompt_hook_dead_hints ($FAILS)"; exit 1; }
