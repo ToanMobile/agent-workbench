@@ -16,7 +16,7 @@ check() {
   local name="$1" text="$2" w
   [ -n "$text" ] || { fail "$name: không đọc được văn bản"; return; }
   for w in "pm_task_create" "pm_dispatch kind=audit" "audit-agent.json" "pm_verdict kind=audit verdict=pass auditedHead=" \
-           "\"reviewer\":\"antigravity\"" "impacted task receipt" "blocked-by:"; do
+           "\"reviewer\":\"antigravity\"" "impacted task receipt" "blocked-by:" "blocked-by: agent"; do
     case "$text" in *"$w"*) ;; *) fail "$name thiếu '$w'"; return ;; esac
   done
   for w in "satisfy the independent audit" "--full receipt" "cross-review task id" "\"task_id\":\"<id>\""; do
