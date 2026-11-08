@@ -543,6 +543,9 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
                                          _hb.warning(row))
     if hits:
         dossier["hardware_boundaries"] = [r.get("id") for r in hits[:3]]
+        # compact() in mỗi cảnh báo trên dòng riêng "- Ngõ cụt phần cứng: ": đây là lưới an toàn, không đi chung dòng
+        # "Yêu cầu ngầm định" mà đường --hook bỏ (Antigravity audit PR #1057).
+        dossier["hardware_warnings"] = [_hb.warning(r) for r in hits[:3]]
 
     # 4. Generate Codebase Graph Search Queries
     tokens = [w for w in re.findall(r"[A-Za-z0-9_]{3,}", prompt) if w.lower() not in ["sửa", "lỗi", "giúp", "tạo", "làm", "cho", "vào", "khi", "bị"]]
@@ -621,14 +624,16 @@ def log_surfaced(project_root, session, prompt, refs):
 
 def compact(dossier, project_root, limit=4):
     """A few lines for the UserPromptSubmit hook — empty when the request matched no
-    intent and no instinct (questions, chit-chat): no context tax on those. Except on an
+    intent, instinct, notice, order or measured hardware dead-end (questions, chit-chat):
+    no context tax on those. Except on an
     app profile (APP_PROFILES): the UI door always matches there, so every prompt gets
     the UI lines (once per session, dedupe_session) — the price of "no UI word needed"."""
     intents = [i for i in dossier["detected_intents"] if i != "GENERAL_TASK"]
     refs = shown_refs(dossier, limit)
     notices = dossier.get("notices") or []
     orders = dossier.get("orders") or []
-    if not intents and not refs and not notices and not orders:
+    hw = dossier.get("hardware_warnings") or []   # lưới an toàn: prompt chỉ khớp triệu chứng phần cứng vẫn có cảnh báo
+    if not intents and not refs and not notices and not orders and not hw:
         return ""
     out = [f"[DevKit] Ngữ cảnh tự động cho yêu cầu này (profile: {dossier['active_profile']}):"]
     out.extend("- ⚠ " + n for n in notices)
@@ -639,7 +644,8 @@ def compact(dossier, project_root, limit=4):
         out.append("- Bắt buộc: chạy test tái hiện lỗi thấy ĐỎ trước khi sửa, XANH sau khi sửa "
                    "(Stop hook chỉ chấp nhận 'đã fix' khi thấy cặp RED→GREEN này).")
     specific = dossier["injected_nfrs"][:-GENERIC_NFRS]
-    short = [n for n in specific if "\n" not in n]
+    out.extend("- Ngõ cụt phần cứng: " + w for w in hw)
+    short = [n for n in specific if "\n" not in n and n not in hw]
     if short:
         out.append("- Yêu cầu ngầm định: " + " · ".join(short))
     # A multi-line requirement (the Zero-Slop mandate) keeps its lines apart: dedupe_session sends each once per session.
@@ -666,6 +672,19 @@ def compact(dossier, project_root, limit=4):
     if shown:
         out.append("- Skill phù hợp: " + ", ".join(shown))
     return "\n".join(out)
+
+
+# Hai dòng hook prompt không còn in (chủ repo 08/11, đo 30 ngày transcript thật): "Skill phù hợp" dẫn tới dùng đúng skill 0,2 %
+# lượt và gợi ý tên mà danh sách skill của Claude không có (Claude gộp command trùng nội dung về alias: fix, tdd…);
+# "Yêu cầu ngầm định" không đổi hành vi (tỉ lệ sửa code có từ khoá NFR khi có dòng ≈ khi không) và trùng Engineering musts
+# của AGENTS.md. compact() vẫn dựng chúng cho --compact / test định tuyến; chỉ đường --hook bỏ.
+# Test: tests/context_memory/test_prompt_hook_dead_hints.sh.
+HOOK_DROPPED_LINES = ("- Skill phù hợp: ", "- Yêu cầu ngầm định: ")
+
+
+def drop_dead_hints(text):
+    """Bỏ các dòng HOOK_DROPPED_LINES khỏi chữ hook in ra."""
+    return "\n".join(l for l in text.split("\n") if not l.startswith(HOOK_DROPPED_LINES))
 
 
 def format_anthropic_prompt(dossier, project_root=None):
@@ -1279,7 +1298,7 @@ def context_note(payload, project_dir, session_id):
 # Lines the model keeps once it has read them in this session (2026-09-28: GeelyEx2, 5 days,
 # 492 injections — the same ~700-char requirements line re-sent 43.9k chars, each copy re-read
 # on every API call). "Loại việc" and the RED→GREEN rule are short and stay every time.
-ONCE_PER_SESSION = ("- Yêu cầu ngầm định: ", "- Bẫy đã gặp: ", "- Skill phù hợp: ",
+ONCE_PER_SESSION = ("- Bẫy đã gặp: ", "- Ngõ cụt phần cứng: ",
                     "ZERO-SLOP UI MANDATE", "• ",  # these two: the lines of ZERO_SLOP_MANDATE
                     "- GIAO MẶC ĐỊNH BẬT")  # the giaoDefault order (2026-10-25: ~370 B re-sent on every prompt, 19.6 KB a session)
 SAME_AS_BEFORE = "(ngữ cảnh DevKit như lượt trước)"
@@ -1421,6 +1440,7 @@ if __name__ == "__main__":
     elif is_compact:
         text = compact(res, project_dir)
         if is_hook:
+            text = drop_dead_hints(text)
             log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
             write_turn_class(project_dir, session_id, res)
             asked = res.get("lane_card", prompt_input)   # a super-board lane: the card's words, not the runner's text

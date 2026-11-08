@@ -157,7 +157,7 @@ Mọi dòng mã sinh ra hoặc sửa đổi BẮT BUỘC phải tuân thủ 5 ng
    - AI Agent BẮT BUỘC phải chủ động phân tích ngữ cảnh, yêu cầu và phạm vi ảnh hưởng của tác vụ để nạp và thực thi các Kỹ năng chuyên biệt (`skills/`) phù hợp.
    - TUYỆT ĐỐI KHÔNG bắt người dùng phải gõ lệnh slash command (như `/fix`, `/qc`, `/ocr`, `/giao`) hay chạy thủ công bằng tay.
 2. **Tự Động Chuỗi Hóa Quy Trình (Autonomous Skill Chaining):**
-   - **Mọi yêu cầu đầu vào:** **[hook]** `prompt_context.sh` tự chèn ngữ cảnh `context-enricher` (loại việc, yêu cầu ngầm định, bẫy instincts khớp kèm số dòng, luật RED→GREEN) — đọc và làm theo; tự dò AST/Graph cho vùng code liên quan trước khi viết dòng code đầu tiên.
+   - **Mọi yêu cầu đầu vào:** **[hook]** `prompt_context.sh` tự chèn ngữ cảnh `context-enricher` (loại việc, ngõ cụt phần cứng đã đo, bẫy instincts khớp kèm số dòng, luật RED→GREEN) — đọc và làm theo; tự dò AST/Graph cho vùng code liên quan trước khi viết dòng code đầu tiên.
    - **Khi sửa bug:** Tự động kết hợp `fixbugs` (Paired Executable Oracle RED ➔ GREEN) ➔ `observability-instrumentation` (log audit) ➔ `verification-before-completion`.
    - **Khi thiết kế / refactor:** Tự động kết hợp `grill-plan` (stress-test) ➔ `deep-module-design` (interface seam) / `deprecation-migration` ➔ `documentation-and-adrs` (ghi ADR).
    - **Khi làm việc với Android:** Tự động kích hoạt `android-real-device-qa` (đo FPS SurfaceFlinger, dump view hierarchy, ANR logcat triage, DEX scan).

@@ -216,7 +216,7 @@ The agent MUST trigger these skills from context by itself and NEVER ask the use
 
 | Giai Đoạn Vòng Đời | Kỹ Năng Tự Động Kích Hoạt | Ngữ Cảnh / Tình Huống Kỹ Thuật Tự Động Kích Hoạt | Hành Động Tự Động Của Agent |
 |---|---|---|---|
-| **0. Gateway & Context** | `context-enricher` | **MỌI YÊU CẦU ĐẦU VÀO / PROMPT NGẮN CỦA USER** | **[hook]** `prompt_context.sh` (UserPromptSubmit) tự chèn: loại việc, yêu cầu ngầm định (debounce ≥ 1000ms, a11y ≥ 48dp, main thread, PII), bẫy instincts khớp kèm số dòng, và luật paired RED→GREEN khi sửa bug; prompt tả bug được tự ghi thành dòng REPORTED trong regression checklist (`agent-kit bugs add/link/drop`); `session_context.sh` (SessionStart) nạp mục lục instincts + trạng thái checklist. Agent vẫn tự dò AST/Graph. |
+| **0. Gateway & Context** | `context-enricher` | **MỌI YÊU CẦU ĐẦU VÀO / PROMPT NGẮN CỦA USER** | **[hook]** `prompt_context.sh` (UserPromptSubmit) tự chèn: loại việc, ngõ cụt phần cứng đã đo, bẫy instincts khớp kèm số dòng, và luật paired RED→GREEN khi sửa bug; prompt tả bug được tự ghi thành dòng REPORTED trong regression checklist (`agent-kit bugs add/link/drop`); `session_context.sh` (SessionStart) nạp mục lục instincts + trạng thái checklist. Agent vẫn tự dò AST/Graph. |
 | **0. Gateway & Context** | `session-handoff` | Phiên làm việc dài, context window > 50%, trước refactor lớn | Tự động tóm tắt tiến độ (checkpoint), dọn sạch ngữ cảnh thừa, chống suy thoái năng lực suy luận. |
 | **1. Discovery & Arch** | `codebase-memory` | Khám phá dự án, tìm symbol, hàm, route, truy vết blast radius, Cypher | **SSOT ĐỒ THỊ:** Tự động resolve symbol, trace inbound/outbound callers, truy vấn Cypher, hoặc fallback Read/Grep an toàn. |
 | **1. Discovery & Arch** | `spec-driven-development` | Tính năng mới phức tạp chạm $\ge 2$ module, $\ge 3$ files hoặc > 200 LOC | Tự động soạn thảo spec kỹ thuật, phân tích assumptions và edge cases trước khi code. |
@@ -259,18 +259,13 @@ The DevKit provides 10 council subagent prompts in `agents/councils/` (5 focus a
 - **Council 9 — Solo Dev & Operational Process (5 Agents):** Anti-spam click & debounce verification, mandatory acceptance screenshot with PASS badge, audit trail logging, DEMO vs LIVE isolation, fail-closed receipt signing.
 - **Council 10 — Standards Compliance & Delivery (5 Agents):** Bidirectional requirement traceability, protocol & data stream integrity, accessibility & UX visual safety, offline resilience & fault tolerance, Tech Lead handover formatting.
 
-### 8.3.1 10 Specialized Audit Agents & Sandbox Engine
+### 8.3.1 5 Specialized Audit Agents & Sandbox Engine
 Bổ sung từ `agency-agents` & `orca` (chuẩn hóa Zero-Defect DevKit):
-- **`minimal-change-auditor`:** Thẩm định diff tối thiểu, Zero Blast Radius, từ chối premature abstraction và scope creep.
-- **`worktree-sandbox-auditor`:** Thẩm định cô lập sandbox song song, APFS CoW, .worktreeinclude, và dọn sạch .git/worktrees/.
-- **`performance-anr-auditor`:** Thẩm định nghẽn main-thread, ANR, O(N²), hot loop allocations và debounce $\ge 1000$ms.
 - **`security-penetration-auditor`:** Thẩm định Zero-Trust, rò rỉ secret, mask PII, SQLi, Intent Spoofing và Path Traversal.
 - **`database-reliability-auditor`:** Thẩm định schema migrations, paired migration test, cấm DROP cột LIVE, cột `mode` (DEMO/LIVE).
 - **`mobile-release-auditor`:** Thẩm định keystore signing, Proguard/R8 rules, đồng bộ bump version 4 nền tảng (Android, iOS, Flutter, RN).
-- **`api-contract-resilience-auditor`:** Thẩm định backward compatibility, explicit timeouts ($\le 10$s/$\le 15$s), idempotency keys, retry jitter.
 - **`real-device-ui-auditor`:** Thẩm định UI Automator accessibility tree, touch target $\ge 48$dp, xác thực proof image thành công.
 - **`game-gc-rendering-auditor`:** Thẩm định Zero-Allocation Update loop, draw call batching, texture compression, Unity/Blender memory.
-- **`token-cost-telemetry-auditor`:** Thẩm định token usage, bảng giá Claude/Gemini, prompt caching savings, 5-minute root cause telemetry.
 - **APFS Worktree Sandbox (`scripts/git/worktree_sandbox.py`):** Điều phối worktree song song bằng macOS APFS CoW (<100ms, 0-byte đĩa), nạp `.worktreeinclude`, cô lập dependencies và trọng tài so sánh diff chọn Winner.
 - **Token Cost Engine (`scripts/governance/token_cost_tracker.py`):** Bóc tách transcript JSONL và tính toán chi phí token USD cho báo cáo nghiệm thu.
 

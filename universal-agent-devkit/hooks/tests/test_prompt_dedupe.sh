@@ -2,7 +2,8 @@
 # Regression test: hooks/prompt_context.sh does not re-inject, within one session, the
 # lines it already injected (GeelyEx2, 5 days: 492 injections, the same ~700-char
 # "Yêu cầu ngầm định" line re-sent 43.9k chars in total, every one re-read on each call).
-#   - "Yêu cầu ngầm định", each "Bẫy đã gặp" and each "Skill phù hợp" line: first time only
+#   - each "Bẫy đã gặp" line: first time only ("Yêu cầu ngầm định" / "Skill phù hợp" are no longer printed by the
+#     hook at all, 08/11: tests/context_memory/test_prompt_hook_dead_hints.sh)
 #   - "Loại việc" and the RED→GREEN rule of a bug prompt: every time
 #   - the whole injection identical to the previous one → a one-line reminder (+ RED→GREEN)
 #   - a new session_id, or a compaction in the transcript → everything again
@@ -58,7 +59,7 @@ hook "$TMP/o2" s1 "$TMP/tr1.jsonl" "app vẫn crash khi xoay màn hình ở tran
 hook "$TMP/o3" s1 "$TMP/tr1.jsonl" "sửa lỗi crash khi xoay màn hình, mất trạng thái"
 c1="$(chars "$TMP/o1")"; c2="$(chars "$TMP/o2")"; c3="$(chars "$TMP/o3")"
 echo "  chars: prompt1=$c1 prompt2=$c2 prompt3=$c3"
-has "$TMP/o1" "Yêu cầu ngầm định" && has "$TMP/o1" "Bẫy đã gặp: [INSTINCT-001]" && has "$TMP/o1" "Skill phù hợp" \
+has "$TMP/o1" "Bẫy đã gặp: [INSTINCT-001]" && has "$TMP/o1" "Loại việc" \
   && ok "1st prompt: the full context" || fail "1st prompt incomplete: $(cat "$TMP/o1")"
 for n in 2 3; do
   grep -qE "$REPEATED" "$TMP/o$n" && fail "prompt $n repeats lines already sent: $(grep -E "$REPEATED" "$TMP/o$n")" \
@@ -73,15 +74,15 @@ for n in 1 2 3; do
 done
 
 # ── partly new context: only the unseen lines are added ─────────────────────────
-# Same screen words as prompts 1-3 (a screen word brings the design skill, so the skill line is the same
-# line), plus a network word: only the requirements line is new.
+# Same screen words as prompts 1-3, plus a network word: the kind of work changes, traps already sent stay out,
+# and the network requirements line (no longer printed by the hook) must not come back.
 hook "$TMP/o3b" s1 "$TMP/tr1.jsonl" "app crash ViewModel mất trạng thái khi xoay màn hình, gọi API lỗi"
 has "$TMP/o3b" "Loại việc" && ok "partly new context: the kind of work stays" || fail "lost 'Loại việc': $(cat "$TMP/o3b")"
 has "$TMP/o3b" "$RED_LINE" && ok "partly new context: RED→GREEN rule present" || fail "RED lost: $(cat "$TMP/o3b")"
 grep -qE "Bẫy đã gặp|Skill phù hợp" "$TMP/o3b" && fail "traps/skills already sent are repeated: $(cat "$TMP/o3b")" \
   || ok "partly new context: traps and skills already sent are not repeated"
-has "$TMP/o3b" "Explicit Timeouts" && ok "partly new context: a different requirements line is shown" \
-  || fail "new requirements line hidden: $(cat "$TMP/o3b")"
+has "$TMP/o3b" "Explicit Timeouts" && fail "partly new context: the dropped requirements line is back: $(cat "$TMP/o3b")" \
+  || ok "partly new context: no requirements line (dropped from the hook)"
 
 # ── a trap not yet shown in the session is still shown ─────────────────────────
 hook "$TMP/o4" s1 "$TMP/tr1.jsonl" "sửa lỗi bluetooth ngắt khi đổi bài hát"
@@ -90,7 +91,7 @@ has "$TMP/o4" "$RED_LINE" && ok "new trap prompt: RED→GREEN rule present" || f
 
 # ── a new session gets everything again ─────────────────────────────────────────
 hook "$TMP/o5" s2 "$TMP/tr2.jsonl" "app vẫn crash khi xoay màn hình ở trang cài đặt, ViewModel mất trạng thái"
-has "$TMP/o5" "Yêu cầu ngầm định" && has "$TMP/o5" "Bẫy đã gặp: [INSTINCT-001]" && has "$TMP/o5" "Skill phù hợp" \
+has "$TMP/o5" "Bẫy đã gặp: [INSTINCT-001]" && has "$TMP/o5" "Loại việc" \
   && ok "new session_id: the full context again" || fail "new session suppressed: $(cat "$TMP/o5")"
 
 # ── a compaction in the session resets it ───────────────────────────────────────
@@ -98,7 +99,7 @@ hook "$TMP/o6" s1 "$TMP/tr1.jsonl" "app vẫn crash khi xoay màn hình ở tran
 grep -qE "$REPEATED" "$TMP/o6" && fail "before compaction already full: $(cat "$TMP/o6")" || ok "same session before compaction: still suppressed"
 printf '%s\n' '{"parentUuid":null,"isSidechain":false,"type":"system","subtype":"compact_boundary","content":"Conversation compacted","level":"info"}' >> "$TMP/tr1.jsonl"
 hook "$TMP/o7" s1 "$TMP/tr1.jsonl" "app vẫn crash khi xoay màn hình ở trang cài đặt, ViewModel mất trạng thái"
-has "$TMP/o7" "Yêu cầu ngầm định" && has "$TMP/o7" "Bẫy đã gặp: [INSTINCT-001]" && has "$TMP/o7" "Skill phù hợp" \
+has "$TMP/o7" "Bẫy đã gặp: [INSTINCT-001]" && has "$TMP/o7" "Loại việc" \
   && ok "after a compact_boundary: the full context again" || fail "after compaction still suppressed: $(cat "$TMP/o7")"
 hook "$TMP/o8" s1 "$TMP/tr1.jsonl" "app vẫn crash khi xoay màn hình ở trang cài đặt, ViewModel mất trạng thái"
 grep -qE "$REPEATED" "$TMP/o8" && fail "the same boundary reset twice: $(cat "$TMP/o8")" || ok "one compaction resets once"
@@ -110,13 +111,13 @@ i=2; while [ "$i" -le 21 ]; do
 done
 grep -qE "$REPEATED" "$TMP/n2" && fail "no transcript: 2nd prompt not suppressed" || ok "no transcript: 2nd prompt suppressed"
 grep -qE "$REPEATED" "$TMP/n20" && fail "no transcript: 20th prompt already full" || ok "no transcript: 20th prompt still suppressed"
-has "$TMP/n21" "Yêu cầu ngầm định" && has "$TMP/n21" "Bẫy đã gặp: [INSTINCT-001]" \
+has "$TMP/n21" "Bẫy đã gặp: [INSTINCT-001]" \
   && ok "no transcript: 21st prompt full again (cap 20)" || fail "no transcript: 21st prompt still suppressed"
 
 # ── no session_id: nothing to scope by, nothing suppressed ─────────────────────
 hook "$TMP/x1" "" "" "app bị crash khi xoay màn hình, ViewModel mất trạng thái"
 hook "$TMP/x2" "" "" "app bị crash khi xoay màn hình, ViewModel mất trạng thái"
-has "$TMP/x2" "Yêu cầu ngầm định" && ok "no session_id: never suppressed" || fail "no session_id suppressed: $(cat "$TMP/x2")"
+has "$TMP/x2" "Bẫy đã gặp: [INSTINCT-001]" && ok "no session_id: never suppressed" || fail "no session_id suppressed: $(cat "$TMP/x2")"
 
 # ── the Zero-Slop mandate (any prompt on an app profile) is a block of lines, each sent once ─────
 # dedupe_session drops repeated lines ONE BY ONE: a mandate glued onto the "Yêu cầu ngầm định" line would
