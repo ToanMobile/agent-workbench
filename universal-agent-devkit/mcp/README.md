@@ -27,7 +27,7 @@ File cấu hình: `.mcp.json` tại root dự án hoặc `~/.claude/.mcp.json`.
     "codebase-memory-mcp": { "command": "codebase-memory-mcp" },
     "context7": { "command": "npx", "args": ["-y", "@upstash/context7-mcp"] },
     "android-code-search": { "command": "npx", "args": ["-y", "cs-android-mcp"] },
-    "mobile-mcp": { "command": "npx", "args": ["-y", "@mobilenext/mobile-mcp@1.0.16"], "env": { "ANDROID_HOME": "/Volumes/Data/AndroidSDK" } }
+    "mobile-mcp": { "command": "npx", "args": ["-y", "@mobilenext/mobile-mcp@1.0.16"], "env": { "ANDROID_HOME": "/Volumes/Data/AndroidSDK", "MOBILEMCP_DISABLE_TELEMETRY": "1" } }
   }
 }
 ```
