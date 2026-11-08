@@ -199,6 +199,33 @@ def _write(path: str, text: str) -> None:
     os.replace(tmp, path)
 
 
+# OfficeReader issue 258: launchd chạy lượt đêm với môi trường trơ (PATH, TZ), không JAVA_HOME ⇒ ./gradlew rơi về stub `java` của macOS và mọi suite
+# Gradle đỏ giả. Tự đặt JAVA_HOME cho gate và checks_fail; không sửa plist, không cài thêm gì. Ứng viên đổi được bằng DEVKIT_GATE_FULL_JDK_CANDIDATES (':').
+JDK_CANDIDATES = [
+    "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+    "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+    "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+    "/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+]
+
+
+def _jdk_ok(path):
+    return bool(path) and os.access(os.path.join(path, "bin", "java"), os.X_OK)
+
+
+def with_java_home(env):
+    """Trả bản sao env có JAVA_HOME dùng được: giữ nguyên nếu đã trỏ JDK có bin/java, không thì lấy ứng viên đầu tiên dùng được; không có thì để nguyên."""
+    out = dict(env)
+    if _jdk_ok(out.get("JAVA_HOME")):
+        return out
+    raw = os.environ.get("DEVKIT_GATE_FULL_JDK_CANDIDATES")
+    for cand in (raw.split(":") if raw is not None else JDK_CANDIDATES):
+        if _jdk_ok(cand):
+            out["JAVA_HOME"] = cand
+            return out
+    return out
+
+
 def sh(cmd, cwd=None, timeout=None, env=None, shell=False):
     """(exit, stdout+stderr) trong process group riêng: hết giờ / SIGTERM thì giết cả cây con. Hết giờ: exit 124."""
     p = subprocess.Popen(cmd, cwd=cwd, env=env, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -682,6 +709,7 @@ def red_excerpt(out: str, tail: int = 15, cap: int = 40) -> str:
 def checks_fail(run: Run, scratch: str, checks: list, timeout: int, match=None) -> str:
     """"bad" (một phần đỏ chạy lại vẫn đỏ), "good", hay "timeout" (hết giờ: không kết luận được commit này).
     `match` (dòng ✖ chuẩn hoá): ca MỚI trong file test vốn đỏ kinh niên — chỉ "bad" khi output đỏ có một trong các dòng đó."""
+    retry_env = with_java_home(dict(os.environ, DEVKIT_SLOT_PRIORITY="nightly"))
     for label, cmd, cwd in checks:
         d = os.path.join(scratch, cwd)
         if cwd != "." and not os.path.isdir(d):
@@ -689,7 +717,7 @@ def checks_fail(run: Run, scratch: str, checks: list, timeout: int, match=None) 
         m = re.match(r"bash '?([^' ]+)'?$", cmd)
         if m and cwd != "." and not os.path.isfile(os.path.join(d, m.group(1))):
             continue   # test chưa có ở commit này: chưa vỡ ở đây
-        rc, out = sh(cmd, cwd=d, timeout=KIT_TEST_TIMEOUT_S if "agent-kit" in cmd else timeout, shell=True)
+        rc, out = sh(cmd, cwd=d, timeout=KIT_TEST_TIMEOUT_S if "agent-kit" in cmd else timeout, env=retry_env, shell=True)
         run.raw("$ (%s) %s -> %d\n%s" % (label, cmd, rc, red_excerpt(out) if rc else "\n".join(out.splitlines()[-15:])))
         if rc == 124:
             return "timeout"
@@ -1297,7 +1325,7 @@ def cmd_run(args) -> int:
             return 2
         run.log("scratch %s @ %s" % (scratch, sha[:12]))
         override = os.environ.get("DEVKIT_GATE_FULL_CMD")
-        env = dict(os.environ, DEVKIT_SLOT_PRIORITY="nightly")   # hàng đợi heavy_slot: đêm đứng sau merge/push/interactive
+        env = with_java_home(dict(os.environ, DEVKIT_SLOT_PRIORITY="nightly"))   # hàng đợi heavy_slot: đêm đứng sau merge/push/interactive
         if override:
             gate_rc, gate_out = sh(override, cwd=scratch, timeout=GATE_TIMEOUT_S, env=env, shell=True)
         else:
