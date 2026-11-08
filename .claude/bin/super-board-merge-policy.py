@@ -261,9 +261,9 @@ def deleted_paths(diff: str) -> list[str]:
 
 # File định nghĩa chính luật này: dòng danh sách từ khoá của nó (`"jwt.sign", …`) tự khớp, mọi PR đồng bộ kit đổi dòng
 # đó bị gắn human-gate auth (Idle-Plaza-3D PR #86, OfficeReader PR #300). Mục diff của file này (cả tên cũ lẫn tên mới
-# đúng đường dẫn; đổi tên file khác vào đây vẫn bị quét) chỉ bỏ khỏi quét từ khoá/pattern khi dòng thêm và dòng xoá khớp
-# đúng cùng tập luật: chép lại hay đổi dạng danh sách thì auto, bớt một từ khoá (nới gate) thì cần người (principal review
-# PR #1059). Nhãn, path và xoá file vẫn xét như cũ.
+# đúng đường dẫn; đổi tên file khác vào đây vẫn bị quét) không bị quét từ khoá/pattern; literal của một luật xuất hiện ở
+# dòng xoá nhiều hơn ở dòng thêm (bỏ một từ khoá hay pattern: nới gate) thì cần người, xem scanned_diff (principal review
+# PR #1059). Chép lại hay đổi dạng danh sách thì auto. Nhãn, path và xoá file vẫn xét như cũ.
 # ponytail: danh sách cứng 2 file; test merge-policy mang dữ liệu từ khoá vẫn cần người, thêm khi kit đồng bộ chúng sang app.
 SELF_POLICY_PATHS = (".claude/bin/super-board-merge-policy.py", ".claude/skills/super-board/references/config-schema.json")
 
@@ -282,26 +282,32 @@ def rule_hit(rule: dict, labels: set, paths: list, added: str, added_nc: str) ->
     return hit
 
 
-def text_hits(always: dict, text: str) -> set:
-    """Mọi (nhóm, từ khoá/pattern) của always_human khớp trong text (đã chuẩn hoá như added_text)."""
-    nc = comment_free(text)
-    return {(cat, k) for cat, rule in always.items() for k in (rule or {}).get("keywords") or []
-            if " ".join(k.lower().split()) in text or " ".join(k.lower().split()) in nc} | \
-           {(cat, r) for cat, rule in always.items() for r in (rule or {}).get("patterns") or []
-            if re.search(r, text) or re.search(r, nc)}
+def rule_literals(always: dict, lines: list) -> dict:
+    """{(nhóm, luật): số lần luật đứng nguyên văn trong nháy kép} trên các dòng không phải comment.
+
+    Literal nguyên văn (`"jwt.sign"`, `"\\b[sp]k_live_"`, dạng JSON `"\\\\b…"`), không phải chuỗi con: comment nhắc tên luật hay
+    literal dài hơn (`"jwt.sign_v2("`) không che việc một luật bị bỏ (principal review PR #1059).
+    """
+    body = "\n".join(l for l in lines if not l.lstrip().startswith(("#", "//"))).lower()
+    return {(cat, t): body.count(f'"{t.lower()}"') + body.count(json.dumps(t.lower()))
+            for cat, rule in always.items() for kind in ("keywords", "patterns") for t in (rule or {}).get(kind) or []}
 
 
 def scanned_diff(diff: str, always: dict) -> tuple[str, set]:
-    """(diff bỏ các mục chỉ chạm SELF_POLICY_PATHS, các (nhóm, luật) có ở dòng xoá mà mất ở dòng thêm của các mục đó).
+    """(diff bỏ các mục chỉ chạm SELF_POLICY_PATHS, các (nhóm, luật) có literal ở dòng xoá nhiều hơn ở dòng thêm).
 
-    Header không đọc được thì giữ mục (fail-closed). Luật mất khỏi file luật = PR nới gate, main() đưa sang người.
+    Header không đọc được thì giữ mục (fail-closed). Luật bớt khỏi file luật = PR nới gate, main() đưa sang người.
+    ponytail: chỉ bắt luật bị bỏ/đổi literal; chuyển luật sang nhóm khác, comment cuối dòng chứa literal, sửa logic
+    rule_hit vẫn auto — nâng cấp khi gate đọc được file luật của base và head để so tập luật thật.
     """
     keep, lost = [], set()
     for sec in re.split(r"(?m)^(?=diff --git )", diff):
         p = diff_git_paths(sec.split("\n", 1)[0]) if sec.startswith("diff --git ") else None
         if p and p[0] in SELF_POLICY_PATHS and p[1] in SELF_POLICY_PATHS:
-            removed = " ".join(" ".join(line[1:] for line in sec.split("\n") if line.startswith("-")).lower().split())
-            lost |= text_hits(always, removed) - text_hits(always, added_text(sec))
+            body = sec.split("\n@@", 1)[1] if "\n@@" in sec else ""
+            removed = rule_literals(always, [l[1:] for l in body.split("\n") if l.startswith("-")])
+            added = rule_literals(always, [l[1:] for l in body.split("\n") if l.startswith("+")])
+            lost |= {k for k, n in removed.items() if n > added[k]}
             continue
         keep.append(sec)
     return "".join(keep), lost
