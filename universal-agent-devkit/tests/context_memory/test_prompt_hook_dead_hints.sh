@@ -6,7 +6,7 @@
 #   - "Yêu cầu ngầm định": tỉ lệ sửa code có từ khoá NFR khi CÓ dòng ≈ khi KHÔNG có (2,9/2,9 % game, 2,6/2,5 % office…),
 #     và nội dung đã nằm sẵn trong AGENTS.md (Engineering musts) nạp mọi phiên.
 # Hook prompt (hooks/prompt_context.sh) không in hai dòng này nữa; phần còn lại giữ nguyên: Loại việc, RED→GREEN,
-# khối ZERO-SLOP nhiều dòng, Bẫy đã gặp, và một prompt chỉ khớp hai dòng đó thì im lặng (không còn header trơ trọi).
+# khối ZERO-SLOP nhiều dòng, Bẫy đã gặp.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không GIT_* thừa kế, không config user
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -32,13 +32,8 @@ printf '%s\n' "$o" | grep -q '^- Bắt buộc: chạy test tái hiện lỗi' &&
 printf '%s\n' "$o" | grep -qF 'ZERO-SLOP UI MANDATE' && ok "1: khối ZERO-SLOP vẫn còn với prompt UI" || fail "1: mất khối ZERO-SLOP: $o"
 [ "$(printf '%s\n' "$o" | grep -c '^• ')" = 6 ] && ok "1: ZERO-SLOP còn đủ 6 gạch đầu dòng" || fail "1: ZERO-SLOP thiếu gạch: $o"
 
-# 2. Không còn dòng nào ngoài header thì hook im lặng (một header trơ trọi là token phí).
+# 2. Prompt mạng (trước đây mang dòng NFR timeout/backoff): dòng đó không quay lại.
 o="$(run "thêm timeout và retry có backoff cho lời gọi mạng")"
-if printf '%s\n' "$o" | grep -q '^- '; then
-  ok "2: prompt mạng vẫn có dòng thật (Loại việc …)"
-else
-  [ -z "$o" ] && ok "2: chỉ còn header thì im lặng" || fail "2: header trơ trọi: $o"
-fi
 printf '%s\n' "$o" | grep -q 'Yêu cầu ngầm định\|Skill phù hợp' && fail "2: còn dòng đã gỡ: $o" || ok "2: không còn dòng đã gỡ"
 
 [ "$FAILS" = 0 ] && echo "PASS test_prompt_hook_dead_hints" || { echo "FAIL test_prompt_hook_dead_hints ($FAILS)"; exit 1; }

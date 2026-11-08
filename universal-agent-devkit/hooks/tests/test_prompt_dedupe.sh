@@ -74,8 +74,8 @@ for n in 1 2 3; do
 done
 
 # ── partly new context: only the unseen lines are added ─────────────────────────
-# Same screen words as prompts 1-3 (a screen word brings the design skill, so the skill line is the same
-# line), plus a network word: only the requirements line is new.
+# Same screen words as prompts 1-3, plus a network word: the kind of work changes, traps already sent stay out,
+# and the network requirements line (no longer printed by the hook) must not come back.
 hook "$TMP/o3b" s1 "$TMP/tr1.jsonl" "app crash ViewModel mất trạng thái khi xoay màn hình, gọi API lỗi"
 has "$TMP/o3b" "Loại việc" && ok "partly new context: the kind of work stays" || fail "lost 'Loại việc': $(cat "$TMP/o3b")"
 has "$TMP/o3b" "$RED_LINE" && ok "partly new context: RED→GREEN rule present" || fail "RED lost: $(cat "$TMP/o3b")"

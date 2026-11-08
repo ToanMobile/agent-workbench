@@ -16,7 +16,7 @@
 # carries at least the "Loại việc" line (enrich_context.py APP_PROFILES).
 #
 # Once per session (enrich_context.py dedupe_session, state .claude/audit-gate/prompt_seen_<id>):
-# the "Yêu cầu ngầm định", "Bẫy đã gặp" and "Skill phù hợp" lines and the ZERO-SLOP UI MANDATE
+# the "Bẫy đã gặp" lines and the ZERO-SLOP UI MANDATE ("Yêu cầu ngầm định" / "Skill phù hợp": not printed since 08/11)
 # block are sent only the first time (under Codex / Gemini / Cursor too: hooks/agent_bridge.sh hands on
 # session_id / conversation_id);
 # an unchanged injection becomes "(ngữ cảnh DevKit như lượt trước)" (+ the RED→GREEN rule).

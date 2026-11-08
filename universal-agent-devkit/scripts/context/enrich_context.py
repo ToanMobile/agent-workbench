@@ -677,9 +677,8 @@ HOOK_DROPPED_LINES = ("- Skill phù hợp: ", "- Yêu cầu ngầm định: ")
 
 
 def drop_dead_hints(text):
-    """Bỏ các dòng HOOK_DROPPED_LINES; chỉ còn dòng header thì trả chuỗi rỗng (header trơ trọi là token phí)."""
-    lines = [l for l in text.split("\n") if not l.startswith(HOOK_DROPPED_LINES)]
-    return "\n".join(lines) if len(lines) > 1 else ""
+    """Bỏ các dòng HOOK_DROPPED_LINES khỏi chữ hook in ra."""
+    return "\n".join(l for l in text.split("\n") if not l.startswith(HOOK_DROPPED_LINES))
 
 
 def format_anthropic_prompt(dossier, project_root=None):
@@ -1293,7 +1292,7 @@ def context_note(payload, project_dir, session_id):
 # Lines the model keeps once it has read them in this session (2026-09-28: GeelyEx2, 5 days,
 # 492 injections — the same ~700-char requirements line re-sent 43.9k chars, each copy re-read
 # on every API call). "Loại việc" and the RED→GREEN rule are short and stay every time.
-ONCE_PER_SESSION = ("- Yêu cầu ngầm định: ", "- Bẫy đã gặp: ", "- Skill phù hợp: ",
+ONCE_PER_SESSION = ("- Bẫy đã gặp: ",
                     "ZERO-SLOP UI MANDATE", "• ",  # these two: the lines of ZERO_SLOP_MANDATE
                     "- GIAO MẶC ĐỊNH BẬT")  # the giaoDefault order (2026-10-25: ~370 B re-sent on every prompt, 19.6 KB a session)
 SAME_AS_BEFORE = "(ngữ cảnh DevKit như lượt trước)"
