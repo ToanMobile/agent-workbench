@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Test hồi quy (gate speed v26 mục 10): hai cần gạt chờ và độ rộng ở điểm gộp.
-# Đo tải thật 08/11 (2 merge gate chồng nhau, s=0.5): slots có load1 p90 25,5 > 24, width chỉ nhanh 13 % < 25 % ⇒ cả hai cần gạt
-# MẶC ĐỊNH TẮT (giá trị "tắt" của lượt đo); biến vẫn còn, đặt tường minh thì bật.
-#   a  pool gate: DEVKIT_CAPACITY=0.5 (gate_max 1) ở ưu tiên merge ⇒ 1 slot (mặc định tắt); DEVKIT_MERGE_GATE_SLOTS=2 ⇒ 2; ưu tiên khác 1;
-#      DEVKIT_GATE_SLOTS=1 tường minh giữ 1
-#   b  merge gate opt_gate_slots (12 lõi, N = 2): mặc định ngưỡng = số lõi: tải 11 không hạn, tải 12 ⇒ N−1; SB_MERGE_OPT_LOAD_MAX vẫn ghi đè
-#   c  opt_gate_slots: gate_max 1, DEVKIT_GATE_SLOTS không đặt ⇒ không sàn ⇒ không hạn; DEVKIT_MERGE_GATE_SLOTS=2 ⇒ sàn 2 ⇒ N−1 = 1
-#   d  .merge-scratch-*, sáu suite parallel_safe, s=0.75, 12 lõi, tải 0: mặc định 4 như ngoài điểm gộp; DEVKIT_MERGE_PARALLEL=6 +
-#      DEVKIT_MERGE_WIDE_LOAD_MAX=24 ⇒ 6; tải 30 với hai biến đó: 3 như cũ; ngoài điểm gộp: 4
+# Đo tải thật 08/11 lần 2 (gói both: 2 × lõi + sàn 2 slot + độ rộng 6 ở điểm gộp, 5 vòng, capacity 0.5 và 0.75) đạt ngưỡng ⇒ cả hai
+# cần gạt MẶC ĐỊNH BẬT (giá trị "bật" của lượt đo); đặt 0 tường minh thì tắt.
+#   a  pool gate: DEVKIT_CAPACITY=0.5 (gate_max 1) ở ưu tiên merge ⇒ 2 slot (mặc định bật); DEVKIT_MERGE_GATE_SLOTS=0 ⇒ 1 (tắt);
+#      ưu tiên khác 1; DEVKIT_GATE_SLOTS=1 tường minh giữ 1
+#   b  merge gate opt_gate_slots (12 lõi, N = 2): mặc định ngưỡng = 2 × số lõi: tải 23 không hạn, tải 24 ⇒ N−1; SB_MERGE_OPT_LOAD_MAX
+#      vẫn ghi đè (12: tải 12 ⇒ N−1); SB_MERGE_OPT_LOAD_MAX=0 ⇒ tắt (không hạn)
+#   c  opt_gate_slots: gate_max 1, DEVKIT_GATE_SLOTS không đặt ⇒ sàn mặc định 2 ⇒ N−1 = 1; DEVKIT_MERGE_GATE_SLOTS=0 ⇒ không sàn ⇒
+#      không hạn; DEVKIT_GATE_SLOTS=1 tường minh ⇒ không hạn
+#   d  .merge-scratch-*, sáu suite parallel_safe, s=0.75, 12 lõi: tải 0 mặc định 6 (ngưỡng 2 × 12 = 24); tải 30 ≥ 24: 3 như cũ;
+#      DEVKIT_MERGE_WIDE_LOAD_MAX=0 (tắt) ⇒ 4; ngoài điểm gộp: 4
 #   e  biến độ rộng / slot của điểm gộp không lọt vào môi trường suite
 #   f  guard có hạn giờ (REG-DK-SESSION-01) ở điểm gộp: chạy sau cùng, một mình
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
@@ -34,14 +36,15 @@ import importlib.util, os, sys
 spec = importlib.util.spec_from_file_location("pfg_w", sys.argv[1]); m = importlib.util.module_from_spec(spec)
 sys.modules["pfg_w"] = m; spec.loader.exec_module(m)
 os.environ["DEVKIT_SLOT_PRIORITY"] = "merge"; a = m.default_gate_slots()
-os.environ["DEVKIT_MERGE_GATE_SLOTS"] = "2"; on = m.default_gate_slots()
+os.environ["DEVKIT_MERGE_GATE_SLOTS"] = "0"; off = m.default_gate_slots()
+del os.environ["DEVKIT_MERGE_GATE_SLOTS"]
 os.environ["DEVKIT_SLOT_PRIORITY"] = "task"; b = m.default_gate_slots()
 os.environ["DEVKIT_SLOT_PRIORITY"] = "merge"; os.environ["DEVKIT_GATE_SLOTS"] = "1"; c = m.default_gate_slots()
-print(a, on, b, c)
+print(a, off, b, c)
 PY
 )"
-[ "$A" = "1 2 1 1" ] && ok "a. s=0.5: merge mặc định 1 (tắt), DEVKIT_MERGE_GATE_SLOTS=2 ⇒ 2, ưu tiên khác 1, DEVKIT_GATE_SLOTS=1 giữ 1" \
-  || fail "a. merge/merge+bật/task/explicit = $A (muốn 1 2 1 1)"
+[ "$A" = "2 1 1 1" ] && ok "a. s=0.5: merge mặc định 2 (bật), DEVKIT_MERGE_GATE_SLOTS=0 ⇒ 1, ưu tiên khác 1, DEVKIT_GATE_SLOTS=1 giữ 1" \
+  || fail "a. merge/merge+tắt/task/explicit = $A (muốn 2 1 1 1)"
 
 # b, c: thân opt_gate_slots + load_now của merge gate, capacity giả
 awk '/^load_now\(\) \{/,/^\}/' "$MG" > "$TMP/fn.sh"; awk '/^opt_gate_slots\(\) \{/,/^\}/' "$MG" >> "$TMP/fn.sh"
@@ -50,13 +53,15 @@ opt() {   # opt <load> <gate_max> [VAR=giá trị…] → OPT_SLOTS
   echo "$1" > "$TMP/mload"; echo "$2" > "$TMP/gmax"; shift 2
   env "$@" SB_CAPACITY="$TMP/cap" SB_MERGE_LOAD_FILE="$TMP/mload" LOCK_HELD=0 HERE=/nonexistent bash -c '. "$1"; opt_gate_slots; echo "[${OPT_SLOTS}]"' _ "$TMP/fn.sh"
 }
-[ "$(opt 11 2)" = "[]" ] && ok "b. tải 11 < 12 lõi: không hạn" || fail "b. tải 11: $(opt 11 2)"
-[ "$(opt 12 2)" = "[1]" ] && ok "b. tải 12 ≥ 12 lõi (mặc định, không nhân 2): N−1 = 1" || fail "b. tải 12: $(opt 12 2)"
-[ "$(opt 18 2 SB_MERGE_OPT_LOAD_MAX=24)" = "[]" ] && ok "b. SB_MERGE_OPT_LOAD_MAX ghi đè" || fail "b. ghi đè: $(opt 18 2 SB_MERGE_OPT_LOAD_MAX=24)"
-[ "$(opt 30 1)" = "[]" ] && ok "c. gate_max 1, mặc định không sàn: không hạn" || fail "c. không sàn: $(opt 30 1)"
-[ "$(opt 30 1 DEVKIT_MERGE_GATE_SLOTS=2)" = "[1]" ] && ok "c. DEVKIT_MERGE_GATE_SLOTS=2: sàn 2 ⇒ N−1 = 1" || fail "c. sàn bật: $(opt 30 1 DEVKIT_MERGE_GATE_SLOTS=2)"
-[ "$(opt 30 1 DEVKIT_MERGE_GATE_SLOTS=2 DEVKIT_GATE_SLOTS=1)" = "[]" ] && ok "c. DEVKIT_GATE_SLOTS=1 tường minh: không hạn" \
-  || fail "c. tường minh: $(opt 30 1 DEVKIT_MERGE_GATE_SLOTS=2 DEVKIT_GATE_SLOTS=1)"
+[ "$(opt 23 2)" = "[]" ] && ok "b. tải 23 < 2 × 12 lõi: không hạn" || fail "b. tải 23: $(opt 23 2)"
+[ "$(opt 24 2)" = "[1]" ] && ok "b. tải 24 ≥ 2 × 12 lõi (mặc định): N−1 = 1" || fail "b. tải 24: $(opt 24 2)"
+[ "$(opt 12 2 SB_MERGE_OPT_LOAD_MAX=12)" = "[1]" ] && ok "b. SB_MERGE_OPT_LOAD_MAX=12 ghi đè: tải 12 ⇒ N−1 = 1" \
+  || fail "b. ghi đè: $(opt 12 2 SB_MERGE_OPT_LOAD_MAX=12)"
+[ "$(opt 30 2 SB_MERGE_OPT_LOAD_MAX=0)" = "[]" ] && ok "b. SB_MERGE_OPT_LOAD_MAX=0: tắt, không hạn" || fail "b. tắt: $(opt 30 2 SB_MERGE_OPT_LOAD_MAX=0)"
+[ "$(opt 30 1)" = "[1]" ] && ok "c. gate_max 1, mặc định sàn 2 ⇒ N−1 = 1" || fail "c. sàn mặc định: $(opt 30 1)"
+[ "$(opt 30 1 DEVKIT_MERGE_GATE_SLOTS=0)" = "[]" ] && ok "c. DEVKIT_MERGE_GATE_SLOTS=0: không sàn, không hạn" || fail "c. sàn tắt: $(opt 30 1 DEVKIT_MERGE_GATE_SLOTS=0)"
+[ "$(opt 30 1 DEVKIT_GATE_SLOTS=1)" = "[]" ] && ok "c. DEVKIT_GATE_SLOTS=1 tường minh: không hạn" \
+  || fail "c. tường minh: $(opt 30 1 DEVKIT_GATE_SLOTS=1)"
 
 # d, e, f: gate thật trong repo nháp
 new_repo() {   # $1 = repo, $2 = 1: thêm guard REG-DK-SESSION-01
@@ -97,11 +102,11 @@ maxc() { sort -n "$TMP/conc" 2>/dev/null | tail -1; }
 
 R="$TMP/.merge-scratch-d"; new_repo "$R"
 gate "$R" 0
-[ "$RC" -eq 0 ] && [ "$(maxc)" = 4 ] && ok "d. điểm gộp, tải 0, mặc định tắt: 4 như ngoài điểm gộp" || { fail "d. mặc định: rc=$RC cùng lúc=$(maxc) (muốn 4)"; tail -8 "$TMP/out"; }
-gate "$R" 0 DEVKIT_MERGE_PARALLEL=6 DEVKIT_MERGE_WIDE_LOAD_MAX=24
-[ "$RC" -eq 0 ] && [ "$(maxc)" = 6 ] && ok "d. điểm gộp, bật, tải 0: 6 suite cùng lúc" || { fail "d. bật, tải 0: rc=$RC cùng lúc=$(maxc) (muốn 6)"; tail -8 "$TMP/out"; }
-gate "$R" 30 DEVKIT_MERGE_PARALLEL=6 DEVKIT_MERGE_WIDE_LOAD_MAX=24
-[ "$RC" -eq 0 ] && [ "$(maxc)" = 3 ] && ok "d. điểm gộp, bật, tải 30 ≥ 24: 3 như cũ" || { fail "d. tải 30: rc=$RC cùng lúc=$(maxc) (muốn 3)"; tail -8 "$TMP/out"; }
+[ "$RC" -eq 0 ] && [ "$(maxc)" = 6 ] && ok "d. điểm gộp, tải 0, mặc định bật (ngưỡng 24): 6 suite cùng lúc" || { fail "d. mặc định: rc=$RC cùng lúc=$(maxc) (muốn 6)"; tail -8 "$TMP/out"; }
+gate "$R" 30
+[ "$RC" -eq 0 ] && [ "$(maxc)" = 3 ] && ok "d. điểm gộp, mặc định, tải 30 ≥ 24: 3 như cũ" || { fail "d. tải 30: rc=$RC cùng lúc=$(maxc) (muốn 3)"; tail -8 "$TMP/out"; }
+gate "$R" 0 DEVKIT_MERGE_WIDE_LOAD_MAX=0
+[ "$RC" -eq 0 ] && [ "$(maxc)" = 4 ] && ok "d. điểm gộp, DEVKIT_MERGE_WIDE_LOAD_MAX=0 (tắt), tải 0: 4" || { fail "d. tắt: rc=$RC cùng lúc=$(maxc) (muốn 4)"; tail -8 "$TMP/out"; }
 gate "$R" 0 DEVKIT_MERGE_PARALLEL=6 DEVKIT_MERGE_WIDE_LOAD_MAX=24 DEVKIT_MERGE_GATE_SLOTS=2
 [ "$(sort -u "$TMP/env")" = "unset unset unset" ] && ok "e. suite không thấy biến của điểm gộp" || fail "e. suite thấy: $(sort -u "$TMP/env" | tr '\n' ';')"
 R="$TMP/plain-d"; new_repo "$R"
