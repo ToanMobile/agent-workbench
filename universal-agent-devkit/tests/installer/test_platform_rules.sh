@@ -104,7 +104,7 @@ ln -s "$DEVKIT_DIR/agents/android-principal-architect.md" "$U/.claude/agents/and
 install "$U" -a claude,gemini
 grep -q 'Profile:.*game' "$TMP/out" || fail "game: profile not detected"
 got="$(servers "$U/.mcp.json")"
-case " $got " in *" android-code-search "*|*" replicant-mcp "*|*" play-store "*) fail "game: Android MCPs left in .mcp.json: $got" ;;
+case " $got " in *" android-code-search "*|*" mobile-mcp "*|*" play-store "*) fail "game: Android MCPs left in .mcp.json: $got" ;;
   *) ok "game: the unmodified Android MCP entries are removed from .mcp.json" ;; esac
 case " $got " in *" android-skills "*) case " $got " in *" my-own "*) ok "game: the user's own and user-edited MCP entries are kept" ;; *) fail "game: user MCP lost: $got" ;; esac ;;
   *) fail "game: the user-edited android-skills entry was removed: $got" ;; esac
@@ -112,7 +112,7 @@ case " $got " in *" context7 "*) ok "game: generic MCPs (context7) installed" ;;
 case " $got " in *" codebase-memory-mcp "*) ok "game: codebase-memory-mcp (universal essential MCP) installed" ;; *) fail "game: codebase-memory-mcp missing: $got" ;; esac
 got="$(servers "$U/mcp_config.json")"
 case " $got " in *" codebase-memory-mcp "*) ok "game: codebase-memory-mcp in mcp_config.json (Gemini)" ;; *) fail "game: codebase-memory-mcp missing in mcp_config.json: $got" ;; esac
-case " $got " in *" android-code-search "*|*" android-skills "*|*" replicant-mcp "*) fail "game: Android MCPs in mcp_config.json: $got" ;;
+case " $got " in *" android-code-search "*|*" android-skills "*|*" mobile-mcp "*) fail "game: Android MCPs in mcp_config.json: $got" ;;
   *) ok "game: mcp_config.json (Gemini) filtered the same way" ;; esac
 [ ! -e "$U/.claude/agents/android-principal-architect.md" ] && [ ! -L "$U/.claude/agents/android-principal-architect.md" ] \
   && ok "game: android-principal-architect is not linked (exclude_agents)" || fail "game: android-principal-architect linked"

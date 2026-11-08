@@ -240,7 +240,7 @@ def run_full_audit() -> int:
     def t15():
         mcp1 = auditor.read_file(".mcp.json")
         servers = json.loads(mcp1).get("mcpServers", {})
-        ok = "codebase-memory-mcp" in servers and "android-code-search" in servers and "replicant-mcp" in servers
+        ok = "codebase-memory-mcp" in servers and "android-code-search" in servers and "mobile-mcp" in servers
         return ok, f"Đã đăng ký đầy đủ các MCP Server cốt lõi ({len(servers)} servers online)"
     auditor.run_agent(3, C3, 15, "EssentialMcpAvailabilityAuditor", "Kiểm tra sự hiện diện của các MCP Servers nòng cốt trong hệ sinh thái", t15)
 

@@ -7,7 +7,7 @@
   "essential_mcps": [
     "codebase-memory-mcp",
     "android-code-search",
-    "replicant-mcp"
+    "mobile-mcp"
   ],
   "active_councils": [
     "01-automotive-hardware.md",

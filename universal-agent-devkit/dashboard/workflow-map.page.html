@@ -184,7 +184,7 @@
 
   <section class="detail">
     <h2>MCP server từng repo</h2>
-    <p class="note">"Không cần" nghĩa là repo đó không yêu cầu server này. Hiện yêu cầu: agent-workbench cần 3 server nền; GeelyEx2 thêm replicant-mcp; OfficeReader, Goods và Neighbours-From-Hell cần đủ 5. "Tắt" nghĩa là đã khai báo nhưng bị tắt hoặc chưa được bật trong settings.local.json.</p>
+    <p class="note">"Không cần" nghĩa là repo đó không yêu cầu server này. Hiện yêu cầu: agent-workbench cần 3 server nền; GeelyEx2 thêm mobile-mcp; OfficeReader, Goods và Neighbours-From-Hell cần đủ 5. "Tắt" nghĩa là đã khai báo nhưng bị tắt hoặc chưa được bật trong settings.local.json.</p>
     <div class="scroll" data-source="mcp_matrix">
       <table id="dc-mcp"></table>
     </div>
@@ -504,7 +504,7 @@ dash.calc('mcp_matrix', {
     if (/^(Edit|Write|MultiEdit|NotebookEdit)/.test(mt)) return 'edit';
     return 'other';
   };
-  const BANK_NAME = { bash: 'Lệnh Bash', edit: 'Sửa file (Edit, Write)', read: 'Đọc file (Read)', mcp: 'MCP replicant', other: 'Công cụ khác' };
+  const BANK_NAME = { bash: 'Lệnh Bash', edit: 'Sửa file (Edit, Write)', read: 'Đọc file (Read)', mcp: 'MCP mobile-mcp', other: 'Công cụ khác' };
   const BANK_ORDER = ['bash', 'edit', 'read', 'mcp', 'other'];
   const GIT_ORDER = ['git pre-commit', 'git commit-msg', 'git pre-push'];
   const short = (s) => { const t = s.replace(/\.(sh|py)$/, ''); return t.length > 22 ? t.slice(0, 21) + '…' : t; };

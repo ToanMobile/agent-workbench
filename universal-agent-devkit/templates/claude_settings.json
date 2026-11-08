@@ -77,6 +77,16 @@
         ]
       },
       {
+        "matcher": "mcp__mobile-mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/hardware_safety_gate.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "mcp__replicant-mcp__.*",
         "hooks": [
           {

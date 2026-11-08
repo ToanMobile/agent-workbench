@@ -24,11 +24,11 @@
         "android-skills-mcp@0.1.7"
       ]
     },
-    "replicant-mcp": {
+    "mobile-mcp": {
       "command": "npx",
       "args": [
         "-y",
-        "replicant-mcp@1.6.7"
+        "@mobilenext/mobile-mcp@1.0.16"
       ],
       "env": {
         "ANDROID_HOME": "${ANDROID_HOME:-}"

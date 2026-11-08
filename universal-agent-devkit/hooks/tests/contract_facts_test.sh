@@ -94,6 +94,13 @@ for path, (ev_map, _, by_m) in wired.items():
                  and re.fullmatch(mt, "mcp__replicant-mcp__adb-shell")
                  for (ev, mt), hooks in by_m.items())
     check(routed, f"{path} routes mcp__replicant-mcp__* to hardware_safety_gate.sh")
+    # mobile-mcp replaces replicant-mcp (08/11/2026): every tool but get_more_tools is mobile_<name>, and install / uninstall /
+    # clear data / batch commands reach the device: the same guard must see them in every registry.
+    routed = all(any(ev == "PreToolUse" and "hardware_safety_gate.sh" in hooks and re.fullmatch(mt, t)
+                     for (ev, mt), hooks in by_m.items())
+                 for t in ("mcp__mobile-mcp__mobile_clear_app_data", "mcp__mobile-mcp__mobile_batch_commands",
+                           "mcp__mobile-mcp__mobile_login_to_cloud_provider"))
+    check(routed, f"{path} routes mcp__mobile-mcp__* to hardware_safety_gate.sh")
     if path == "hooks/hooks.json":
         continue
     same = {k: sorted(v) for k, v in ev_map.items()} == {k: sorted(v) for k, v in ref.items()}

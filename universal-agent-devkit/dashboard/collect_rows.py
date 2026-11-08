@@ -26,10 +26,10 @@ REPOS = {
 }
 # user requirement 2026-10-13, per repo: MCP servers that must run there (anything else is optional)
 BASE_MCPS = ["codebase-memory-mcp", "context7"]
-ALL_MCPS = BASE_MCPS + ["play-store", "replicant-mcp"]
+ALL_MCPS = BASE_MCPS + ["play-store", "mobile-mcp"]
 REQUIRED_MCPS = {
-    "agent-workbench": BASE_MCPS,                    # no replicant-mcp, no play-store: it has no app or device
-    "GeelyEx2": BASE_MCPS + ["replicant-mcp"],       # no play-store
+    "agent-workbench": BASE_MCPS,                    # no mobile-mcp, no play-store: it has no app or device
+    "GeelyEx2": BASE_MCPS + ["mobile-mcp"],       # no play-store
     "OfficeReader": ALL_MCPS,
     "Goods": ALL_MCPS,
     "Neighbours-From-Hell": ALL_MCPS,
