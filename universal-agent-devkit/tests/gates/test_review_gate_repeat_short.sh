@@ -65,7 +65,8 @@ else fail "R2. rc $rc2, $n2 dòng (lần đầu $n1): $(cat "$TMP/e2" | head -6 
 : > "$TR"; ev edit t1 "$P/app.py"
 stop c "$TMP/e4"; stop c "$TMP/e5"; rc5=$?
 n4=$(wc -l < "$TMP/e4" | tr -d ' '); n5=$(wc -l < "$TMP/e5" | tr -d ' ')
-if [ "$rc5" = 2 ] && [ "$n5" -lt "$n4" ] && grep -q 'A) Agent principal-code-reviewer' "$TMP/e5" && grep -q 'Như lần chặn trước' "$TMP/e5"; then
+if [ "$rc5" = 2 ] && [ "$n5" -lt "$n4" ] && grep -q 'A) Agent principal-code-reviewer' "$TMP/e5" && grep -q 'Như lần chặn trước' "$TMP/e5" \
+   && ! grep -q '^Nhắc: OCR' "$TMP/e5"; then
   ok "R4. chặn thường lặp lại: ngắn ($n5 < $n4 dòng), còn lựa chọn A–D"
 else fail "R4. rc $rc5, $n5 dòng (lần đầu $n4): $(cat "$TMP/e5" | tr '\n' '|')"; fi
 

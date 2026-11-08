@@ -1204,7 +1204,7 @@ except OSError:
     pass
 if _again:
     # Giữ cả các lựa chọn A–D của đường chặn thường: đó là lệnh cần chạy (review PR #1059).
-    _ocr_rule = any("ocr-review" in l for l in lines)
+    _ocr_rule = ocr_missing   # chỉ thông điệp "thiếu OCR" mang các ràng buộc này
     lines = [l for l in lines if l.startswith(("⛔", "OCR")) or l.lstrip().startswith(("•", "… +", "python3 ", "→"))
              or re.match(r"\s+[A-D]\) ", l)]
     # Ràng buộc cách chạy OCR (không phải giải thích): thiếu thì lượt OCR không được tính (review PR #1059).
