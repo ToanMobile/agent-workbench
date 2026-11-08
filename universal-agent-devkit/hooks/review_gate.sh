@@ -1187,6 +1187,24 @@ if os.environ.get("REVIEW_GATE_OCR", "1") != "0" and not ocr_missing and not any
             logline(f"[{ts}] ocr-review --delegate-only rc={_r.returncode} spec={_spec or '-'}")
     except Exception as _e:   # OCR is an aid here, never a reason to fail the gate
         logline(f"[{ts}] ocr-review failed: {_e!r}")
+# Cùng thông điệp lần nữa trong phiên (chủ repo 08/11: "spam lắm và dài"): giữ dòng ⛔ (yêu cầu), lệnh cần chạy và danh sách
+# file, bỏ phần giải thích — như test_evidence_gate.sh O4. So không tính số đếm lần chặn.
+import hashlib as _hl
+_shown = os.path.join(logdir, f"review_gate_shown_{sid}")
+_digest = _hl.sha256("\n".join(lines).encode()).hexdigest()[:16]
+try:
+    with open(_shown) as fh:
+        _again = fh.read().strip() == _digest
+except OSError:
+    _again = False
+try:
+    with open(_shown, "w") as fh:
+        fh.write(_digest)
+except OSError:
+    pass
+if _again:
+    lines = [l for l in lines if l.startswith(("⛔", "OCR")) or l.lstrip().startswith(("•", "… +", "python3 ", "→"))] + \
+            ["(Như lần chặn trước trong phiên — phần giải thích không lặp lại.)"]
 sys.stderr.write("\n".join(lines) + "\n")
 sys.exit(2)
 PY
