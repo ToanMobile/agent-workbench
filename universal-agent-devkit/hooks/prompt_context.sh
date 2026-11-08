@@ -5,8 +5,8 @@
 #
 # For each prompt, scripts/enrich_context.py --compact prints a few lines that are
 # added to the model's context: the kind of work detected (bug fix, UI, network…),
-# the paired RED→GREEN requirement for bug fixes, intent-specific non-functional
-# requirements, and the project's own recorded traps (.agents/instincts.md) that
+# the paired RED→GREEN requirement for bug fixes, measured hardware dead-ends
+# (.agents/context/hardware-boundaries.json), and the project's own recorded traps (.agents/instincts.md) that
 # match the request — with the `sed -n` line range to read each one; then the
 # project-rule sections whose title matches (scripts/rule_context.py).
 #

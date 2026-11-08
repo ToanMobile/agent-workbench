@@ -38,4 +38,20 @@ printf '%s\n' "$o" | grep -q '^- Loại việc: .*NETWORK_AND_RESILIENCE' && ok 
   || fail "2: hook im lặng hoặc mất Loại việc: $o"
 printf '%s\n' "$o" | grep -q 'Yêu cầu ngầm định\|Skill phù hợp' && fail "2: còn dòng đã gỡ: $o" || ok "2: không còn dòng đã gỡ"
 
+# 3. Ngõ cụt phần cứng đã đo (.agents/context/hardware-boundaries.json) là lưới an toàn: trước đây đi chung dòng
+#    "Yêu cầu ngầm định" nên bị gỡ theo (Antigravity audit PR #1057). Nó phải còn, trên dòng riêng, mỗi phiên một lần.
+mkdir -p .agents/context
+cat > .agents/context/hardware-boundaries.json <<'EOF'
+{"boundaries": [{"id": "ECU-TEST-ONLY", "title": "ECU chỉ nhận lệnh qua TBOX", "symptoms": ["peps không hoạt động"],
+  "measured": "Đo 3 lần: lệnh trực tiếp bị bỏ.", "rescue": "gửi qua TBOX."}]}
+EOF
+sid="s$RANDOM$RANDOM"
+o="$(printf '{"prompt":"%s","session_id":"%s"}' "sửa lỗi PEPS không hoạt động" "$sid" | bash "$HOOK" 2>&1)"
+printf '%s\n' "$o" | grep -q '^- Ngõ cụt phần cứng: DỪNG: ECU-TEST-ONLY .*Cứu hộ: gửi qua TBOX' \
+  && ok "3: cảnh báo ngõ cụt phần cứng còn, trên dòng riêng" || fail "3: mất cảnh báo phần cứng: $o"
+printf '%s\n' "$o" | grep -q 'Yêu cầu ngầm định' && fail "3: dòng NFR quay lại: $o" || ok "3: không kéo dòng NFR theo"
+o2="$(printf '{"prompt":"%s","session_id":"%s"}' "vẫn lỗi PEPS không hoạt động ở xe 2" "$sid" | bash "$HOOK" 2>&1)"
+printf '%s\n' "$o2" | grep -q 'Ngõ cụt phần cứng' && fail "3: cảnh báo gửi lại trong cùng phiên: $o2" || ok "3: cùng phiên không gửi lại"
+rm -f .agents/context/hardware-boundaries.json
+
 [ "$FAILS" = 0 ] && echo "PASS test_prompt_hook_dead_hints" || { echo "FAIL test_prompt_hook_dead_hints ($FAILS)"; exit 1; }

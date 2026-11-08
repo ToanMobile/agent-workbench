@@ -543,6 +543,9 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
                                          _hb.warning(row))
     if hits:
         dossier["hardware_boundaries"] = [r.get("id") for r in hits[:3]]
+        # compact() in mỗi cảnh báo trên dòng riêng "- Ngõ cụt phần cứng: ": đây là lưới an toàn, không đi chung dòng
+        # "Yêu cầu ngầm định" mà đường --hook bỏ (Antigravity audit PR #1057).
+        dossier["hardware_warnings"] = [_hb.warning(r) for r in hits[:3]]
 
     # 4. Generate Codebase Graph Search Queries
     tokens = [w for w in re.findall(r"[A-Za-z0-9_]{3,}", prompt) if w.lower() not in ["sửa", "lỗi", "giúp", "tạo", "làm", "cho", "vào", "khi", "bị"]]
@@ -639,7 +642,9 @@ def compact(dossier, project_root, limit=4):
         out.append("- Bắt buộc: chạy test tái hiện lỗi thấy ĐỎ trước khi sửa, XANH sau khi sửa "
                    "(Stop hook chỉ chấp nhận 'đã fix' khi thấy cặp RED→GREEN này).")
     specific = dossier["injected_nfrs"][:-GENERIC_NFRS]
-    short = [n for n in specific if "\n" not in n]
+    hw = dossier.get("hardware_warnings") or []
+    out.extend("- Ngõ cụt phần cứng: " + w for w in hw)
+    short = [n for n in specific if "\n" not in n and n not in hw]
     if short:
         out.append("- Yêu cầu ngầm định: " + " · ".join(short))
     # A multi-line requirement (the Zero-Slop mandate) keeps its lines apart: dedupe_session sends each once per session.
@@ -1292,7 +1297,7 @@ def context_note(payload, project_dir, session_id):
 # Lines the model keeps once it has read them in this session (2026-09-28: GeelyEx2, 5 days,
 # 492 injections — the same ~700-char requirements line re-sent 43.9k chars, each copy re-read
 # on every API call). "Loại việc" and the RED→GREEN rule are short and stay every time.
-ONCE_PER_SESSION = ("- Bẫy đã gặp: ",
+ONCE_PER_SESSION = ("- Bẫy đã gặp: ", "- Ngõ cụt phần cứng: ",
                     "ZERO-SLOP UI MANDATE", "• ",  # these two: the lines of ZERO_SLOP_MANDATE
                     "- GIAO MẶC ĐỊNH BẬT")  # the giaoDefault order (2026-10-25: ~370 B re-sent on every prompt, 19.6 KB a session)
 SAME_AS_BEFORE = "(ngữ cảnh DevKit như lượt trước)"
