@@ -624,7 +624,8 @@ def log_surfaced(project_root, session, prompt, refs):
 
 def compact(dossier, project_root, limit=4):
     """A few lines for the UserPromptSubmit hook — empty when the request matched no
-    intent and no instinct (questions, chit-chat): no context tax on those. Except on an
+    intent, instinct, notice, order or measured hardware dead-end (questions, chit-chat):
+    no context tax on those. Except on an
     app profile (APP_PROFILES): the UI door always matches there, so every prompt gets
     the UI lines (once per session, dedupe_session) — the price of "no UI word needed"."""
     intents = [i for i in dossier["detected_intents"] if i != "GENERAL_TASK"]
