@@ -359,7 +359,7 @@ export async function approveSuperBoardCallback(token, opts = {}) {
   } catch {
     return { toastText: 'Không ghi được comment done.', showAlert: true };
   }
-  return { toastText: 'Đã ghi done trên đúng nguồn duyệt.', showAlert: false };
+  return { toastText: 'Đã ghi done trên đúng nguồn duyệt.', showAlert: false, approved: true };
 }
 
 /** Chat lạ: trả lời từ chối, không comment, không gán chatId. */

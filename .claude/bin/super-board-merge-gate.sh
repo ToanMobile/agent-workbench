@@ -338,7 +338,10 @@ needs_you_notify() {
     case "$(printf '%s' "${APPROVAL:-}" | jq -r '.why // empty' 2>/dev/null || true)" in
       "no request from a trusted repository collaborator"|"the latest request does not cover the current code and human steps"|"approval request was edited; post a fresh request")
         if [ "$DRY" -eq 1 ]; then
-          say "dry run: would post the approval-request on PR #${PR} for head ${HEAD_SHA:0:7}"
+          # Humans-vs.-UFOs PR #129: không có request hiện hành thì bot từ chối nút ("Yêu cầu duyệt mới nhất không phải cho PR …"),
+          # nên dry-run không gửi nút; lần chạy thật đăng request rồi gửi nút.
+          say "dry run: would post the approval-request on PR #${PR} for head ${HEAD_SHA:0:7}; Approve button not sent (no current request yet)"
+          return 0
         else
           gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "[merge-gate] [blocker] 🛑 needs a person · head ${HEAD_SHA:0:7}
 ${APPROVAL_REQ_LINE}" >/dev/null 2>&1 \
