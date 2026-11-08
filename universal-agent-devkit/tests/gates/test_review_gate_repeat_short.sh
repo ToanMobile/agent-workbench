@@ -55,7 +55,7 @@ n1=$(wc -l < "$TMP/e1" | tr -d ' '); n2=$(wc -l < "$TMP/e2" | tr -d ' '); n3=$(w
   && ok "R1. lần đầu: chặn (rc 2), đủ giải thích ($n1 dòng)" || fail "R1. rc $rc1, $n1 dòng: $(head -3 "$TMP/e1" | tr '\n' ' ')"
 if [ "$rc2" = 2 ] && [ "$n2" -lt "$n1" ] && ! grep -q 'hai bên tìm ra lỗi khác nhau' "$TMP/e2" \
    && grep -q '^⛔ REVIEW-GATE' "$TMP/e2" && grep -q 'ocr-review' "$TMP/e2" && grep -q 'app.py' "$TMP/e2" \
-   && grep -q 'Như lần chặn trước' "$TMP/e2"; then
+   && grep -q 'Như lần chặn trước' "$TMP/e2" && grep -q -- '--out viết thẳng' "$TMP/e2" && grep -q '| tail' "$TMP/e2"; then
   ok "R2. lần hai cùng phiên: ngắn ($n2 < $n1 dòng), còn ⛔ + lệnh + file"
 else fail "R2. rc $rc2, $n2 dòng (lần đầu $n1): $(cat "$TMP/e2" | head -6 | tr '\n' '|')"; fi
 [ "$rc3" = 2 ] && grep -q 'hai bên tìm ra lỗi khác nhau' "$TMP/e3" \

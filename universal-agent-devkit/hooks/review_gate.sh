@@ -1204,9 +1204,13 @@ except OSError:
     pass
 if _again:
     # Giữ cả các lựa chọn A–D của đường chặn thường: đó là lệnh cần chạy (review PR #1059).
+    _ocr_rule = any("ocr-review" in l for l in lines)
     lines = [l for l in lines if l.startswith(("⛔", "OCR")) or l.lstrip().startswith(("•", "… +", "python3 ", "→"))
-             or re.match(r"\s+[A-D]\) ", l)] + \
-            ["(Như lần chặn trước trong phiên — phần giải thích không lặp lại.)"]
+             or re.match(r"\s+[A-D]\) ", l)]
+    # Ràng buộc cách chạy OCR (không phải giải thích): thiếu thì lượt OCR không được tính (review PR #1059).
+    if _ocr_rule:
+        lines.append("Nhắc: OCR trước Agent review; --out viết thẳng đường dẫn (không $BIẾN); không cắt output (| tail, | head).")
+    lines.append("(Như lần chặn trước trong phiên — phần giải thích không lặp lại.)")
 sys.stderr.write("\n".join(lines) + "\n")
 sys.exit(2)
 PY
