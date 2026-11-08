@@ -260,20 +260,51 @@ def deleted_paths(diff: str) -> list[str]:
 
 
 # File định nghĩa chính luật này: dòng danh sách từ khoá của nó (`"jwt.sign", …`) tự khớp, mọi PR đồng bộ kit đổi dòng
-# đó bị gắn human-gate auth (Idle-Plaza-3D PR #86, OfficeReader PR #300). Chỉ bỏ khỏi quét từ khoá/pattern, khi cả tên
-# cũ lẫn tên mới đúng đường dẫn này (đổi tên file khác vào đây vẫn bị quét); nhãn, path và xoá file vẫn xét như cũ.
+# đó bị gắn human-gate auth (Idle-Plaza-3D PR #86, OfficeReader PR #300). Mục diff của file này (cả tên cũ lẫn tên mới
+# đúng đường dẫn; đổi tên file khác vào đây vẫn bị quét) chỉ bỏ khỏi quét từ khoá/pattern khi dòng thêm và dòng xoá khớp
+# đúng cùng tập luật: chép lại hay đổi dạng danh sách thì auto, bớt một từ khoá (nới gate) thì cần người (principal review
+# PR #1059). Nhãn, path và xoá file vẫn xét như cũ.
 # ponytail: danh sách cứng 2 file; test merge-policy mang dữ liệu từ khoá vẫn cần người, thêm khi kit đồng bộ chúng sang app.
 SELF_POLICY_PATHS = (".claude/bin/super-board-merge-policy.py", ".claude/skills/super-board/references/config-schema.json")
 
 
-def scanned_diff(diff: str) -> str:
-    """Diff bỏ các mục chỉ chạm SELF_POLICY_PATHS; header không đọc được thì giữ (fail-closed)."""
-    keep = []
+def rule_hit(rule: dict, labels: set, paths: list, added: str, added_nc: str) -> str | None:
+    """Lý do một luật always_human khớp (nhãn, path, từ khoá hay pattern trong dòng thêm); None khi không khớp."""
+    hit = next((f"label {l}" for l in rule.get("labels") or [] if l.lower() in labels), None)
+    if not hit:
+        hit = next((f"path {p} (matches {g})" for p in paths for g in [matches(p, rule.get("paths"))] if g), None)
+    if not hit:
+        hit = next((f"keyword \"{k}\" in an added line" for k in rule.get("keywords") or []
+                    if " ".join(k.lower().split()) in added or " ".join(k.lower().split()) in added_nc), None)
+    if not hit:
+        hit = next((f"pattern \"{r}\" in an added line" for r in rule.get("patterns") or []
+                    if re.search(r, added) or re.search(r, added_nc)), None)
+    return hit
+
+
+def text_hits(always: dict, text: str) -> set:
+    """Mọi (nhóm, từ khoá/pattern) của always_human khớp trong text (đã chuẩn hoá như added_text)."""
+    nc = comment_free(text)
+    return {(cat, k) for cat, rule in always.items() for k in (rule or {}).get("keywords") or []
+            if " ".join(k.lower().split()) in text or " ".join(k.lower().split()) in nc} | \
+           {(cat, r) for cat, rule in always.items() for r in (rule or {}).get("patterns") or []
+            if re.search(r, text) or re.search(r, nc)}
+
+
+def scanned_diff(diff: str, always: dict) -> tuple[str, set]:
+    """(diff bỏ các mục chỉ chạm SELF_POLICY_PATHS, các (nhóm, luật) có ở dòng xoá mà mất ở dòng thêm của các mục đó).
+
+    Header không đọc được thì giữ mục (fail-closed). Luật mất khỏi file luật = PR nới gate, main() đưa sang người.
+    """
+    keep, lost = [], set()
     for sec in re.split(r"(?m)^(?=diff --git )", diff):
         p = diff_git_paths(sec.split("\n", 1)[0]) if sec.startswith("diff --git ") else None
-        if not (p and p[0] in SELF_POLICY_PATHS and p[1] in SELF_POLICY_PATHS):
-            keep.append(sec)
-    return "".join(keep)
+        if p and p[0] in SELF_POLICY_PATHS and p[1] in SELF_POLICY_PATHS:
+            removed = " ".join(" ".join(line[1:] for line in sec.split("\n") if line.startswith("-")).lower().split())
+            lost |= text_hits(always, removed) - text_hits(always, added_text(sec))
+            continue
+        keep.append(sec)
+    return "".join(keep), lost
 
 
 def comment_free(text: str) -> str:
@@ -303,11 +334,13 @@ def main() -> int:
 
     labels = {(l.get("name") or "").lower() for l in meta.get("labels") or []}
     paths = [f.get("path") or "" for f in meta.get("files") or []]
-    added = added_text(scanned_diff(diff))
-    added_nc = comment_free(added)
     body = meta.get("body") or ""
 
     policy = cfg.get("merge_policy") or {}
+    always = policy["always_human"] if isinstance(policy.get("always_human"), dict) else DEFAULT_ALWAYS_HUMAN
+    scanned, lost = scanned_diff(diff, always)
+    added = added_text(scanned)
+    added_nc = comment_free(added)
     human = []
     if (policy.get("default") or "auto") == "human":
         human.append({"category": "default", "why": "merge_policy.default is \"human\""})
@@ -335,19 +368,9 @@ def main() -> int:
         extra = f" (+{mig_lines} migration lines counted separately)" if mig_lines else ""
         human.append({"category": "size",
                       "why": f"big PR — please review: {size} changed lines > auto_max_lines {cap}{extra}"})
-    always = policy["always_human"] if isinstance(policy.get("always_human"), dict) else DEFAULT_ALWAYS_HUMAN
     for cat, rule in always.items():
-        rule = rule or {}
-        hit = next((f"label {l}" for l in rule.get("labels") or [] if l.lower() in labels), None)
-        if not hit:
-            hit = next((f"path {p} (matches {g})" for p in paths
-                        for g in [matches(p, rule.get("paths"))] if g), None)
-        if not hit:
-            hit = next((f"keyword \"{k}\" in an added line" for k in rule.get("keywords") or []
-                        if " ".join(k.lower().split()) in added or " ".join(k.lower().split()) in added_nc), None)
-        if not hit:
-            hit = next((f"pattern \"{r}\" in an added line" for r in rule.get("patterns") or []
-                        if re.search(r, added) or re.search(r, added_nc)), None)
+        hit = rule_hit(rule or {}, labels, paths, added, added_nc) or next(
+            (f"merge policy loses \"{k}\" (removed from its own rule file)" for c, k in sorted(lost) if c == cat), None)
         if hit:
             human.append({"category": cat, "why": hit})
     protected = policy.get("protected_paths")

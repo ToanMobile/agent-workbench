@@ -33,10 +33,14 @@ for i in range(0, len(args), 2):
     out += f"diff --git a/{old} b/{new}\n"
     if old != new:
         out += f"similarity index 90%\nrename from {old}\nrename to {new}\n"
-    out += f"index 1111111..2222222 100644\n--- a/{old}\n+++ b/{new}\n@@ -1,1 +1,2 @@\n ctx\n+{args[i + 1]}\n"
-    files.append({"path": new, "additions": 1, "deletions": 0})
+    # "<dòng xoá>⇒<dòng thêm>": hunk sửa một dòng; không có ⇒: chỉ thêm một dòng.
+    rm, _, add = args[i + 1].rpartition("⇒")
+    hunk = f"@@ -1,2 +1,2 @@\n ctx\n-{rm}\n+{add}\n" if "⇒" in args[i + 1] else f"@@ -1,1 +1,2 @@\n ctx\n+{add}\n"
+    out += f"index 1111111..2222222 100644\n--- a/{old}\n+++ b/{new}\n" + hunk
+    files.append({"path": new, "additions": 1, "deletions": 1 if "⇒" in args[i + 1] else 0})
 open(sys.argv[1], "wb").write(out.encode("utf-8"))
-json.dump({"files": files, "labels": [], "body": "", "additions": len(files), "deletions": 0,
+json.dump({"files": files, "labels": [], "body": "", "additions": len(files),
+           "deletions": sum(f["deletions"] for f in files),
            "changedFiles": len(files)}, open(sys.argv[2], "w"))
 PY
   rm -f "$TMP/halt.json"
@@ -52,6 +56,11 @@ PY
 P=.claude/bin/super-board-merge-policy.py
 S=.claude/skills/super-board/references/config-schema.json
 check "danh sách từ khoá trong merge-policy.py (PR #86/#300)" auto "$P|$P" "$KW"
+OLD='        "keywords": ["jwt.sign", "bcrypt", "password_hash", "service_role"],'
+check "kit-sync đổi dạng danh sách, cùng tập luật khớp (c45755c9)" auto "$P|$P" "$OLD⇒$KW        \"patterns\": [r\"bcrypt(?!o)\"],"
+# principal review P3: miễn quét cả file thì PR bỏ một từ khoá khỏi luật (nới gate) thành auto.
+check "đối chứng âm: bỏ jwt.sign khỏi danh sách luật" auth "$P|$P" "$KW⇒        \"keywords\": [\"password_hash\", \"service_role\"],"
+check "đối chứng âm: xoá hẳn dòng danh sách luật" auth "$P|$P" "$KW⇒        pass"
 check "danh sách từ khoá trong config-schema.json" auto "$S|$S" '"keywords": ["jwt.sign", "bcrypt", "password_hash"] },'
 check "đối chứng âm: cùng dòng trong file app" auth "app/x.ts|app/x.ts" "$KW"
 check "đối chứng âm: PR có merge-policy.py và file app gọi jwt.sign" auth "$P|$P" "$KW" "app/x.ts|app/x.ts" 'const t = jwt.sign(p, k);'
