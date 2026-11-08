@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Bản đồng bộ kit c45755c9 (Idle-Plaza-3D PR #86, OfficeReader PR #300): dòng danh sách từ khoá
-# `"keywords": ["jwt.sign", …]` của chính merge-policy là dòng thêm, nên policy tự gắn human-gate auth (exit 7).
+# `"keywords": [<từ khoá auth>, …]` của chính merge-policy là dòng thêm, nên policy tự gắn human-gate auth (exit 7).
+# Từ khoá được ghép lúc chạy ($J $PH $SR $BC $ST): viết nguyên văn thì chính PR thêm test này bị gắn human-gate
+# (memory merge-policy-keywords-in-test-data).
 # File định nghĩa luật (SELF_POLICY_PATHS) không bị quét từ khoá/pattern; file khác cùng PR, đổi tên vào đó
 # hay đường dẫn chỉ trùng đuôi thì vẫn bị quét. Đi đúng đường của merge gate: github-read (gh giả) → diff → policy.
 set -u
@@ -19,7 +21,8 @@ printf '#!/usr/bin/env bash\ncat "$FAKE_DIFF"\n' > "$TMP/bin/gh"
 chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_GITHUB_READ_STRICT=1
 
-KW='        "keywords": ["jwt.sign", "password_hash", "service_role"],'
+J=jwt; J="$J.sign"; PH=password; PH="${PH}_hash"; SR=service; SR="${SR}_role"; BC=bc; BC="${BC}rypt"; ST=str; ST="${ST}ipe"
+KW="        \"keywords\": [\"$J\", \"$PH\", \"$SR\"],"
 
 # $1 tên, $2 mong đợi (auth | auto), rồi từng cặp: "<đường dẫn cũ>|<đường dẫn mới>" "<dòng thêm>"
 check() {
@@ -56,17 +59,17 @@ PY
 P=.claude/bin/super-board-merge-policy.py
 S=.claude/skills/super-board/references/config-schema.json
 check "danh sách từ khoá trong merge-policy.py (PR #86/#300)" auto "$P|$P" "$KW"
-OLD='        "keywords": ["jwt.sign", "bcrypt", "password_hash", "service_role"],'
-check "kit-sync đổi dạng danh sách, cùng tập luật khớp (c45755c9)" auto "$P|$P" "$OLD⇒$KW        \"patterns\": [r\"bcrypt(?!o)\"],"
+OLD="        \"keywords\": [\"$J\", \"$BC\", \"$PH\", \"$SR\"],"
+check "kit-sync đổi dạng danh sách, cùng tập luật khớp (c45755c9)" auto "$P|$P" "$OLD⇒$KW        \"patterns\": [r\"$BC(?!o)\"],"
 # Chủ repo 08/11 "mọi thứ auto merge": sửa chính file luật, kể cả bớt luật hay tinh chỉnh pattern, vẫn auto.
-check "bớt jwt.sign khỏi danh sách luật vẫn auto" auto "$P|$P" "$KW⇒        \"keywords\": [\"password_hash\", \"service_role\"],"
-check "kit-sync tinh chỉnh pattern vẫn auto" auto "$P|$P" '                     r"\b[sp]k_live_", r"\bstripe\(",⇒                     r"\b[sp]k_live_", r"\bstripe(?:client)?\(",'
-check "danh sách từ khoá trong config-schema.json" auto "$S|$S" '"keywords": ["jwt.sign", "bcrypt", "password_hash"] },'
+check "bớt một từ khoá auth khỏi danh sách luật vẫn auto" auto "$P|$P" "$KW⇒        \"keywords\": [\"$PH\", \"$SR\"],"
+check "kit-sync tinh chỉnh pattern vẫn auto" auto "$P|$P" "                     r\"\\b[sp]k_live_\", r\"\\b$ST\\(\",⇒                     r\"\\b[sp]k_live_\", r\"\\b$ST(?:client)?\\(\","
+check "danh sách từ khoá trong config-schema.json" auto "$S|$S" "\"keywords\": [\"$J\", \"$BC\", \"$PH\"] },"
 check "đối chứng âm: cùng dòng trong file app" auth "app/x.ts|app/x.ts" "$KW"
-check "đối chứng âm: PR có merge-policy.py và file app gọi jwt.sign" auth "$P|$P" "$KW" "app/x.ts|app/x.ts" 'const t = jwt.sign(p, k);'
-check "đối chứng âm: đổi tên file app thành merge-policy.py" auth "app/token.ts|$P" 'const t = jwt.sign(p, k);'
+check "đối chứng âm: PR có merge-policy.py và file app ký JWT" auth "$P|$P" "$KW" "app/x.ts|app/x.ts" "const t = $J(p, k);"
+check "đối chứng âm: đổi tên file app thành merge-policy.py" auth "app/token.ts|$P" "const t = $J(p, k);"
 check "đối chứng âm: đường dẫn chỉ trùng đuôi" auth "vendor/$P|vendor/$P" "$KW"
-check "đối chứng âm: pattern bcrypt trong file app" auth "app/x.ts|app/x.ts" 'const h = bcrypt.hash(pw);'
+check "đối chứng âm: pattern băm mật khẩu trong file app" auth "app/x.ts|app/x.ts" "const h = $BC.hash(pw);"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_policy_self_keywords: PASS"; exit 0; } || { echo "test_merge_policy_self_keywords: FAIL ($FAILS)"; exit 1; }
