@@ -4794,6 +4794,23 @@ def _remote_ref(main, branch):
     return r.returncode != 0 or bool(r.stdout.strip())
 
 
+def _prune_stale_remote_refs(main, timeout=20):
+    """`git remote prune <r>` for every remote: drops only the remote-tracking refs whose branch is gone on the remote (GitHub's "delete
+    branch on merge"). Nothing ever pruned them, so every finished branch kept a ref, `_remote_ref` kept its local branch and the
+    session-start hook reported it as unmerged (agent-workbench 2026-11-08: 46 stale refs). Network trouble or a timeout: refs stay
+    (the sweep is then as conservative as before); never raises."""
+    try:
+        names = git(main, "remote", check=False).stdout.split()
+    except Exception:  # noqa: BLE001 - cannot list remotes: nothing pruned
+        return
+    for name in names:
+        try:
+            subprocess.run(["git", "-C", main, "remote", "prune", name], capture_output=True, text=True, timeout=timeout,
+                           env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": os.environ.get("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")})
+        except (OSError, subprocess.SubprocessError):
+            continue   # ssh hung / git missing: the refs stay
+
+
 def _open_pr_names(main):
     """The branch names OPEN pull requests use, as head or as base (a stacked PR), per `gh`; None when gh cannot say (missing, failing,
     over 15 s, unreadable, or as many rows as the limit: one may be cut off)."""
@@ -4904,6 +4921,8 @@ def _reap_merged(main, here, dry, log, logged):
             continue
         acted += 1
         record("✔ gc: " + tr("đã gỡ worktree đã tích hợp ", "removed integrated worktree ") + p)
+    if not dry:
+        _prune_stale_remote_refs(main)   # BEFORE the branch sweep: a stale refs/remotes/origin/<b> reads as "a remote still has it" (_remote_ref)
     try:
         entries = _worktree_entries(main)
         heads = git(main, "for-each-ref", "--format=%(refname)", "refs/heads").stdout.split()
