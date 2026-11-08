@@ -133,6 +133,21 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
 
       // Nut cua bang dieu khien cu: go hang nut khoi tin nhan (bang dieu khien da chuyen sang web)
       const msgId = cbq.message?.message_id;
+      // Chu repo 08/11: duyet xong thi chinh tin do doi sang "da duyet" va bo nut (khong con trong nhu dang cho).
+      if (msgId && cbResult.approved) {
+        const at = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+        try {
+          await apiCaller(cfg.botToken, 'editMessageText', {
+            chat_id: fromChatId,
+            message_id: msgId,
+            text: `${cbq.message?.text || ''}\n\n✅ Đã duyệt lúc ${at} (đã ghi done, merge gate chạy tiếp)`.trim(),
+            reply_markup: { inline_keyboard: [] },
+          });
+        } catch (err) {
+          logStructured('warn', 'telegram_mark_approved_failed', { error: err?.message });
+        }
+        continue;
+      }
       if (msgId && cbResult.clearButtons) {
         try {
           await apiCaller(cfg.botToken, 'editMessageReplyMarkup', {
