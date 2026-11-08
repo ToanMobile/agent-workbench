@@ -241,9 +241,14 @@ The essentials keep the obligation; this section keeps how the tools carry it ou
   without the test lock, unless `--force`, `--no-cache` or `DEVKIT_GATE_CACHE=0`. A merge guard is never reused.
 - **Step 3 load**: suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores (`bin/capacity.py`;
   `DEVKIT_SLOT_LOAD_MAX` / `DEVKIT_CAPACITY` override) they start at once, above it they wait up to 600 s and run anyway; only
-  Unity and device suites hold an exclusive lock. Merge-point levers are off by default (load test 2026-11-08 missed its thresholds):
-  `DEVKIT_MERGE_WIDE_LOAD_MAX=<load>` widens the parallel group to `DEVKIT_MERGE_PARALLEL` (6) under that load, and
-  `DEVKIT_MERGE_GATE_SLOTS=2` gives a merge-priority run at least 2 gate slots.
+  Unity and device suites hold an exclusive lock. Merge-point levers are on by default (load test 2026-11-08, both levers together, met its thresholds):
+  under a 1-minute load of 2 × cores the parallel group widens to `DEVKIT_MERGE_PARALLEL` (6), a merge-priority run gets at least
+  2 gate slots, and the optimistic merge verify leaves the last gate slot to the locked verify only at or above that load.
+  `DEVKIT_MERGE_WIDE_LOAD_MAX=0` and `DEVKIT_MERGE_GATE_SLOTS=0` turn the first two off; `SB_MERGE_OPT_LOAD_MAX=<cores>` restores
+  the earlier 1 × cores reserve (0 removes the reserve entirely, which reopens the 2026-11-05 locked-verify starvation).
+  Rollback: when a week of `runs.jsonl` shows merge-priority `gate_slot.waited_s` p90 above 300 s or merge-point load1 p90
+  above 24 (the load-test thresholds), set the first two to 0 and `SB_MERGE_OPT_LOAD_MAX` to the core count, then file the
+  numbers on the gate-speed issue.
 - **Step 4 waiver**: the profile was backend when the turn started (committed, or an uncommitted profile file written before the
   turn), or every file changed since HEAD at the turn start (commits, merges, pulls included; new files too) is under a
   top-level `.agents/ .claude/ .gemini/ .github/ .githooks/ .codebase-memory/ docs/ reports/ scripts/ bin/ tools/`, a top-level
