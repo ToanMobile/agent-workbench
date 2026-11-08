@@ -17,7 +17,7 @@ FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
-# độ rộng bật tường minh (mặc định tắt từ lượt đo tải 08/11): ca a vẫn chứng minh thiếu dấu thì không rộng ra
+# độ rộng đặt tường minh (mặc định bật từ lượt đo tải 08/11 lần 2): ca a vẫn chứng minh thiếu dấu thì không rộng ra
 OUT="$(DEVKIT_CAPACITY_LOAD=0 DEVKIT_MERGE_WIDE_LOAD_MAX=24 python3 - "$GATE" <<'PY'
 import importlib.util, os, sys
 spec = importlib.util.spec_from_file_location("pfg_mp", sys.argv[1]); m = importlib.util.module_from_spec(spec)

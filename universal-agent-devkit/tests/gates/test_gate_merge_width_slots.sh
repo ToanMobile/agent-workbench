@@ -8,7 +8,7 @@
 #      vẫn ghi đè (12: tải 12 ⇒ N−1); SB_MERGE_OPT_LOAD_MAX=0 ⇒ tắt (không hạn)
 #   c  opt_gate_slots: gate_max 1, DEVKIT_GATE_SLOTS không đặt ⇒ sàn mặc định 2 ⇒ N−1 = 1; DEVKIT_MERGE_GATE_SLOTS=0 ⇒ không sàn ⇒
 #      không hạn; DEVKIT_GATE_SLOTS=1 tường minh ⇒ không hạn
-#   d  .merge-scratch-*, sáu suite parallel_safe, s=0.75, 12 lõi: tải 0 mặc định 6 (ngưỡng 2 × 12 = 24); tải 30 ≥ 24: 3 như cũ;
+#   d  .merge-scratch-*, sáu suite parallel_safe, s=0.75, 12 lõi: tải 0 và 18 mặc định 6 (ngưỡng 2 × 12 = 24); tải 30 ≥ 24: 3 như cũ;
 #      DEVKIT_MERGE_WIDE_LOAD_MAX=0 (tắt) ⇒ 4; ngoài điểm gộp: 4
 #   e  biến độ rộng / slot của điểm gộp không lọt vào môi trường suite
 #   f  guard có hạn giờ (REG-DK-SESSION-01) ở điểm gộp: chạy sau cùng, một mình
@@ -103,6 +103,8 @@ maxc() { sort -n "$TMP/conc" 2>/dev/null | tail -1; }
 R="$TMP/.merge-scratch-d"; new_repo "$R"
 gate "$R" 0
 [ "$RC" -eq 0 ] && [ "$(maxc)" = 6 ] && ok "d. điểm gộp, tải 0, mặc định bật (ngưỡng 24): 6 suite cùng lúc" || { fail "d. mặc định: rc=$RC cùng lúc=$(maxc) (muốn 6)"; tail -8 "$TMP/out"; }
+gate "$R" 18
+[ "$RC" -eq 0 ] && [ "$(maxc)" = 6 ] && ok "d. điểm gộp, mặc định, 12 ≤ tải 18 < 24: 6 (ngưỡng 2 × lõi, không phải 1 ×)" || { fail "d. tải 18: rc=$RC cùng lúc=$(maxc) (muốn 6)"; tail -8 "$TMP/out"; }
 gate "$R" 30
 [ "$RC" -eq 0 ] && [ "$(maxc)" = 3 ] && ok "d. điểm gộp, mặc định, tải 30 ≥ 24: 3 như cũ" || { fail "d. tải 30: rc=$RC cùng lúc=$(maxc) (muốn 3)"; tail -8 "$TMP/out"; }
 gate "$R" 0 DEVKIT_MERGE_WIDE_LOAD_MAX=0

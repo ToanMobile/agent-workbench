@@ -1395,7 +1395,8 @@ opt_gate_slots() {
   local lmax="${SB_MERGE_OPT_LOAD_MAX:-}" n="${DEVKIT_GATE_SLOTS:-}" load
   # Gate speed v26 mục 10: mặc định 2 × số lõi. Lượt đo tải thật 08/11 lần 2 (gói both: 2 × lõi + sàn 2 slot + độ rộng 6 ở điểm gộp,
   # 5 vòng, capacity 0.5 và 0.75) đạt ngưỡng nên bật: cặp 2 PR 154 s so với nối tiếp 342 s (−55 %) ở 0.5, 161 s so với 311 s
-  # (−48 %) ở 0.75, load1 p90 11,6 và 15,1 ≤ 24, chờ slot 0 s, mọi rc 0. SB_MERGE_OPT_LOAD_MAX ghi đè, 0 = tắt.
+  # (−48 %) ở 0.75, load1 p90 11,6 và 15,1 ≤ 24, chờ slot 0 s, mọi rc 0. SB_MERGE_OPT_LOAD_MAX ghi đè (số lõi = như
+  # trước mục 10; 0 = bỏ hẳn lớp dành slot của 05/11).
   if ! [[ "$lmax" =~ ^[0-9]{1,6}$ ]]; then
     lmax=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" cores 2>/dev/null) || lmax=""
     [[ "$lmax" =~ ^[0-9]{1,6}$ ]] || return 0
