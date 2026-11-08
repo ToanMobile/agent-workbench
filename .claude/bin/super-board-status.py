@@ -408,7 +408,7 @@ query($owner:String!, $number:Int!, $after:String) {
         items(first:100, after:$after) {
           pageInfo { endCursor hasNextPage }
           nodes {
-            content { ... on Issue { number title labels(first:20){nodes{name}} } }
+            content { ... on Issue { number title repository{nameWithOwner} labels(first:20){nodes{name}} } }
             fieldValues(first:8) {
               nodes { ... on ProjectV2ItemFieldSingleSelectValue {
                 name field { ... on ProjectV2SingleSelectField { name } } } }
@@ -756,10 +756,17 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    # Thẻ của repo khác trên board không tính vào status (cùng luật với SB_CARD_HOME_REPO của card.sh).
+    home = re.sub(r"\.git$", "", re.sub(r"^.*github\.com[:/]", "", (cfg.get("repo") or {}).get("remote") or "").rstrip("/")).lower()
+    foreign_cards = 0
     items: list[dict[str, Any]] = []
     for n in items_raw:
         c = n.get("content") or {}
         if not c.get("number"):
+            continue
+        card_repo = ((c.get("repository") or {}).get("nameWithOwner") or "").lower()
+        if home and card_repo and card_repo != home:
+            foreign_cards += 1
             continue
         items.append({
             "number": c["number"],
@@ -771,6 +778,8 @@ def main() -> int:
             ],
             "status": field_status(n),
         })
+    if foreign_cards and not items:
+        print(f"warning: no card of {home} on this board (wrong repo in config?); {foreign_cards} skipped", file=sys.stderr)
 
     by_status = group_by_status(items)
 
