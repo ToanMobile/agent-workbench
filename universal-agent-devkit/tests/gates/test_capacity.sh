@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Test hồi quy (T0052): bin/capacity.py là NGUỒN DUY NHẤT của mọi giới hạn song song (ngưỡng tải, số job test, nhóm suite của gate,
+# loadtest 08/11: dòng comment tạm cho PR nháp đo tải, không merge.
 # suite nặng, gate cùng lúc, worker super-board, lane song song) — tính từ số lõi × hệ số DEVKIT_CAPACITY, co lại khi tải cao.
 # Hai ngưỡng tải: hold_load (8 × lõi, 12 lõi: 96) — việc BẮT BUỘC (suite của gate, verify của merge gate) chờ trên mức này (người dùng
 # 20/10: "dưới 100 thì cho chạy"); busy_load (3 × lõi, 12 lõi: 36) — chỉ để mở thêm việc TÙY CHỌN (worker build thêm của super-board).
