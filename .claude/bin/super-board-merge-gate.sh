@@ -1385,27 +1385,32 @@ prepare_scratch_evidence() {
 }
 # 05/11 (chủ repo: "Hạn số merge gate chạy cùng lúc theo tải, để 3 gate không cùng tranh CPU"). Đo runs.jsonl 05/11 08:25–09:11: verify
 # lạc quan (ngoài khoá, PR3) của #1007 và #1004 giữ cả 2 slot pool gate, verify TRONG khoá của #1009 chờ slot 1662,9 s mà vẫn chặn mọi
-# merge của repo; giây/test của verify khi chồng ≈ 1,9 × khi chạy một mình (4,35 → 8,32 s/test, 29/10–05/11). Tải 1 phút ≥ số lõi
-# (capacity cores; SB_MERGE_OPT_LOAD_MAX ghi đè, 0 = tắt; v26 mục 10 thử 2 × lõi, đo tải 08/11 trượt ngưỡng nên lùi) thì verify lạc quan chỉ thấy N−1 slot đầu của pool gate (N = DEVKIT_GATE_SLOTS
+# merge của repo; giây/test của verify khi chồng ≈ 1,9 × khi chạy một mình (4,35 → 8,32 s/test, 29/10–05/11). Tải 1 phút ≥ 2 × số lõi
+# (2 × capacity cores, v26 mục 10; SB_MERGE_OPT_LOAD_MAX ghi đè, 0 = tắt) thì verify lạc quan chỉ thấy N−1 slot đầu của pool gate (N = DEVKIT_GATE_SLOTS
 # hay capacity gate_max, ≥ 2): slot cuối để dành cho verify trong khoá (vé cỡ nhỏ ghép bằng _pick_free, P1 02/11). OPT_SLOTS rỗng = không hạn.
 # ponytail: N = 1 thì không còn gì để dành (không hạn); tải đọc một lần lúc verify bắt đầu; merge train có verify riêng, chưa hạn.
 opt_gate_slots() {
   OPT_SLOTS=""
   [ "${LOCK_HELD:-0}" -eq 0 ] || return 0
   local lmax="${SB_MERGE_OPT_LOAD_MAX:-}" n="${DEVKIT_GATE_SLOTS:-}" load
-  # Gate speed v26 mục 10: mặc định vẫn là số lõi. Lượt đo tải thật 08/11 với 2 × lõi kèm sàn 2 slot cho load1 p90 25,5 > 24 nên đã lùi;
-  # SB_MERGE_OPT_LOAD_MAX ghi đè.
-  [[ "$lmax" =~ ^[0-9]{1,6}$ ]] || lmax=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" cores 2>/dev/null) || lmax=""
-  [[ "$lmax" =~ ^[0-9]{1,6}$ ]] || return 0
+  # Gate speed v26 mục 10: mặc định 2 × số lõi. Lượt đo tải thật 08/11 lần 2 (gói both: 2 × lõi + sàn 2 slot + độ rộng 6 ở điểm gộp,
+  # 5 vòng, capacity 0.5 và 0.75) đạt ngưỡng nên bật: cặp 2 PR 154 s so với nối tiếp 342 s (−55 %) ở 0.5, 161 s so với 311 s
+  # (−48 %) ở 0.75, load1 p90 11,6 và 15,1 ≤ 24, chờ slot 0 s, mọi rc 0. SB_MERGE_OPT_LOAD_MAX ghi đè (số lõi = như
+  # trước mục 10; 0 = bỏ hẳn lớp dành slot của 05/11).
+  if ! [[ "$lmax" =~ ^[0-9]{1,6}$ ]]; then
+    lmax=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" cores 2>/dev/null) || lmax=""
+    [[ "$lmax" =~ ^[0-9]{1,6}$ ]] || return 0
+    lmax=$((2 * 10#$lmax))
+  fi
   lmax=$((10#$lmax)); [ "$lmax" -gt 0 ] || return 0
   load=$(load_now)
   [[ "$load" =~ ^[0-9]{1,6}$ ]] || return 0
   [ $((10#$load)) -ge "$lmax" ] || return 0
   if ! [[ "$n" =~ ^[0-9]{1,6}$ ]]; then
     n=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" gate_max 2>/dev/null) || n=""
-    # mục 10: như post-fix-gate ở ưu tiên merge, pool gate không dưới DEVKIT_MERGE_GATE_SLOTS khi DEVKIT_GATE_SLOTS không đặt; mặc định tắt
-    # (lượt đo tải 08/11: load1 p90 25,5 > 24), đặt 2 thì bật
-    local floor="${DEVKIT_MERGE_GATE_SLOTS:-0}"
+    # mục 10: như post-fix-gate ở ưu tiên merge, pool gate không dưới DEVKIT_MERGE_GATE_SLOTS khi DEVKIT_GATE_SLOTS không đặt; mặc định 2
+    # (lượt đo tải 08/11 lần 2, gói both, đạt ngưỡng), 0 = tắt
+    local floor="${DEVKIT_MERGE_GATE_SLOTS:-2}"
     [[ "$floor" =~ ^[0-9]{1,6}$ ]] || floor=0
     [[ "$n" =~ ^[0-9]{1,6}$ ]] && [ $((10#$n)) -lt $((10#$floor)) ] && n=$((10#$floor))
   fi

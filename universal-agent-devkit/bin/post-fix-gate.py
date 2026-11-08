@@ -6655,33 +6655,37 @@ def default_gate_slots() -> int:
 
 def merge_wide_parallel(cap, project_dir) -> int:
     """Gate speed v26 mục 10: ở điểm gộp (scratch merge gate / train / integrate) khi tải 1 phút dưới DEVKIT_MERGE_WIDE_LOAD_MAX thì nhóm suite
-    parallel_safe rộng ít nhất DEVKIT_MERGE_PARALLEL (mặc định 6). Mặc định TẮT (DEVKIT_MERGE_WIDE_LOAD_MAX không đặt hay ≤ 0): lượt đo tải thật
-    08/11 chỉ nhanh 13 % (< 25 %), nên lùi; đặt số (vd 2 × lõi) thì bật. Ngoài điểm gộp, tải cao hơn hay đọc lỗi: `cap` như cũ.
+    parallel_safe rộng ít nhất DEVKIT_MERGE_PARALLEL (mặc định 6). Mặc định BẬT: DEVKIT_MERGE_WIDE_LOAD_MAX không đặt = 2 × số lõi
+    (capacity.cores, theo DEVKIT_CAPACITY_CORES); lượt đo tải thật 08/11 lần 2 (gói both, 5 vòng, capacity 0.5 và 0.75) đạt ngưỡng nên bật (số đo: opt_gate_slots
+    của super-board-merge-gate.sh). Đặt ≤ 0 thì tắt. Ngoài điểm gộp, tải cao hơn hay đọc lỗi: `cap` như cũ.
     Chỉ gọi khi DEVKIT_GATE_PARALLEL không đặt (số đã đặt vẫn là công tắc tường minh)."""
     raw = (os.environ.get("DEVKIT_MERGE_WIDE_LOAD_MAX") or "").strip()
-    if not raw or not at_merge_point(project_dir):
+    if not at_merge_point(project_dir):
         return cap
     try:
         _bin = str(Path(__file__).resolve().parent)
         if _bin not in sys.path:
             sys.path.insert(0, _bin)
         import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
-        lmax = float(raw)
+        lmax = float(raw) if raw else 2.0 * _capacity.cores()
         load = _capacity.load()   # DEVKIT_CAPACITY_LOAD rồi os.getloadavg()
         want = int((os.environ.get("DEVKIT_MERGE_PARALLEL") or "6").strip())
     except Exception as exc:   # noqa: BLE001 - đọc tải / lõi lỗi: giữ độ rộng cũ
         log_warn(f"merge width: {exc!r}; giữ {cap}")
+        return cap
+    if lmax <= 0:   # tắt tường minh
         return cap
     return max(cap, want) if load is not None and load < lmax else cap
 
 
 def merge_gate_slots_floor() -> int:
     """Gate speed v26 mục 10: lượt ưu tiên merge (DEVKIT_SLOT_PRIORITY=merge) thấy ít nhất DEVKIT_MERGE_GATE_SLOTS slot pool gate khi
-    DEVKIT_GATE_SLOTS không đặt (DEVKIT_CAPACITY=0,5 cho gate_max 1). Mặc định TẮT: lượt đo tải thật 08/11 với sàn 2 cho load1 p90 25,5 > 24,
-    nên lùi; đặt 2 thì bật. Lượt khác, không đặt, hay số không phải nguyên ≥ 1: 0 (không sàn)."""
+    DEVKIT_GATE_SLOTS không đặt (DEVKIT_CAPACITY=0,5 cho gate_max 1). Mặc định BẬT, sàn 2: lượt đo tải thật 08/11 lần 2 (gói both, 5 vòng,
+    capacity 0.5 và 0.75) đạt ngưỡng nên bật (số đo: opt_gate_slots của super-board-merge-gate.sh).
+    Lượt khác, đặt 0, hay số không phải nguyên ≥ 1: 0 (không sàn)."""
     if (os.environ.get("DEVKIT_SLOT_PRIORITY") or "").strip().lower() != "merge":
         return 0
-    raw = (os.environ.get("DEVKIT_MERGE_GATE_SLOTS") or "0").strip()
+    raw = (os.environ.get("DEVKIT_MERGE_GATE_SLOTS") or "2").strip()
     return int(raw) if raw.isdigit() and int(raw) >= 1 else 0
 
 
