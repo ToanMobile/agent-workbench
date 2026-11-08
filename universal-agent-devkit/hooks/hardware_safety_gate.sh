@@ -114,6 +114,11 @@ INPUT="$(cat)"
 # An MCP payload never takes it: its "command" is a DEVICE shell command (adb-shell).
 fast_allow() { # $1 = trigger ERE
   local re='"command"[[:space:]]*:[[:space:]]*"((\\.|[^"\\])*)"' c bash_re='"tool(_n|N)ame"[[:space:]]*:[[:space:]]*"Bash"'
+  local mcp_re='"tool(_n|N)ame"[[:space:]]*:[[:space:]]*"mcp__'
+  # (09/11, audit T0001) the two regexes below read the WHOLE payload, so an MCP call whose arguments carry {"tool_name":"Bash",
+  # "command":"ls"} (mobile_batch_commands steps take any key) looked like a Bash call and skipped the parser. An MCP tool name
+  # anywhere in the payload sends it to the parser.
+  [[ $INPUT =~ $mcp_re ]] && return 1
   [[ $INPUT =~ $bash_re ]] || return 1
   [[ $INPUT =~ $re ]] || return 1
   c="${BASH_REMATCH[1]}"

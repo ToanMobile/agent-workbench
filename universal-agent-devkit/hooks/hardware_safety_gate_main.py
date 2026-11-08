@@ -93,8 +93,10 @@ def mobile_as_adb(name, inp):
         return MM_INVALID + " " + name + ": no device or no steps"
     cmds = [mobile_cmd("mobile_list_elements_on_screen", {}, parent)]   # the batch device is always touched (listElementsAtEnd)
     for st in steps:
-        sname = st.get("name") if isinstance(st, dict) else None
-        sargs = st.get("arguments") if isinstance(st, dict) and isinstance(st.get("arguments"), dict) else {}
+        if not isinstance(st, dict) or not isinstance(st.get("arguments"), dict):   # not an object: the packageName / device in it is unread
+            cmds.append(MM_INVALID + " " + name + ": invalid step")
+            continue
+        sname, sargs = st.get("name"), st["arguments"]
         if not isinstance(sname, str) or sname == "mobile_batch_commands" or not (
                 sname in MOBILE_CLOUD or sname in MOBILE_NO_DEVICE or sname.startswith("mobile_")):
             cmds.append(MM_INVALID + " " + name + ": unknown step")
@@ -2259,15 +2261,28 @@ if MCP and not label:   # (2026-10-13) the command of replicant adb-shell runs o
 
 
 # ── Device policy: which serial may adb touch ─────────────────────────────────
+def policy_entries(text, deny, one_per_line=False):
+    """The device names in one policy text. A name may hold spaces ('Pixel 7 API 34', "Toan's Pixel 8": the AVD name mobile-mcp
+    passes as `device`, audit 09/11). Denylist: every word (as before) AND every whole entry between , or ; : listing more
+    only refuses more. Allowlist: listing more would let more through, so the words of a name with spaces must NOT be allowed
+    by themselves ("Pixel 7 API 34" must not allow a device called "API", review 09/11): a file line is ONE entry, and a text
+    with , or ; is split there only; only a plain space-separated text (ADB_ALLOW_SERIALS="A B", the old form) is split into words."""
+    words = {t for t in re.split(r"[\s,;]+", text) if t}
+    whole = {e.strip() for e in re.split(r"[,;]+", text) if e.strip()}
+    if deny:
+        return words | whole
+    return whole if one_per_line or re.search(r"[,;]", text) else words
+
 def serial_set(env_name, file_name):
-    out = {t for t in re.split(r"[\s,;]+", os.environ.get(env_name, "")) if t}
+    deny = file_name == "denylist"
+    out = policy_entries(os.environ.get(env_name, ""), deny)
     cfg = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
                        "universal-agent-devkit", "adb-" + file_name)
     for path in (cfg, os.path.join(os.environ.get("REPO_ROOT", "."), ".adb-" + file_name)):
         try:
             with open(path, encoding="utf-8") as fh:
                 for line in fh:
-                    out.update(t for t in re.split(r"[\s,;]+", line.split("#", 1)[0]) if t)
+                    out.update(policy_entries(line.split("#", 1)[0], deny, True))
         except OSError:   # no such file (the usual case) or unreadable: no serial from it
             pass
     return out

@@ -654,7 +654,7 @@ universal-agent-devkit/mcp/
     ├── context7/
     ├── android-code-search/
     ├── android-skills/
-    ├── mobile-mcp/
+    ├── replicant-mcp/
     └── play-store/
 ```
 

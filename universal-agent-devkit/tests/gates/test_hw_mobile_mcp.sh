@@ -68,4 +68,45 @@ mm 2 mobile_batch_commands '{"device":"OK1"}'
 mm 2 mobile_batch_commands '{"device":"OK1","steps":"x"}'
 mm 2 mobile_batch_commands '{"steps":[{"name":"mobile_type_keys","arguments":{"text":"a"}}]}'
 
+echo "── mobile-mcp: a step whose arguments are not an object cannot be read"
+mm 2 mobile_batch_commands '{"device":"OK1","steps":[{"name":"mobile_uninstall_app","arguments":"x"}]}'
+mm 2 mobile_batch_commands '{"device":"OK1","steps":[{"name":"mobile_uninstall_app"}]}'
+mm 2 mobile_batch_commands '{"device":"OK1","steps":["x"]}'
+
+mm 2 mobile_batch_commands '{"device":"OK1","steps":[{"name":"mobile_type_keys","arguments":{"device":null,"text":"a"}}]}'
+mm 2 mobile_batch_commands '{"device":"OK1","steps":[{"name":"mobile_type_keys","arguments":{"device":7,"text":"a"}}]}'
+
+echo "── mobile-mcp: extra keys that look like a Bash payload do not open the fast path (audit 09/11)"
+mm 2 mobile_clear_app_data '{"device":"DENIED1","packageName":"com.example.app","tool_name":"Bash","command":"ls"}'
+mm 2 mobile_batch_commands '{"device":"OK1","steps":[{"name":"mobile_login_to_cloud_provider","arguments":{"tool_name":"Bash","command":"ls"}}]}'
+mm 2 mobile_uninstall_app '{"device":"OK1","packageName":"com.android.systemui","toolName":"Bash","command":"ls"}'
+
+# mmf <want rc> <file> <name> <json>: the device policy comes from <repo>/.adb-<file> (a device name with spaces is ONE entry there)
+mmf() {
+  local want="$1" file="$2" name="$3" inp="$4" tool="mcp__mobile-mcp__$3"
+  printf '%s\n' "$5" > "$P/.adb-$file"
+  python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[3],"hook_event_name":"PreToolUse",
+    "tool_name":sys.argv[1],"tool_input":json.loads(sys.argv[2])}))' "$tool" "$inp" "$P" > "$TMP/in.json"
+  ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" ADB_DENY_SERIALS= ADB_ALLOW_SERIALS= ANDROID_SERIAL= \
+      bash "$HW" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
+  local rc=$?
+  rm -f "$P/.adb-$file"
+  if [ "$rc" = "$want" ] && ! crashed; then ok "mmf $file rc $rc: $name $inp"; else fail "mmf $file rc $rc (want $want): $name $inp — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
+}
+echo "── mobile-mcp: device names with spaces in .adb-denylist / .adb-allowlist (audit 09/11)"
+mmf 2 denylist mobile_clear_app_data '{"device":"Toan'"'"'s Pixel 8","packageName":"com.example.app"}' "Toan's Pixel 8   # my phone"
+mmf 2 denylist mobile_clear_app_data '{"device":"Pixel 7 API 34","packageName":"com.example.app"}' "Pixel 7 API 34"
+mmf 0 denylist mobile_clear_app_data '{"device":"Pixel 7 API 35","packageName":"com.example.app"}' "Pixel 7 API 34"
+mmf 0 allowlist mobile_list_elements_on_screen '{"device":"Pixel 7 API 34"}' "Pixel 7 API 34"
+mmf 2 allowlist mobile_list_elements_on_screen '{"device":"Pixel 9 API 34"}' "Pixel 7 API 34"
+mmf 2 denylist mobile_clear_app_data '{"device":"DENIED1","packageName":"com.example.app"}' "DENIED1 OTHER1"
+# an allowlist entry is the whole line: its words do not allow other devices (review 09/11: "API" passed with "Pixel 7 API 34")
+mmf 2 allowlist mobile_list_elements_on_screen '{"device":"API"}' "Pixel 7 API 34"
+mmf 2 allowlist mobile_list_elements_on_screen '{"device":"Pixel"}' "Pixel 7 API 34"
+mmf 0 allowlist mobile_list_elements_on_screen '{"device":"Toan'"'"'s Pixel 8"}' "Toan's Pixel 8  # my phone"
+mmf 2 allowlist mobile_list_elements_on_screen '{"device":"8"}' "Toan's Pixel 8"
+mmf 0 allowlist mobile_list_elements_on_screen '{"device":"emulator-5554"}' "emulator-5554,Pixel 7 API 34"
+mmf 0 allowlist mobile_list_elements_on_screen '{"device":"Pixel 7 API 34"}' "emulator-5554,Pixel 7 API 34"
+mmf 2 allowlist mobile_list_elements_on_screen '{"device":"API"}' "emulator-5554,Pixel 7 API 34"
+
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }
