@@ -846,3 +846,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Cắt output ocr-review bằng tail làm review gate đòi thêm vòng OCR
 - **Nguyên nhân:** review_gate nhận fallback delegate qua dòng 'LLM endpoint unusable/no valid LLM endpoint' trong output; '| tail -2' cắt mất dòng đó nên lượt OCR không được tính (PR #977: 29/36 lần chặn vì đòi OCR)
 - **Quy tắc phòng ngừa & Cách fix:** Chạy ocr-review không pipe qua tail/head; chạy nó TRƯỚC lời gọi agent review, và --from phải phủ mọi commit từ verified head
+
+---
+
+### [INSTINCT-108] Gỡ một dòng hook theo prefix làm mất luôn lưới an toàn đi chung dòng đó
+- **Ngày phát hiện:** 2026-11-08
+- **Hiện tượng lỗi:** Gỡ một dòng hook theo prefix làm mất luôn lưới an toàn đi chung dòng đó
+- **Nguyên nhân:** compact() gộp cảnh báo ngõ cụt phần cứng (hardware-boundaries.json, DỪNG/Cứu hộ) vào dòng 'Yêu cầu ngầm định'; PR #1057 bỏ dòng NFR ở đường --hook nên mất luôn cảnh báo phần cứng
+- **Quy tắc phòng ngừa & Cách fix:** Trước khi gỡ hay lọc một dòng hook, liệt kê mọi nguồn được nối vào dòng đó (grep injected_nfrs.insert/append); lưới an toàn phải có dòng prefix riêng và có ca test ĐỎ→XANH riêng
