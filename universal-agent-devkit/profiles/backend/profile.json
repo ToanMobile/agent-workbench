@@ -32,7 +32,9 @@
     "video2dsprite"
   ],
   "exclude_agents": [
-    "android-principal-architect"
+    "android-principal-architect",
+    "game-gc-rendering-auditor",
+    "mobile-release-auditor"
   ],
   "source_extensions": [
     ".py",

@@ -44,5 +44,8 @@
     ".js",
     ".py",
     ".sql"
+  ],
+  "exclude_agents": [
+    "game-gc-rendering-auditor"
   ]
 }

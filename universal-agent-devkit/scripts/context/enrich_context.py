@@ -668,6 +668,20 @@ def compact(dossier, project_root, limit=4):
     return "\n".join(out)
 
 
+# Hai dòng hook prompt không còn in (chủ repo 08/11, đo 30 ngày transcript thật): "Skill phù hợp" dẫn tới dùng đúng skill 0,2 %
+# lượt và gợi ý tên mà danh sách skill của Claude không có (Claude gộp command trùng nội dung về alias: fix, tdd…);
+# "Yêu cầu ngầm định" không đổi hành vi (tỉ lệ sửa code có từ khoá NFR khi có dòng ≈ khi không) và trùng Engineering musts
+# của AGENTS.md. compact() vẫn dựng chúng cho --compact / test định tuyến; chỉ đường --hook bỏ.
+# Test: tests/context_memory/test_prompt_hook_dead_hints.sh.
+HOOK_DROPPED_LINES = ("- Skill phù hợp: ", "- Yêu cầu ngầm định: ")
+
+
+def drop_dead_hints(text):
+    """Bỏ các dòng HOOK_DROPPED_LINES; chỉ còn dòng header thì trả chuỗi rỗng (header trơ trọi là token phí)."""
+    lines = [l for l in text.split("\n") if not l.startswith(HOOK_DROPPED_LINES)]
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def format_anthropic_prompt(dossier, project_root=None):
     """Formats the 5D context dossier into a battle-tested Anthropic XML Prompt."""
     profile = dossier.get("active_profile", "universal")
@@ -1421,6 +1435,7 @@ if __name__ == "__main__":
     elif is_compact:
         text = compact(res, project_dir)
         if is_hook:
+            text = drop_dead_hints(text)
             log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
             write_turn_class(project_dir, session_id, res)
             asked = res.get("lane_card", prompt_input)   # a super-board lane: the card's words, not the runner's text

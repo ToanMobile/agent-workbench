@@ -41,7 +41,7 @@ printf '%s' "$o" | grep -q "DUAL_AGENT_DELEGATION" && fail "  … the flag must 
 # the flag takes no slot of the 5-skill line (INSTINCT-022: a skill added to a broad intent pushed others out)
 PU="sửa lỗi hud bị vỡ layout trên màn hình chính"
 on="$(skill_line "$(out "$PU")")"; clear; off="$(skill_line "$(out "$PU")")"; setg '{"giaoDefault": true}'
-[ -n "$on" ] && [ "$on" = "$off" ] && ok "  … and the skill line is unchanged by the flag ($on)" || fail "  … the flag changed the skill line: on='$on' off='$off'"
+[ "$on" = "$off" ] && ok "  … and the skill line is unchanged by the flag ('$on'; the hook prints none since 08/11)" || fail "  … the flag changed the skill line: on='$on' off='$off'"
 printf '%s' "$o" | grep -q "câu hỏi" && ok "  … the order exempts a turn that changes nothing (a question is answered directly)" || fail "  … no exemption for questions"
 
 setp '{"giaoDefault": false}'
