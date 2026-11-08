@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# loadtest 08/11: dòng comment tạm cho PR nháp đo tải, không merge.
 """Nguồn sức chứa DUY NHẤT của máy (T0052): mọi giới hạn song song của DevKit và super-board (ngưỡng tải, số job test, nhóm suite
 của gate, suite nặng, gate cùng lúc, worker board, lane song song) suy từ số lõi × hệ số DEVKIT_CAPACITY (nhóm suite của gate còn co
 lại khi tải cao), thay cho các hằng số rải rác (100, 6, 3, 10, 16, 4) chỉ đúng trên máy 12 lõi.
