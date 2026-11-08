@@ -813,7 +813,9 @@ if out is not None:
         remind(lines[1:])
         sys.exit(0)
     state["touched_fp"] = fp
-    block(lines, ["Cần duyệt chéo bởi agent khác: commit, rồi antigravity-pm `pm_dispatch kind=audit agent=grok` trên head PR (PM tự ghi biên "
+    block(lines, ["Cần duyệt chéo bởi agent khác: commit, rồi antigravity-pm `pm_task_create` và `pm_dispatch kind=audit` (mặc định Antigravity) trên head PR, "
+                  "đọc kết quả rồi `pm_verdict kind=audit verdict=pass auditedHead=<sha head PR>`, rồi `agent-kit approve-tests <task-id>` "
+                  "và chạy lại gate; chỉ khi Antigravity bị giới hạn mới dùng `pm_dispatch kind=audit agent=grok` (PM tự ghi biên "
                   "bản, gate tra thẳng); agent sửa test KHÔNG tự duyệt, KHÔNG hỏi người dùng. Không sửa test cũ để lách."], 2)
 
 # A PR repo (super-board): the merge gate of the PR runs the tests. HEAD of a pushed branch that is not the trunk, clean tree: nothing to do here.
