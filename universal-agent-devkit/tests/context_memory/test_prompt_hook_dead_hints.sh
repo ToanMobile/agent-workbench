@@ -52,6 +52,17 @@ printf '%s\n' "$o" | grep -q '^- Ngõ cụt phần cứng: DỪNG: ECU-TEST-ONLY
 printf '%s\n' "$o" | grep -q 'Yêu cầu ngầm định' && fail "3: dòng NFR quay lại: $o" || ok "3: không kéo dòng NFR theo"
 o2="$(printf '{"prompt":"%s","session_id":"%s"}' "vẫn lỗi PEPS không hoạt động ở xe 2" "$sid" | bash "$HOOK" 2>&1)"
 printf '%s\n' "$o2" | grep -q 'Ngõ cụt phần cứng' && fail "3: cảnh báo gửi lại trong cùng phiên: $o2" || ok "3: cùng phiên không gửi lại"
+# 3b. Dữ liệu catalog có xuống dòng: cảnh báo vẫn là MỘT dòng, in một lần, không gửi lại mảnh nào trong phiên.
+cat > .agents/context/hardware-boundaries.json <<'EOF'
+{"boundaries": [{"id": "ECU-ML", "title": "ECU chỉ nhận lệnh qua TBOX", "symptoms": ["peps không hoạt động"],
+  "measured": "Đo 3 lần:\nlệnh trực tiếp bị bỏ.", "rescue": "gửi qua TBOX."}]}
+EOF
+sid="s$RANDOM$RANDOM"
+o="$(printf '{"prompt":"%s","session_id":"%s"}' "sửa lỗi PEPS không hoạt động" "$sid" | bash "$HOOK" 2>&1)"
+[ "$(printf '%s\n' "$o" | grep -c 'ECU-ML')" = 1 ] && printf '%s\n' "$o" | grep -q '^- Ngõ cụt phần cứng: DỪNG: ECU-ML .*Đo 3 lần: lệnh trực tiếp' \
+  && ok "3b: cảnh báo nhiều dòng in đúng một lần, trên một dòng" || fail "3b: cảnh báo nhiều dòng lặp hoặc vỡ dòng: $o"
+o2="$(printf '{"prompt":"%s","session_id":"%s"}' "vẫn lỗi PEPS không hoạt động ở xe 2" "$sid" | bash "$HOOK" 2>&1)"
+printf '%s\n' "$o2" | grep -q 'ECU-ML\|lệnh trực tiếp bị bỏ' && fail "3b: mảnh cảnh báo gửi lại trong cùng phiên: $o2" || ok "3b: cùng phiên không gửi lại mảnh nào"
 rm -f .agents/context/hardware-boundaries.json
 
 [ "$FAILS" = 0 ] && echo "PASS test_prompt_hook_dead_hints" || { echo "FAIL test_prompt_hook_dead_hints ($FAILS)"; exit 1; }

@@ -61,5 +61,6 @@ def match_paths(rows: list, rels: list) -> list:
 
 
 def warning(row: dict) -> str:
-    return (f"DỪNG: {row.get('id')} — {row.get('title')}. "
-            f"{row.get('measured', '')} Cứu hộ: {row.get('rescue', '')}").strip()
+    # Một dòng: catalog có thể chứa xuống dòng; hook in theo dòng và dedupe_session nhớ theo prefix của dòng (PR #1057).
+    return " ".join((f"DỪNG: {row.get('id')} — {row.get('title')}. "
+                     f"{row.get('measured', '')} Cứu hộ: {row.get('rescue', '')}").split())

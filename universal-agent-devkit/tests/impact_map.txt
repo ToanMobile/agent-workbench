@@ -66,3 +66,4 @@ tests/lib/watchdog_env.py   hooks/tests/hook_contract_test.sh tests/gates/test_h
 # 02/11 (T0211): test_skill_description_budget.sh caps every listed description at 300 bytes without naming the files.
 skills/*/SKILL.md   tests/verification/test_skill_description_budget.sh
 commands/*.md   tests/verification/test_skill_description_budget.sh
+scripts/context/hardware_boundaries.py   tests/context_memory/test_prompt_hook_dead_hints.sh
