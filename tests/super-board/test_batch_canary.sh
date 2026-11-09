@@ -6,6 +6,8 @@ set -u
 export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$ROOT/universal-agent-devkit"
+[ -d "$KIT" ] || KIT="$ROOT/.agents/devkit"
+[ -d "$KIT" ] || KIT="$ROOT/.agents/devkit"
 CANARY="$KIT/bin/batch_canary.py"
 . "$KIT/tests/lib/clean_git_env.sh"
 FAILS=0

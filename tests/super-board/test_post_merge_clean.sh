@@ -8,7 +8,9 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # PMC_CLEAN: chạy test trên một bản khác của script (vd bản gốc chép ra thư mục tạm để thấy RED); kit đi cùng bản đó (HERE_UP)
 CLEAN="${PMC_CLEAN:-$ROOT/.claude/bin/super-board-post-merge-clean.sh}"
-. "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
+for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
+  if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
+done
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
