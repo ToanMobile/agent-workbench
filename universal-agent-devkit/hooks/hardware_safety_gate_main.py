@@ -49,13 +49,8 @@ if not isinstance(cmd, str):
     sys.stderr.write("🛑 [HARDWARE SAFETY GATE] tool_input.command không phải chuỗi — chặn để an toàn.\n")
     sys.exit(2)
 
-# ── replicant-mcp: the adb command each tool runs (replicant-mcp 1.6.7 dist/tools) ──
 tool = str(data.get("tool_name") or data.get("toolName") or "")
 MCP = tool.startswith("mcp__")
-REPLICANT_HOST_ONLY = {"gradle-build", "gradle-test", "gradle-list", "gradle-get-details",
-                       "emulator-device", "cache", "rtfm"}
-REPLICANT_APP = {"uninstall": "shell pm uninstall", "clear-data": "shell pm clear",
-                 "stop": "shell am force-stop", "launch": "shell monkey -p", "list": "shell pm list packages"}
 
 # ── mobile-mcp (@mobilenext/mobile-mcp 1.0.16, lib/server.js, 08/11/2026): the device is the string parameter `device` (a serial, or the
 # AVD name on an emulator). Every tool is mobile_<name> but get_more_tools. mobile_batch_commands runs other tools as steps: a step own
@@ -107,34 +102,10 @@ def mobile_as_adb(name, inp):
     return "; ".join(c for c in cmds if c)
 
 def mcp_as_adb(tool, inp):
-    """The adb command line a replicant-mcp / mobile-mcp call amounts to ("" = no device touched)."""
+    """The adb command line a mobile-mcp call amounts to ("" = no device touched; any other MCP tool is not a device tool)."""
     if tool.startswith(MOBILE_PFX) and isinstance(inp, dict):
         return mobile_as_adb(tool[len(MOBILE_PFX):], inp)
-    if not tool.startswith("mcp__replicant-mcp__") or not isinstance(inp, dict):
-        return ""
-    name = tool[len("mcp__replicant-mcp__"):]
-    serial = next((v for k, v in inp.items() if isinstance(v, str) and v
-                   and re.search(r"serial|device_?id", k, re.I)), "")
-    adb = "adb -s " + shlex.quote(serial) if serial else "adb"
-    op = inp.get("operation") or ""
-    q = _q
-    if name in REPLICANT_HOST_ONLY:
-        return ""
-    if name == "adb-shell":
-        return adb + " shell " + str(inp.get("command") or "")
-    if name == "adb-app":
-        if op == "install":
-            return adb + " install " + q(inp.get("apkPath"))
-        return " ".join((adb, REPLICANT_APP.get(op, "shell pm"), q(inp.get("packageName"))))
-    if name == "adb-device":
-        # list auto-selects the only online device; health-check only asks the adb server
-        return "" if op == "health-check" else f"{adb} get-state"
-    if name in ("adb-logcat", "ui-action", "ui-capture", "ui-query", "ui-find"):
-        return f"{adb} get-state"
-    # A tool this version does not have: its command-like strings run on the device.
-    shells = [v for k, v in inp.items() if isinstance(v, str)
-              and k.lower() in ("command", "cmd", "shellcommand", "shell_command", "args")]
-    return "; ".join(f"{adb} shell {c}" for c in shells) or f"{adb} get-state"
+    return ""
 
 shown = cmd
 if MCP:
@@ -2257,9 +2228,6 @@ def rm_walk(text, cwds, depth, remote, env):
 
 CDPATH_SET = bool(os.environ.get("CDPATH")) or "CDPATH" in cmd   # set in the environment or anywhere in the command
 rm_why = None if (label or MCP) else rm_problem(cmd, [CWD])
-if MCP and not label:   # (2026-10-13) the command of replicant adb-shell runs on the device: walked like adb shell "<command>"
-    _dev = inp.get("command") if tool == "mcp__replicant-mcp__adb-shell" and isinstance(inp, dict) else None
-    rm_why = rm_problem(_dev, ["/"], 0, "device") if isinstance(_dev, str) and _dev.strip() else None
 
 
 # ── Device policy: which serial may adb touch ─────────────────────────────────
@@ -2497,17 +2465,16 @@ def adb_calls(text, strict=True):
         yield toks[i], opts, (toks[j] if j < len(toks) else ("$(" if from_stdin else "")), env_serial, toks[j + 1:], st
 
 def sdk_adb():
-    """adb the way replicant-mcp finds it: ANDROID_HOME / ANDROID_SDK_ROOT, also from the
-    replicant-mcp env in <repo>/.mcp.json, then the default SDK folders. MCP calls only."""
+    """adb the way mobile-mcp finds it: ANDROID_HOME / ANDROID_SDK_ROOT, also from the
+    mobile-mcp env in <repo>/.mcp.json, then the default SDK folders. MCP calls only."""
     if not MCP:
         return None
     homes = [os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT")]
     try:
         with open(os.path.join(os.environ.get("REPO_ROOT", "."), ".mcp.json"), encoding="utf-8") as fh:
             servers = json.load(fh).get("mcpServers", {})
-        for key in ("mobile-mcp", "replicant-mcp"):
-            srv_env = servers.get(key, {}).get("env") or {}
-            homes += [srv_env.get("ANDROID_HOME"), srv_env.get("ANDROID_SDK_ROOT")]
+        srv_env = servers.get("mobile-mcp", {}).get("env") or {}
+        homes += [srv_env.get("ANDROID_HOME"), srv_env.get("ANDROID_SDK_ROOT")]
     except (OSError, ValueError, AttributeError):
         pass
     homes += [os.path.expanduser("~/Library/Android/sdk"), os.path.expanduser("~/Android/Sdk")]
@@ -2590,8 +2557,8 @@ def target_serial(exe, opts, env_serial, lits=None, strict=True):
         return None, "ANDROID_SERIAL=" + env_serial + " không xác định được"
     adb = exe if "/" in exe and os.access(exe, os.X_OK) else (shutil.which("adb") or sdk_adb())
     if not adb:
-        # A Bash adb call then fails on its own; replicant-mcp finds its adb elsewhere.
-        return (None, "không tìm thấy adb để biết MCP (mobile-mcp / replicant-mcp) dùng thiết bị nào — đặt ANDROID_HOME") if MCP else (None, None)
+        # A Bash adb call then fails on its own; mobile-mcp finds its adb elsewhere.
+        return (None, "không tìm thấy adb để biết MCP mobile-mcp dùng thiết bị nào — đặt ANDROID_HOME") if MCP else (None, None)
     env = dict(os.environ)
     if env_serial:
         env["ANDROID_SERIAL"] = env_serial
@@ -2631,8 +2598,7 @@ def device_violation(text):
             serial, why = memo[key]
         if why:
             return "không xác định được thiết bị đích (" + why + ") — " + (
-                ("ghi rõ tham số device (mobile_list_available_devices)" if tool.startswith(MOBILE_PFX)
-                 else "chọn thiết bị bằng adb-device select") if MCP else "ghi rõ adb -s <SERIAL>")
+                "ghi rõ tham số device (mobile_list_available_devices)" if MCP else "ghi rõ adb -s <SERIAL>")
         if serial and serial in deny:
             return "thiết bị " + serial + " nằm trong denylist (máy cá nhân / cấm đụng)"
         if serial and allow and serial not in allow:

@@ -30,7 +30,7 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HW="${HW_HOOK:-$DEVKIT_DIR/hooks/hardware_safety_gate.sh}"
 GG="${GG_HOOK:-$DEVKIT_DIR/hooks/block-dangerous-git.sh}"
-. "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, repo nháp $P, check / check_mcp / check_deny / pair / r5_rows
+. "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, repo nháp $P, check / check_deny / pair / r5_rows
 
 echo "── hw: brace expansion in a device path"
 check 2 hw 'adb shell "rm -rf /{system,vendor}"'
@@ -67,13 +67,6 @@ check 2 hw 'adb shell "find /system -delete"'
 check 2 hw 'adb shell find /vendor -exec rm -rf {} +'
 check 0 hw "adb shell \"find /sdcard/Download -name '*.tmp' -delete\""
 check 0 hw 'adb shell "find /sdcard/x -delete"'
-
-echo "── hw: the same device command through replicant-mcp adb-shell"
-check_mcp 2 'cd /system && rm -rf *'
-check_mcp 2 'rm -rf /{system,vendor}'
-check_mcp 2 'find /vendor -delete'
-check_mcp 0 'rm -rf /sdcard/Download/x'
-check_mcp 0 'cd /sdcard && rm -rf old'
 
 echo "── hw: the device policy sees adb behind a wrapper option value"
 check_deny 2 'sudo -u me adb -s DENIED1 reboot'

@@ -655,7 +655,6 @@ universal-agent-devkit/mcp/
     ├── context7/
     ├── android-code-search/
     ├── android-skills/
-    ├── replicant-mcp/
     └── play-store/
 ```
 
@@ -665,7 +664,7 @@ universal-agent-devkit/mcp/
 | **`context7`** | npx | Real-time official documentation lookup by library version (`resolve-library-id`, `query-docs`). |
 | **`android-code-search`** | npx | AOSP source code and symbol search across Android releases (`search_android_code`). |
 | **`android-skills`** | npx | Official Android engineering patterns and best practices (`list_skills`, `get_skill`). |
-| **`mobile-mcp`** | npx | Android/iOS device automation (replaced `replicant-mcp`, 2026-11-08): device list, launch, tap by element ref, type, swipe, screenshot, logs. The device guard covers every tool, including each `mobile_batch_commands` step. |
+| **`mobile-mcp`** | npx | Android/iOS device automation (2026-11-08): device list, launch, tap by element ref, type, swipe, screenshot, logs. The device guard covers every tool, including each `mobile_batch_commands` step. |
 | **`play-store`** | Python stdio | Google Play APK/AAB deployment, crash vitals, ANR tracking, review replies. |
 
 ---

@@ -1,1 +1,0 @@
-Use these tools for Android — never raw adb/gradle/emulator commands. Auto-selects single device. Start: `adb-device list`. Docs: `rtfm`.

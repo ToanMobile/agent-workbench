@@ -1199,7 +1199,7 @@ def _load_state_json(path):
 # when that suite ran less than DEVKIT_UNITY_REUSE_MAX_S ago (default 3600; 0 = never; receipt tests[].ran_at).
 # DEVICE_SUITE stays the union of the hard part and the loose Unity match it always had: every other reader is unchanged.
 HARD_DEVICE_SUITE = re.compile(r"\badb\b|connected\w*(?:Test|Check)|\bemulator\b|\bsimctl\b|"
-                               r"\bxcodebuild\b[^\n]*\btest\b|replicant|mobile-mcp|mobilecli|-testPlatform[ =]+(?!EditMode\b|PlayMode\b)\w+", re.I)
+                               r"\bxcodebuild\b[^\n]*\btest\b|mobile-mcp|mobilecli|-testPlatform[ =]+(?!EditMode\b|PlayMode\b)\w+", re.I)
 UNITY_SUITE = re.compile(r"\bunity-batch\b[^\n]*\b(?:editmode|playmode)\b", re.I)
 DEVICE_SUITE = re.compile(HARD_DEVICE_SUITE.pattern + r"|unity-batch|-runTests\b", re.I)
 
