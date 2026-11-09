@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { CACHE_MAX_AGE_MS, readAccountUuid, readCachedUsage, refreshUsageViaCli } from './usage-cache.js';
 import {
   AppError,
   resolveStateDir,
@@ -590,6 +591,69 @@ export function formatRemainDuration(remainMs) {
   return `${m}p`;
 }
 
+/** Doi phan hoi cua /api/oauth/usage (hoac cachedUsageUtilization cua Claude Code, cung cau truc) thanh so lieu quota. */
+export function quotaFromUsageBody(body, nowMs, updatedAtMs = nowMs) {
+  const usedPct = Math.min(100, Math.max(0, Math.round(Number(body?.five_hour?.utilization ?? 0))));
+  const remainingPct = Math.max(0, 100 - usedPct);
+  const rawResetIso =
+    body?.five_hour?.resets_at ||
+    body?.limits?.find((l) => l.group === 'session')?.resets_at ||
+    '';
+  const rawResetMs = rawResetIso ? Date.parse(rawResetIso) : 0;
+  // Luon giu moc gio reset 5h (resets_at) do Anthropic OAuth Usage API tra ve de hien thi ⏰ dong nhat tren ca 3 tai khoan
+  const resetAtMs = Number.isFinite(rawResetMs) && rawResetMs > 0 ? rawResetMs : 0;
+  const weeklyUsed = Number(
+    body?.seven_day?.utilization ??
+      body?.limits?.find((l) => l.group === 'weekly')?.percent ??
+      0,
+  );
+  const weeklyRemainingPct = Math.max(0, 100 - Math.round(weeklyUsed));
+  const rawWeeklyIso =
+    body?.seven_day?.resets_at ||
+    body?.limits?.find((l) => l.group === 'weekly')?.resets_at ||
+    '';
+  const rawWeeklyMs = rawWeeklyIso ? Date.parse(rawWeeklyIso) : 0;
+  const weeklyResetAtMs = Number.isFinite(rawWeeklyMs) && rawWeeklyMs > 0 ? rawWeeklyMs : 0;
+  return {
+    remainingPct,
+    usedPct,
+    resetAtMs,
+    weeklyRemainingPct,
+    weeklyResetAtMs,
+    isRateLimited: remainingPct <= 0,
+    source: 'anthropic_oauth',
+    updatedAtMs,
+  };
+}
+
+/**
+ * Token het han: de Claude Code tu lam moi (claude -p /usage trong thu muc profile) roi doc cache quota no ghi.
+ * Co tokenReader (moi truong thu co lap) thi khong tu chay claude that, tru khi truyen usageRefresher.
+ */
+async function viaUsageCli(profile, nowMs, opts, fail) {
+  const { tokenReader, accountReader = readLoggedInEmail } = opts;
+  let refresher = opts.usageRefresher;
+  if (!refresher && typeof tokenReader !== 'function') {
+    refresher = (p, n) => refreshUsageViaCli(p, n, { lockDir: resolveStateDir(opts.stateDir) });
+  }
+  if (!refresher) return fail('token_expired');
+  if (profile.expectedEmail) {
+    const actual = accountReader(profile);
+    if (actual && actual !== profile.expectedEmail.toLowerCase()) return fail('token_expired'); // sai tai khoan: khong lam moi giup tai khoan khac
+  }
+  try {
+    await refresher(profile, nowMs);
+  } catch (err) {
+    logStructured('warn', 'usage_refresher_threw', { profileId: profile.id, error: err?.message });
+  }
+  const uuid = readAccountUuid(profile.configDir);
+  const cached = uuid ? readCachedUsage(profile.configDir, uuid) : null;
+  if (cached && nowMs - cached.fetchedAtMs <= CACHE_MAX_AGE_MS) {
+    return quotaFromUsageBody(cached.utilization, nowMs, cached.fetchedAtMs);
+  }
+  return fail('refresh_failed'); // /usage khong ghi duoc cache moi: dang nhap that su da het han
+}
+
 /**
  * Truy van truc tiep % Quota 5h & 7d va gio mo khoa tu Anthropic OAuth Usage API qua Keychain cua tung profile.
  * Luu y quan trong:
@@ -627,7 +691,7 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
   // Neu tai khoan dang o che do standby va accessToken da het han -> bo qua khong spam /api/oauth/usage gay 429
   if (typeof oauth?.expiresAt === 'number' && oauth.expiresAt > 0 && oauth.expiresAt <= nowMs) {
     logStructured('info', 'oauth_token_expired_skip_usage_poll', { profileId: profile.id });
-    return fail('token_expired');
+    return viaUsageCli(profile, nowMs, opts, fail);
   }
 
   try {
@@ -642,37 +706,7 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
 
     if (res.status === 200) {
       const body = await res.json().catch(() => ({}));
-      const usedPct = Math.min(100, Math.max(0, Math.round(Number(body?.five_hour?.utilization ?? 0))));
-      const remainingPct = Math.max(0, 100 - usedPct);
-      const rawResetIso =
-        body?.five_hour?.resets_at ||
-        body?.limits?.find((l) => l.group === 'session')?.resets_at ||
-        '';
-      const rawResetMs = rawResetIso ? Date.parse(rawResetIso) : 0;
-      // Luon giu moc gio reset 5h (resets_at) do Anthropic OAuth Usage API tra ve de hien thi ⏰ dong nhat tren ca 3 tai khoan
-      const resetAtMs = Number.isFinite(rawResetMs) && rawResetMs > 0 ? rawResetMs : 0;
-      const weeklyUsed = Number(
-        body?.seven_day?.utilization ??
-          body?.limits?.find((l) => l.group === 'weekly')?.percent ??
-          0,
-      );
-      const weeklyRemainingPct = Math.max(0, 100 - Math.round(weeklyUsed));
-      const rawWeeklyIso =
-        body?.seven_day?.resets_at ||
-        body?.limits?.find((l) => l.group === 'weekly')?.resets_at ||
-        '';
-      const rawWeeklyMs = rawWeeklyIso ? Date.parse(rawWeeklyIso) : 0;
-      const weeklyResetAtMs = Number.isFinite(rawWeeklyMs) && rawWeeklyMs > 0 ? rawWeeklyMs : 0;
-      return {
-        remainingPct,
-        usedPct,
-        resetAtMs,
-        weeklyRemainingPct,
-        weeklyResetAtMs,
-        isRateLimited: remainingPct <= 0,
-        source: 'anthropic_oauth',
-        updatedAtMs: nowMs,
-      };
+      return quotaFromUsageBody(body, nowMs);
     }
 
     if (res.status === 429) {
@@ -707,7 +741,7 @@ export async function syncLiveQuotas(opts = {}) {
   const failures = {};
   for (const p of DEFAULT_PROFILES) {
     try {
-      fetched.push([p, await quotaFetcher(p, nowMs, { onFailure: (reason) => { failures[p.id] = reason; } })]);
+      fetched.push([p, await quotaFetcher(p, nowMs, { stateDir, onFailure: (reason) => { failures[p.id] = reason; } })]);
     } catch (err) {
       logStructured('warn', 'sync_profile_quota_error', { profileId: p.id, error: err?.message });
     }
