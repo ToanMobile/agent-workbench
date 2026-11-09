@@ -1689,7 +1689,7 @@ def moves_cwd(text, cwds, remote, depth=0):
         seg = []
     return False
 
-RM_VAR_DEFAULT = re.compile(r"\$\{(\w+):?-([\w./+-]*)\}")
+RM_VAR_DEFAULT = re.compile(r"\$\{(\w+):?[-=]([\w./+-]*)\}")
 RM_VAR_PLAIN = re.compile(r"\$(\w+)|\$\{(\w+)\}")
 
 def rm_var_command(toks, i, cwds, env, depth, feed, remote, implied):
@@ -1707,9 +1707,14 @@ def rm_var_command(toks, i, cwds, env, depth, feed, remote, implied):
     else:
         m = RM_VAR_PLAIN.fullmatch(w)
         if not m:
-            return None
-        known = env.get(m.group(1) or m.group(2))
-        names.append(known if known is not None and "$" not in known else "rm")
+            parts = re.findall(r"\$(\w+)|\$\{(\w+)\}", w) if re.fullmatch(r"(?:\$\w+|\$\{\w+\}){2,}", w) else None
+            if not parts:
+                return None
+            vals = [env.get(a or b) for a, b in parts]   # $X$Y: the words joined when all known, else rm
+            names.append("".join(vals) if all(v is not None and "$" not in v for v in vals) else "rm")
+        else:
+            known = env.get(m.group(1) or m.group(2))
+            names.append(known if known is not None and "$" not in known else "rm")
     for name in dict.fromkeys(names):
         try:
             words = shlex.split(name)
@@ -2426,8 +2431,13 @@ def cut_text_heredocs(text, work):
     return "".join(out)
 
 # (#830) ANDROID_SERIAL=X as a statement of its own (export ANDROID_SERIAL=X; ANDROID_SERIAL=X && …): the next adb inherits it
-EXPORT_SERIAL = re.compile(r"(?:^|[;&|(){\n])[ \t]*(?:export[ \t]+)?ANDROID_SERIAL=([^\s;&|()]*)(?=[ \t]*(?:$|;|&|\||\)|\n))", re.M)
-CASE_PATTERN = re.compile(r"^[^\s()]*\)$")   # `x)` of a case branch, as shlex returns it
+# (R4) a value may be dynamic ($(…), ${…}, $VAR, quoted): read whole, "$" in it makes the target unknown (fail closed); export / declare -x
+# may carry other assignments first; then / do / else start a statement too
+EXPORT_SERIAL = re.compile(
+    r"(?:^|[;&|(){\n]|\b(?:then|do|else)\b)[ \t]*(?:(?:export|declare[ \t]+-x|typeset[ \t]+-x)[ \t]+(?:\w+=\S*[ \t]+)*)?"
+    r"ANDROID_SERIAL=((?:[^\s;&|()$\x22\x27]|\$\([^)]*\)|\$\{[^}]*\}|\$\w+|\x22[^\x22]*\x22|\x27[^\x27]*\x27)*)"
+    r"(?=[ \t]*(?:$|;|&|\||\)|\n))", re.M)
+CASE_PATTERN = re.compile(r"^\(?[^()]*\)$")   # `x)` of a case branch, as shlex returns it
 
 def shlex_value(v):
     try:
@@ -2643,8 +2653,13 @@ def target_serial(exe, opts, env_serial, lits=None, strict=True):
 def tcp_target(x):
     """(host, port or None) of a TCP serial the way adb reads a target: [tcp:|udp:]host[:port]; None for any other serial."""
     x = re.sub(r"^(?:tcp|udp):", "", x)
+    if x.count(":") >= 2 and not x.startswith("["):   # bare IPv6: no port
+        return (x.lower(), None) if re.fullmatch(r"[0-9A-Fa-f:.]+", x) else None
     m = re.fullmatch(r"(\[[0-9A-Fa-f:.]+\]|[^:\s\[\]]+)(?::(\d{1,5}))?", x)
-    return (m.group(1).lower(), m.group(2)) if m else None
+    if not m:
+        return None
+    host = m.group(1).lower().strip("[]")
+    return (host, str(int(m.group(2))) if m.group(2) else None)
 
 def serial_matches(serial, entry):
     """(#830) a denylist entry matches the serial of a command when equal, or when adb would take them for one TCP device
@@ -2663,7 +2678,10 @@ def device_violation(text):
         return None
     lits = literal_vars(text)
     memo = {}   # (01/11, r31adb) nhiều cách đọc cho cùng lệnh adb: mỗi bộ tuỳ chọn chỉ hỏi adb get-serialno một lần
+    seen_wait = False   # (R2) an earlier adb call of this command was `adb wait-for-*`: a later adb call runs on the device that shows up
     for exe, opts, sub, env_serial, _rest, strict, waited in adb_calls(text):
+        waited = strict and (waited or seen_wait)   # (R1) only the quote-aware reading: the raw cut stays as before #830
+        seen_wait = seen_wait or waited
         # (01/11, r31adb) bản đọc theo nháy: biến hay lệnh con ở chỗ subcommand có thể bung ra tuỳ chọn chọn thiết bị (adb $O
         # reboot với O="-s X", adb $(echo -s X) reboot, O=-s; adb -s A $O B reboot): còn "$" sau khi bung biến đã biết, hay giá
         # trị bung ra là tuỳ chọn (bắt đầu bằng -) hoặc nhiều chữ, thì tuỳ chọn và máy đích chỉ biết lúc chạy
@@ -2688,7 +2706,7 @@ def device_violation(text):
         if why:
             return "không xác định được thiết bị đích (" + why + ") — " + (
                 "ghi rõ tham số device (mobile_list_available_devices)" if MCP else "ghi rõ adb -s <SERIAL>")
-        if serial and any(serial_matches(serial, d) for d in deny):
+        if serial and any(serial_matches(serial, d) if strict else serial == d for d in deny):
             return "thiết bị " + serial + " nằm trong denylist (máy cá nhân / cấm đụng)"
         if serial and allow and serial not in allow:
             return "thiết bị " + serial + " không có trong allowlist"

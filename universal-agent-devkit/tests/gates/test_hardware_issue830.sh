@@ -137,6 +137,26 @@ check 0 "grep -E 'rm|x' notes.txt"
 check 0 "git grep 'rm -rf' -- ."
 check 0 "sed -n '/rm -rf/p' notes.txt"
 
+echo "— vòng 1 (reviewer R1–R5)"
+# R1: bản cắt thô không được chặn thêm so với trước #830 (mẫu tìm kiếm có chữ adb trong nháy vẫn qua)
+check 0 'grep -E "x|adb wait-for-device reboot" notes.txt' FAKE_FAIL=1
+check 0 'grep -E "x|adb -s 192.168.1.20 reboot" notes.txt'
+# R2: wait-for-* ở lệnh adb riêng, lệnh thật ở lệnh adb sau
+check 2u 'adb wait-for-device && adb reboot' FAKE_FAIL=1
+check 2u 'adb wait-for-device; adb shell pm clear x' FAKE_FAIL=1
+check 0 'adb wait-for-device && adb -s emulator-5554 reboot' FAKE_FAIL=1
+# R4: ANDROID_SERIAL gán bằng giá trị động / dạng khác của export: fail closed
+check 2u 'export ANDROID_SERIAL=$(echo R58PHONE01); adb reboot' ANDROID_SERIAL=emulator-5554
+check 2d 'declare -x ANDROID_SERIAL=R58PHONE01; adb reboot' ANDROID_SERIAL=emulator-5554
+check 2d 'export FOO=1 ANDROID_SERIAL=R58PHONE01; adb reboot' ANDROID_SERIAL=emulator-5554
+check 2d 'if true; then export ANDROID_SERIAL=R58PHONE01; fi; adb reboot' ANDROID_SERIAL=emulator-5554
+# R5: các dạng gần kề
+check 2d 'case x in (x) adb -s R58PHONE01 reboot;; esac'
+check 2d 'case x in "a b") adb -s R58PHONE01 reboot;; esac'
+check 2d 'adb -s 192.168.1.20:05555 reboot'
+check 2 '${X:=rm} -rf ~'
+check 2 '$X$Y -rf ~'
+
 # adb giả chỉ được hỏi get-serialno: lệnh thật (reboot, shell, wait-for-device …) không bao giờ chạy
 if grep -v 'get-serialno$' "$ADB_FAKE_LOG" | grep -q .; then
   fail "hook chạy adb ngoài get-serialno: $(grep -v 'get-serialno$' "$ADB_FAKE_LOG" | head -3 | tr '\n' ';')"
