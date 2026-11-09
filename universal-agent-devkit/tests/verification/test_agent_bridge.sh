@@ -83,7 +83,7 @@ JSON
 (cd "$P" && git add -A && git commit -qm init)
 echo "fun ok() = 2" > "$P/src/Core.kt"
 bridge codex stop regression_gate.sh "{\"session_id\":\"sb1\",\"cwd\":\"$P\"}"
-[ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q "REG-B" && ok "codex: Stop blocked by the failing regression test" || fail "codex stop (rc=$RC)"
+[ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q -- "--run-tests --scoped" && ok "codex: Stop blocked (v26: no gate receipt, the gate command named)" || fail "codex stop (rc=$RC)"
 bridge cursor stop regression_gate.sh "{\"conversation_id\":\"sb2\",\"status\":\"completed\"}"
 [ "$RC" = 0 ] && printf '%s' "$OUT" | grep -q "followup_message" && ok "cursor: stop → followup_message (agent continues)" || fail "cursor stop (rc=$RC out=$OUT)"
 # Gemini AfterAgent gửi prompt_response. Bridge cũ bỏ trường này, Stop không thấy lời giữa chừng và vẫn chạy suite.
@@ -94,7 +94,7 @@ bridge gemini stop regression_gate.sh "{\"session_id\":\"sg-mid\",\"cwd\":\"$P\"
   || fail "gemini mid-work ran the suite (rc=$RC err=$(head -c 240 "$TMP/err"))"
 echo "fun ok() = 4" > "$P/src/Core.kt"
 bridge gemini stop regression_gate.sh "{\"session_id\":\"sg-hand\",\"cwd\":\"$P\",\"hook_event_name\":\"AfterAgent\",\"prompt_response\":\"XONG\"}"
-[ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q "REG-B" && ok "gemini: handover prompt_response still gated" \
+[ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q -- "--run-tests --scoped" && ok "gemini: handover prompt_response still gated (v26: the gate command named)" \
   || fail "gemini handover not gated (rc=$RC err=$(head -c 240 "$TMP/err"))"
 (cd "$P" && git checkout -q -- src)
 

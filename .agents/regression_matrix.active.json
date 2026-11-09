@@ -4141,6 +4141,214 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-all-kit-runner",
+      "watch_files": [
+        "universal-agent-devkit/tests/run_impacted.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-KIT-01",
+          "name": "Gate speed v14 mục 5a: lượt --scoped chạy test kit đã chọn qua một runner run_impacted.sh, thay ba shard",
+          "command": "bash universal-agent-devkit/tests/run_impacted.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-red-on-base-kit-tests",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_red_on_base_kit_tests.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RED-ON-BASE-KIT-TESTS-01",
+          "name": "Gate speed v26 mục 5a: runner kit đỏ ⇒ red-on-base chạy riêng từng test ✖ trên base; danh sách thiếu, lạ hay có thể bị cắt ⇒ đỏ",
+          "command": "bash tests/super-board/test_merge_gate_red_on_base_kit_tests.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-guard-checklist-journal",
+      "watch_files": [
+        "universal-agent-devkit/tests/verification/test_checklist_journal.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-CHECKLIST-JOURNAL-01",
+          "name": "merge-guard: nhật ký checklist không mất dòng (gate speed v26 mục 7)",
+          "command": "bash universal-agent-devkit/tests/verification/test_checklist_journal.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-guard-hardware-rm",
+      "watch_files": [
+        "universal-agent-devkit/tests/gates/test_hardware_rm_containment.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-HARDWARE-RM-01",
+          "name": "merge-guard: rm trong hardware_safety_gate bị giam đúng phạm vi (gate speed v26 mục 7)",
+          "command": "bash universal-agent-devkit/tests/gates/test_hardware_rm_containment.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-guard-push-gate-integrity",
+      "watch_files": [
+        "universal-agent-devkit/tests/gates/test_push_gate_integrity.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-PUSH-GATE-INTEGRITY-01",
+          "name": "merge-guard: push gate không bị lách (gate speed v26 mục 7)",
+          "command": "bash universal-agent-devkit/tests/gates/test_push_gate_integrity.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-guard-merge-policy-sql",
+      "watch_files": [
+        "tests/super-board/test_merge_policy_sql_forms.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-GUARD-MERGE-POLICY-SQL-01",
+          "name": "merge-guard: merge policy bắt mọi dạng SQL phá dữ liệu (gate speed v26 mục 7)",
+          "command": "bash tests/super-board/test_merge_policy_sql_forms.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-guard-git-guard-bypass",
+      "watch_files": [
+        "universal-agent-devkit/hooks/tests/test_git_guard_bypass.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-GIT-BYPASS-01",
+          "name": "merge-guard: git guard không bị lách (gate speed v26 mục 7)",
+          "command": "bash universal-agent-devkit/hooks/tests/test_git_guard_bypass.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-guard-gate-audit-holes",
+      "watch_files": [
+        "universal-agent-devkit/tests/gates/test_gate_audit_holes.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-GATE-AUDIT-HOLES-01",
+          "name": "merge-guard: lỗ kiểm của post-fix-gate đã vá vẫn kín (gate speed v26 mục 7)",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_audit_holes.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-merge-guard-inject",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        ".agents/gate-core.txt",
+        "universal-agent-devkit/tests/gates/test_gate_merge_guard_inject.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MERGE-GUARD-INJECT-01",
+          "name": "Gate speed v26 mục 7: [merge-guard] (∪ base) tiêm sau cap chỉ ở điểm gộp, luôn chạy thật, id thiếu trong ma trận ⇒ đỏ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_merge_guard_inject.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-guard-retry",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_guard_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GUARD-RETRY-01",
+          "name": "Gate speed v26 mục 7: merge gate chạy lại guard đỏ (theo [merge-guard] của base) đúng một lần, comment PR; guard vẫn đỏ ⇒ exit 11",
+          "command": "bash tests/super-board/test_merge_guard_retry.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-train-guard-retry",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_train_guard_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-TRAIN-GUARD-RETRY-01",
+          "name": "Gate speed v26 mục 7: merge train chạy lại guard đỏ đúng một lần (không áp rows == 1), comment PR khi merge",
+          "command": "bash tests/super-board/test_merge_train_guard_retry.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-merge-width-slots",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/tests/gates/test_gate_merge_width_slots.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MERGE-WIDTH-SLOTS-01",
+          "name": "Gate speed v26 mục 10: cần gạt độ rộng và sàn slot của điểm gộp mặc định tắt (đo tải 08/11 trượt ngưỡng), bật khi đặt biến; verify lạc quan hạn từ số lõi; guard có hạn giờ chạy sau cùng",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_merge_width_slots.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-verify-single-pfg",
+      "watch_files": [
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_verify_single_pfg_cmd.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-VERIFY-SINGLE-PFG-01",
+          "name": "Gate speed v26 mục 7: guard chỉ chạy lại khi lệnh verify là một post-fix-gate đơn (từ chối $( ), backtick, tên giả kiểu xpost-fix-gate.py)",
+          "command": "bash tests/super-board/test_verify_single_pfg_cmd.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "agent-office-gate-full-weekdays",
+      "watch_files": [
+        "mcp-servers/agent-office/gate_full_runner.py",
+        "mcp-servers/agent-office/tests/test_gate_full_runner_weekdays.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AGENT-OFFICE-GATE-FULL-WEEKDAYS-01",
+          "name": "Gate speed v26 mục 6: agent-office đọc lịch heavy gate thứ Hai + thứ Năm (dict hoặc list StartCalendarInterval)",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest discover -s tests -p test_gate_full_runner_weekdays.py",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

@@ -105,3 +105,70 @@ sys.path.insert(0, sys.argv[1])
 from regression_checklist import redact_secrets
 sys.stdout.write(redact_secrets(sys.stdin.buffer.read().decode("utf-8", "replace")))' "$kit"
 }
+
+# #251 R1: post-fix-gate.py xét REJECT TRƯỚC các điều kiện CHƯA XÁC MINH (ma trận không tin được, test đã có bị sửa, file không đọc được, test
+# mới mồ côi, code chưa có test, không suite nào khớp): khi có suite đỏ, log chỉ còn REJECT và các điều kiện đó chưa từng được đánh giá. Dòng JSON
+# cuối của `--json` vẫn mang chúng. Chỉ khi JSON có mặt và mọi điều kiện sạch (trường thiếu = không sạch) mới coi REJECT là chỉ do suite đỏ.
+# Merge gate (red_only_on_base) và sb_merge_guard_red_ids (gate + train) cùng dùng.
+gate_masked_conditions_clean() {
+  local line
+  line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$1" 2>/dev/null | tail -1) || return 1
+  [ -n "$line" ] || return 1
+  printf '%s' "$line" | jq -e '(.matrix_problem // "x") == "" and ((.tests_touched // ["x"]) | length) == 0 and ((.unreadable // ["x"]) | length) == 0
+    and ((.uncovered // ["x"]) | length) == 0 and ((.orphan_tests // ["x"]) | length) == 0 and (.busy == false) and (.budget_exhausted == false)
+    and ((.regression_tests // []) | length) > 0' >/dev/null 2>&1
+}
+
+# sb_verify_single_pfg_cmd <cmd>: 0 khi lệnh verify là ĐÚNG MỘT lệnh post-fix-gate.py (tuỳ chọn VAR=x và python/python3 đứng trước), không
+# ghép (`; & | < >` hay xuống dòng: lệnh khác có thể chưa chạy hay đỏ vì PR), không phải script bọc (`./scripts/verify.sh`, `make verify` có thể
+# chạy post-fix-gate rồi bước khác cũng exit 1; R2). Chỉ khi đó đỏ của lệnh mới là đỏ của các suite trong log: red_only_on_base và chạy lại
+# guard (v26 mục 7) dựa vào điều này. Rỗng = không. Không nhận thay thế lệnh (`$(` hay backtick: lệnh lồng chạy trước, có thể đỏ hay
+# đổi đường dẫn), và token phải là `post-fix-gate.py` trần hoặc đường dẫn kết thúc bằng `/post-fix-gate.py` (không nhận `xpost-fix-gate.py`).
+sb_verify_single_pfg_cmd() {
+  local re='^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(python3?[[:space:]]+(-[A-Za-z]+[[:space:]]+)*)?([^[:space:]]*/)?post-fix-gate[.]py([[:space:]]|$)'
+  case "$1" in ''|*[\;\&\|\<\>]*|*$'\n'*) return 1 ;; esac
+  case "$1" in *'`'*|*'$('*) return 1 ;; esac
+  [[ "$1" =~ $re ]]
+}
+
+# Gate speed v26 mục 7: guard của điểm gộp đỏ vì tải (watchdog 5–7 s) được chạy lại đúng một lần, ở merge gate VÀ merge train.
+# sb_merge_guard_red_ids <log> <scratch> <base-sha> <verify-cmd>: in id các suite đỏ (mỗi dòng một id) khi lệnh verify là đúng một
+# post-fix-gate.py (sb_verify_single_pfg_cmd: `pfg … && npm test` đỏ ở guard thì npm test chưa chạy, chạy lại guard xanh sẽ bỏ qua nó), gate
+# REJECT, lớp tĩnh "đạt", MỌI dòng suite đỏ là
+# FAIL và id nằm trong mục [merge-guard] của gate-core.txt CỦA BASE (không phải của cây gộp: PR không tự cho test flaky của nó một lần chạy
+# lại), và dòng JSON cuối của --json sạch mọi điều kiện CHƯA XÁC MINH mà REJECT che (test sửa chưa duyệt, ma trận, mồ côi…: lần chạy lại xanh
+# không được mở đường cho chúng). Khác: thoát 1, không in gì.
+sb_merge_guard_red_ids() {
+  local log="$1" scratch="$2" base="$3" vcmd="${4:-}" ids guards id
+  sb_verify_single_pfg_cmd "$vcmd" || return 1
+  gate_masked_conditions_clean "$log" || return 1
+  ids=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$log" 2>/dev/null | LC_ALL=C awk '
+    /(KẾT LUẬN CỔNG POST-FIX AUDIT|POST-FIX AUDIT GATE VERDICT):.*REJECT/ { rej = 1 }
+    /^[[:space:]]*• (Lớp tĩnh|Static checks) \(.*\): / { if (static != 2) static = ($0 ~ /: (đạt|passed)[[:space:]]*$/) ? 1 : 2 }
+    /^[[:space:]]*\[ \] [^|]*\|/ {
+      split($0, parts, "|"); st = parts[1]; sub(/^[[:space:]]*\[ \][[:space:]]*/, "", st); sub(/[[:space:]]+$/, "", st)
+      if (st != "FAIL") odd = 1
+      id = parts[2]; sub(/^[[:space:]]+/, "", id); sub(/[[:space:]].*$/, "", id)
+      if (id !~ /^[A-Za-z0-9_.-]+$/) odd = 1; else if (!(id in seen)) { seen[id] = 1; o[++n] = id }
+    }
+    END { if (!(rej && static == 1 && n > 0 && !odd)) exit 1; for (i = 1; i <= n; i++) print o[i] }') || return 1
+  guards=$(git -C "$scratch" show "${base}:.agents/gate-core.txt" 2>/dev/null | LC_ALL=C awk '
+    /^[[:space:]]*\[.*\][[:space:]]*$/ { sec = $1; next }
+    sec == "[merge-guard]" && NF && $1 !~ /^#/ { print $1 }') || return 1
+  [ -n "$guards" ] || return 1
+  while IFS= read -r id; do
+    printf '%s\n' "$guards" | grep -qxF -- "$id" || return 1
+  done <<<"$ids"
+  printf '%s\n' "$ids"
+}
+# sb_merge_guard_rerun <scratch> <id>: chạy lại lệnh ma trận (cây gộp) của guard `id` đúng một lần bằng `bash -c` trong scratch, qua hàng đợi tải như
+# test chạy lại của train (#578). 0 = xanh; không tìm thấy lệnh = 1 (vẫn đỏ). Bên gọi trả scratch về commit đã gộp trước và sau.
+sb_merge_guard_rerun() {
+  local scratch="$1" id="$2" cmd here="${HERE:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+  cmd=$(jq -r --arg id "$id" '[.. | objects | select(.id? == $id and (.command? | type) == "string")] | first | .command // empty' \
+    "$scratch/.agents/regression_matrix.active.json" 2>/dev/null) || return 1
+  [ -n "$cmd" ] || return 1
+  ( cd "$scratch" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+      DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
+      && python3 "$here/super-board-heavy-slot.py" -- bash -c "$cmd" ) 8>&-
+}

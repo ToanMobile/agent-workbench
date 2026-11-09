@@ -312,7 +312,7 @@ out="$(printf '{"prompt":"lỗi bluetooth đổi bài hát a2dp"}' | CLAUDE_PROJ
 printf '%s' "$out" | grep -q "sed -n '1,20p' .agents/local/rules/audio.md" \
   && ok "rule_context: an index not yet re-synced (old format) still works" || fail "rule_context old format: $out"
 
-# ── 9. the same Stop block twice: items kept, long command + advice not repeated (O4) ──
+# ── 9. the same Stop block twice: what is missing kept, advice not repeated (O4; v26: the items are in the gate run) ──
 # GeelyEx2 session 2bcee73a: regression_gate blocked 31 times, 32 k characters of feedback, the
 # 600-character Gradle command of REG-CAR-VOICE on every block. Antigravity review: never drop the
 # items (id, status, exit, log) — the earlier block may have been compacted away.
@@ -323,10 +323,12 @@ python3 -c 'import json,sys; json.dump({"project":"t","rules":[{"component":"Cor
   "mandatory_regression_tests":[{"id":"REG-LONG","name":"voice funnel","command":sys.argv[1]}]}]}, open(sys.argv[2],"w"))' "$LONGCMD" "$M9/.agents/regression_matrix.active.json"
 git -C "$M9" add -A; git -C "$M9" commit -qm init; echo "fun ok() = 2" > "$M9/src/Core.kt"
 o4stop() { printf '{"session_id":"s-o4","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$M9" FLAKY_RETRY=0 bash "$DEVKIT_DIR/hooks/regression_gate.sh" >/dev/null 2>"$1"; }
+# v26 mục 1: the Stop runs no suite and lists no suite items (id, exit, log: the agent's gate run prints them, and REG-LONG's command
+# never reaches the Stop); what it must keep on a repeat is what is still missing, the gate command, and the advice is not repeated.
 o4stop "$TMP/e1"; r1=$?; sleep 1; o4stop "$TMP/e2"; r2=$?   # a new evidence-log stamp, as between real stops
-[ "$r1" = 2 ] && [ "$r2" = 2 ] && grep -q 'REG-LONG' "$TMP/e2" && grep -q 'exit 3' "$TMP/e2" && grep -q 'log:' "$TMP/e2" \
-  && [ "$(wc -c < "$TMP/e2")" -lt "$(( $(wc -c < "$TMP/e1") * 70 / 100 ))" ] && ! grep -q 'Sửa code/test' "$TMP/e2" \
-  && ok "repeat block: same items (id, exit, log), long command cut, advice not repeated" \
+[ "$r1" = 2 ] && [ "$r2" = 2 ] && grep -q -- '--run-tests --scoped' "$TMP/e2" && ! grep -q 'voice-funnel-failed' "$TMP/e1" "$TMP/e2" \
+  && [ "$(wc -c < "$TMP/e2")" -lt "$(wc -c < "$TMP/e1")" ] && grep -q 'Không sửa test cũ' "$TMP/e1" && ! grep -q 'Không sửa test cũ' "$TMP/e2" \
+  && ok "repeat block: the missing gate run still named, no long command, advice not repeated" \
   || fail "repeat block (rc $r1/$r2, $(wc -c < "$TMP/e1")→$(wc -c < "$TMP/e2") B): $(head -3 "$TMP/e2" | tr '\n' '|')"
 P10="$TMP/p10"; mkdir -p "$P10"; : > "$P10/tr.jsonl"
 te10() { printf '{"session_id":"s-o4te","transcript_path":"%s/tr.jsonl","last_assistant_message":"Đã fix lỗi đăng nhập."}' "$P10" \

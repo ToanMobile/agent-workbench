@@ -6,9 +6,10 @@
 # trees; 100 blocks were a repeat on the same content and each re-ran the suites at Stop
 # (median wait 34 s, p90 181 s). hooks/proof_gate.sh blocked 45 times with long prose; 20 were
 # "pushed, 4-item report missing".
-#   (a) A Claude session whose previous Stop blocked on the same tree: the next Stop returns
-#       the stored block (exit 2, same reason + one line) without running the gate again.
-#   (b) Any content change (tracked edit, new or edited untracked file) runs the gate again.
+#   (a) A Claude session whose previous Stop blocked on the same tree: the next Stop blocks
+#       again (exit 2) without the advice, and runs nothing (v26 mục 1: no Stop runs a suite).
+#   (b) Any content change (tracked edit, new or edited untracked file) is judged again: the
+#       receipt of the old content does not allow it.
 #   (c) proof_gate block messages: ≤ 400 characters besides the 4-line report skeleton, and
 #       the skeleton itself whenever the report is missing.
 #
@@ -29,53 +30,55 @@ ok()   { PASS=$((PASS + 1)); echo "  ok   $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL $1"; }
 
 # ── (a)/(b) regression_gate.sh: same red content → no re-run ─────────────────
+# v26 mục 1: the Stop runs no suite at all; the agent's gate run (the command the block prints) writes a receipt, and the Stop reads it.
+# (a) a repeat Stop on the same content costs no run and does not repeat the advice; (b) a content change is judged again: the receipt
+# of the old content does not allow it.
 echo "hooks/regression_gate.sh — repeat Stop on the same content"
 R="$TMP/rg"; mkdir -p "$R/src" "$R/.agents"
 ( cd "$R" && git init -q . && git config user.email t@t && git config user.name t
   echo "fun ok() = 1" > src/Core.kt
-  printf 'echo x >> "%s"\nexit 1\n' "$TMP/runs" > result.sh
+  printf 'echo x >> "%s"\nexit "$(cat "%s")"\n' "$TMP/runs" "$TMP/exit" > result.sh
   cat > .agents/regression_matrix.active.json <<'JSON'
 {"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt"],
  "mandatory_regression_tests":[{"id":"REG-R","name":"core","command":"sh result.sh"}]}]}
 JSON
   git add -A && git commit -qm init ) >/dev/null
-: > "$TMP/runs"
+: > "$TMP/runs"; echo 1 > "$TMP/exit"
 # A Claude Code transcript: not degraded, so the per-session reuse of degraded mode never applied.
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix it"},"uuid":"u1","sessionId":"c-r"}' > "$TMP/claude.jsonl"
 runs() { grep -c x "$TMP/runs" | tr -d ' '; }
 rstop() { printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "${1:-c-r}" "$TMP/claude.jsonl" \
   | CLAUDE_PROJECT_DIR="$R" bash "$RGATE" >"$TMP/out" 2>"$TMP/err"; }
-REUSED="cùng nội dung với lần chặn trước — chưa chạy lại"
+grun() { ( cd "$R" && CLAUDE_PROJECT_DIR="$R" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --scoped --brief ) >"$TMP/gate.out" 2>&1; GRC=$?; }
+CURE="Không sửa test cũ để lách"
 
 echo "fun ok() = 2" > "$R/src/Core.kt"
-rstop; rc1=$?; n1="$(runs)"
-[ "$rc1" = 2 ] && [ "$n1" -gt 0 ] && grep -q "REG-R" "$TMP/err" && ! grep -q "$REUSED" "$TMP/err" \
-  && ok "first Stop on red content: gate runs, blocks (exit 2)" || fail "first stop (rc=$rc1 runs=$n1 err=$(head -2 "$TMP/err"))"
-rstop; rc2=$?; n2="$(runs)"
-[ "$rc2" = 2 ] && [ "$n2" = "$n1" ] && grep -q "REG-R" "$TMP/err" && grep -q "$REUSED" "$TMP/err" \
-  && ok "(a) second Stop, same content: gate NOT run, still exit 2, same reason + the reuse line" \
-  || fail "(a) same content re-ran or lost the block (rc=$rc2 runs $n1 -> $n2 err=$(tr '\n' '~' < "$TMP/err" | head -c 300))"
-grep -q "reused result" "$R/.claude/audit-gate/regression_gate.log" \
-  && ok "(a) the log marks the reused block" || fail "(a) log has no 'reused result'"
+grun; n0="$(runs)"; rstop; rc1=$?; n1="$(runs)"; e1="$(wc -c < "$TMP/err" | tr -d ' ')"
+[ "$GRC" = 1 ] && grep -q "REG-R" "$TMP/gate.out" && [ "$rc1" = 2 ] && [ "$n1" = "$n0" ] && grep -q "$CURE" "$TMP/err" \
+  && ok "first Stop on red content (the gate run failed REG-R): blocks (exit 2) with the advice, runs nothing" || fail "first stop (gate=$GRC rc=$rc1 runs $n0 -> $n1 err=$(head -2 "$TMP/err"))"
+rstop; rc2=$?; n2="$(runs)"; e2="$(wc -c < "$TMP/err" | tr -d ' ')"
+[ "$rc2" = 2 ] && [ "$n2" = "$n1" ] && ! grep -q "$CURE" "$TMP/err" && [ "$e2" -lt "$e1" ] \
+  && ok "(a) second Stop, same content: no run, still exit 2, the advice not repeated ($e1 -> $e2 bytes)" \
+  || fail "(a) same content re-ran or repeated the advice (rc=$rc2 runs $n1 -> $n2 bytes $e1 -> $e2 err=$(tr '\n' '~' < "$TMP/err" | head -c 300))"
 rstop; rc3=$?; n3="$(runs)"
 [ "$rc3" = 0 ] && [ "$n3" = "$n1" ] && grep -q systemMessage "$TMP/out" \
   && ok "existing loop guard unchanged: 3rd Stop on one change released with a warning, no re-run" \
   || fail "loop guard changed (rc=$rc3 runs=$n3)"
 
-echo "fun ok() = 3" > "$R/src/Core.kt"
-rstop; rc=$?; n4="$(runs)"
-[ "$rc" = 2 ] && [ "$n4" -gt "$n3" ] && ok "(b) tracked file edited: gate runs again" || fail "(b) tracked edit not re-run (rc=$rc runs $n3 -> $n4)"
-rstop; n5="$(runs)"
-echo "fun t() = 1" > "$R/src/NewTest.kt"; rstop; rc=$?; n6="$(runs)"
-[ "$rc" = 2 ] && [ "$n6" -gt "$n5" ] && ok "(b) new untracked file: gate runs again" || fail "(b) new untracked file not re-run (runs $n5 -> $n6)"
-echo "fun t() = 2" > "$R/src/NewTest.kt"; rstop; rc=$?; n7="$(runs)"
-[ "$rc" = 2 ] && [ "$n7" -gt "$n6" ] && ok "(b) untracked file content edited: gate runs again" \
-  || fail "(b) untracked content edit reused the old block (rc=$rc runs $n6 -> $n7)"
-rm -f "$R/src/NewTest.kt"; echo "fun ok() = 4" > "$R/src/Core.kt"
-rstop c-r; n8="$(runs)"; rstop c-other; rc=$?; n9="$(runs)"
-[ "$rc" = 2 ] && [ "$n9" -gt "$n8" ] && ok "another session on the same content: runs its own gate" \
-  || fail "reuse leaked across sessions (rc=$rc runs $n8 -> $n9)"
-
+echo 0 > "$TMP/exit"; echo "fun ok() = 3" > "$R/src/Core.kt"
+rstop; rc=$?
+[ "$rc" = 2 ] && ok "(b) tracked file edited: judged again (a new change gets its own blocks)" || fail "(b) tracked edit released by the old change's guard (rc=$rc)"
+grun; rstop; rc5=$?
+echo "fun t() = 1" > "$R/src/NewTest.kt"; rstop; rc=$?
+[ "$GRC" = 0 ] && [ "$rc5" = 0 ] && [ "$rc" = 2 ] && ok "(b) new untracked file: the receipt of the tree before does not allow it" || fail "(b) new untracked file not judged (gate=$GRC rcs $rc5 $rc)"
+grun; rstop; rc6=$?
+echo "fun t() = 2" > "$R/src/NewTest.kt"; rstop; rc=$?
+[ "$GRC" = 0 ] && [ "$rc6" = 0 ] && [ "$rc" = 2 ] && ok "(b) untracked file content edited: the receipt of the old content does not allow it" \
+  || fail "(b) untracked content edit kept the old receipt (gate=$GRC rcs $rc6 $rc)"
+rm -f "$R/src/NewTest.kt"; echo 1 > "$TMP/exit"; echo "fun ok() = 4" > "$R/src/Core.kt"
+grun; n8="$(runs)"; rstop c-r; rstop c-other; rc=$?; n9="$(runs)"
+[ "$rc" = 2 ] && [ "$n9" = "$n8" ] && ok "another session on the same red content: blocked too, no run" \
+  || fail "another session (rc=$rc runs $n8 -> $n9)"
 # ── (c) hooks/proof_gate.sh: short, actionable block messages ────────────────
 echo "hooks/proof_gate.sh — block message size and report skeleton"
 SKEL="1. Đã fix gì: …

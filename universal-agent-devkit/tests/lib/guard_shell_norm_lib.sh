@@ -1,6 +1,6 @@
 # tests/lib/guard_shell_norm_lib.sh: phần dựng chung của tests/gates/test_guard_shell_norm*.sh (tách 03/11 để shard
 # REG-DK-ALL-GATES-01 chạy các phần cùng lúc). Source sau khi đặt DEVKIT_DIR, HW và GG: tạo TMP (xoá khi thoát), FAILS, repo git
-# nháp $P và các helper check / check_mcp / check_deny / pair / r5_rows (+ R5_COMMON). Chỉ chạy hook, không bao giờ chạy lệnh.
+# nháp $P và các helper check / check_deny / pair / r5_rows (+ R5_COMMON). Chỉ chạy hook, không bao giờ chạy lệnh.
 # Tương thích bash 3.2.
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -30,16 +30,6 @@ check() {
   if [ "$rc" = "$want" ] && ! crashed; then ok "$hook rc $rc: ${s:0:110}"; else fail "$hook rc $rc (want $want): ${s:0:110} — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
 }
 
-# check_mcp <want rc> <device command>: the same through replicant-mcp adb-shell (its command runs on the device)
-check_mcp() {
-  local want="$1" c="$2"
-  python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[2],"hook_event_name":"PreToolUse",
-    "tool_name":"mcp__replicant-mcp__adb-shell","tool_input":{"command":sys.argv[1]}}))' "$c" "$P" > "$TMP/in.json"
-  ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" ADB_DENY_SERIALS= ADB_ALLOW_SERIALS= ANDROID_SERIAL= \
-      bash "$HW" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
-  local rc=$?
-  if [ "$rc" = "$want" ] && ! crashed; then ok "mcp rc $rc: $c"; else fail "mcp rc $rc (want $want): $c — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
-}
 # check_deny <want rc> <command>: with the serial DENIED1 on the device denylist (only literal -s serials here: no adb call)
 check_deny() {
   local want="$1" c="$2"

@@ -534,7 +534,7 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 | **`impeccable`** | `/impeccable` | UI/UX design craft & anti-slop engine (24 steering verbs such as `/impeccable shape`, `/impeccable critique`, `/impeccable audit`, `/impeccable polish` + 62-rule `impeccable detect` scanner for typography, OKLCH color, layout rhythm, and a11y). |
 | **`ui-ux-pro-max`** | `/ui-ux-pro-max` | Searchable UI/UX design data (styles, palettes, fonts, UX rules) plus per-stack guidelines incl. SwiftUI, Flutter, Compose and Unity 6 uGUI (`scripts/search.py --stack`). |
 | **`taste-mobile-app`** | `/taste-mobile-app` | Art direction for new or rebuilt mobile screens (Compose, SwiftUI, Flutter, React Native): 3 dials, design lock, 4 mandatory states, anti-slop QA. |
-| **`android-real-device-qa`** | `/android-qa` | Real-device & emulator QA via ADB/Replicant: SurfaceFlinger FPS profiling, view hierarchy dumps, and ANR logcat triage. |
+| **`android-real-device-qa`** | `/android-qa` | Real-device & emulator QA via ADB/mobile-mcp: SurfaceFlinger FPS profiling, view hierarchy dumps, and ANR logcat triage. |
 
 ---
 
@@ -655,7 +655,6 @@ universal-agent-devkit/mcp/
     ├── context7/
     ├── android-code-search/
     ├── android-skills/
-    ├── replicant-mcp/
     └── play-store/
 ```
 
@@ -665,7 +664,7 @@ universal-agent-devkit/mcp/
 | **`context7`** | npx | Real-time official documentation lookup by library version (`resolve-library-id`, `query-docs`). |
 | **`android-code-search`** | npx | AOSP source code and symbol search across Android releases (`search_android_code`). |
 | **`android-skills`** | npx | Official Android engineering patterns and best practices (`list_skills`, `get_skill`). |
-| **`replicant-mcp`** | npx | ADB device automation, screen capture, UI node inspection, UI tap/swipe, logcat, and Gradle runs. |
+| **`mobile-mcp`** | npx | Android/iOS device automation (2026-11-08): device list, launch, tap by element ref, type, swipe, screenshot, logs. The device guard covers every tool, including each `mobile_batch_commands` step. |
 | **`play-store`** | Python stdio | Google Play APK/AAB deployment, crash vitals, ANR tracking, review replies. |
 
 ---
@@ -776,7 +775,7 @@ universal-agent-devkit/
 ├── rules/                       # Core rules & dynamic profile rules symlinks
 ├── skills/                      # 36 Curated Skills
 ├── commands/                    # Slash commands & aliases (links into skills/, plus audit-gate & profile)
-├── agents/                      # Subagents (.md), 10 Specialized Audit Agents, and 10 Councils (agents/councils/)
+├── agents/                      # Subagents (.md), 5 Specialized Audit Agents, and 10 Councils (agents/councils/)
 ├── hooks/                       # Lifecycle hooks (hooks.json) and their contract tests (hooks/tests/)
 ├── workflows/                   # Workflow engines (Claude Code Workflow harness) and their tests
 ├── scripts/                     # Installer helpers, worktree_sandbox.py (APFS CoW), token_cost_tracker.py, regex linters

@@ -593,14 +593,18 @@ launch_train() {
 os.setsid(); open(sys.argv[-1] + "/session", "w").close()
 os.execvp("bash", ["bash", "-c"] + sys.argv[1:])' \
     "$LAUNCHER" merge-queue-launch "$TRAIN" "$CONFIG" "${n}:${head}" "$dir" 9>&- >"$dir/launch.log" 2>&1 </dev/null &
-  LAUNCHED+=("$!")
+  local lpid=$!
+  LAUNCHED+=("$lpid")
+  # Ghi inflight NGAY sau khi phóng, trước lúc chờ session: train có thể chạy trước khi vòng chờ dưới xong (tải cao); queue bị giết trong
+  # khoảng đó mà chưa ghi thì lượt sau không thấy train sống và phóng train thứ hai (gate-full đêm 05/11, 07/11: "orphan train calls=2").
+  echo "${n} ${head} ${ref} ${ci} ${lpid} ${dir}" >> "$INFLIGHT"
   # Chờ launcher TÁCH session xong (dấu <dir>/session ghi ngay sau os.setsid) rồi mới tiếp / thoát: queue thoát trước đó thì launchd giết cả
-  # process group lúc python còn khởi động (~14 ms, lâu hơn khi tải cao) — audit Antigravity #676. Tối đa 5 s.
+  # process group lúc python còn khởi động (~14 ms, lâu hơn khi tải cao) — audit Antigravity #676. Tối đa 5 s. `sleep` không giữ khoá
+  # queue (9>&-): queue bị giết giữa lúc chờ thì khoá đi theo nó ngay.
   local w=0
-  while [ ! -e "$dir/session" ] && [ "$w" -lt 250 ]; do sleep 0.02; w=$((w + 1)); done
+  while [ ! -e "$dir/session" ] && [ "$w" -lt 250 ]; do sleep 0.02 9>&-; w=$((w + 1)); done
   [ -e "$dir/session" ] || say "PR #${n}: the train launcher did not report its own session within 5 s (a later kill of this run's process group may take it)"
-  echo "${n} ${head} ${ref} ${ci} $! ${dir}" >> "$INFLIGHT"
-  say "PR #${n}: train started for ${n}:${head} (pid $!, ${dir})"
+  say "PR #${n}: train started for ${n}:${head} (pid ${lpid}, ${dir})"
 }
 
 collect
@@ -684,6 +688,10 @@ if [ "$READ_HALT" -eq 1 ]; then say "GitHub reads halted while routing PRs from 
 MAX_TRAINS=$(posint "$(echo "$CONFIG_JSON" | jq -r '.merge_queue.max_trains // empty')" 3)
 NLIVE=0; for n in $LIVE; do NLIVE=$((NLIVE + 1)); done
 SLOTS=$((MAX_TRAINS - NLIVE)); NB=0
+# --wait: bẫy TERM / INT / HUP đặt TRƯỚC vòng phóng (không phải sau): tín hiệu tới giữa lúc phóng (chờ session, duyệt PR sau) mà chưa có
+# bẫy thì queue chết theo mặc định và train vừa phóng mồ côi (gate-full đêm 05/11, 07/11: "TERM to the queue left its train running").
+forward_stop() { local t; for t in ${LAUNCHED[@]+"${LAUNCHED[@]}"}; do kill -TERM "$t" 2>/dev/null || true; done; exit "$1"; }
+if [ "$WAIT" -eq 1 ] && [ "$DRY" -eq 0 ]; then trap 'forward_stop 143' TERM; trap 'forward_stop 130' INT; trap 'forward_stop 129' HUP; fi
 while read -r at n head ref; do
   [ -n "${n:-}" ] || continue
   comments=$(python3 "$GITHUB_READ" --kind object -- pr view "$n" ${REPO:+--repo "$REPO"} --json comments) || exit $?
@@ -713,12 +721,10 @@ done < <(printf '%s' "$LAUNCH_ROWS")
 [ "$DRY" -eq 0 ] || exit 0
 
 # ---- --wait (test / chạy tay): chờ các train vừa phóng rồi thu luôn ----------------------------------------------------------------------
-# Thả khoá TRƯỚC khi chờ (lượt queue khác vẫn chạy được), lấy lại khoá (chờ có trần) rồi thu như đầu lượt. Chỉ ở đây queue chuyển TERM /
+# Thả khoá TRƯỚC khi chờ (lượt queue khác vẫn chạy được), lấy lại khoá (chờ có trần) rồi thu như đầu lượt. Chỉ lượt --wait (bẫy đặt trước vòng phóng) queue chuyển TERM /
 # INT / HUP xuống các subshell phóng train (chúng chuyển tiếp xuống train). Không có --wait (cách super-board-run.sh merge_queue_due và
 # plist của super-board-queue-schedule.sh gọi queue, grep 01/11): queue thoát ngay, lượt sau thu.
 [ "$WAIT" -eq 1 ] && [ "${#LAUNCHED[@]}" -gt 0 ] || exit 0
-forward_stop() { local t; for t in ${LAUNCHED[@]+"${LAUNCHED[@]}"}; do kill -TERM "$t" 2>/dev/null || true; done; exit "$1"; }
-trap 'forward_stop 143' TERM; trap 'forward_stop 130' INT; trap 'forward_stop 129' HUP
 exec 9>&-
 for t in "${LAUNCHED[@]}"; do wait "$t" 2>/dev/null || true; done
 exec 9>>"$LOCK"

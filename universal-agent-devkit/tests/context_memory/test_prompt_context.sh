@@ -120,7 +120,7 @@ for p in "chuẩn bị thiết bị thật để chạy thử" "tối ưu build 
 done
 has "$(intents "tối ưu build script cho nhanh")" UI_INTERACTION \
   && fail "'ui' inside 'build' → UI_INTERACTION" || ok "short keywords match whole words only ('ui' ≠ build)"
-# skills <prompt> → the "Skill phù hợp" line the hook prints (compact(), not the raw dossier)
+# skills <prompt> → the "Skill phù hợp" line of compact() (routing only: the --hook path drops it since 08/11)
 skills() {
   python3 - "$ENRICH" "$1" "$TMP/emptykit" "$TMP/proj" <<'PY'
 import importlib.util, re, sys

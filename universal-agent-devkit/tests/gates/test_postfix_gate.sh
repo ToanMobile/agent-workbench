@@ -807,7 +807,7 @@ grp_edited_tests_mcp() {   # …the read-only / write-capable MCP tool lists, ui
 for tool in mcp__claude_ai_Atlassian_Rovo__getJiraIssue mcp__claude_ai_Atlassian_Rovo__getConfluencePage \
             mcp__claude_ai_Atlassian_Rovo__searchJiraIssuesUsingJql mcp__antigravity-pm__pm_status \
             mcp__antigravity-pm__pm_diff mcp__antigravity-pm__pm_report mcp__antigravity-pm__pm_doctor \
-            mcp__antigravity-pm__pm_ack mcp__replicant-mcp__ui-query; do
+            mcp__antigravity-pm__pm_ack; do
   existing_test_repo
   set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
   fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" "$tool"
@@ -823,25 +823,63 @@ for tool in mcp__claude_ai_Atlassian_Rovo__createJiraIssue mcp__claude_ai_Atlass
   out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
   check "write-capable tool ${tool##*__} -> attribution off, UNVERIFIED" 2 $? "$out" "PASS —"
 done
-# replicant ui-capture reads the screen; with localPath it writes that one file, which then
-# counts as this session's write (like Write), not as an unknown one.
+# legacy-device-mcp was removed from the kit (09/11/2026): its tools are not in the read-only list and ui-capture is no longer a
+# path-writing tool, so every one of them is an opaque write-capable MCP tool again -> attribution off, UNVERIFIED.
+for tool in mcp__legacy-device-mcp__ui-query mcp__legacy-device-mcp__ui-capture mcp__legacy-device-mcp__ui-action; do
+  existing_test_repo
+  set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+  FAKE_INPUT='{"operation":"screenshot","localPath":"'"$TMP"'/repo/reports/proof-1.png"}' \
+    fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" "$tool"
+  out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+  check "removed legacy-device tool ${tool##*__} -> opaque, UNVERIFIED" 2 $? "$out" "PASS —"
+done
+
+# mobile-mcp: full names are mcp__mobile-mcp__mobile_<name> (the snake-case read rule does not
+# match them: they start with mobile_). Reads of the screen are read-only; save_screenshot / get_device_logs / start_screen_recording
+# write the one file their path names; everything that drives the device, and mobile_batch_commands, stays opaque.
+for tool in mcp__mobile-mcp__mobile_list_available_devices mcp__mobile-mcp__mobile_list_apps \
+            mcp__mobile-mcp__mobile_get_foreground_app mcp__mobile-mcp__mobile_get_screen_size \
+            mcp__mobile-mcp__mobile_list_elements_on_screen mcp__mobile-mcp__mobile_take_screenshot \
+            mcp__mobile-mcp__mobile_get_orientation mcp__mobile-mcp__mobile_list_crashes mcp__mobile-mcp__mobile_get_crash \
+            mcp__mobile-mcp__get_more_tools; do
+  existing_test_repo
+  set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+  fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" "$tool"
+  out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+  check "mobile read tool ${tool##*__} + another session's window -> warning (PASS)" 0 $? "$out"
+done
+for tool in mcp__mobile-mcp__mobile_click_on_screen_at_coordinates mcp__mobile-mcp__mobile_batch_commands \
+            mcp__mobile-mcp__mobile_install_app mcp__mobile-mcp__mobile_clear_app_data; do
+  existing_test_repo
+  set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+  fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" "$tool"
+  out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+  check "mobile tool ${tool##*__} drives the device -> attribution off, UNVERIFIED" 2 $? "$out" "PASS —"
+done
 existing_test_repo
 set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
-FAKE_INPUT='{"operation":"screenshot","localPath":"'"$TMP"'/repo/reports/proof-1.png"}' \
-  fake_session s-me "$TMP/me.jsonl" x mcp__replicant-mcp__ui-capture
+FAKE_INPUT='{"device":"PhoneConnect","saveTo":"'"$TMP"'/repo/reports/proof-1.png"}' \
+  fake_session s-me "$TMP/me.jsonl" x mcp__mobile-mcp__mobile_save_screenshot
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
-check "ui-capture to reports/*.png + another session's window -> warning (PASS)" 0 $? "$out"
+check "mobile_save_screenshot to reports/*.png + another session's window -> warning (PASS)" 0 $? "$out"
 existing_test_repo
 set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
-FAKE_INPUT='{"operation":"screenshot","localPath":"'"$TMP"'/repo/src/test/CoreTest.kt"}' \
-  fake_session s-me "$TMP/me.jsonl" x mcp__replicant-mcp__ui-capture
+FAKE_INPUT='{"device":"PhoneConnect","saveTo":"'"$TMP"'/repo/src/test/CoreTest.kt"}' \
+  fake_session s-me "$TMP/me.jsonl" x mcp__mobile-mcp__mobile_save_screenshot
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
-check "ui-capture whose localPath is the test -> this session's write, UNVERIFIED" 2 $? "$out" "PASS —"
+check "mobile_save_screenshot whose saveTo is the test -> this session's write, UNVERIFIED" 2 $? "$out" "PASS —"
 existing_test_repo
 set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
-fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" mcp__replicant-mcp__ui-action
+FAKE_INPUT='{"device":"PhoneConnect","saveTo":"'"$TMP"'/repo/src/test/CoreTest.kt"}' \
+  fake_session s-me "$TMP/me.jsonl" x mcp__mobile-mcp__mobile_get_device_logs
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
-check "ui-action (drives the device) stays opaque -> UNVERIFIED" 2 $? "$out" "PASS —"
+check "mobile_get_device_logs whose saveTo is the test -> this session's write, UNVERIFIED" 2 $? "$out" "PASS —"
+existing_test_repo
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+FAKE_INPUT='{"device":"PhoneConnect","output":"'"$TMP"'/repo/src/test/CoreTest.kt"}' \
+  fake_session s-me "$TMP/me.jsonl" x mcp__mobile-mcp__mobile_start_screen_recording
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "mobile_start_screen_recording whose output is the test -> this session's write, UNVERIFIED" 2 $? "$out" "PASS —"
 
 existing_test_repo   # this session wrote it, then backdated it with touch -t (mtime before the session)
 set_mtime src/test/CoreTest.kt -3600; ledger_window s-me m1 -590 -589

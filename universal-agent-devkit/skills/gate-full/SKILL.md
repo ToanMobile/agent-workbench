@@ -5,7 +5,8 @@ description: "Dùng khi cần kiểm cả bộ suite trên main, khi hỏi 'đê
 
 # gate-full — lượt --full trên main (#644)
 
-Gate mặc định là **scoped**: task, merge và push không còn chạy `--full`. Lượt full chạy ở đây — tay, hoặc 00:00 mỗi đêm (giờ máy, Asia/Ho_Chi_Minh).
+Gate mặc định là **scoped**: task, merge và push không còn chạy `--full`; từ gate speed v26 chỉ test kit trực tiếp chặn, phần còn lại
+`deferred_to_heavy`. Heavy gate (lượt full) chạy ở đây — tay, hoặc 00:00 thứ Hai + thứ Năm (giờ máy, Asia/Ho_Chi_Minh).
 
 ## Phạm vi
 
@@ -17,7 +18,12 @@ Chạy post-fix-gate --full THẬT SỰ trên origin/main (hoặc ref chỉ đ�
 python3 .agents/devkit/bin/gate_full.py run                       # origin/main của repo đang đứng
 python3 .agents/devkit/bin/gate_full.py run --ref origin/main --repo <repo> --max-wait-s 0
 python3 .agents/devkit/bin/gate_full.py run --dry-run             # chỉ in kế hoạch: sha, khoá, scratch, tải
+python3 .agents/devkit/bin/gate_full.py run --force               # chạy dù không có gì mới; trước phát hành chạy lệnh này (không cổng nào ép)
 ```
+
+Không có gì mới (fetch thành công VÀ sha của ref == `last_full_green_sha` VÀ hash cây kit HEAD == `last_full_green_kit`) ⇒ `skip`, exit 0,
+một dòng history `skip_reason: no-new-commit`; fetch lỗi hoặc thiếu một bên ⇒ chạy. Khoá bận cũng ghi dòng history (`skip_reason: lock` /
+`global-lock`). `--force`: luôn chạy, mất khoá ⇒ exit 3. Nút "Chạy gate full" của Agent Office luôn thêm `--force`.
 
 Một lượt: khoá `<git common dir>/postfix-gate/gate-full.lock` (lượt trước còn sống ⇒ `skip`, exit 0) · chờ tải 1 phút ≤ `capacity.py hold_load`
 (tối đa `--max-wait-s`, mặc định 2 h, rồi chạy luôn) · `git fetch` · scratch `postfix-gate/gate-full-scratch-<stamp>` tách rời ở sha của ref, cài
@@ -43,9 +49,21 @@ Lượt của lịch đêm ghi vào `~/Library/Logs/devkit-gate-full/<slug>/` ri
 - `<thư mục log>/<yyyymmdd-HHMMSS>.log`: toàn văn gate, `agent-kit test`, từng bước chia đôi.
 - `<git common dir>/postfix-gate/last_full_green_sha`, `nightly/full_pass.json`, `nightly/history.jsonl` (một dòng mỗi lượt).
 
-## Đỏ: chia đôi + thẻ P1
+## Đỏ: chỉ đỏ MỚI có thẻ (v26 mục 6)
 
-0. Nhóm b (#700): suite đỏ có nhãn `"timing": true` trong ma trận, hoặc trong toàn văn log của suite MỌI khối hỏng lá (`✖/✗ …` + dòng thụt
+Mốc = dòng `nightly/history.jsonl` cuối có result `green` / `red` / `red-env` mà sha là tổ tiên của sha hiện tại (không bao giờ skip,
+inconclusive, aborted, error). Đỏ mới = suite không có trong `red_tests` của mốc, đường test mới, hoặc dòng `✖` mới (đã chuẩn hoá pid, đường
+tạm, số đứng riêng, sha hex). Đỏ kinh niên: không chia đôi, không thẻ, không comment, không tính lọt lưới. Mỗi đỏ mới (tối đa 5) chia đôi
+riêng từ sha của mốc (≤ 128 commit first-parent; ca mới trong file kinh niên chỉ "đỏ" khi output có đúng dòng đó; mốc == đỉnh ⇒ không nghi
+ai, ghi kit đổi / flaky) — `suspects` trong history. Suite mới ⇒ thẻ riêng tiêu đề mang tên nó (đã có thẻ mở ⇒ comment); ca mới của suite
+kinh niên ⇒ comment vào thẻ mở nêu đúng ca. gh lỗi khi tìm thẻ trùng / comment lỗi / tạo thẻ lỗi ⇒ `unreported`, suite không vào mốc, lượt
+sau báo lại. Mốc dạng cũ (dòng red không có `red_tests`) chỉ gieo mốc, không thẻ. Lọt lưới (`escape`): chỉ đỏ mới; test gate scoped chọn
+mà hoãn tới heavy gate (`scoped_gate.cap_selection`) ⇒ `deferred`, không phải lọt lưới. Không có mốc history: hành vi cũ bên dưới.
+
+## Đỏ: chia đôi + thẻ P1 (không có mốc history)
+
+0. Nhóm b (#700): suite đỏ có nhãn `"timing": true` trong ma trận; suite runner kit (run_impacted / `agent-kit test`) khi MỌI đường
+   `✖ tests/…` đỏ có nhãn ở khoá gốc ma trận `"timing_paths": {"tests/…": "<bằng chứng>"}` (bằng chứng rỗng không tính); hoặc trong toàn văn log của suite MỌI khối hỏng lá (`✖/✗ …` + dòng thụt
    sâu hơn; khối có khối con chỉ xét khối con) có dấu hiệu thời gian thực / môi trường (watchdog "quá lớn / quá phức tạp…", `killed after
    …s (deadline)`, `Killed: 9`), hoặc không có khối hỏng nào mà có dòng tổng kết hook contract `ENV-BLOCKED: hook watchdog fired under
    load, no verdict` (và không có Traceback / dòng `FAIL` trần). Không bao giờ nhóm b (#749): lần đầu đỏ thật dù lần chạy lại (FLAKY_RETRY)
@@ -64,7 +82,7 @@ Thẻ đến tay: đọc summary + log, sửa hoặc revert commit nghi vấn qu
 ## Lịch đêm
 
 ```bash
-bash .agents/devkit/bin/gate-full-schedule.sh install --repo "$(pwd)"    # 00:00 mỗi ngày (--hour/--minute để đổi)
+bash .agents/devkit/bin/gate-full-schedule.sh install --repo "$(pwd)"    # 00:00 thứ Hai + thứ Năm (--weekdays 1,4 --hour/--minute để đổi)
 bash .agents/devkit/bin/gate-full-schedule.sh status                     # launchctl print rút gọn + summary-latest.md
 bash .agents/devkit/bin/gate-full-schedule.sh uninstall                  # status / uninstall: --repo mặc định gốc git của thư mục hiện tại
 ```
@@ -72,5 +90,5 @@ bash .agents/devkit/bin/gate-full-schedule.sh uninstall                  # statu
 Mỗi repo một LaunchAgent `com.toanmobile.devkit.gate-full.<slug>` (`~/Library/LaunchAgents/<label>.plist`, `bootstrap gui/<uid>`, không sudo):
 cài repo B không gỡ lịch repo A. `/usr/bin/nice -n 10 <python3 tuyệt đối> gate_full.py run --repo <repo>`, PATH chứa thư mục của python3/git/gh
 lấy lúc cài, `TZ=Asia/Ho_Chi_Minh`, `DEVKIT_GATE_FULL_LOG_DIR=~/Library/Logs/devkit-gate-full/<slug>`, `RunAtLoad` false, stdout/stderr vào
-thư mục log đó. Máy ngủ lúc 00:00 thì launchd chạy bù khi thức dậy; đêm trùng do khoá pid bỏ qua. Label cũ chung `com.toanmobile.devkit.gate-full`
+thư mục log đó. `StartCalendarInterval` là mảng `{Weekday, Hour, Minute}` (launchd: 1 = thứ Hai, 0/7 = Chủ nhật). Máy ngủ lúc 00:00 thì launchd chạy bù khi thức dậy; đêm trùng do khoá pid bỏ qua. Label cũ chung `com.toanmobile.devkit.gate-full`
 (trước lịch theo repo) script không đụng tới; việc chuyển nó sang label theo repo làm riêng, không phải việc của agent.
