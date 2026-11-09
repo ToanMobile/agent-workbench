@@ -3,11 +3,11 @@ import { panelUrl, BACKUP_ORDER } from './panel.js';
 
 /** Cau bao dung ly do khong lay duoc quota; refresh token con thi KHONG can dang nhap lai. */
 export function quotaIssueText(reason, mismatch) {
-  if (reason === 'wrong_account') return `Sai tài khoản: thư mục đang đăng nhập ${mismatch?.actual || '?'}, cần ${mismatch?.expected || '?'} — chạy claude với thư mục này rồi /login lại`;
-  if (reason === 'token_expired') return 'Token hết hạn — mở profile này bằng `claude` một lần để tự làm mới (chưa cần đăng nhập lại)';
+  if (reason === 'wrong_account') return `Sai tài khoản: thư mục đang đăng nhập ${mismatch?.actual || '?'}, cần ${mismatch?.expected || '?'} — bấm "Đăng nhập lại" trên trang cc-switcher`;
+  if (reason === 'token_expired') return 'Token hết hạn — bấm "Đăng nhập lại" trên trang cc-switcher (hoặc chạy claude auth login với thư mục này)';
   if (reason === 'throttled') return 'Endpoint quota đang giới hạn (429), sẽ thử lại sau';
   if (reason === 'network') return 'Lỗi mạng khi lấy quota, sẽ thử lại sau';
-  if (reason === 'no_credentials') return 'Chưa có thông tin đăng nhập trong Keychain — đăng nhập profile này bằng `claude`';
+  if (reason === 'no_credentials') return 'Chưa có thông tin đăng nhập trong Keychain — bấm "Đăng nhập lại" trên trang cc-switcher';
   return 'Số liệu cũ, chưa làm mới được';
 }
 

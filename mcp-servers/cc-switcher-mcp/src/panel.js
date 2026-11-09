@@ -2,6 +2,7 @@
 // Bang dieu khien da chuyen khoi Telegram: moi thao tac dung lai logic cua profiles.js, khong nhan ban.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { AppError, resolveStateDir, logStructured } from './errors.js';
 import {
@@ -25,6 +26,8 @@ export const BACKUP_ORDER = ['grok', 'antigravity_ultra', 'antigravity_pro'];
 export const PANEL_ACTIONS = [
   'refresh', 'switch', 'rotate', 'limit', 'unfreeze', 'balance', 'cooldown', 'repo_assign', 'repo_add', 'repo_remove',
 ];
+// Thao tac mo Terminal de dang nhap: tach khoi PANEL_ACTIONS (danh sach thao tac doi trang thai switcher) de giu hop dong cu.
+export const LOGIN_ACTION = 'login';
 const BALANCE_MODES = new Set(['even', 'swap']);
 
 /** Link bang dieu khien web (ghi de bang CC_SWITCHER_PANEL_URL). */
@@ -280,6 +283,20 @@ function repoRows(report, profiles, claudeHomes) {
   });
 }
 
+/** Mo Terminal.app chay lenh dang nhap (can thay man hinh/ma xac nhan nen khong chay ngam). Chi macOS. */
+function openTerminalWith({ command }) {
+  if (process.platform !== 'darwin') throw new Error('chỉ hỗ trợ macOS');
+  execFileSync('osascript', [
+    '-e', 'tell application "Terminal" to activate',
+    '-e', `tell application "Terminal" to do script "${command}"`,
+  ], { timeout: 10_000, stdio: 'ignore' });
+}
+
+function claudeBinary() {
+  const local = path.join(os.homedir(), '.local', 'bin', 'claude');
+  return fs.existsSync(local) ? local : 'claude';
+}
+
 function badInput(message) {
   return new AppError('INVALID_INPUT', message);
 }
@@ -290,11 +307,31 @@ function badInput(message) {
  */
 export async function runPanelAction(action, params = {}, opts = {}) {
   const { stateDir, nowMs = Date.now(), repos, quotaFetcher } = opts;
-  if (!PANEL_ACTIONS.includes(action)) throw badInput(`Thao tác không hợp lệ: ${action}`);
+  if (action !== LOGIN_ACTION && !PANEL_ACTIONS.includes(action)) throw badInput(`Thao tác không hợp lệ: ${action}`);
 
   if (action === 'refresh') {
     await maybeSync(stateDir, nowMs, true, quotaFetcher);
     return { ok: true, message: 'Đã cập nhật quota và trạng thái mới nhất.' };
+  }
+
+  if (action === 'login') {
+    const target = canonicalProfileId(String(params.target ?? '').trim());
+    const prof = DEFAULT_PROFILES.find((p) => p.id === target && p.vendor === 'anthropic' && p.configDir);
+    if (!prof) throw badInput('Chọn một tài khoản Claude hợp lệ.');
+    // Thu muc va email lay tu bang profile, khong nhan tu client; tu choi ky tu pha vo chuoi shell/AppleScript.
+    const unsafe = /['"\\\n\r`$]/;
+    const email = prof.expectedEmail || '';
+    if (unsafe.test(prof.configDir) || unsafe.test(email)) throw badInput('Cấu hình tài khoản chứa ký tự không an toàn.');
+    const bin = claudeBinary();
+    if (unsafe.test(bin)) throw badInput('Đường dẫn claude chứa ký tự không an toàn.');
+    const command = `CLAUDE_CONFIG_DIR='${prof.configDir}' '${bin}' auth login --claudeai${email ? ` --email '${email}'` : ''}`;
+    try {
+      (opts.loginLauncher || openTerminalWith)({ command, profile: prof.id });
+    } catch (err) {
+      logStructured('warn', 'panel_login_launch_failed', { profileId: prof.id, error: err?.message });
+      return { ok: false, error: `Không mở được Terminal để đăng nhập: ${err?.message}` };
+    }
+    return { ok: true, message: `Đã mở Terminal để đăng nhập ${prof.shortLabel || prof.id}${email ? ` (${email})` : ''}. Đăng nhập xong bấm "Làm mới quota".`, profile: prof.id };
   }
 
   if (action === 'switch') {

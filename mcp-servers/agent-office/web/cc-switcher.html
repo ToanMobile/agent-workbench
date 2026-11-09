@@ -396,14 +396,21 @@
   function switchBtn(p) {
     var b = el('button', { type: 'button', class: 'btn' + (p.isActive ? '' : ' primary'), 'data-switch': p.id }, [p.isActive ? 'Đang dùng' : 'Chuyển sang']);
     if (p.isActive) b.disabled = true;
+    if (p.accountMismatch) { b.disabled = true; b.title = 'Profile đang đăng nhập sai tài khoản, đăng nhập lại trước khi chuyển'; }
     return b;
   }
+  function needsLogin(p) {
+    return p.vendor === 'anthropic' && (p.quotaStale || Boolean(p.accountMismatch)) && p.quotaIssue !== 'throttled' && p.quotaIssue !== 'network';
+  }
+  function loginBtn(p) {
+    return el('button', { type: 'button', class: 'btn', 'data-login': p.id }, ['Đăng nhập lại']);
+  }
   function issueText(reason, mm) {
-    if (reason === 'wrong_account') return 'sai tài khoản: thư mục đang đăng nhập ' + (mm ? mm.actual : '?') + ', cần ' + (mm ? mm.expected : '?') + '. Chạy claude với thư mục này rồi /login lại.';
-    if (reason === 'token_expired') return 'token hết hạn. Mở profile này bằng `claude` một lần để tự làm mới (chưa cần đăng nhập lại).';
+    if (reason === 'wrong_account') return 'sai tài khoản: thư mục đang đăng nhập ' + (mm ? mm.actual : '?') + ', cần ' + (mm ? mm.expected : '?') + '. Bấm "Đăng nhập lại" bên dưới.';
+    if (reason === 'token_expired') return 'token hết hạn. Bấm "Đăng nhập lại" bên dưới.';
     if (reason === 'throttled') return 'endpoint quota đang giới hạn (429), sẽ thử lại sau.';
     if (reason === 'network') return 'lỗi mạng khi lấy quota, sẽ thử lại sau.';
-    if (reason === 'no_credentials') return 'chưa có đăng nhập trong Keychain. Đăng nhập profile này bằng `claude`.';
+    if (reason === 'no_credentials') return 'chưa có đăng nhập trong Keychain. Bấm "Đăng nhập lại" bên dưới.';
     return 'chưa làm mới được.';
   }
   function accountCard(p) {
@@ -425,7 +432,7 @@
       ['Repo đang gán', String(p.assignedRepoCount || 0)],
       ['Số liệu quota', p.quota.live ? ('live · ' + ago(p.quota.updatedAtMs)) : (p.quota.source ? (p.quota.source + ' · ' + ago(p.quota.updatedAtMs)) : 'chưa có số liệu live')]
     ]));
-    card.appendChild(el('div', { class: 'acc-actions' }, [switchBtn(p)]));
+    card.appendChild(el('div', { class: 'acc-actions' }, needsLogin(p) ? [loginBtn(p), switchBtn(p)] : [switchBtn(p)]));
     return card;
   }
   function backupCard(p) {
@@ -584,7 +591,7 @@
     if (busy) return Promise.resolve();
     busy = true;
     if (btn) btn.setAttribute('aria-busy', 'true');
-    document.querySelectorAll('[data-act],[data-switch],#cdSeg button,#cdForm button,#btnRefresh,#repoAddForm button,[data-repo-save],[data-repo-remove],[data-repo-select]').forEach(function (x) { x.disabled = true; });
+    document.querySelectorAll('[data-act],[data-switch],[data-login],#cdSeg button,#cdForm button,#btnRefresh,#repoAddForm button,[data-repo-save],[data-repo-remove],[data-repo-select]').forEach(function (x) { x.disabled = true; });
     return api('/api/cc-switcher/action', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Agent-Office': '1' }, body: JSON.stringify(body) })
       .then(function (j) {
         if (j.state) { state = j.state; loadedAt = Date.now(); }
@@ -628,6 +635,8 @@
       });
       return;
     }
+    var lg = e.target.closest('[data-login]');
+    if (lg && !lg.disabled) { act({ action: 'login', target: lg.dataset.login }, lg); return; }
     var sw = e.target.closest('[data-switch]');
     if (sw && !sw.disabled) {
       var id = sw.dataset.switch;
