@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Test hồi quy (#914 mục 2, 3, 7): heavy_slot ghép vé, tuổi ưu tiên ghi vào vé, prio không băm được. (Mục 5, 6 sửa test có sẵn: đợt riêng chờ duyệt chéo.)
+# Test hồi quy (#914 mục 2, 3, 7): heavy_slot ghép vé, tuổi ưu tiên ghi vào vé, prio không băm được. (Mục 5 kiểm ở test_matrix_real_readers.sh.)
+#   6. clean_git_env.sh gỡ DEVKIT_SLOT_HEAVY_MAX/_WAIT_S/_BUDGET_S của người gọi
 #   2. _pick_free: vé đứng trước giữ chỗ chỉ số trống NHỎ nhất < n (khớp vé hạng 0 quét từ chỉ số 0); vé này lấy chỉ số nhỏ nhất còn lại
 #   3. vé ghi age_s lúc tạo; queue_order dùng age_s của vé, không đọc env của tiến trình đọc
 #   7. queue_order không ném TypeError khi prio của vé không băm được (list/dict)
@@ -55,6 +56,9 @@ shutil.rmtree(qdir, ignore_errors=True)
 sys.exit(1 if fails else 0)
 PY
 rc=$?
+# 6. núm heavy_slot của người gọi không lái test: nạp clean_git_env.sh trong shell sạch rồi đếm biến còn sót
+left=$(DEVKIT_SLOT_HEAVY_MAX=1 DEVKIT_SLOT_HEAVY_WAIT_S=1 DEVKIT_SLOT_HEAVY_BUDGET_S=1 bash -c '. "$1/tests/lib/clean_git_env.sh"; env | grep -c "^DEVKIT_SLOT_HEAVY_"' _ "$DEVKIT_DIR")
+if [ "$left" = 0 ]; then echo "✔ 6. clean_git_env.sh gỡ ba núm DEVKIT_SLOT_HEAVY_*"; else echo "✖ 6. còn $left núm DEVKIT_SLOT_HEAVY_* sau khi nạp clean_git_env.sh"; FAILS=1; fi
 if [ "$rc" = 0 ] && [ "$FAILS" = 0 ]; then echo "PASS test_heavy_slot_914_tickets"; exit 0; fi
 echo "FAIL test_heavy_slot_914_tickets"
 exit 1
