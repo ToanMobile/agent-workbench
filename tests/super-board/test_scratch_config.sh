@@ -7,7 +7,9 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HELPER="$ROOT/.claude/bin/super-board-scratch-config.sh"
-. "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
+for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
+  if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
+done
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }

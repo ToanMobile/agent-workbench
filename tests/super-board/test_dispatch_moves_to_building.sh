@@ -12,6 +12,7 @@ RUN_SH="$REPO_ROOT/.claude/bin/super-board-run.sh"
 NEEDS_YOU_PY="$REPO_ROOT/.claude/bin/super-board-needs-you.py"
 MONITOR_PY="$REPO_ROOT/universal-agent-devkit/scripts/governance/super_board_monitor.py"
 ALL_PY="$REPO_ROOT/universal-agent-devkit/scripts/governance/super_board_all.py"
+[ -f "$ALL_PY" ] || ALL_PY="$REPO_ROOT/.agents/devkit/scripts/governance/super_board_all.py"
 
 PASS=0
 FAIL=0
