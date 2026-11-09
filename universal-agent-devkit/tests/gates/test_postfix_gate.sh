@@ -823,15 +823,15 @@ for tool in mcp__claude_ai_Atlassian_Rovo__createJiraIssue mcp__claude_ai_Atlass
   out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
   check "write-capable tool ${tool##*__} -> attribution off, UNVERIFIED" 2 $? "$out" "PASS —"
 done
-# replicant-mcp was removed from the kit (09/11/2026): its tools are not in the read-only list and ui-capture is no longer a
+# legacy-device-mcp was removed from the kit (09/11/2026): its tools are not in the read-only list and ui-capture is no longer a
 # path-writing tool, so every one of them is an opaque write-capable MCP tool again -> attribution off, UNVERIFIED.
-for tool in mcp__replicant-mcp__ui-query mcp__replicant-mcp__ui-capture mcp__replicant-mcp__ui-action; do
+for tool in mcp__legacy-device-mcp__ui-query mcp__legacy-device-mcp__ui-capture mcp__legacy-device-mcp__ui-action; do
   existing_test_repo
   set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
   FAKE_INPUT='{"operation":"screenshot","localPath":"'"$TMP"'/repo/reports/proof-1.png"}' \
     fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" "$tool"
   out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
-  check "removed replicant tool ${tool##*__} -> opaque, UNVERIFIED" 2 $? "$out" "PASS —"
+  check "removed legacy-device tool ${tool##*__} -> opaque, UNVERIFIED" 2 $? "$out" "PASS —"
 done
 
 # mobile-mcp: full names are mcp__mobile-mcp__mobile_<name> (the snake-case read rule does not

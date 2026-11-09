@@ -619,8 +619,8 @@ else
 fi
 release_all
 
-# 22. replicant-mcp was removed from the kit (09/11/2026): the device-suite regexes (heavy_slot.HARD_DEVICE and
-# post-fix-gate.HARD_DEVICE_SUITE, kept in sync) still know mobile-mcp / mobilecli but a command naming only replicant is not a device suite.
+# 22. legacy-device-mcp was removed from the kit (09/11/2026): the device-suite regexes (heavy_slot.HARD_DEVICE and
+# post-fix-gate.HARD_DEVICE_SUITE, kept in sync) still know mobile-mcp / mobilecli but a command naming only legacy-device-mcp is not a device suite.
 RX_OUT="$(python3 -I - "$DEVKIT_DIR" <<'PY'
 import importlib.util, sys
 d = sys.argv[1]; sys.path.insert(0, d + "/bin")
@@ -631,12 +631,12 @@ pats = {"heavy_slot.HARD_DEVICE": load("hs", "heavy_slot.py").HARD_DEVICE,
         "post-fix-gate.HARD_DEVICE_SUITE": load("pfg", "post-fix-gate.py").HARD_DEVICE_SUITE}
 bad = []
 for name, rx in pats.items():
-    for cmd, want in (("npx mobile-mcp@1.0.16", True), ("mobilecli devices", True), ("run replicant-mcp ui-query", False)):
+    for cmd, want in (("npx mobile-mcp@1.0.16", True), ("mobilecli devices", True), ("run legacy-device-mcp ui-query", False)):
         if bool(rx.search(cmd)) != want:
             bad.append(f"{name} {cmd!r} want {want}")
 print("; ".join(bad) or "ok")
 PY
 )"
-if [ "$RX_OUT" = ok ]; then ok "22. regex suite thiết bị: mobile-mcp/mobilecli có, replicant không"; else fail "22. regex suite thiết bị: $RX_OUT"; fi
+if [ "$RX_OUT" = ok ]; then ok "22. regex suite thiết bị: mobile-mcp/mobilecli có, legacy-device-mcp không"; else fail "22. regex suite thiết bị: $RX_OUT"; fi
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_slot_classes: all passed" || { echo "❌ test_gate_slot_classes: $FAILS failed"; exit 1; }

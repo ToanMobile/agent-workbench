@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hooks/hardware_safety_gate.sh with the mobile-mcp tools (@mobilenext/mobile-mcp 1.0.16, replaces replicant-mcp, 08/11/2026).
+# hooks/hardware_safety_gate.sh with the mobile-mcp tools (@mobilenext/mobile-mcp 1.0.16, replaces the legacy device MCP, 08/11/2026).
 # Tool names and parameters are read from the package source (lib/server.js): every tool but get_more_tools is
 # mcp__mobile-mcp__mobile_<name>; the device is the string parameter `device` (a serial, or the AVD NAME on an emulator).
 # mobile_batch_commands runs other tools as steps: a step's own `device` replaces the batch device, listElementsAtEnd lists the
@@ -119,10 +119,10 @@ mmf 2 denylist mobile_clear_app_data '{"device":"emulator-5556","packageName":"c
 mmf 0 denylist mobile_clear_app_data '{"device":"PhoneConnect","packageName":"com.example.app"}' "emulator-5556"
 mmf 0 allowlist mobile_list_elements_on_screen '{"device":"PhoneConnect"}' "emulator-5556,PhoneConnect"
 
-# mr <want rc> <tool> <json>: replicant-mcp is gone from the kit (09/11): its tools are no longer mapped to an adb command, so the
+# mr <want rc> <tool> <json>: legacy-device-mcp is gone from the kit (09/11): its tools are no longer mapped to an adb command, so the
 # device guard no longer judges them (mobile-mcp above is the only device MCP). DENIED1 is on the denylist and still passes here.
 mr() {
-  local want="$1" name="$2" inp="$3" tool="mcp__replicant-mcp__$2"
+  local want="$1" name="$2" inp="$3" tool="mcp__legacy-device-mcp__$2"
   python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[3],"hook_event_name":"PreToolUse",
     "tool_name":sys.argv[1],"tool_input":json.loads(sys.argv[2])}))' "$tool" "$inp" "$P" > "$TMP/in.json"
   ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" ADB_DENY_SERIALS=DENIED1 ADB_ALLOW_SERIALS= ANDROID_SERIAL= \
@@ -130,7 +130,7 @@ mr() {
   local rc=$?
   if [ "$rc" = "$want" ] && ! crashed; then ok "mr rc $rc: $name $inp"; else fail "mr rc $rc (want $want): $name $inp — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
 }
-echo "── replicant-mcp tools are no longer special (removed from the kit 09/11)"
+echo "── legacy-device-mcp tools are no longer special (removed from the kit 09/11)"
 mr 0 adb-shell '{"command":"pm uninstall --user 0 com.android.systemui"}'
 mr 0 adb-device '{"operation":"select","deviceId":"DENIED1"}'
 mr 0 adb-app '{"operation":"uninstall","packageName":"com.android.systemui"}'
@@ -139,7 +139,7 @@ echo "── mobile-mcp: the four kit configs pin 1.0.16 and switch the vendor t
 # Without MOBILEMCP_DISABLE_TELEMETRY every tool call is posted to us.i.posthog.com (tool name, device count, hashed host id) and
 # get_more_tools sends the agent's free text to the vendor (server.js L142-194, L268-276).
 for cfg in .mcp.json mcp_config.json mcp/.mcp.json mcp/mcp_config.json; do
-  if python3 -I -c 'import json,sys; s=json.load(open(sys.argv[1]))["mcpServers"]["mobile-mcp"]; sys.exit(0 if "@mobilenext/mobile-mcp@1.0.16" in s["args"] and s.get("env",{}).get("MOBILEMCP_DISABLE_TELEMETRY")=="1" and "replicant-mcp" not in json.load(open(sys.argv[1]))["mcpServers"] else 1)' "$DEVKIT_DIR/$cfg"; then
+  if python3 -I -c 'import json,sys; s=json.load(open(sys.argv[1]))["mcpServers"]["mobile-mcp"]; sys.exit(0 if "@mobilenext/mobile-mcp@1.0.16" in s["args"] and s.get("env",{}).get("MOBILEMCP_DISABLE_TELEMETRY")=="1" and "legacy-device-mcp" not in json.load(open(sys.argv[1]))["mcpServers"] else 1)' "$DEVKIT_DIR/$cfg"; then
     ok "config $cfg: mobile-mcp@1.0.16, telemetry off"; else fail "config $cfg: mobile-mcp@1.0.16 with MOBILEMCP_DISABLE_TELEMETRY=1 missing"; fi
 done
 
