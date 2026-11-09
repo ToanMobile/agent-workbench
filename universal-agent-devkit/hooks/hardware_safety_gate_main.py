@@ -1690,7 +1690,7 @@ def moves_cwd(text, cwds, remote, depth=0):
     return False
 
 RM_VAR_DEFAULT = re.compile(r"\$\{(\w+):?[-=]([\w./+-]*)\}")
-RM_OPTION = re.compile(r"-[rRfiIvdPx]+|--(?:recursive|force|interactive|verbose|dir|one-file-system|preserve-root|no-preserve-root)")
+RM_OPTION = re.compile(r"-[rRfiIvdPx]+|--|--(?:recursive|force|interactive|verbose|dir|one-file-system|preserve-root|no-preserve-root)")
 RM_VAR_PLAIN = re.compile(r"\$(\w+)|\$\{(\w+)\}")
 
 def rm_var_command(toks, i, cwds, env, depth, feed, remote, implied):
@@ -1733,9 +1733,13 @@ def rm_var_command(toks, i, cwds, env, depth, feed, remote, implied):
             # is not rm); only what leaves the project (/, ~, $VAR, ..) is judged: `$TAR -rf a.tar .` is not a deletion of the project
             if any(a.startswith("-") and not RM_OPTION.fullmatch(a) for a in args):
                 continue
-            args = [a for a in args if a.startswith(("-", "/", "~", "$", ".."))]
+            # (R15) a relative operand before the risky one (`$TAR -rf a.tar ~/x`) means this is no bare `rm -rf <outside>`
+            # ponytail: `$X -rf build ~` stays allowed (one relative word hides it), upgrade when a real case shows
+            if any(not a.startswith(("-", "/", "~", "$", "..")) for a in args):
+                continue
         pre = toks[:i]   # (R9) the prefix (xargs and its options, NAME=VAL) stays: `xargs $X -rf ~` is xargs rm -rf ~
-        why = rm_command_problem(pre + words + args, len(pre), cwds, env, depth, feed, remote, implied)
+        # (R13) each reading runs on its own copy of env: a candidate that may not run (${CMD:-export} with CMD=true) must not rewrite it
+        why = rm_command_problem(pre + words + args, len(pre), cwds, dict(env), depth, feed, remote, implied)
         if why:
             return why
     return None

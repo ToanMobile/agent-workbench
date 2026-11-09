@@ -179,6 +179,15 @@ check 2u 'adb -d wait-for-device reboot' ANDROID_SERIAL=emulator-5554 FAKE_FAIL=
 check 2u 'adb -e wait-for-device reboot' ANDROID_SERIAL=emulator-5554 FAKE_FAIL=1
 check 0 'adb -s emulator-5554 wait-for-device reboot' ANDROID_SERIAL=emulator-5554 FAKE_FAIL=1
 
+echo "— vòng 3 (reviewer R13–R15)"
+# R13: ứng viên ${CMD:-export} không được ghi đè env sống (CMD=true thì export không chạy: D vẫn là ~)
+check 2 'CMD=true; D=~; ${CMD:-export} D=/tmp/a; rm -rf "$D"'
+check 2 'CMD=true; D=~; ${CMD:-declare} -g D=/tmp/a; rm -rf "$D"'
+# R14: `--` sau cờ rm không làm lọt
+check 2 '$UNKNOWN -rf -- ~'
+# R15: đối số tương đối (tên tar) đứng trước: không phải rm ra ngoài dự án
+check 0 '"$TAR" -rf a.tar ~/x'
+
 # adb giả chỉ được hỏi get-serialno: lệnh thật (reboot, shell, wait-for-device …) không bao giờ chạy
 if grep -v 'get-serialno$' "$ADB_FAKE_LOG" | grep -q .; then
   fail "hook chạy adb ngoài get-serialno: $(grep -v 'get-serialno$' "$ADB_FAKE_LOG" | head -3 | tr '\n' ';')"
