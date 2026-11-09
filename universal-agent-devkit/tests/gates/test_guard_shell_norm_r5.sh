@@ -9,7 +9,7 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HW="${HW_HOOK:-$DEVKIT_DIR/hooks/hardware_safety_gate.sh}"
 GG="${GG_HOOK:-$DEVKIT_DIR/hooks/block-dangerous-git.sh}"
-. "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, repo nháp $P, check / check_mcp / check_deny / pair / r5_rows
+. "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, repo nháp $P, check / check_deny / pair / r5_rows
 
 echo "── r5 (independent verification of the r4 tree; every dangerous row below ran its harmless marker twin under /bin/bash 3.2 and zsh): the"
 echo "   newline of the OUTER text is not rewritten, so a quoted script reaches the second pass as typed, and a backslash-newline inside"

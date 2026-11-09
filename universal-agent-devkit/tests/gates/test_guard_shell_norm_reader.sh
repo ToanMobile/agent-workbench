@@ -9,7 +9,7 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HW="${HW_HOOK:-$DEVKIT_DIR/hooks/hardware_safety_gate.sh}"
 GG="${GG_HOOK:-$DEVKIT_DIR/hooks/block-dangerous-git.sh}"
-. "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, repo nháp $P, check / check_mcp / check_deny / pair / r5_rows
+. "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, repo nháp $P, check / check_deny / pair / r5_rows
 
 echo "── shell_norm.py: heredoc reader kinds, and the hooks fail closed without it"
 SN_DIR="$(cd "$(dirname "$HW")" && pwd)"

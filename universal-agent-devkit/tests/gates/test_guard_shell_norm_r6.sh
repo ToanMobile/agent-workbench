@@ -8,7 +8,7 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HW="${HW_HOOK:-$DEVKIT_DIR/hooks/hardware_safety_gate.sh}"
 GG="${GG_HOOK:-$DEVKIT_DIR/hooks/block-dangerous-git.sh}"
-. "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, repo nháp $P, check / check_mcp / check_deny / pair / r5_rows
+. "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, repo nháp $P, check / check_deny / pair / r5_rows
 
 echo "── r6 (independent verification of 76899f4; every dangerous row below ran its harmless marker twin under /bin/bash 3.2 and zsh 5.9): a quote character of a"
 echo "   heredoc body that stays in the scan is no quote of the command (P0-1: it paired with one in another body and hid the command between them from every"

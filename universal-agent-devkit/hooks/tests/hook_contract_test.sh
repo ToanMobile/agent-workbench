@@ -822,41 +822,23 @@ hwcase 0 'adb shell pkill logcat' "${AUTO}"
 hwcase 0 'adb shell "pkill -f logcat"' "${AUTO}"
 hwcase 0 'adb shell pidof logcat' "${AUTO}"
 hwcase 2 'adb shell logcat -f /data/local/tmp/l.txt & sleep 5; echo "x &"' "${AUTO}"
-# The same guard through replicant-mcp (profiles android/automotive: essential_mcps).
-# Tool names and input schemas from replicant-mcp 1.6.7 dist/tools/*.js: adb-shell
-# {command} and adb-app {operation, packageName} have no device field — they run on the
-# server's selected device, or the only online one. Its own process-runner blocks
-# `rm -rf /system`, dd, su, format, but not `mount … rw /system` or `pm uninstall
-# <system package>`, and knows nothing of the device policy.
+# replicant-mcp was removed from the kit (09/11/2026): its tools are no longer mapped to an adb command, so the guard lets them pass.
+# mobile-mcp (the only device MCP) is covered in depth by tests/gates/test_hw_mobile_mcp.sh; here only the hook contract.
 mcpcase() { # want tool input-json [ENV=VAL ...]
   want="$1"; tool="$2"; input="$3"; shift 3
   run_case "hw-gate[${want}]: mcp ${tool} ${input}${1:+ [${1%%,*}…]}" hardware_safety_gate.sh "${want}" \
-    "{\"tool_name\":\"mcp__replicant-mcp__${tool}\",\"tool_input\":${input}}" \
+    "{\"tool_name\":\"mcp__${tool}\",\"tool_input\":${input}}" \
     XDG_CONFIG_HOME="${SANDBOX}/xdg" ADB_DENY_SERIALS= ADB_ALLOW_SERIALS= ANDROID_SERIAL= "$@"
 }
-mcpcase 2 adb-shell '{"command":"pm uninstall --user 0 com.android.systemui"}'
-mcpcase 2 adb-shell '{"command":"mount -o rw,remount /system"}'
-mcpcase 2 adb-shell '{"command":"rm -rf /system/app/Launcher"}'
-mcpcase 0 adb-shell '{"command":"ls /sdcard"}'
-mcpcase 0 adb-shell '{"command":"rm -rf /sdcard/Download/shots"}'
-mcpcase 2 adb-app '{"operation":"uninstall","packageName":"com.android.systemui"}'
-mcpcase 0 adb-app '{"operation":"uninstall","packageName":"com.shop.app"}'
-mcpcase 2 adb-device '{"operation":"select","deviceId":"RFCW504KFKJ"}' "${DENY}"
-mcpcase 0 adb-device '{"operation":"select","deviceId":"IVI01"}' "${DENY}"
-mcpcase 2 adb-shell '{"command":"ls"}' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
-mcpcase 0 adb-shell '{"command":"ls"}' "${DENY}" "${HWP}" FAKE_SERIAL=IVI01
-mcpcase 2 ui-capture '{"operation":"screenshot"}' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
-mcpcase 2 adb-app '{"operation":"install","apkPath":"app.apk"}' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
-# `adb-device list` auto-selects the only online device: checked like a device call.
-mcpcase 2 adb-device '{"operation":"list"}' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
-mcpcase 0 adb-device '{"operation":"list"}' "${DENY}" "${HWP}"
-mcpcase 0 gradle-build '{"operation":"assembleDebug"}' "${DENY}" "${HWP}" FAKE_SERIAL=RFCWA1KQT1Y
-mcpcase 2 adb-shell '{"command":"ls"}' ADB_ALLOW_SERIALS=IVI01 "${HWP}" FAKE_SERIAL=RFCW504KFKJ
-# a tool this version does not have: its serial-like field is still checked
-mcpcase 2 adb-reboot '{"deviceId":"RFCW504KFKJ"}' "${DENY}"
-# An MCP payload never takes the Bash fast path (its "command" is a DEVICE command).
+mcpcase 2 mobile-mcp__mobile_uninstall_app '{"device":"emulator-5554","packageName":"com.android.systemui"}'
+mcpcase 0 mobile-mcp__mobile_uninstall_app '{"device":"emulator-5554","packageName":"com.shop.app"}'
+mcpcase 2 mobile-mcp__mobile_clear_app_data '{"device":"RFCW504KFKJ","packageName":"com.shop.app"}' "${DENY}"
+mcpcase 0 mobile-mcp__mobile_clear_app_data '{"device":"IVI01","packageName":"com.shop.app"}' "${DENY}"
+mcpcase 2 mobile-mcp__mobile_launch_app '{"packageName":"com.shop.app"}'
+mcpcase 0 replicant-mcp__adb-shell '{"command":"pm uninstall --user 0 com.android.systemui"}'
+# An MCP payload never takes the Bash fast path (its device is a parameter, not a command line).
 run_case "hw-gate: mcp payload skips the fast path (no python3)" hardware_safety_gate.sh 2 \
-  '{"tool_name":"mcp__replicant-mcp__adb-shell","tool_input":{"command":"pm uninstall com.android.systemui"}}' PATH="${NOJQ_BIN}"
+  '{"tool_name":"mcp__mobile-mcp__mobile_uninstall_app","tool_input":{"device":"emulator-5554","packageName":"com.android.systemui"}}' PATH="${NOJQ_BIN}"
 
 # Destructive rm in the project (Claude's `Bash(rm -rf *)` deny misses -fr, -r -f,
 # --recursive --force; Codex/Gemini/Cursor had nothing). CLAUDE_PROJECT_DIR=SANDBOX.

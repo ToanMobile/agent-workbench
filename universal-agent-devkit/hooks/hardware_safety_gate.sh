@@ -88,19 +88,6 @@
 #     listElementsAtEnd touches the batch device); the four cloud tools and any call that names no device are refused.
 #     A denylist entry must be written the way the device is NAMED to the tool: list both the adb serial and the AVD name /
 #     Simulator UDID. An MCP tool name anywhere in the payload sends it to the parser, never the fast path (tests/gates/test_hw_mobile_mcp.sh).
-#   • the same device checks through replicant-mcp (PreToolUse `mcp__replicant-mcp__.*`;
-#     tool names and schemas from replicant-mcp 1.6.7 dist/tools/*.js). Each call is
-#     turned into the adb command it runs: adb-shell {command} → `adb shell <command>`,
-#     adb-app uninstall|clear-data|stop|launch|install|list → `adb shell pm …` / `adb
-#     install`, adb-device select|wait|properties {deviceId} → `adb -s <deviceId> …`,
-#     adb-logcat / ui-* → a device call. adb-shell and adb-app carry no device field:
-#     they run on the server's selected device or the only online one — the device
-#     `adb get-serialno` names, as for a bare `adb`. `adb-device list` auto-selects the
-#     only online device, so it is checked too. gradle-*, emulator-device, cache, rtfm
-#     never reach a device and are allowed. A replicant tool this map does not know
-#     is checked through its command-like string fields and serial/deviceId field.
-#     replicant's own process-runner blocks `rm -rf /system`, dd, su and format, but
-#     not `mount … rw /system`, `pm uninstall <system package>` or the device policy.
 #
 # FAIL-CLOSED: malformed JSON, missing python3 or an uncaught internal error → exit 2 (the command is not
 # allowed through unexamined). Empty stdin → exit 0 (no tool call to judge).

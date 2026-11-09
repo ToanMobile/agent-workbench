@@ -110,6 +110,31 @@ mmf 0 allowlist mobile_list_elements_on_screen '{"device":"emulator-5554"}' "emu
 mmf 0 allowlist mobile_list_elements_on_screen '{"device":"Pixel 7 API 34"}' "emulator-5554,Pixel 7 API 34"
 mmf 2 allowlist mobile_list_elements_on_screen '{"device":"API"}' "emulator-5554,Pixel 7 API 34"
 
+echo "── mobile-mcp: the id measured on a real emulator (09/11, mobile-mcp 1.0.16 on AVD PhoneConnect = emulator-5556)"
+# mobile_list_available_devices returned {"id":"PhoneConnect","name":"PhoneConnect","type":"emulator"}: the AVD NAME, not the serial.
+# The denylist therefore has to hold both; a serial alone does not catch the id the MCP passes (characterization, no code change).
+mmf 2 denylist mobile_clear_app_data '{"device":"PhoneConnect","packageName":"com.example.app"}' "PhoneConnect"
+mmf 2 denylist mobile_clear_app_data '{"device":"PhoneConnect","packageName":"com.example.app"}' "emulator-5556,PhoneConnect"
+mmf 2 denylist mobile_clear_app_data '{"device":"emulator-5556","packageName":"com.example.app"}' "emulator-5556,PhoneConnect"
+mmf 0 denylist mobile_clear_app_data '{"device":"PhoneConnect","packageName":"com.example.app"}' "emulator-5556"
+mmf 0 allowlist mobile_list_elements_on_screen '{"device":"PhoneConnect"}' "emulator-5556,PhoneConnect"
+
+# mr <want rc> <tool> <json>: replicant-mcp is gone from the kit (09/11): its tools are no longer mapped to an adb command, so the
+# device guard no longer judges them (mobile-mcp above is the only device MCP). DENIED1 is on the denylist and still passes here.
+mr() {
+  local want="$1" name="$2" inp="$3" tool="mcp__replicant-mcp__$2"
+  python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[3],"hook_event_name":"PreToolUse",
+    "tool_name":sys.argv[1],"tool_input":json.loads(sys.argv[2])}))' "$tool" "$inp" "$P" > "$TMP/in.json"
+  ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" ADB_DENY_SERIALS=DENIED1 ADB_ALLOW_SERIALS= ANDROID_SERIAL= \
+      bash "$HW" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
+  local rc=$?
+  if [ "$rc" = "$want" ] && ! crashed; then ok "mr rc $rc: $name $inp"; else fail "mr rc $rc (want $want): $name $inp — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; fi
+}
+echo "── replicant-mcp tools are no longer special (removed from the kit 09/11)"
+mr 0 adb-shell '{"command":"pm uninstall --user 0 com.android.systemui"}'
+mr 0 adb-device '{"operation":"select","deviceId":"DENIED1"}'
+mr 0 adb-app '{"operation":"uninstall","packageName":"com.android.systemui"}'
+
 echo "── mobile-mcp: the four kit configs pin 1.0.16 and switch the vendor telemetry off (review 09/11)"
 # Without MOBILEMCP_DISABLE_TELEMETRY every tool call is posted to us.i.posthog.com (tool name, device count, hashed host id) and
 # get_more_tools sends the agent's free text to the vendor (server.js L142-194, L268-276).
