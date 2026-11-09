@@ -157,6 +157,28 @@ check 2d 'adb -s 192.168.1.20:05555 reboot'
 check 2 '${X:=rm} -rf ~'
 check 2 '$X$Y -rf ~'
 
+echo "— vòng 2 (reviewer R7–R10)"
+# R7: giá trị ANDROID_SERIAL lấy từ lượt đọc theo nháy (đã cắt heredoc/comment/nháy), không từ chuỗi thô
+check 0 'rg "a|export ANDROID_SERIAL=R58PHONE01|b" . && adb shell ls' ANDROID_SERIAL=emulator-5554
+check 0 "grep -E 'x|export ANDROID_SERIAL=R58PHONE01|y' notes.txt && adb shell ls" ANDROID_SERIAL=emulator-5554
+check 0 "$(printf 'cat <<\\EOF > n.txt\nexport ANDROID_SERIAL=R58PHONE01\nEOF\nadb shell ls')" ANDROID_SERIAL=emulator-5554
+check 2d 'export ANDROID_SERIAL=R58PHONE01; adb reboot' ANDROID_SERIAL=emulator-5554
+# R8: ANDROID_SERIAL của phiên vẫn được xét cùng giá trị export (không làm mềm cổng so với main)
+check 2d 'ANDROID_SERIAL=emulator-5554; X=$(true) adb reboot' ANDROID_SERIAL=R58PHONE01
+check 2d '(export ANDROID_SERIAL=emulator-5554); adb reboot' ANDROID_SERIAL=R58PHONE01
+check 2d 'false && export ANDROID_SERIAL=emulator-5554; adb reboot' ANDROID_SERIAL=R58PHONE01
+check 2d "export ANDROID_SERIAL=emulator-5554; bash -c 'adb reboot'" ANDROID_SERIAL=R58PHONE01
+# R9: biến ở vị trí lệnh chỉ phán như rm khi mọi cờ thuộc tập cờ của rm; xargs giữ tiền tố
+check 0 '"$PYTHON" -m pytest -rA .'
+check 0 '"$TAR" -rf a.tar .'
+check 2 'echo x | xargs $X -rf ~'
+check 2 '$UNKNOWN -rf ~'
+# R10: -s / -d / -e / -t trong lệnh thắng ANDROID_SERIAL của phiên; -s "" không rơi về serial của phiên
+check 2u 'adb -s "" wait-for-device reboot' ANDROID_SERIAL=emulator-5554 FAKE_FAIL=1
+check 2u 'adb -d wait-for-device reboot' ANDROID_SERIAL=emulator-5554 FAKE_FAIL=1
+check 2u 'adb -e wait-for-device reboot' ANDROID_SERIAL=emulator-5554 FAKE_FAIL=1
+check 0 'adb -s emulator-5554 wait-for-device reboot' ANDROID_SERIAL=emulator-5554 FAKE_FAIL=1
+
 # adb giả chỉ được hỏi get-serialno: lệnh thật (reboot, shell, wait-for-device …) không bao giờ chạy
 if grep -v 'get-serialno$' "$ADB_FAKE_LOG" | grep -q .; then
   fail "hook chạy adb ngoài get-serialno: $(grep -v 'get-serialno$' "$ADB_FAKE_LOG" | head -3 | tr '\n' ';')"
