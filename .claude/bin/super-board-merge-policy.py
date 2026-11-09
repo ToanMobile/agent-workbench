@@ -359,10 +359,12 @@ def main() -> int:
     # thư mục reviewable, OCR T0209) hay nhóm nhạy cảm.
     gone = {"delete-protected": None, "delete-reviewable": None}
     other = [x for x in protected if x not in REVIEWABLE_DELETE_GLOBS]
+    sensitive = [x for x in protected if x in SENSITIVE_DELETE_GLOBS]
     for p in deleted_paths(diff):
         # "" = xoá một file không đọc được đường dẫn: coi như chạm file bảo vệ (fail-closed), trừ khi protected_paths tắt ([]).
         # Nhóm nhạy cảm so cả dạng chữ thường (#889): `.ENV`, `app.KEYSTORE` không lọt bước lọc đầu; protected_paths=[] vẫn tắt cổng.
-        g = ((matches(p, protected) or (protected and matches(p.lower(), SENSITIVE_DELETE_GLOBS)))
+        # Chỉ phần nhóm nhạy cảm nằm TRONG protected: danh sách tự khai THAY mặc định, không áp thêm nhóm nhạy cảm.
+        g = ((matches(p, protected) or matches(p.lower(), sensitive))
              if p else (protected and "an unreadable diff header"))
         if not g:
             continue

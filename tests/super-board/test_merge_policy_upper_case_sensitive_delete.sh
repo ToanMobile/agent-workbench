@@ -30,6 +30,16 @@ del_diff "docs/keystore-notes.md"
 echo '{"merge_policy":{"protected_paths":["docs/Keep/**"]}}' > "$TMP/cfg.json"
 del_diff "docs/keep/a.md"
 [ -z "$(cats)" ] && ok "protected_paths tự khai vẫn phân biệt hoa thường" || fail "glob tự khai bị hạ chữ: [$(cats)]"
+# Ca dương: glob tự khai vẫn chặn đúng đường dẫn khớp (R2)
+del_diff "docs/Keep/a.md"
+[ "$(cats)" = "delete-protected" ] && ok "protected_paths tự khai chặn docs/Keep/a.md" || fail "docs/Keep/a.md lọt cổng: [$(cats)]"
+# Danh sách tự khai THAY mặc định: nhóm nhạy cảm không được áp thêm (R1)
+del_diff ".ENV"
+[ -z "$(cats)" ] && ok "protected_paths tự khai thay mặc định: .ENV vẫn auto" || fail "nhóm nhạy cảm bị áp thêm khi tự khai: [$(cats)]"
+# Tự khai CÓ nhóm nhạy cảm thì file hoa vẫn bị chặn
+echo '{"merge_policy":{"protected_paths":["**/.env*"]}}' > "$TMP/cfg.json"
+del_diff ".ENV"
+[ "$(cats)" = "delete-protected" ] && ok "tự khai **/.env* chặn .ENV" || fail ".ENV lọt dù tự khai **/.env*: [$(cats)]"
 echo '{"merge_policy":{"protected_paths":[]}}' > "$TMP/cfg.json"
 del_diff ".ENV"
 [ -z "$(cats)" ] && ok "protected_paths=[] vẫn tắt cổng" || fail "protected_paths=[] bị bỏ qua: [$(cats)]"
