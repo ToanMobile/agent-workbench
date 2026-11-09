@@ -85,7 +85,12 @@
   .kpi .label { color: var(--muted); font-size: 12.5px; }
   .kpi .value { font-size: 20px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .kpi .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
-  .acc-head { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; }
+  /* Thẻ tài khoản: các khối cùng loại luôn cao bằng nhau giữa các thẻ, nút nằm đáy thẻ */
+  #claude .card { display: flex; flex-direction: column; }
+  .acc-head { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: flex-start; justify-content: flex-end; }
+  .acc-head > :first-child { order: 2; flex: 1 1 100%; min-width: 0; }
+  .acc-head > .badge { order: 1; }
+  #claude .acc-head .acc-mail { min-height: 3em; }
   .acc-name { font-weight: 600; line-height: 1.3; }
   .acc-mail { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
   .badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
@@ -95,14 +100,17 @@
   .b-frozen { background: color-mix(in srgb, var(--c-blocked) 16%, transparent); color: var(--t-blocked); }
   .b-prio { background: color-mix(in srgb, var(--c-qa) 16%, transparent); color: var(--t-qa); }
   .meter { margin-top: 12px; }
-  .meter .row { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); }
+  .meter .row { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--muted); }
+  .meter .sub { font-size: 12px; color: var(--muted); min-height: 1.5em; font-variant-numeric: tabular-nums; }
+  .acc-note { min-height: calc(2 * 3.7em + 12px); margin-top: 12px; }
   .meter .row b { color: var(--ink); font-variant-numeric: tabular-nums; }
   .bar { height: 8px; border-radius: 999px; background: var(--floor2); overflow: hidden; margin-top: 4px; }
   .bar > i { display: block; height: 100%; border-radius: inherit; background: var(--c-done); transition: width .4s ease; }
   .bar > i.mid { background: var(--c-building); } .bar > i.low { background: var(--c-blocked); }
   .facts { margin: 12px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12.5px; }
+  .facts dd.two { white-space: pre-line; min-height: 3em; }
   .facts dt { color: var(--muted); } .facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-  .acc-actions { margin-top: 12px; display: flex; gap: 8px; }
+  .acc-actions { margin-top: auto; padding-top: 12px; display: flex; gap: 8px; }
   .acc-actions .btn { flex: 1; }
 
   .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -384,19 +392,36 @@
     var v = Math.max(0, Math.min(100, Number(pct) || 0));
     var i = el('i', { class: v <= 15 ? 'low' : v <= 40 ? 'mid' : '' }); i.style.width = v + '%';
     return el('div', { class: 'meter' }, [
-      el('div', { class: 'row' }, [el('span', { text: label }), el('span', null, [el('b', { text: 'Còn ' + v + '%' }), extra ? ' · ' + extra : ''])]),
+      el('div', { class: 'row' }, [el('span', { text: label }), el('b', { text: 'Còn ' + v + '%' })]),
+      el('div', { class: 'sub', text: extra || '\u00a0' }),
       el('div', { class: 'bar', role: 'progressbar', 'aria-label': label, 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(v) }, [i])
     ]);
   }
   function facts(rows) {
     var dl = el('dl', { class: 'facts' });
-    rows.forEach(function (r) { if (!r) return; dl.appendChild(el('dt', { text: r[0] })); dl.appendChild(el('dd', { text: r[1] })); });
+    rows.forEach(function (r) { if (!r) return; dl.appendChild(el('dt', { text: r[0] })); dl.appendChild(el('dd', { class: r[2] === 'two' ? 'two' : '', text: r[2] === 'two' ? String(r[1]).replace(' · ', '\n') : r[1] })); });
     return dl;
   }
   function switchBtn(p) {
     var b = el('button', { type: 'button', class: 'btn' + (p.isActive ? '' : ' primary'), 'data-switch': p.id }, [p.isActive ? 'Đang dùng' : 'Chuyển sang']);
     if (p.isActive) b.disabled = true;
+    if (p.accountMismatch) { b.disabled = true; b.title = 'Profile đang đăng nhập sai tài khoản, đăng nhập lại trước khi chuyển'; }
     return b;
+  }
+  function needsLogin(p) {
+    return p.vendor === 'anthropic' && (p.quotaStale || Boolean(p.accountMismatch)) && p.quotaIssue !== 'throttled' && p.quotaIssue !== 'network';
+  }
+  function loginBtn(p) {
+    return el('button', { type: 'button', class: 'btn', 'data-login': p.id }, ['Đăng nhập lại']);
+  }
+  function issueText(reason, mm, idle) {
+    if (reason === 'token_expired' && idle) return 'chưa dùng gần đây nên token đã hết hạn (bình thường). Bấm "Đăng nhập lại" khi muốn chuyển sang tài khoản này.';
+    if (reason === 'wrong_account') return 'sai tài khoản: thư mục đang đăng nhập ' + (mm ? mm.actual : '?') + ', cần ' + (mm ? mm.expected : '?') + '. Bấm "Đăng nhập lại" bên dưới.';
+    if (reason === 'token_expired') return 'token hết hạn. Bấm "Đăng nhập lại" bên dưới.';
+    if (reason === 'throttled') return 'endpoint quota đang giới hạn (429), sẽ thử lại sau.';
+    if (reason === 'network') return 'lỗi mạng khi lấy quota, sẽ thử lại sau.';
+    if (reason === 'no_credentials') return 'chưa có đăng nhập trong Keychain. Bấm "Đăng nhập lại" bên dưới.';
+    return 'chưa làm mới được.';
   }
   function accountCard(p) {
     var n = splitName(p.name);
@@ -406,16 +431,19 @@
       el('div', null, [el('div', { class: 'acc-name', text: n.title }), el('div', { class: 'acc-mail', text: n.detail })]),
       badgeFor(p)
     ]));
-    card.appendChild(meter('Quota 5 giờ', p.remainingPct, p.resetAtMs ? ('reset ' + fmtTime(p.resetAtMs)) : ''));
-    if (p.weeklyRemainingPct !== null && p.weeklyRemainingPct !== undefined) card.appendChild(meter('Quota 7 ngày', p.weeklyRemainingPct));
+    var soft = !p.isActive && !p.isParallelActive && p.quotaIssue === 'token_expired';
+    if (p.quotaStale) card.appendChild(el('div', { class: 'acc-mail acc-note', role: soft ? 'status' : 'alert', text: 'Số liệu cũ (' + ago(p.quota.updatedAtMs) + ') — ' + issueText(p.quotaIssue, p.accountMismatch, soft) }));
+    else card.appendChild(meter('Quota 5 giờ', p.remainingPct, p.resetAtMs ? ('reset ' + fmtTime(p.resetAtMs)) : ''));
+    if (!p.quotaStale && p.weeklyRemainingPct !== null && p.weeklyRemainingPct !== undefined) card.appendChild(meter('Quota 7 ngày', p.weeklyRemainingPct, p.weeklyResetFormatted ? ('reset ' + p.weeklyResetFormatted) : ''));
     card.appendChild(facts([
-      ['Đã dùng (5 giờ)', p.usedPct + '%'],
-      ['Reset / mở khóa', p.resetAtMs ? (fmtTime(p.resetAtMs) + ' · còn ' + fmtDur(resetLeft)) : 'Chưa có mốc'],
+      ['Đã dùng (5 giờ)', p.usedPct == null ? '—' : p.usedPct + '%'],
+      ['Reset tuần', p.weeklyResetAtMs ? (p.weeklyResetFormatted + ' · còn ' + fmtDur((p.weeklyResetAtMs - Date.now()) / 1000)) : '—', 'two'],
+      ['Reset / mở khóa', p.resetAtMs ? (fmtTime(p.resetAtMs) + ' · còn ' + fmtDur(resetLeft)) : 'Chưa có mốc', 'two'],
       p.isFrozen && p.frozenUntilMs ? ['Đóng băng tới', fmtTime(p.frozenUntilMs, true)] : null,
       ['Repo đang gán', String(p.assignedRepoCount || 0)],
       ['Số liệu quota', p.quota.live ? ('live · ' + ago(p.quota.updatedAtMs)) : (p.quota.source ? (p.quota.source + ' · ' + ago(p.quota.updatedAtMs)) : 'chưa có số liệu live')]
     ]));
-    card.appendChild(el('div', { class: 'acc-actions' }, [switchBtn(p)]));
+    card.appendChild(el('div', { class: 'acc-actions' }, needsLogin(p) ? [loginBtn(p), switchBtn(p)] : [switchBtn(p)]));
     return card;
   }
   function backupCard(p) {
@@ -439,7 +467,7 @@
   function renderSummary() {
     var a = state.activeProfile, h = state.health, s = $('#summary'); s.innerHTML = '';
     var cl = cooldownLeft();
-    s.appendChild(kpi('Đang dùng', splitName(a.name).title, 'Còn ' + a.remainingPct + '%' + (a.resetAtMs ? ' · reset ' + fmtTime(a.resetAtMs) : '')));
+    s.appendChild(kpi('Đang dùng', splitName(a.name).title, (a.remainingPct == null ? 'Số liệu cũ' : 'Còn ' + a.remainingPct + '%') + (a.resetAtMs ? ' · reset ' + fmtTime(a.resetAtMs) : '') + (a.weeklyResetFormatted ? ' · tuần reset ' + a.weeklyResetFormatted : '')));
     var cd = kpi('Chống ban (Claude ↔ Claude)', cl > 0 ? ('Chờ ' + fmtDur(cl)) : 'Đổi ngay được', 'Nghỉ ' + state.antiBan.cooldownMinutes + ' phút · đóng băng 429: ' + Math.round(state.antiBan.rateLimitFreezeSec / 3600 * 10) / 10 + ' giờ');
     cd.querySelector('.value').id = 'cdLive';
     s.appendChild(cd);
@@ -574,7 +602,7 @@
     if (busy) return Promise.resolve();
     busy = true;
     if (btn) btn.setAttribute('aria-busy', 'true');
-    document.querySelectorAll('[data-act],[data-switch],#cdSeg button,#cdForm button,#btnRefresh,#repoAddForm button,[data-repo-save],[data-repo-remove],[data-repo-select]').forEach(function (x) { x.disabled = true; });
+    document.querySelectorAll('[data-act],[data-switch],[data-login],#cdSeg button,#cdForm button,#btnRefresh,#repoAddForm button,[data-repo-save],[data-repo-remove],[data-repo-select]').forEach(function (x) { x.disabled = true; });
     return api('/api/cc-switcher/action', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Agent-Office': '1' }, body: JSON.stringify(body) })
       .then(function (j) {
         if (j.state) { state = j.state; loadedAt = Date.now(); }
@@ -618,6 +646,8 @@
       });
       return;
     }
+    var lg = e.target.closest('[data-login]');
+    if (lg && !lg.disabled) { act({ action: 'login', target: lg.dataset.login }, lg); return; }
     var sw = e.target.closest('[data-switch]');
     if (sw && !sw.disabled) {
       var id = sw.dataset.switch;

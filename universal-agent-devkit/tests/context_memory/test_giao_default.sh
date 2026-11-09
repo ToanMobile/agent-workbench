@@ -27,7 +27,6 @@ out() { printf '{"prompt":"%s","session_id":"s%s"}' "${1:-$P}" "$RANDOM$RANDOM" 
 setg() { printf '%s' "$1" > "$ANTIGRAVITY_PM_GLOBAL_CONFIG"; }
 setp() { printf '%s' "$1" > "$TMP/proj/.antigravity-pm.json"; }
 clear() { rm -f "$ANTIGRAVITY_PM_GLOBAL_CONFIG" "$TMP/proj/.antigravity-pm.json"; }
-skill_line() { printf '%s' "$1" | grep -o 'Skill phù hợp: [^\\]*' | head -1; }
 
 clear
 o="$(out)"
@@ -38,10 +37,7 @@ setg '{"giaoDefault": true}'
 o="$(out)"
 printf '%s' "$o" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "1: global giaoDefault=true -> the standing order is added" || fail "1: true, no order: $o"
 printf '%s' "$o" | grep -q "DUAL_AGENT_DELEGATION" && fail "  … the flag must not add a real intent (it flips the noise filter and the GENERAL_TASK fallback): $o" || ok "  … and no DUAL_AGENT_DELEGATION intent (an order, not a classification)"
-# the flag takes no slot of the 5-skill line (INSTINCT-022: a skill added to a broad intent pushed others out)
-PU="sửa lỗi hud bị vỡ layout trên màn hình chính"
-on="$(skill_line "$(out "$PU")")"; clear; off="$(skill_line "$(out "$PU")")"; setg '{"giaoDefault": true}'
-[ -n "$on" ] && [ "$on" = "$off" ] && ok "  … and the skill line is unchanged by the flag ($on)" || fail "  … the flag changed the skill line: on='$on' off='$off'"
+# (the skill-line slot check is gone: the hook prints no skill line since 08/11, test_prompt_hook_dead_hints.sh)
 printf '%s' "$o" | grep -q "câu hỏi" && ok "  … the order exempts a turn that changes nothing (a question is answered directly)" || fail "  … no exemption for questions"
 
 setp '{"giaoDefault": false}'

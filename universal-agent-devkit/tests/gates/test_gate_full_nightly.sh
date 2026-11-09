@@ -142,6 +142,7 @@ open(sys.argv[1], "w").write('#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho %s\n'
 PY
 chmod +x "$T/bin/gh"
 rm -f "$T/card.args"
+rm -f "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: thẻ chỉ cho đỏ MỚI — ca này cần REG-FAKE-01 là đỏ mới
 rc=$(run_gf --slug fake/repo)
 chk "b8. đã có issue mở cùng tiêu đề: không gọi lệnh tạo thẻ, summary dẫn issue cũ" \
   '[ ! -e "$T/card.args" ] && grep -q "issues/7" "$T/logs/summary-latest.md"' "$(tail -5 "$T/out")"
@@ -157,12 +158,14 @@ PY
 }
 gh_returns "🐛 [fix] gate: thẻ mở tay" "https://github.com/fake/repo/issues/659" "Suite đỏ: REG-FAKE-01 trên main"
 rm -f "$T/card.args" "$T/gh.calls"
+rm -f "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: thẻ chỉ cho đỏ MỚI — ca này cần REG-FAKE-01 là đỏ mới
 rc=$(run_gf --slug fake/repo)
 chk "b9. thẻ mở tay có mã suite trong body: không gọi lệnh tạo thẻ, summary dẫn thẻ đó" \
   '[ ! -e "$T/card.args" ] && grep -q "issues/659" "$T/logs/summary-latest.md"' "$(tail -5 "$T/out")"
 chk "b9b. gh issue comment được gọi vào đúng thẻ mở tay" 'grep -q "issue comment https://github.com/fake/repo/issues/659" "$T/gh.calls"'
 gh_returns "🐛 [fix] gate: thẻ mở tay" "https://github.com/fake/repo/issues/659" "Suite đỏ: REG-FAKE-011 và REG-OTHER-01"
 rm -f "$T/card.args"
+rm -f "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: thẻ chỉ cho đỏ MỚI — ca này cần REG-FAKE-01 là đỏ mới
 rc=$(run_gf --slug fake/repo)
 chk "b10. body chỉ chứa mã suite dài hơn (REG-FAKE-011): không khớp lỏng, vẫn mở thẻ mới" '[ -e "$T/card.args" ]' "$(tail -5 "$T/out")"
 chk "b10b. gh được gọi với --search \"<suite>\" in:title,body và --json title,url,body" \
@@ -170,6 +173,7 @@ chk "b10b. gh được gọi với --search \"<suite>\" in:title,body và --json
 # b11. mã suite chỉ ở tiêu đề (body rỗng) ⇒ vẫn nhận thẻ đó
 gh_returns "🐛 [fix] gate: REG-FAKE-01 đỏ trên main" "https://github.com/fake/repo/issues/660" ""
 rm -f "$T/card.args" "$T/gh.calls"
+rm -f "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: thẻ chỉ cho đỏ MỚI — ca này cần REG-FAKE-01 là đỏ mới
 rc=$(run_gf --slug fake/repo)
 chk "b11. mã suite chỉ ở tiêu đề: nhận thẻ, không mở thẻ mới" \
   '[ ! -e "$T/card.args" ] && grep -q "issue comment https://github.com/fake/repo/issues/660" "$T/gh.calls"' "$(tail -5 "$T/out")"
@@ -182,6 +186,7 @@ open(sys.argv[1], "w").write('#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho %s\n' %
 PY
 chmod +x "$T/bin/gh"
 rm -f "$T/card.args" "$T/gh.calls"
+rm -f "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: thẻ chỉ cho đỏ MỚI — ca này cần REG-FAKE-01 là đỏ mới
 rc=$(run_gf --slug fake/repo)
 chk "b12. có cả thẻ body-only (mới) và thẻ CARD_PREFIX (cũ): ưu tiên thẻ CARD_PREFIX" \
   '[ ! -e "$T/card.args" ] && grep -q "issue comment https://github.com/fake/repo/issues/5 " "$T/gh.calls"' "$(cat "$T/gh.calls" 2>/dev/null)"
@@ -207,6 +212,7 @@ chk "c2. gate không chạy, khoá của lượt kia còn nguyên" \
   '[ ! -s "$T/gate.calls" ] && grep -q "$SLEEP_PID" "$COMMON/postfix-gate/gate-full.lock"'
 kill "$SLEEP_PID" 2>/dev/null; wait "$SLEEP_PID" 2>/dev/null; DEAD="$SLEEP_PID"; SLEEP_PID=""
 printf '{"pid": %s, "started": "x"}\n' "$DEAD" >"$COMMON/postfix-gate/gate-full.lock"
+rm -f "$COMMON/postfix-gate/last_full_green_kit"   # v26 mục 6: origin/green đã xanh cùng kit ⇒ lượt sẽ bỏ vì không có gì mới
 rc=$(run_gf --ref origin/green)
 chk "c3. pid đã chết: chiếm lại khoá, gate chạy, exit 0" '[ "$rc" = 0 ] && [ -s "$T/gate.calls" ]' "rc=$rc $(tail -3 "$T/out")"
 chk "c4. scratch đã gỡ, khoá đã nhả" 'no_scratch'
@@ -227,6 +233,7 @@ rm -f "$COMMON/postfix-gate/gate-full.lock"
 
 # d. tải cao ⇒ chờ tới hạn rồi chạy ----------------------------------------------------------------------------------------
 : >"$T/gate.calls"
+rm -f "$COMMON/postfix-gate/last_full_green_kit"   # v26 mục 6: như c3
 t0=$(date +%s)
 rc=$(DEVKIT_CAPACITY_LOAD=999 DEVKIT_CAPACITY_CORES=1 run_gf --ref origin/green --max-wait-s 2)
 dt=$(( $(date +%s) - t0 ))
@@ -287,7 +294,8 @@ chk "e10. log riêng của repo: DEVKIT_GATE_FULL_LOG_DIR = <log>/<slug>, stdout
 chk "e8. PATH của job có PATH đăng nhập của người dùng (thư mục uv), vẫn có /usr/bin" \
   'case ":$(px EnvironmentVariables.PATH):" in *":$T/uvbin:"*) true ;; *) false ;; esac && case ":$(px EnvironmentVariables.PATH):" in *":/usr/bin:"*) true ;; *) false ;; esac' \
   "PATH=$(px EnvironmentVariables.PATH)"
-chk "e2. StartCalendarInterval Hour 0 Minute 0" '[ "$(px StartCalendarInterval.Hour)" = 0 ] && [ "$(px StartCalendarInterval.Minute)" = 0 ]'
+chk "e2. StartCalendarInterval Hour 0 Minute 0 (v26 mục 6: mảng thứ Hai + thứ Năm)" '[ "$(px StartCalendarInterval.0.Hour)" = 0 ] && [ "$(px StartCalendarInterval.0.Minute)" = 0 ] \
+   && [ "$(px StartCalendarInterval.0.Weekday)" = 1 ] && [ "$(px StartCalendarInterval.1.Weekday)" = 4 ] && [ "$(px StartCalendarInterval.1.Hour)" = 0 ]'
 chk "e3. ProgramArguments: /usr/bin/nice -n 10 <python3 tuyệt đối> gate_full.py run --repo" \
   '[ "$(px ProgramArguments.0)" = /usr/bin/nice ] && [ "$(px ProgramArguments.1)" = -n ] && [ "$(px ProgramArguments.2)" = 10 ] \
    && case "$(px ProgramArguments.3)" in /*) [ -x "$(px ProgramArguments.3)" ] ;; *) false ;; esac \

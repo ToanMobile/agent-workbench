@@ -12,9 +12,9 @@
 #       templates/claude_settings.json (installer template) and
 #       .claude/settings.json (the DevKit's own dogfood config) wire the same
 #       hooks on the same events UNDER THE SAME MATCHERS (2026-09-23: a hook
-#       wired for `Bash` but not for `mcp__replicant-mcp__.*` in one registry
-#       used to pass), and each routes replicant-mcp's device tools through
-#       hardware_safety_gate.sh (the adb device policy must not be bypassable
+#       wired for `Bash` but not for the MCP matcher in one registry
+#       used to pass), and each routes mobile-mcp's device tools through
+#       hardware_safety_gate.sh (no registry still routes legacy-device-mcp, removed 09/11) (the adb device policy must not be bypassable
 #       through MCP).
 #   F2. Every hooks/*.sh is either wired in hooks/hooks.json or says
 #       "OPT-IN HELPER" in its header — no silent orphans.
@@ -61,6 +61,13 @@ REGISTRIES = {
     ".claude/settings.json": "dogfood config",
 }
 
+def routes_legacy_device(mt):
+    """True when the matcher selects a legacy-device-mcp tool. A matcher like "*" is not a regex: skipped (it names no tool)."""
+    try:
+        return bool(re.fullmatch(mt, "mcp__legacy-device-mcp__adb-shell"))
+    except re.error:
+        return False
+
 def wiring(path):
     """{event: set(hook basenames)}, the raw commands and {(event, matcher): set(basenames)}."""
     d = json.load(open(path))
@@ -88,12 +95,16 @@ for path, label in REGISTRIES.items():
 ref = wired.get("hooks/hooks.json", ({}, [], {}))[0]
 ref_m = wired.get("hooks/hooks.json", ({}, [], {}))[2]
 for path, (ev_map, _, by_m) in wired.items():
-    # replicant-mcp (android/automotive essential_mcps) exposes adb-shell / adb-app /
-    # adb-device: the device guard must see them in every registry.
-    routed = any(ev == "PreToolUse" and "hardware_safety_gate.sh" in hooks
-                 and re.fullmatch(mt, "mcp__replicant-mcp__adb-shell")
-                 for (ev, mt), hooks in by_m.items())
-    check(routed, f"{path} routes mcp__replicant-mcp__* to hardware_safety_gate.sh")
+    # legacy-device-mcp is removed from the kit (09/11/2026): no registry may still route its tools to the device guard.
+    gone = not any(routes_legacy_device(mt) for (ev, mt) in by_m)
+    check(gone, f"{path} has no matcher for mcp__legacy-device-mcp__*")
+    # mobile-mcp is the device MCP: every tool but get_more_tools is mobile_<name>, and install / uninstall /
+    # clear data / batch commands reach the device: the same guard must see them in every registry.
+    routed = all(any(ev == "PreToolUse" and "hardware_safety_gate.sh" in hooks and re.fullmatch(mt, t)
+                     for (ev, mt), hooks in by_m.items())
+                 for t in ("mcp__mobile-mcp__mobile_clear_app_data", "mcp__mobile-mcp__mobile_batch_commands",
+                           "mcp__mobile-mcp__mobile_login_to_cloud_provider"))
+    check(routed, f"{path} routes mcp__mobile-mcp__* to hardware_safety_gate.sh")
     if path == "hooks/hooks.json":
         continue
     same = {k: sorted(v) for k, v in ev_map.items()} == {k: sorted(v) for k, v in ref.items()}
@@ -109,6 +120,11 @@ for path, (ev_map, _, by_m) in wired.items():
                     f"-{sorted(ref_m.get((ev, mt), set()) - by_m.get((ev, mt), set()))}"
                     for ev, mt in sorted(set(by_m) | set(ref_m)) if by_m.get((ev, mt)) != ref_m.get((ev, mt)))
     check(same_m, f"{path} == hooks/hooks.json (per matcher)", diff)
+ROOT_REG = "../.claude/settings.json"   # the agent-workbench dogfood copy, when this kit sits inside the repo
+if os.path.exists(ROOT_REG):
+    root_matchers = [m.get("matcher") or "" for arr in (json.load(open(ROOT_REG)).get("hooks") or {}).values() for m in arr]
+    check(not any(routes_legacy_device(mt) for mt in root_matchers if mt),
+          f"{ROOT_REG} has no matcher for mcp__legacy-device-mcp__*")
 print()
 
 print("F2. no silent orphans")

@@ -1,206 +1,131 @@
 #!/usr/bin/env bash
-# Regression test: the block cache of hooks/regression_gate.sh (a Claude session whose previous Stop blocked on the same
-# content gets the stored block back without running the suites) is hardened (DevKit backlog #2, measured 2026-10-10):
-#   - a FAIL block that came with a suite that can never run on this machine (untested_exit) was never stored, so every
-#     Stop re-ran everything (GeelyEx2: exit-1 repeats of the same state, 21 runs / 213 min in 3.9 days);
-#   - the key missed the gitignored local config the suites read (.env, local.properties ...), so a FAIL from before a
-#     config fix was served again; and it had no age limit (REGRESSION_GATE_REPEAT_TTL_S, default 1800 s, 0 = never reuse);
-#   - a stored block outlived a fix of the hook itself (the key now holds the size and mtime of the hook and the gate);
-#   - sessions share regression_gate.state.json: the file was read at the start and written minutes later, so the
-#     session that finished last erased the entries of the one that finished first (read-merge-write under a lock now).
-# Unchanged and checked here as controls: a block with a BUDGET suite is never stored; a third Stop of one content is
-# released with a warning; unrelated ignored files do not drop the cache; the time of the reuse is the time of the REAL run.
+# Regression test (ported to gate speed v26 mục 1, 07/11): the repeat behaviour of hooks/regression_gate.sh on one content.
+# Before v26 the Stop hook RAN the gate and kept a per-session block cache (regression_gate.state.json "repeat": the stored block came back
+# without running the suites; its key held the tree, the gitignored local config, the hook and gate files; a TTL; a read-merge-write
+# across sessions). v26 removed that cache with the gate call: the Stop runs NO suite and starts no gate; it reads the receipt the agent's
+# own gate run wrote for the tree (bin/tree_fp.py receipt_for_tree) and blocks one content at most MAX_ATTEMPTS (2) times. What this file
+# keeps of the old contract, on the v26 mechanism:
+#   C1 no receipt: the first two Stops of one content block naming the gate command, the third is released with a warning
+#      (systemMessage, not a PASS); none of them starts the gate or a suite (the old hook ran the gate at the first Stop)
+#   C2 the agent's gate run writes a receipt (exit 0): every later Stop of that content is allowed from it, the gate is not started again
+#   C3 the content moves after the receipt (a tracked edit, then new bytes in an untracked file): blocked again, the old receipt is not reused
+#   C4 the gate file changes after the receipt (the old key held the gate's size and mtime; the receipt holds its sha256): blocked again
+# The kit under test is a COPY whose bin/post-fix-gate.py counts its own starts when GATE_SPAWNS names a file; only the hook's Stops set
+# it (the agent's gate runs here do not), so any count means the Stop started the gate. bash 3.2 compatible;
+# REPEATCACHE_KIT=<kit dir> tests another copy of the kit (a mutant, or the pre-v26 kit, must go red).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 export WORKTREE_TRUNK_MODE=0   # K12 (18/10): các ca ở đây là phiên sửa thẳng main (không trunk mode); ở trunk mode Stop tại main không gate (test_regression_gate_trunk_main.sh)
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-HOOK="$DEVKIT_DIR/hooks/regression_gate.sh"
-TMP="$(mktemp -d)" || exit 1
+SRC_KIT="${REPEATCACHE_KIT:-$DEVKIT_DIR}"
+TMP="$(mktemp -d)"
+case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
+if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
 trap 'rm -rf "$TMP"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+unset CLAUDE_CODE_SESSION_ID DEVKIT_SESSION_ID CLAUDE_SESSION_ID REGRESSION_GATE_MAX_ATTEMPTS DEVKIT_GATE_CACHE_MAX_S TEST_RUN_LOCK_WAIT_S
+export FLAKY_RETRY=0 VACUITY_REVERT=0 DEVKIT_GATE_CACHE=0
 
-# A Claude Code transcript (not degraded): the per-session cache applies.
+# the kit under test, with a gate that counts the starts the hook makes
+KIT="$TMP/kit"
+if ! { mkdir -p "$KIT" && cp -R "$SRC_KIT/hooks" "$KIT/hooks" && cp -R "$SRC_KIT/bin" "$KIT/bin"; }; then echo "✖ cannot copy the kit $SRC_KIT"; exit 1; fi
+for d in scripts profiles templates rules; do [ -e "$SRC_KIT/$d" ] && ln -s "$SRC_KIT/$d" "$KIT/$d"; done   # what the gate imports (scripts/governance ...)
+python3 -I -c 'import sys
+p = sys.argv[1]; src = open(p, encoding="utf-8").read().split("\n")
+i = next(n for n, l in enumerate(src) if l.startswith("import "))
+src.insert(i, "import os as _spawn_os; _spawn_os.environ.get(\"GATE_SPAWNS\") and open(_spawn_os.environ[\"GATE_SPAWNS\"], \"a\").write(\"x\")")
+open(p, "w", encoding="utf-8").write("\n".join(src))' "$KIT/bin/post-fix-gate.py" || { echo "✖ cannot instrument the gate copy"; exit 1; }
+HOOK="$KIT/hooks/regression_gate.sh"
+GATE="$KIT/bin/post-fix-gate.py"
+SPAWNS="$TMP/spawns"; : > "$SPAWNS"
+RUNS="$TMP/runs"; : > "$RUNS"
+spawns() { wc -c < "$SPAWNS" | tr -d ' '; }
+runs() { wc -c < "$RUNS" | tr -d ' '; }
+
+# A Claude Code transcript (not degraded).
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix it"},"uuid":"u1","sessionId":"c-r"}' > "$TMP/claude.jsonl"
-
-UNTESTED_SUITE=',{"id":"REG-U","name":"cannot run here","command":"exit 2","untested_exit":2}'
-# mkrepo <name> [extra suite json] [command of the failing suite]: a committed matrix with one failing suite that counts its runs
-# in $TMP/runs.<name>, then a dirty tree (the Stop only gates a change).
-mkrepo() {
-  local name="$1" extra="${2:-}" cmd="${3:-}"
-  R="$TMP/$name"; mkdir -p "$R/src" "$R/.agents"
-  : > "$TMP/runs.$name"
-  ( cd "$R" && git init -q . && git config user.email t@t && git config user.name t
-    printf '.env\n*.tmp\n' > .gitignore
-    echo "fun ok() = 1" > src/Core.kt
-    if [ -n "$cmd" ]; then printf '%s\n' "$cmd" > result.sh; else printf 'echo x >> "%s"\nexit 1\n' "$TMP/runs.$name" > result.sh; fi
-    cat > .agents/regression_matrix.active.json <<JSON
+R="$TMP/repo"; mkdir -p "$R/src" "$R/.agents" && cd "$R" || exit 1
+git init -q -b main . && git config user.email t@t && git config user.name t
+printf '.env\n.claude/\n.agents/CHECKLIST.md\n.agents/regression_status.json\n.agents/regression_checklist.md\n' > .gitignore
+echo "fun ok() = 1" > src/Core.kt
+cat > .agents/regression_matrix.active.json <<JSON
 {"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt"],
- "mandatory_regression_tests":[{"id":"REG-R","name":"core","command":"sh result.sh"}$extra]}]}
+ "mandatory_regression_tests":[{"id":"REG-R","name":"core","command":"printf x >> $RUNS"}]}]}
 JSON
-    git add -A && git commit -qm init ) >/dev/null
-  echo "fun ok() = 2" > "$R/src/Core.kt"
-  STATE="$R/.claude/audit-gate/regression_gate.state.json"
-}
-# stopx <repo> <session> [NAME=value ...]: one Stop. HOOKX overrides the hook under test. Sets RC; stdout/stderr in $TMP/out.<session>, err.<session>.
+git add -A && git commit -qm init
+
+# stopx <session>: one Stop of the kit copy's hook. Sets RC; stdout/stderr in $TMP/out, $TMP/err.
 stopx() {
-  local repo="$1" sid="$2"; shift 2
-  printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$sid" "${TP:-$TMP/claude.jsonl}" \
-    | env FLAKY_RETRY=0 "$@" CLAUDE_PROJECT_DIR="$repo" bash "${HOOKX:-$HOOK}" >"$TMP/out.$sid" 2>"$TMP/err.$sid"
+  printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$1" "$TMP/claude.jsonl" \
+    | env GATE_SPAWNS="$SPAWNS" CLAUDE_PROJECT_DIR="$R" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"
   RC=$?
 }
-runs() { grep -c x "$TMP/runs.$1" | tr -d ' '; }
-REUSED="cùng nội dung với lần chặn trước"
-# the stored block of a session: a field of state.repeat[sid]
-rep() { python3 -c 'import json,sys
-d = json.load(open(sys.argv[1])); e = (d.get("repeat") or {}).get(sys.argv[2]) or {}
-print(e.get(sys.argv[3], ""))' "$STATE" "$1" "$2"; }
-set_at() { python3 -c 'import json,sys,time
-p = sys.argv[1]; d = json.load(open(p))
-if sys.argv[3] == "none":
-    d["repeat"][sys.argv[2]].pop("at", None)
-else:
-    d["repeat"][sys.argv[2]]["at"] = time.time() - float(sys.argv[3])
-json.dump(d, open(p, "w"))' "$STATE" "$1" "$2"; }
+# gaterun: the agent's gate run, the command a block prints (--diff <verified_head> on this trunk branch once one is recorded)
+gaterun() {
+  local vh; vh="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verified_head") or "")' "$R/.claude/audit-gate/regression_gate.state.json" 2>/dev/null)"
+  git cat-file -e "${vh:-none}^{commit}" 2>/dev/null || vh=""
+  ( cd "$R" && CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --run-tests --scoped --brief ${vh:+--diff "$vh"} ) >"$TMP/gate.out" 2>&1; GRC=$?
+}
 
-# (1) control: a FAIL block on the same content is served again, the suites run once.
-mkrepo base
-stopx "$R" s1; r1=$RC; stopx "$R" s1; r2=$RC
-[ "$r1" = 2 ] && [ "$r2" = 2 ] && [ "$(runs base)" = 1 ] && grep -q "$REUSED" "$TMP/err.s1" \
-  && ok "(1) FAIL block: the second Stop on the same content reuses it, suites ran once" \
-  || fail "(1) control: rc=$r1/$r2 runs=$(runs base) err='$(head -2 "$TMP/err.s1" | tr '\n' ' ')'"
+stopx s1   # clean tree: verified_head = the start point
+CMD="post-fix-gate.py --run-tests --scoped --brief"
 
-# (2) a suite that cannot run on this machine (untested_exit) must not stop the FAIL block from being stored.
-mkrepo untested "$UNTESTED_SUITE"
-stopx "$R" s1; r1=$RC; stopx "$R" s1; r2=$RC
-[ "$r1" = 2 ] && [ "$r2" = 2 ] && [ "$(runs untested)" = 1 ] && grep -q "$REUSED" "$TMP/err.s1" \
-  && ok "(2) FAIL + a suite that cannot run here: the block is stored and reused" \
-  || fail "(2) FAIL with an UNTESTED suite was run again (rc=$r1/$r2 runs=$(runs untested))"
-
-# (3) the gitignored local config the suites read is part of the key; other ignored files are not.
-mkrepo localcfg
-stopx "$R" s1
-echo "TOKEN=1" > "$R/.env"; stopx "$R" s1
-[ "$RC" = 2 ] && [ "$(runs localcfg)" = 2 ] && ok "(3a) .env changed after the block: the suites ran again" \
-  || fail "(3a) stale FAIL served after a local config change (rc=$RC runs=$(runs localcfg))"
-mkrepo ignoredjunk
-stopx "$R" s1
-echo "scratch" > "$R/notes.tmp"; stopx "$R" s1
-[ "$RC" = 2 ] && [ "$(runs ignoredjunk)" = 1 ] && ok "(3b) an unrelated ignored file does not drop the cache" \
-  || fail "(3b) unrelated ignored file invalidated the cache (rc=$RC runs=$(runs ignoredjunk))"
-
-# (4) age limit: REGRESSION_GATE_REPEAT_TTL_S (default 1800 s, 0 = never reuse); the age counts from the REAL run.
-mkrepo ttlold
-stopx "$R" s1; set_at s1 2000; stopx "$R" s1
-[ "$RC" = 2 ] && [ "$(runs ttlold)" = 2 ] && ok "(4a) a block older than 1800 s is not reused: the suites ran again" \
-  || fail "(4a) expired block reused (rc=$RC runs=$(runs ttlold))"
-mkrepo ttlyoung
-stopx "$R" s1; set_at s1 100; before="$(rep s1 at)"; stopx "$R" s1; after="$(rep s1 at)"
-[ "$RC" = 2 ] && [ "$(runs ttlyoung)" = 1 ] && [ -n "$before" ] && [ "$before" = "$after" ] \
-  && ok "(4b) a block of 100 s is reused, and the reuse keeps the time of the real run" \
-  || fail "(4b) young block (rc=$RC runs=$(runs ttlyoung) at $before -> $after)"
-mkrepo ttlenv
-stopx "$R" s1; set_at s1 100; stopx "$R" s1 REGRESSION_GATE_REPEAT_TTL_S=60
-[ "$RC" = 2 ] && [ "$(runs ttlenv)" = 2 ] && ok "(4c) REGRESSION_GATE_REPEAT_TTL_S=60 drops a block of 100 s" || fail "(4c) TTL env ignored (runs=$(runs ttlenv))"
-mkrepo ttlzero
-stopx "$R" s1; stopx "$R" s1 REGRESSION_GATE_REPEAT_TTL_S=0
-[ "$RC" = 2 ] && [ "$(runs ttlzero)" = 2 ] && ok "(4d) REGRESSION_GATE_REPEAT_TTL_S=0: never reuse" || fail "(4d) TTL 0 reused (runs=$(runs ttlzero))"
-mkrepo ttlnone
-stopx "$R" s1; set_at s1 none; stopx "$R" s1
-[ "$RC" = 2 ] && [ "$(runs ttlnone)" = 2 ] && ok "(4e) a stored block without a time (written by the old hook) is not reused" || fail "(4e) block without a time reused (runs=$(runs ttlnone))"
-
-mkrepo ttlgarbage
-stopx "$R" s1; set_at s1 100; stopx "$R" s1 REGRESSION_GATE_REPEAT_TTL_S=abc
-[ "$RC" = 2 ] && [ "$(runs ttlgarbage)" = 1 ] && ok "(4g) REGRESSION_GATE_REPEAT_TTL_S=abc: falls back to 1800 s, a block of 100 s is reused" || fail "(4g) garbage TTL (runs=$(runs ttlgarbage))"
-mkrepo ttlfuture
-stopx "$R" s1; set_at s1 -100000; stopx "$R" s1
-[ "$RC" = 2 ] && [ "$(runs ttlfuture)" = 2 ] && ok "(4f) a stored time in the future (clock set back) is not trusted: the suites ran again" || fail "(4f) future time reused (runs=$(runs ttlfuture))"
-
-# (5) a fix of the hook itself drops the stored block (the key holds the size and mtime of the hook and of the gate).
-TK="$TMP/kit"; mkdir -p "$TK/hooks"
-cp "$DEVKIT_DIR"/hooks/*.py "$HOOK" "$TK/hooks/"
-# bin/ is a real folder of links, except post-fix-gate.py which is a copy, so a test can edit the gate without touching the kit
-mkdir -p "$TK/bin"
-for f in "$DEVKIT_DIR"/bin/*; do
-  case "$(basename "$f")" in post-fix-gate.py) cp "$f" "$TK/bin/" ;; *) ln -s "$f" "$TK/bin/$(basename "$f")" ;; esac
-done
-for d in profiles templates rules scripts; do [ -e "$DEVKIT_DIR/$d" ] && ln -s "$DEVKIT_DIR/$d" "$TK/$d"; done
-mkrepo kitsame
-HOOKX="$TK/hooks/regression_gate.sh" stopx "$R" s1
-HOOKX="$TK/hooks/regression_gate.sh" stopx "$R" s1
-[ "$RC" = 2 ] && [ "$(runs kitsame)" = 1 ] && ok "(5a) copied hook, nothing changed: the stored block is reused" || fail "(5a) control (rc=$RC runs=$(runs kitsame))"
-mkrepo kitfix
-HOOKX="$TK/hooks/regression_gate.sh" stopx "$R" s1
-echo "# edited" >> "$TK/hooks/regression_gate.sh"
-HOOKX="$TK/hooks/regression_gate.sh" stopx "$R" s1
-[ "$RC" = 2 ] && [ "$(runs kitfix)" = 2 ] && ok "(5b) the hook file changed: the stored block is dropped, the suites ran again" \
-  || fail "(5b) hook edit did not drop the cache (runs=$(runs kitfix) rc=$RC)"
-
-mkrepo kitgate
-HOOKX="$TK/hooks/regression_gate.sh" stopx "$R" s1
-echo "# edited" >> "$TK/bin/post-fix-gate.py"
-HOOKX="$TK/hooks/regression_gate.sh" stopx "$R" s1
-[ "$RC" = 2 ] && [ "$(runs kitgate)" = 2 ] && ok "(5d) the gate file changed: the stored block is dropped, the suites ran again" \
-  || fail "(5d) gate edit did not drop the cache (runs=$(runs kitgate) rc=$RC)"
-mkrepo kitharness
-HOOKX="$TK/hooks/regression_gate.sh" stopx "$R" s1
-echo "# edited" >> "$TK/hooks/devkit_harness.py"
-HOOKX="$TK/hooks/regression_gate.sh" stopx "$R" s1
-[ "$RC" = 2 ] && [ "$(runs kitharness)" = 2 ] && ok "(5e) devkit_harness.py changed: the stored block is dropped, the suites ran again" \
-  || fail "(5e) harness edit did not drop the cache (runs=$(runs kitharness) rc=$RC)"
-
-# (5c) an existing test edited by this session together with a FAIL: only a person clears the edit (the user answer, not the tree),
-# so the block is never stored and the next Stop runs the suites again.
-mkrepo touchfail
-( cd "$R" && mkdir -p src/test && echo "assert(true)" > src/test/CoreTest.kt && git add -A && git commit -qm test \
-  && echo "// weakened" > src/test/CoreTest.kt && echo "fun ok() = 3" > src/Core.kt ) >/dev/null
-python3 - "$R" "$TMP/touch.jsonl" <<'PYT'
-import json, sys, time
-repo, tp = sys.argv[1], sys.argv[2]
-open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
-    {"type": "user", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 600)),
-     "message": {"role": "user", "content": "fix it"}},
-    {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "e1", "name": "Edit",
-        "input": {"file_path": repo + "/src/test/CoreTest.kt", "old_string": "a", "new_string": "b"}}]}}]))
-PYT
-TP="$TMP/touch.jsonl" stopx "$R" s1; r1=$RC; TP="$TMP/touch.jsonl" stopx "$R" s1
-[ "$r1" = 2 ] && grep -q "CoreTest.kt" "$TMP/err.s1" && [ "$(runs touchfail)" = 2 ] \
-  && ok "(5c) FAIL + an edited existing test: the block is not stored, the suites ran again" \
-  || fail "(5c) touched block was reused (rc=$r1/$RC runs=$(runs touchfail) err='$(head -3 "$TMP/err.s1" | tr '\n' ' ')')"
-
-# (6) a block with a BUDGET suite is never stored (the next Stop must run it); the failing suite is slow so the 1 s budget is gone.
-mkrepo budget ',{"id":"REG-S","name":"second","command":"true"}' 'echo x >> '"$TMP/runs.budget"'; sleep 2; exit 1'
-stopx "$R" s1 REGRESSION_GATE_BUDGET_S=1; r1=$RC
-stopx "$R" s1 REGRESSION_GATE_BUDGET_S=1; r2=$RC
-if grep -q "BUDGET" "$TMP/err.s1" "$TMP/out.s1" 2>/dev/null; then
-  [ "$r1" = 2 ] && [ "$(runs budget)" = 2 ] && ok "(6) a block with a BUDGET suite is not stored: the suites ran again" || fail "(6) BUDGET block was reused (rc=$r1/$r2 runs=$(runs budget))"
+# C1: no receipt: block, block, release with a warning; the hook starts nothing
+echo "fun ok() = 2" > src/Core.kt
+stopx s1; r1=$RC; e1="$(cat "$TMP/err")"; stopx s1; r2=$RC; stopx s1; r3=$RC
+if [ "$r1" = 2 ] && [ "$r2" = 2 ] && [ "$r3" = 0 ] && printf '%s' "$e1" | grep -q -- "$CMD" && grep -q "systemMessage" "$TMP/out" \
+   && [ "$(spawns)" = 0 ] && [ "$(runs)" = 0 ]; then
+  ok "C1: no receipt: two blocks naming the gate command, the third Stop released with a warning; the hook started no gate, no suite"
 else
-  ok "(6) skipped: this machine finished both suites inside the 1 s budget (no BUDGET label)"
+  fail "C1: rc=$r1/$r2/$r3 spawns=$(spawns) runs=$(runs) err1='$(printf '%s' "$e1" | head -c 300)' out='$(head -c 200 "$TMP/out")'"
 fi
 
-# (7) control: the third Stop of one content is released with a warning (MAX_ATTEMPTS 2), the suites still ran once.
-mkrepo cap
-stopx "$R" s1; stopx "$R" s1; stopx "$R" s1; r3=$RC
-[ "$r3" = 0 ] && [ "$(runs cap)" = 1 ] && grep -q "systemMessage" "$TMP/out.s1" \
-  && ok "(7) third Stop of one content: released with a warning, suites ran once" || fail "(7) cap control (rc=$r3 runs=$(runs cap))"
+# C2: the agent's gate run writes the receipt: the Stops of that content are allowed from it, nothing is started again
+#     (another content than C1, whose two blocks are used up: a release there would also exit 0)
+echo "fun ok() = 22" > src/Core.kt
+gaterun; n0=$(runs)
+stopx s1; a1=$RC; stopx s1; a2=$RC; stopx s2; a3=$RC
+if [ "$GRC" = 0 ] && [ "$n0" -ge 1 ] && [ "$a1" = 0 ] && [ "$a2" = 0 ] && [ "$a3" = 0 ] && [ ! -s "$TMP/err" ] && ! grep -q "CHƯA ĐẠT" "$TMP/out" \
+   && [ "$(spawns)" = 0 ] && [ "$(runs)" = "$n0" ]; then
+  ok "C2: a receipt of this content: three Stops (two sessions) allowed from it, the hook started no gate (runs stay $n0)"
+else
+  fail "C2: gate=$GRC rc=$a1/$a2/$a3 spawns=$(spawns) runs $n0 -> $(runs) err='$(head -c 300 "$TMP/err")' gate='$(tail -3 "$TMP/gate.out")'"
+fi
 
-# (8) two sessions side by side: the state is read-merged-written, so the session that finishes last keeps the other's entry.
-mkrepo merge '' 'echo x >> '"$TMP/runs.merge"'; sleep 2; exit 1'
-( stopx_a() { printf '{"session_id":"sa","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/claude.jsonl" \
-      | env FLAKY_RETRY=0 TEST_RUN_LOCK_WAIT_S=30 CLAUDE_PROJECT_DIR="$R" bash "$HOOK" >"$TMP/out.sa" 2>"$TMP/err.sa"; }; stopx_a ) &
-pa=$!
-sleep 0.7
-printf '{"session_id":"sb","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/claude.jsonl" \
-  | env FLAKY_RETRY=0 TEST_RUN_LOCK_WAIT_S=30 CLAUDE_PROJECT_DIR="$R" bash "$HOOK" >"$TMP/out.sb" 2>"$TMP/err.sb"
-wait "$pa"
-keys="$(python3 -c 'import json,sys
-d = json.load(open(sys.argv[1])); print(" ".join(sorted((d.get("repeat") or {}).keys())))' "$STATE")"
-[ "$keys" = "sa sb" ] && ok "(8) two sessions: both stored blocks survive in the shared state" \
-  || fail "(8) the later writer erased the other session (repeat keys: '$keys', runs=$(runs merge))"
+# C3: the content moves: a tracked edit, then other bytes in an untracked file of the same name
+echo "fun ok() = 3" > src/Core.kt
+stopx s1; t1=$RC; t1e="$(cat "$TMP/err")"
+gaterun; g3=$GRC; echo "scratch v1" > scratch.txt; gaterun; g4=$GRC
+stopx s1; t2=$RC
+echo "scratch v2 other bytes" > scratch.txt
+stopx s1; t3=$RC; t3e="$(cat "$TMP/err")"
+if [ "$t1" = 2 ] && printf '%s' "$t1e" | grep -q -- "$CMD" && [ "$g3" = 0 ] && [ "$g4" = 0 ] && [ "$t2" = 0 ] \
+   && [ "$t3" = 2 ] && printf '%s' "$t3e" | grep -q -- "$CMD" && [ "$(spawns)" = 0 ]; then
+  ok "C3: a tracked edit and new bytes in an untracked file each need a new receipt (blocked), the receipt of the old content is not reused"
+else
+  fail "C3: rc=$t1/$t2/$t3 gate=$g3/$g4 spawns=$(spawns) err='$(printf '%s' "$t3e" | head -c 300)'"
+fi
 
+# C4: the gate file changes between the receipt and the Stop: that receipt no longer counts. (Once a Stop allowed a content, the hook's
+#     pass_fp lets the same content through without reading the receipt again; so the edit lands before the first Stop of a new content.)
+echo "fun ok() = 4" > src/Core.kt
+gaterun; g5=$GRC
+echo "# edited" >> "$GATE"
+stopx s1; u2=$RC; u2e="$(cat "$TMP/err")"
+if [ "$g5" = 0 ] && [ "$u2" = 2 ] && printf '%s' "$u2e" | grep -q -- "$CMD" && [ "$(spawns)" = 0 ]; then
+  ok "C4: the gate file changed after the receipt: the Stop blocks (the receipt holds the gate's sha256), still without starting it"
+else
+  fail "C4: gate=$g5 rc=$u2 spawns=$(spawns) err='$(printf '%s' "$u2e" | head -c 300)'"
+fi
+gaterun; stopx s1
+[ "$GRC" = 0 ] && [ "$RC" = 0 ] && [ "$(spawns)" = 0 ] && ok "C4 control: a gate run by the edited gate writes a receipt the Stop accepts" \
+  || fail "C4 control: gate=$GRC rc=$RC spawns=$(spawns) err='$(head -c 300 "$TMP/err")'"
+
+cd "$TMP" || exit 1
 if [ "$FAILS" -ne 0 ]; then echo "regression gate repeat cache: $FAILS FAILED"; exit 1; fi
 echo "regression gate repeat cache: all passed"

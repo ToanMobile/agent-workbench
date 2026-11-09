@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
-# Regression test (gate speed, 2026-10-15): when a Stop of a session finds ITS OWN stored block still fresh but the key has moved, the hook
-# re-runs the whole gate and used to say nothing about why. Measured on the real logs: 5 same-fingerprint repeats inside the 1800 s repeat TTL
-# (OfficeReader 14/10 05:22 and 05:23, Goods 13/10 12:28, 14/10 03:57 and 10:47, GeelyEx2 and the workbench repo more) re-ran the suites, and the logs carry neither
-# the session nor which part of the key moved, so nobody could tell a second session (by design) from an untracked file that a suite rewrites
-# (the key hashes untracked contents, taken BEFORE the run) or a changed local config. The hook now keeps a short hash of each part of the key
-# (fp, tree, local, sig) next to the stored block and writes one log line at such a miss:
-#     repeat miss sid=<first 8 of the session> differs=<the parts that moved, in order, comma separated>
-# Only a miss of the SAME session on a block that is still fresh is a miss: another session, a first Stop, a block past
-# REGRESSION_GATE_REPEAT_TTL_S and a hit write no such line (the controls below). The line changes no decision.
-#   R1 a hit writes no miss line                              R2 an untracked file rewritten under the same name: differs=tree
-#   R3 a changed ignored local config file: differs=local     R4 a changed tracked file: differs=fp,tree
-#   R5 another session on the same content: no miss line      R6 a stored block past the TTL: no miss line   R7 an entry stored by the old hook (no parts): differs=unknown
-#   R8 the same content through a copy of the kit (the hook and the gate files are part of the key: another stat signature): differs=sig
-# The gate's own result cache is off here (DEVKIT_GATE_CACHE=0, as in test_regression_gate_reminder_throttle.sh): the suite fails on unchanged content, and a
-# cache that re-used suites would hide it. bash 3.2 compatible; REPEATMISS_KIT=<kit dir> tests another copy of the kit (a mutant must go red).
+# Regression test (ported to gate speed v26 mục 1, 07/11): a repeated Stop must say WHY it blocks again and what to run.
+# Before v26 (gate speed, 2026-10-15) the hook re-ran the whole gate when a session's stored block missed, and wrote one log line naming
+# the part of the key that moved ("repeat miss sid=<sid> differs=fp,tree,local,sig"). v26 removed the stored block with the gate call:
+# the Stop runs NO suite and starts no gate; it reads the receipt of the tree (bin/tree_fp.py receipt_for_tree) and, when there is none,
+# blocks with the exact gate command for this kind of repo and logs why each receipt was refused ("no receipt: <file>: <reason>").
+# What this file keeps of the old contract, on the v26 mechanism:
+#   M1 no receipt, on the trunk branch with a verified_head: the block names the reason and the exact command
+#      `python3 <gate> --run-tests --scoped --brief --diff <verified_head>`; the log says "no receipt"; nothing is started
+#   M2 a receipt for an OLDER tree does not count: blocked, and the log names the refusal (": fp", the receipt is of another tree);
+#      back on that older tree the same receipt is accepted again (control)
+#   M3 on a branch that is not the trunk the command carries no --diff
+#   M4 a receipt of this tree whose run started after verified_head, with the commits between off the trunk: blocked, and the block
+#      says those commits were not checked (the range reason)
+# The kit under test is a COPY whose bin/post-fix-gate.py counts its starts when GATE_SPAWNS names a file (only the hook's Stops set it).
+# The suite PASSES here, so a hook that ran the gate itself would allow (the pre-v26 kit). bash 3.2 compatible;
+# REPEATMISS_KIT=<kit dir> tests another copy of the kit (a mutant, or the pre-v26 kit, must go red).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
 export WORKTREE_TRUNK_MODE=0   # K12 (18/10): các ca ở đây là phiên sửa thẳng main (không trunk mode); ở trunk mode Stop tại main không gate (test_regression_gate_trunk_main.sh)
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-HOOK="${REPEATMISS_KIT:-$DEVKIT_DIR}/hooks/regression_gate.sh"
+SRC_KIT="${REPEATMISS_KIT:-$DEVKIT_DIR}"
 TMP="$(mktemp -d)"
 case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
 if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
@@ -26,91 +27,92 @@ trap 'rm -rf "$TMP"' EXIT
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+unset CLAUDE_CODE_SESSION_ID DEVKIT_SESSION_ID CLAUDE_SESSION_ID REGRESSION_GATE_MAX_ATTEMPTS DEVKIT_GATE_CACHE_MAX_S TEST_RUN_LOCK_WAIT_S
 export FLAKY_RETRY=0 VACUITY_REVERT=0 DEVKIT_GATE_CACHE=0
-unset REGRESSION_GATE_REPEAT_TTL_S
+
+KIT="$TMP/kit"
+if ! { mkdir -p "$KIT" && cp -R "$SRC_KIT/hooks" "$KIT/hooks" && cp -R "$SRC_KIT/bin" "$KIT/bin"; }; then echo "✖ cannot copy the kit $SRC_KIT"; exit 1; fi
+for d in scripts profiles templates rules; do [ -e "$SRC_KIT/$d" ] && ln -s "$SRC_KIT/$d" "$KIT/$d"; done   # what the gate imports (scripts/governance ...)
+python3 -I -c 'import sys
+p = sys.argv[1]; src = open(p, encoding="utf-8").read().split("\n")
+i = next(n for n, l in enumerate(src) if l.startswith("import "))
+src.insert(i, "import os as _spawn_os; _spawn_os.environ.get(\"GATE_SPAWNS\") and open(_spawn_os.environ[\"GATE_SPAWNS\"], \"a\").write(\"x\")")
+open(p, "w", encoding="utf-8").write("\n".join(src))' "$KIT/bin/post-fix-gate.py" || { echo "✖ cannot instrument the gate copy"; exit 1; }
+HOOK="$KIT/hooks/regression_gate.sh"
+GATE="$KIT/bin/post-fix-gate.py"
+GATE_REAL="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$GATE")"   # the block prints the real path (/private/var on macOS)
+SPAWNS="$TMP/spawns"; : > "$SPAWNS"
+spawns() { wc -c < "$SPAWNS" | tr -d ' '; }
 
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix it"},"uuid":"u1","sessionId":"c-r"}' > "$TMP/claude.jsonl"
 R="$TMP/repo"; mkdir -p "$R/src" "$R/.agents" && cd "$R" || exit 1
-git init -q . && git config user.email t@t && git config user.name t
-printf '.env\n' > .gitignore
+git init -q -b main . && git config user.email t@t && git config user.name t
+printf '.env\n.claude/\n.agents/CHECKLIST.md\n.agents/regression_status.json\n.agents/regression_checklist.md\n' > .gitignore
 echo "fun ok() = 1" > src/Core.kt
-printf 'echo x >> "%s/runs"\nexit 1\n' "$TMP" > result.sh
 cat > .agents/regression_matrix.active.json <<JSON
 {"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/*.kt"],
- "mandatory_regression_tests":[{"id":"REG-R","name":"core","command":"sh result.sh"}]}]}
+ "mandatory_regression_tests":[{"id":"REG-R","name":"core","command":"true"}]}]}
 JSON
 git add -A && git commit -qm init
-echo "fun ok() = 2" > src/Core.kt
-echo "scratch v1" > scratch.txt     # untracked, present from the start: its NAME is in the fingerprint, its BYTES only in the tree part
-echo "A=1" > .env                   # ignored local config
-: > "$TMP/runs"
 LOG="$R/.claude/audit-gate/regression_gate.log"
 STATE="$R/.claude/audit-gate/regression_gate.state.json"
-stopx() { # $1 = session id, then NAME=value words
-  local sid="$1"; shift
-  printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$sid" "$TMP/claude.jsonl" \
-    | env "$@" CLAUDE_PROJECT_DIR="$R" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"
+stopx() { # $1 = session id
+  printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$1" "$TMP/claude.jsonl" \
+    | env GATE_SPAWNS="$SPAWNS" CLAUDE_PROJECT_DIR="$R" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"
   RC=$?
 }
-runs() { grep -c x "$TMP/runs" | tr -d ' '; }
-misses() { grep -c "repeat miss" "$LOG" 2>/dev/null | tr -d ' '; }
-lastmiss() { grep "repeat miss" "$LOG" | tail -1 | sed 's/^[0-9T:-]* //'; }
+vh() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verified_head") or "")' "$STATE" 2>/dev/null; }
+# gaterun [args]: the agent's gate run (output in $TMP/gate.out, exit code in GRC)
+gaterun() { ( cd "$R" && CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --run-tests --scoped --brief "$@" ) >"$TMP/gate.out" 2>&1; GRC=$?; }
+nolines() { grep -c "no receipt:" "$LOG" 2>/dev/null | tr -d ' '; }
+REASON="chưa có biên nhận gate cho code hiện tại"
 
-stopx c-one X=1; r1=$(runs)
-[ "$RC" = 2 ] && [ "$r1" = 1 ] && [ "$(misses)" = 0 ] && ok "first Stop of session c-one: the gate ran and blocked (the suite fails), no miss line (nothing was stored before)" \
-  || fail "first Stop: rc=$RC runs=$r1 misses=$(misses) err='$(head -2 "$TMP/err")'"
+stopx c-one   # clean tree: verified_head = the start point
+V="$(vh)"
 
-stopx c-one X=1
-[ "$(runs)" = "$r1" ] && grep -q "(reused result)" "$LOG" && [ "$(misses)" = 0 ] && ok "R1: the same content again is a hit: no gate run, no miss line" \
-  || fail "R1: runs $r1 -> $(runs) misses=$(misses) log=$(tail -2 "$LOG")"
-
-echo "scratch v2 other bytes" > scratch.txt
-stopx c-one X=1
-[ "$(runs)" -gt "$r1" ] && [ "$(misses)" = 1 ] && [ "$(lastmiss)" = "repeat miss sid=c-one differs=tree" ] \
-  && ok "R2: an untracked file rewritten under the same name: the gate re-ran and the log says differs=tree" \
-  || fail "R2: runs=$(runs) misses=$(misses) last='$(lastmiss)'"
-
-r2=$(runs); echo "A=2" > .env
-stopx c-one X=1
-[ "$(runs)" -gt "$r2" ] && [ "$(lastmiss)" = "repeat miss sid=c-one differs=local" ] \
-  && ok "R3: a changed ignored local config file: differs=local" || fail "R3: runs=$(runs) last='$(lastmiss)'"
-
-echo "fun ok() = 3" > src/Core.kt
-stopx c-one X=1
-[ "$(lastmiss)" = "repeat miss sid=c-one differs=fp,tree" ] && ok "R4: a changed tracked file moves fp and tree: differs=fp,tree" || fail "R4: last='$(lastmiss)'"
-
-m=$(misses)
-stopx c-two X=1
-[ "$(misses)" = "$m" ] && ok "R5: another session on the same content writes no miss line (its own block store is empty: a first Stop)" || fail "R5: a miss line for another session: $(lastmiss)"
-stopx c-one X=1
-[ "$(misses)" = "$m" ] && ok "R5 control: the first session's repeat on the unchanged content is a hit again, no miss line" || fail "R5 control: $(lastmiss)"
-
-echo "scratch v3" > scratch.txt
-stopx c-one REGRESSION_GATE_REPEAT_TTL_S=0
-[ "$(misses)" = "$m" ] && ok "R6: a stored block past its TTL (TTL 0) is expired by design: no miss line" || fail "R6: a miss line for an expired block: $(lastmiss)"
-echo "scratch v4" > scratch.txt
-stopx c-one X=1
-[ "$(misses)" = "$((m + 1))" ] && [ "$(lastmiss)" = "repeat miss sid=c-one differs=tree" ] && ok "R6 control: the same change with the default TTL is a miss: differs=tree" \
-  || fail "R6 control: misses=$(misses) (want $((m + 1))) last='$(lastmiss)'"
-
-# R7: an entry the previous hook stored has no parts: the miss is still named, as unknown
-python3 -I -c 'import json,sys
-d = json.load(open(sys.argv[1])); e = d["repeat"]["c-one"]; e.pop("parts", None); json.dump(d, open(sys.argv[1], "w"))' "$STATE"
-echo "scratch v5" > scratch.txt
-stopx c-one X=1
-[ "$(lastmiss)" = "repeat miss sid=c-one differs=unknown" ] && ok "R7: a stored block without parts (older hook): the miss line says differs=unknown" || fail "R7: last='$(lastmiss)'"
-
-# R8: the key also holds a stat signature of the hook, the gate and devkit_harness.py (an edited or reinstalled kit is a new key). The same content, the same
-# session, through a COPY of the kit (the same bytes, other files and mtimes) moves only that part. The log is the hook's, in the same project.
-# Only hooks/ and bin/ are copied (the hook finds the gate next to itself, as test_regression_gate_stale_label.sh relies on); a copy that fails fails the row
-# and the row stops there (it must not run the original kit's hook and judge that).
-KIT_SRC="$(dirname "$(dirname "$HOOK")")"; KIT_COPY="$TMP/kit2"
-if mkdir -p "$KIT_COPY" && cp -R "$KIT_SRC/hooks" "$KIT_COPY/hooks" && cp -R "$KIT_SRC/bin" "$KIT_COPY/bin"; then
-  HOOK="$KIT_COPY/hooks/regression_gate.sh"
-  stopx c-one X=1
-  [ "$(lastmiss)" = "repeat miss sid=c-one differs=sig" ] && ok "R8: the same content through a copy of the kit: differs=sig" || fail "R8: last='$(lastmiss)'"
+# M1
+echo "fun ok() = 2" > src/Core.kt
+stopx c-one
+if [ "$RC" = 2 ] && [ -n "$V" ] && grep -q "$REASON" "$TMP/err" \
+   && grep -qF "\`python3 $GATE_REAL --run-tests --scoped --brief --diff $V\`" "$TMP/err" && [ "$(nolines)" -ge 1 ] && [ "$(spawns)" = 0 ]; then
+  ok "M1: no receipt: blocked with the reason and the exact command (--diff <verified_head> on the trunk), logged 'no receipt', nothing started"
 else
-  fail "R8: cannot copy hooks/ and bin/ of $KIT_SRC to $KIT_COPY"
+  fail "M1: rc=$RC vh='$V' spawns=$(spawns) nolines=$(nolines) err='$(head -c 400 "$TMP/err")'"
+fi
+
+# M2: a receipt of tree A, the Stop on tree B
+echo "fun ok() = 3" > src/Core.kt
+gaterun --diff "$V"; ga=$GRC
+echo "fun ok() = 4" > src/Core.kt
+n=$(nolines); stopx c-one; b1=$RC; b1e="$(cat "$TMP/err")"
+lastno="$(grep "no receipt:" "$LOG" | tail -1)"
+echo "fun ok() = 3" > src/Core.kt
+stopx c-one; b2=$RC
+if [ "$ga" = 0 ] && [ "$b1" = 2 ] && printf '%s' "$b1e" | grep -q "$REASON" && [ "$(nolines)" -gt "$n" ] \
+   && printf '%s' "$lastno" | grep -q ": fp" && [ "$b2" = 0 ] && [ "$(spawns)" = 0 ]; then
+  ok "M2: a receipt of an older tree: blocked, the log names the refusal (fp); back on that tree the receipt is accepted"
+else
+  fail "M2: gate=$ga rc=$b1/$b2 spawns=$(spawns) log='$lastno' err='$(printf '%s' "$b1e" | head -c 300)'"
+fi
+
+# M3: a branch that is not the trunk: no --diff in the command
+git checkout -q -b issue-1
+echo "fun ok() = 5" > src/Core.kt
+stopx c-one
+if [ "$RC" = 2 ] && grep -qF "\`python3 $GATE_REAL --run-tests --scoped --brief\`" "$TMP/err" && ! grep -q -- "--diff" "$TMP/err" && [ "$(spawns)" = 0 ]; then
+  ok "M3: off the trunk branch the block names the command without --diff"
+else
+  fail "M3: rc=$RC spawns=$(spawns) err='$(head -c 400 "$TMP/err")'"
+fi
+
+# M4: commits after verified_head that the run did not check, off the trunk: the receipt of this tree is refused for its range
+git add -A && git commit -qm "unchecked commit" && echo "fun ok() = 6" > src/Core.kt
+gaterun --diff HEAD; gm=$GRC
+stopx c-one
+if [ "$gm" = 0 ] && [ "$RC" = 2 ] && grep -q "lượt gate bắt đầu sau verified_head" "$TMP/err" && grep -q ": covers base" "$LOG" && [ "$(spawns)" = 0 ]; then
+  ok "M4: a receipt of this tree that started after verified_head: blocked, the block says the commits between were not checked"
+else
+  fail "M4: gate=$gm rc=$RC spawns=$(spawns) err='$(head -c 400 "$TMP/err")' gate='$(tail -2 "$TMP/gate.out")'"
 fi
 
 cd "$TMP" || exit 1

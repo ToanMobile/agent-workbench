@@ -9,7 +9,7 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HW="${HW_HOOK:-$DEVKIT_DIR/hooks/hardware_safety_gate.sh}"
 GG="${GG_HOOK:-$DEVKIT_DIR/hooks/block-dangerous-git.sh}"
-. "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, repo nháp $P, check / check_mcp / check_deny / pair / r5_rows
+. "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, repo nháp $P, check / check_deny / pair / r5_rows
 
 # ── 15/10 r4, independent verification of 4f1e4b0: every dangerous row below ran its marker twin (a harmless `echo RAN > m1.txt`) under
 # /bin/bash 3.2.57 and zsh 5.9 and the marker RAN, unless the line says the shells differ; each has a control of the same shape that must pass.

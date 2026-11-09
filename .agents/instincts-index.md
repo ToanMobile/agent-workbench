@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (848 dòng, 94.6 KB) · 102 mục
+> **Tệp gốc:** `.agents/instincts.md` (862 dòng, 96.0 KB) · 104 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -102,6 +102,8 @@
 - [INSTINCT-103] Test miễn trừ (exemption) dùng câu không chạm luật nào nên không phân biệt được — `sed -n '811,818p' .agents/instincts.md`
 - [INSTINCT-104] Cho qua đích redirect có $BIẾN không biết bằng 'tiền tố đã biết' là lớp lỗ không đóng được: 4 vòng… — `sed -n '819,827p' .agents/instincts.md`
 - [INSTINCT-105] run_impacted báo PASS khi cây biến mất giữa lượt; AGENTS.md trong worktree bị sinh lại từ kit của main — `sed -n '828,835p' .agents/instincts.md`
-- [INSTINCT-106] Luồng tự động qua agent ngoài (PM/grok) xanh trên fixture nhưng hỏng khi chạy thật — `sed -n '836,843p' .agents/instincts.md`
-- [INSTINCT-107] Cắt output ocr-review bằng tail làm review gate đòi thêm vòng OCR — `sed -n '844,848p' .agents/instincts.md`
+- [INSTINCT-109] Allowlist file tự sinh áp cả kiểm tra trước audit — `sed -n '836,841p' .agents/instincts.md`
+- [INSTINCT-106] Luồng tự động qua agent ngoài (PM/grok) xanh trên fixture nhưng hỏng khi chạy thật — `sed -n '842,849p' .agents/instincts.md`
+- [INSTINCT-107] Cắt output ocr-review bằng tail làm review gate đòi thêm vòng OCR — `sed -n '850,857p' .agents/instincts.md`
+- [INSTINCT-108] Gỡ một dòng hook theo prefix làm mất luôn lưới an toàn đi chung dòng đó — `sed -n '858,862p' .agents/instincts.md`
 

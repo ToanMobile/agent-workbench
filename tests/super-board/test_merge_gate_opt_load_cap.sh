@@ -2,7 +2,7 @@
 # Test hồi quy (05/11, chủ repo: "Hạn số merge gate chạy cùng lúc theo tải, để 3 gate không cùng tranh CPU").
 # Đo thật 05/11 08:25–09:11: verify lạc quan (ngoài khoá merge) của #1007 và #1004 giữ cả 2 slot pool gate, verify TRONG khoá của #1009
 # chờ slot 1662,9 s (runs.jsonl gate_slot.waited_s) trong lúc chặn mọi merge của repo; giây/test lúc chồng ≈ 1,9 × lúc chạy một mình.
-# Luật mới (super-board-merge-gate.sh run_verify_cmd_inner): tải ≥ số lõi (capacity cores; SB_MERGE_OPT_LOAD_MAX ghi đè) thì verify lạc
+# Luật mới (super-board-merge-gate.sh run_verify_cmd_inner): tải ≥ 2 × số lõi (capacity cores, v26 mục 10; SB_MERGE_OPT_LOAD_MAX ghi đè) thì verify lạc
 # quan chỉ thấy N−1 slot của pool gate (N = DEVKIT_GATE_SLOTS / capacity gate_max ≥ 2): slot cuối để dành cho verify trong khoá; hết
 # SB_MERGE_OPT_SLOT_WAIT_S (mặc định 900) vẫn bận thì chạy lại với cả pool — chờ có hạn rồi chạy, không bỏ verify.
 #   1. tải cao, 3 merge gate cùng lúc (2 lạc quan + 1 bi quan giữ khoá): không lúc nào 2 verify lạc quan chạy suite cùng lúc; tối đa

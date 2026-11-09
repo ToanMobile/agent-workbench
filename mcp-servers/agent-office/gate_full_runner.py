@@ -1,4 +1,5 @@
-"""Chạy gate --full THEO YÊU CẦU từ xưởng (nút "Chạy gate full"), cạnh lượt đêm 00:00 của LaunchAgent.
+"""Chạy gate --full THEO YÊU CẦU từ xưởng (nút "Chạy gate full", luôn `--force`), cạnh lượt heavy 00:00 thứ Hai + thứ Năm của LaunchAgent
+(StartCalendarInterval một dict hoặc mảng dict có Weekday: đọc cả hai).
 
 Dùng lại đúng lượt đêm, không tự chế lệnh:
 - lệnh, môi trường, thư mục chạy lấy từ plist com.toanmobile.devkit.gate-full.<slug> mà universal-agent-devkit/bin/gate-full-schedule.sh
@@ -88,12 +89,34 @@ def _alive(pid) -> bool:
     return True
 
 
-def next_run(hour: int, minute: int, now: dt.datetime | None = None) -> float:
+def calendar_slots(cal) -> list:
+    """StartCalendarInterval của plist (một dict, hoặc mảng dict từ gate-full-schedule.sh --weekdays, gate speed v26 mục 6) ⇒
+    [(weekday | None, hour, minute)]. Weekday theo launchd: 0 và 7 = Chủ nhật, 1 = Thứ hai. Mục không phải dict bị bỏ."""
+    items = cal if isinstance(cal, list) else [cal] if isinstance(cal, dict) else []
+    out = []
+    for c in items:
+        if not isinstance(c, dict):
+            continue
+        wd = c.get("Weekday")
+        out.append((int(wd) % 7 if wd is not None else None, int(c.get("Hour", 0)), int(c.get("Minute", 0))))
+    return out or [(None, 0, 0)]
+
+
+def next_run(hour: int, minute: int, now: dt.datetime | None = None, slots=None) -> float:
+    """Lần chạy kế (epoch). `slots` = calendar_slots(...): lần gần nhất trong mọi mục; không có thì hour:minute mỗi ngày."""
     now = now or dt.datetime.now()
-    t = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if t <= now:
-        t += dt.timedelta(days=1)
-    return t.timestamp()
+    best = None
+    for wd, h, m in slots or [(None, hour, minute)]:
+        t = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if wd is None:
+            if t <= now:
+                t += dt.timedelta(days=1)
+        else:   # isoweekday() % 7: 0 = Chủ nhật như launchd
+            t += dt.timedelta(days=(wd - now.isoweekday() % 7) % 7)
+            if t <= now:
+                t += dt.timedelta(days=7)
+        best = t if best is None or t < best else best
+    return best.timestamp()
 
 
 class GateFull:
@@ -148,13 +171,13 @@ class GateFull:
                         d = plistlib.load(f)
                     argv = [str(x) for x in d.get("ProgramArguments") or []]
                     repo = argv[argv.index("--repo") + 1] if "--repo" in argv[:-1] else d.get("WorkingDirectory")
-                    cal = d.get("StartCalendarInterval") or {}
+                    slots = calendar_slots(d.get("StartCalendarInterval") or {})
                     env = {str(k): str(v) for k, v in (d.get("EnvironmentVariables") or {}).items()}
                     info = {"label": d.get("Label") or n[:-6], "argv": argv, "env": env, "cwd": d.get("WorkingDirectory") or repo,
-                            "repo": repo, "hour": int(cal.get("Hour", 0)), "minute": int(cal.get("Minute", 0)),
+                            "repo": repo, "hour": slots[0][1], "minute": slots[0][2], "slots": slots,
                             "logDir": env.get("DEVKIT_GATE_FULL_LOG_DIR") or ""}
                     ok = bool(repo) and any(a.endswith("gate_full.py") for a in argv) and "run" in argv
-                except (OSError, ValueError, plistlib.InvalidFileException, IndexError, TypeError):
+                except (OSError, ValueError, plistlib.InvalidFileException, IndexError, TypeError, AttributeError):
                     ok, info = False, None
                 hit = self._plists[p] = (m, info if ok else None)
             if hit[1]:
@@ -195,8 +218,10 @@ class GateFull:
         os.makedirs(log_dir, exist_ok=True)
         log = os.path.join(log_dir, "manual-%s.out.log" % dt.datetime.now().strftime("%Y%m%d-%H%M%S"))
         env = dict(os.environ, **info["env"])
+        # bấm nút là muốn chạy: --force bỏ qua "không commit mới từ lượt xanh" của gate_full.py (gate speed v26 mục 6)
+        argv = info["argv"] + ([] if "--force" in info["argv"] else ["--force"])
         with open(log, "ab") as f:
-            p = subprocess.Popen(info["argv"], cwd=info["cwd"] or None, env=env, stdin=subprocess.DEVNULL, stdout=f,
+            p = subprocess.Popen(argv, cwd=info["cwd"] or None, env=env, stdin=subprocess.DEVNULL, stdout=f,
                                  stderr=subprocess.STDOUT, start_new_session=True)
         return p, log
 
@@ -264,7 +289,7 @@ class GateFull:
             info = sched.get(rp)
             st = {"installed": bool(info)}
             if info:
-                st["next"] = next_run(info["hour"], info["minute"])
+                st["next"] = next_run(info["hour"], info["minute"], slots=info.get("slots"))
                 st["logDir"] = info["logDir"]
                 st["last"] = self._summary(info["logDir"])
             held = repo_lock(path)
