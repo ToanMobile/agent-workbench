@@ -2173,11 +2173,13 @@ done_signature() {
 
 board_only_file_wait() {
   # #556: không có Building/QA/Review, không có Ready mà lane nhận được, và có ít nhất một Ready mang ⏳ hoặc waiting-on.
+  # #1035: Ready chờ người (needs-you / human-gated, trừ thẻ quay lại làm việc) cũng là chờ: lane không giao được, chỉ người gỡ.
   [ -n "${PROJECT_ITEMS_JSON:-}" ] || return 1
-  printf '%s' "$PROJECT_ITEMS_JSON" | jq -e "$WAITING_ON_JQ"'
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -e "$FOR_A_PERSON_JQ$WAITING_ON_JQ"'
+    def held: waiting_on or file_wait or for_a_person;
     ([.items[] | select(.status == "Building" or .status == "QA" or .status == "Review")] | length) == 0
-    and ([.items[] | select(.status == "Ready" and ((waiting_on or file_wait) | not))] | length) == 0
-    and ([.items[] | select(.status == "Ready" and (waiting_on or file_wait))] | length) > 0
+    and ([.items[] | select(.status == "Ready" and (held | not))] | length) == 0
+    and ([.items[] | select(.status == "Ready" and held)] | length) > 0
   ' >/dev/null 2>&1
 }
 

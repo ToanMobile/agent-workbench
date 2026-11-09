@@ -144,6 +144,25 @@ rc=0
 for i in 1 2; do record_cycle_progress "1" || rc=1; done
 [ "$rc" = 1 ] && ok "AC3 Building plus ${LBL} still trips RUNAWAY" || fail "AC3 stuck Building was exempt: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT"
 
+# ── 3b. #1035: Ready chỉ còn thẻ ⏳ + thẻ chờ người (needs-you): không ai giao được gì, im lặng đó không phải RUNAWAY
+#    (Humans-vs.-UFOs 06/11: Ready=2 Blocked=13 waiting_on_you=14, 0 worker, halt sau 240 chu kỳ).
+reset
+NO_PROGRESS_CYCLE_COUNT=0
+PREV_DONE_SIG="1"
+PROJECT_ITEMS_JSON=$(printf '%s' "$BOARD" | jq -c --arg l "$LBL" 'del(.items[] | select(.content.number == 12))
+  | .items[0].labels = [$l] | .items[1].labels = ["needs-you"]')
+rc=0
+for i in 1 2 3 4; do record_cycle_progress "1" || rc=1; done
+[ "$rc" = 0 ] && [ "$NO_PROGRESS_CYCLE_COUNT" = 0 ] \
+  && ok "AC5 ${LBL} + needs-you Ready cards only: four ticks do not count toward RUNAWAY" \
+  || fail "AC5 counted cards waiting on a person: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT"
+# thẻ needs-you quay lại làm việc (loop:rebuild-N) thì là việc thật: vẫn tính
+NO_PROGRESS_CYCLE_COUNT=0
+PROJECT_ITEMS_JSON=$(printf '%s' "$BOARD" | jq -c 'del(.items[] | select(.content.number != 7)) | .items[0].labels = ["needs-you","loop:rebuild-1"]')
+rc=0
+for i in 1 2; do record_cycle_progress "1" || rc=1; done
+[ "$rc" = 1 ] && ok "AC5 needs-you + loop:rebuild-1 is work again: still counts" || fail "AC5 rebuild card was exempt: rc=$rc count=$NO_PROGRESS_CYCLE_COUNT"
+
 # ── 4. hai thẻ cùng file: thẻ proceed được giao, thẻ conflictWith không có lock
 reset
 export STUB_PREFLIGHT_JSON='{"8":{"number":8,"verdict":"proceed","tag":"clean","reason":"","blockedBy":[],"conflictWith":[]}}'
