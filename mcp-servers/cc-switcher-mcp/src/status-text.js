@@ -2,7 +2,8 @@
 import { panelUrl, BACKUP_ORDER } from './panel.js';
 
 /** Cau bao dung ly do khong lay duoc quota; refresh token con thi KHONG can dang nhap lai. */
-export function quotaIssueText(reason) {
+export function quotaIssueText(reason, mismatch) {
+  if (reason === 'wrong_account') return `Sai tài khoản: thư mục đang đăng nhập ${mismatch?.actual || '?'}, cần ${mismatch?.expected || '?'} — chạy claude với thư mục này rồi /login lại`;
   if (reason === 'token_expired') return 'Token hết hạn — mở profile này bằng `claude` một lần để tự làm mới (chưa cần đăng nhập lại)';
   if (reason === 'throttled') return 'Endpoint quota đang giới hạn (429), sẽ thử lại sau';
   if (reason === 'network') return 'Lỗi mạng khi lấy quota, sẽ thử lại sau';
@@ -37,7 +38,7 @@ export function formatStatusText(report) {
     const icon = stale ? '⚠️' : p.isFrozen || pct <= 0 ? '🔴' : (p.isParallelActive ?? p.isActive) ? '🟢' : '⚪️';
     const repos = p.assignedRepoCount > 0 ? ` · ${p.assignedRepoCount} repo` : '';
     lines.push(`${icon} ${p.name}${repos}`);
-    lines.push(stale ? `   ${quotaIssueText(p.quotaIssue)}` : `   ${bar(pct)} Còn ${pct}%${reset}${weekly}`);
+    lines.push(stale ? `   ${quotaIssueText(p.quotaIssue, p.accountMismatch)}` : `   ${bar(pct)} Còn ${pct}%${reset}${weekly}`);
   }
   lines.push('');
   BACKUP_ORDER.map((id) => report.profiles.find((p) => p.id === id)).filter(Boolean).forEach((p, i) => {

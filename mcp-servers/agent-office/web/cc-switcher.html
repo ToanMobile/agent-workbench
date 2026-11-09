@@ -398,7 +398,8 @@
     if (p.isActive) b.disabled = true;
     return b;
   }
-  function issueText(reason) {
+  function issueText(reason, mm) {
+    if (reason === 'wrong_account') return 'sai tài khoản: thư mục đang đăng nhập ' + (mm ? mm.actual : '?') + ', cần ' + (mm ? mm.expected : '?') + '. Chạy claude với thư mục này rồi /login lại.';
     if (reason === 'token_expired') return 'token hết hạn. Mở profile này bằng `claude` một lần để tự làm mới (chưa cần đăng nhập lại).';
     if (reason === 'throttled') return 'endpoint quota đang giới hạn (429), sẽ thử lại sau.';
     if (reason === 'network') return 'lỗi mạng khi lấy quota, sẽ thử lại sau.';
@@ -413,7 +414,7 @@
       el('div', null, [el('div', { class: 'acc-name', text: n.title }), el('div', { class: 'acc-mail', text: n.detail })]),
       badgeFor(p)
     ]));
-    if (p.quotaStale) card.appendChild(el('div', { class: 'acc-mail', role: 'alert', text: 'Số liệu cũ (' + ago(p.quota.updatedAtMs) + ') — ' + issueText(p.quotaIssue) }));
+    if (p.quotaStale) card.appendChild(el('div', { class: 'acc-mail', role: 'alert', text: 'Số liệu cũ (' + ago(p.quota.updatedAtMs) + ') — ' + issueText(p.quotaIssue, p.accountMismatch) }));
     else card.appendChild(meter('Quota 5 giờ', p.remainingPct, p.resetAtMs ? ('reset ' + fmtTime(p.resetAtMs)) : ''));
     if (!p.quotaStale && p.weeklyRemainingPct !== null && p.weeklyRemainingPct !== undefined) card.appendChild(meter('Quota 7 ngày', p.weeklyRemainingPct, p.weeklyResetFormatted ? ('reset ' + p.weeklyResetFormatted) : ''));
     card.appendChild(facts([

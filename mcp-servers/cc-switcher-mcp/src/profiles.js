@@ -23,6 +23,7 @@ export const DEFAULT_PROFILES = [
     id: 'finos_toan',
     shortLabel: '1. FinOS Toan',
     name: '1. FinOS Toan — toan.huynh@finos.asia (5x Team)',
+    expectedEmail: 'toan.huynh@finos.asia',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-finos'),
@@ -35,6 +36,7 @@ export const DEFAULT_PROFILES = [
     id: 'finos_linh',
     shortLabel: '2. FinOS Linh',
     name: '2. FinOS Linh — linhnt@finos.asia (5x Team)',
+    expectedEmail: 'linhnt@finos.asia',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-finos_team'),
@@ -47,6 +49,7 @@ export const DEFAULT_PROFILES = [
     id: 'finos_toan_max',
     shortLabel: '3. FinOS Toan Max',
     name: '3. FinOS Toan Max — toan.huynh@finos.asia (Personal 5x Max)',
+    expectedEmail: 'toan.huynh@finos.asia',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-max'),
@@ -97,6 +100,7 @@ export const DEFAULT_PROFILES = [
     id: 'finos_lua',
     shortLabel: '7. FinOS Lua',
     name: '7. FinOS Lua — ngoclua892@gmail.com (5x)',
+    expectedEmail: 'ngoclua892@gmail.com',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-finos_lua'),
@@ -1031,8 +1035,21 @@ export function balanceRepoAccounts(opts = {}) {
 /**
  * Tong hop bao cao trang thai 6 profile kem % Quota con lai, thanh tien trinh, gio mo khoa va phan bo 6 repo.
  */
+/** Email tai khoan Claude dang dang nhap trong thu muc cau hinh (oauthAccount trong .claude.json; khong doc token). null neu khong doc duoc. */
+export function readLoggedInEmail(profile) {
+  if (!profile?.configDir) return null;
+  try {
+    const email = JSON.parse(fs.readFileSync(path.join(profile.configDir, '.claude.json'), 'utf8'))?.oauthAccount?.emailAddress;
+    return typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
+  } catch (err) {
+    if (err?.code !== 'ENOENT') logStructured('warn', 'logged_in_email_read_failed', { profileId: profile.id, error: err?.message });
+    return null;
+  }
+}
+
 export function getStatusReport(opts = {}) {
-  const { stateDir, nowMs = Date.now(), repos } = opts;
+  // stateDir tuy chinh = moi truong thu/co lap: khong doc thu muc dang nhap that cua may (chi can accountReader tuong minh).
+  const { stateDir, nowMs = Date.now(), repos, accountReader = stateDir ? () => null : readLoggedInEmail } = opts;
   const state = loadSwitcherState(stateDir);
   const usage = readUsageStatsFromDb(stateDir);
   const repoAssignments = getRepoAssignments({ repos, stateDir });
@@ -1063,11 +1080,18 @@ export function getStatusReport(opts = {}) {
     const quotaStale = Boolean(
       cachedQuota && cachedQuota.source === 'anthropic_oauth' && nowMs - (cachedQuota.updatedAtMs || 0) > QUOTA_STALE_MS,
     );
-    if (quotaStale && !isFrozen) remainingPct = null;
+    // Thu muc dang nhap tai khoan khac thi so lieu quota la cua nguoi khac: khong hien.
+    const actualEmail = p.expectedEmail ? accountReader(p) : null;
+    const accountMismatch = actualEmail && actualEmail !== p.expectedEmail.toLowerCase()
+      ? { expected: p.expectedEmail, actual: actualEmail }
+      : null;
+    if ((quotaStale || accountMismatch) && !isFrozen) remainingPct = null;
+    if (accountMismatch) remainingPct = null;
     const usedPct = remainingPct === null ? null : Math.max(0, 100 - remainingPct);
     const weeklyResetAtMs = cachedQuota?.weeklyResetAtMs || 0;
     let weeklyRemainingPct = cachedQuota?.weeklyRemainingPct ?? null;
     if (weeklyRemainingPct !== null && weeklyResetAtMs > 0 && weeklyResetAtMs <= nowMs && !quotaStale) weeklyRemainingPct = 100;
+    if (accountMismatch) weeklyRemainingPct = null;
     const resetTimeFormatted = effectiveResetMs > nowMs ? formatLocalTimeHHMM(effectiveResetMs) : '';
     const resetRemainHuman = effectiveResetMs > nowMs ? formatRemainDuration(effectiveResetMs - nowMs) : '';
 
@@ -1081,7 +1105,9 @@ export function getStatusReport(opts = {}) {
       assignedRepoCount,
       status: isFrozen
         ? `LIMIT 0% (Mở ${resetTimeFormatted || `${freezeRemainMin}p`})`
-        : remainingPct === null
+        : accountMismatch
+          ? 'SAI TÀI KHOẢN (đăng nhập lại)'
+          : remainingPct === null
           ? 'SỐ LIỆU CŨ (không làm mới được)'
           : isParallelActive
             ? `ACTIVE (${remainingPct}%)`
@@ -1093,8 +1119,9 @@ export function getStatusReport(opts = {}) {
       weeklyRemainingPct: quotaStale ? null : weeklyRemainingPct,
       weeklyResetAtMs: weeklyResetAtMs > nowMs ? weeklyResetAtMs : 0,
       weeklyResetFormatted: weeklyResetAtMs > nowMs ? formatLocalWeekdayTime(weeklyResetAtMs) : '',
-      quotaStale,
-      quotaIssue: quotaStale ? (state.quotaIssues?.[p.id]?.reason || '') : '',
+      quotaStale: quotaStale || Boolean(accountMismatch),
+      quotaIssue: accountMismatch ? 'wrong_account' : quotaStale ? (state.quotaIssues?.[p.id]?.reason || '') : '',
+      accountMismatch,
       resetAtMs: effectiveResetMs,
       resetTimeFormatted,
       resetRemainHuman,

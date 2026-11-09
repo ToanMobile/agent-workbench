@@ -108,6 +108,7 @@ function profileView(p, state, nowMs) {
     weeklyResetFormatted: p.weeklyResetFormatted,
     quotaStale: p.quotaStale,
     quotaIssue: p.quotaIssue || '',
+    accountMismatch: p.accountMismatch || null,
     resetAtMs: p.resetAtMs,
     resetTimeFormatted: p.resetTimeFormatted,
     resetRemainHuman: p.resetRemainHuman,
@@ -123,7 +124,7 @@ function profileView(p, state, nowMs) {
  * chi phi, phan bo repo, lich su chuyen va suc khoe he thong. Khong chua token/chat id/duong dan config.
  */
 export async function buildPanelState(opts = {}) {
-  const { stateDir, nowMs = Date.now(), repos, sync = true, forceRefresh = false, quotaFetcher, daemonProbe, claudeHomes } = opts;
+  const { stateDir, nowMs = Date.now(), repos, sync = true, forceRefresh = false, quotaFetcher, daemonProbe, claudeHomes, accountReader } = opts;
   let syncError = '';
   if (sync) {
     try {
@@ -133,7 +134,7 @@ export async function buildPanelState(opts = {}) {
       logStructured('warn', 'panel_quota_sync_failed', { error: syncError });
     }
   }
-  const report = getStatusReport({ stateDir, nowMs, repos });
+  const report = getStatusReport({ stateDir, nowMs, repos, accountReader });
   const state = loadSwitcherState(stateDir);
   const dir = resolveStateDir(stateDir);
   const profiles = report.profiles.map((p) => profileView(p, state, nowMs));
