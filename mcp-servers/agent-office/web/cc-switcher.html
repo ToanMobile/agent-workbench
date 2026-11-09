@@ -405,7 +405,8 @@
   function loginBtn(p) {
     return el('button', { type: 'button', class: 'btn', 'data-login': p.id }, ['Đăng nhập lại']);
   }
-  function issueText(reason, mm) {
+  function issueText(reason, mm, idle) {
+    if (reason === 'token_expired' && idle) return 'chưa dùng gần đây nên token đã hết hạn (bình thường). Bấm "Đăng nhập lại" khi muốn chuyển sang tài khoản này.';
     if (reason === 'wrong_account') return 'sai tài khoản: thư mục đang đăng nhập ' + (mm ? mm.actual : '?') + ', cần ' + (mm ? mm.expected : '?') + '. Bấm "Đăng nhập lại" bên dưới.';
     if (reason === 'token_expired') return 'token hết hạn. Bấm "Đăng nhập lại" bên dưới.';
     if (reason === 'throttled') return 'endpoint quota đang giới hạn (429), sẽ thử lại sau.';
@@ -421,7 +422,8 @@
       el('div', null, [el('div', { class: 'acc-name', text: n.title }), el('div', { class: 'acc-mail', text: n.detail })]),
       badgeFor(p)
     ]));
-    if (p.quotaStale) card.appendChild(el('div', { class: 'acc-mail', role: 'alert', text: 'Số liệu cũ (' + ago(p.quota.updatedAtMs) + ') — ' + issueText(p.quotaIssue, p.accountMismatch) }));
+    var soft = !p.isActive && !p.isParallelActive && p.quotaIssue === 'token_expired';
+    if (p.quotaStale) card.appendChild(el('div', { class: 'acc-mail', role: soft ? 'status' : 'alert', text: 'Số liệu cũ (' + ago(p.quota.updatedAtMs) + ') — ' + issueText(p.quotaIssue, p.accountMismatch, soft) }));
     else card.appendChild(meter('Quota 5 giờ', p.remainingPct, p.resetAtMs ? ('reset ' + fmtTime(p.resetAtMs)) : ''));
     if (!p.quotaStale && p.weeklyRemainingPct !== null && p.weeklyRemainingPct !== undefined) card.appendChild(meter('Quota 7 ngày', p.weeklyRemainingPct, p.weeklyResetFormatted ? ('reset ' + p.weeklyResetFormatted) : ''));
     card.appendChild(facts([
