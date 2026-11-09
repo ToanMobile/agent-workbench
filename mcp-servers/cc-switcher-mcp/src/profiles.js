@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { CACHE_MAX_AGE_MS, readAccountUuid, readCachedUsage, refreshUsageViaCli } from './usage-cache.js';
 import {
   AppError,
   resolveStateDir,
@@ -23,6 +24,7 @@ export const DEFAULT_PROFILES = [
     id: 'finos_toan',
     shortLabel: '1. FinOS Toan',
     name: '1. FinOS Toan — toan.huynh@finos.asia (5x Team)',
+    expectedEmail: 'toan.huynh@finos.asia',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-finos'),
@@ -35,6 +37,7 @@ export const DEFAULT_PROFILES = [
     id: 'finos_linh',
     shortLabel: '2. FinOS Linh',
     name: '2. FinOS Linh — linhnt@finos.asia (5x Team)',
+    expectedEmail: 'linhnt@finos.asia',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-finos_team'),
@@ -47,6 +50,7 @@ export const DEFAULT_PROFILES = [
     id: 'finos_toan_max',
     shortLabel: '3. FinOS Toan Max',
     name: '3. FinOS Toan Max — toan.huynh@finos.asia (Personal 5x Max)',
+    expectedEmail: 'toan.huynh@finos.asia',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-max'),
@@ -97,6 +101,7 @@ export const DEFAULT_PROFILES = [
     id: 'finos_lua',
     shortLabel: '7. FinOS Lua',
     name: '7. FinOS Lua — ngoclua892@gmail.com (5x)',
+    expectedEmail: 'ngoclua892@gmail.com',
     vendor: 'anthropic',
     appType: 'claude',
     configDir: path.join(os.homedir(), '.claude-finos_lua'),
@@ -169,6 +174,7 @@ export function loadSwitcherState(stateDir) {
     frozenUntil: canonicalKeys(existing?.frozenUntil),
     quotaCache: canonicalKeys(existing?.quotaCache),
     quotaFetchedAtMs: existing?.quotaFetchedAtMs || 0,
+    quotaIssues: canonicalKeys(existing?.quotaIssues), // ly do lan lay quota gan nhat that bai, theo profile
     switchHistory: Array.isArray(existing?.switchHistory) ? existing.switchHistory.slice(-50) : [],
     policy: {
       ...DEFAULT_POLICY,
@@ -585,6 +591,69 @@ export function formatRemainDuration(remainMs) {
   return `${m}p`;
 }
 
+/** Doi phan hoi cua /api/oauth/usage (hoac cachedUsageUtilization cua Claude Code, cung cau truc) thanh so lieu quota. */
+export function quotaFromUsageBody(body, nowMs, updatedAtMs = nowMs) {
+  const usedPct = Math.min(100, Math.max(0, Math.round(Number(body?.five_hour?.utilization ?? 0))));
+  const remainingPct = Math.max(0, 100 - usedPct);
+  const rawResetIso =
+    body?.five_hour?.resets_at ||
+    body?.limits?.find((l) => l.group === 'session')?.resets_at ||
+    '';
+  const rawResetMs = rawResetIso ? Date.parse(rawResetIso) : 0;
+  // Luon giu moc gio reset 5h (resets_at) do Anthropic OAuth Usage API tra ve de hien thi ⏰ dong nhat tren ca 3 tai khoan
+  const resetAtMs = Number.isFinite(rawResetMs) && rawResetMs > 0 ? rawResetMs : 0;
+  const weeklyUsed = Number(
+    body?.seven_day?.utilization ??
+      body?.limits?.find((l) => l.group === 'weekly')?.percent ??
+      0,
+  );
+  const weeklyRemainingPct = Math.max(0, 100 - Math.round(weeklyUsed));
+  const rawWeeklyIso =
+    body?.seven_day?.resets_at ||
+    body?.limits?.find((l) => l.group === 'weekly')?.resets_at ||
+    '';
+  const rawWeeklyMs = rawWeeklyIso ? Date.parse(rawWeeklyIso) : 0;
+  const weeklyResetAtMs = Number.isFinite(rawWeeklyMs) && rawWeeklyMs > 0 ? rawWeeklyMs : 0;
+  return {
+    remainingPct,
+    usedPct,
+    resetAtMs,
+    weeklyRemainingPct,
+    weeklyResetAtMs,
+    isRateLimited: remainingPct <= 0,
+    source: 'anthropic_oauth',
+    updatedAtMs,
+  };
+}
+
+/**
+ * Token het han: de Claude Code tu lam moi (claude -p /usage trong thu muc profile) roi doc cache quota no ghi.
+ * Co tokenReader (moi truong thu co lap) thi khong tu chay claude that, tru khi truyen usageRefresher.
+ */
+async function viaUsageCli(profile, nowMs, opts, fail) {
+  const { tokenReader, accountReader = readLoggedInEmail } = opts;
+  let refresher = opts.usageRefresher;
+  if (!refresher && typeof tokenReader !== 'function') {
+    refresher = (p, n) => refreshUsageViaCli(p, n, { lockDir: resolveStateDir(opts.stateDir) });
+  }
+  if (!refresher) return fail('token_expired');
+  if (profile.expectedEmail) {
+    const actual = accountReader(profile);
+    if (actual && actual !== profile.expectedEmail.toLowerCase()) return fail('token_expired'); // sai tai khoan: khong lam moi giup tai khoan khac
+  }
+  try {
+    await refresher(profile, nowMs);
+  } catch (err) {
+    logStructured('warn', 'usage_refresher_threw', { profileId: profile.id, error: err?.message });
+  }
+  const uuid = readAccountUuid(profile.configDir);
+  const cached = uuid ? readCachedUsage(profile.configDir, uuid) : null;
+  if (cached && nowMs - cached.fetchedAtMs <= CACHE_MAX_AGE_MS) {
+    return quotaFromUsageBody(cached.utilization, nowMs, cached.fetchedAtMs);
+  }
+  return fail('refresh_failed'); // /usage khong ghi duoc cache moi: dang nhap that su da het han
+}
+
 /**
  * Truy van truc tiep % Quota 5h & 7d va gio mo khoa tu Anthropic OAuth Usage API qua Keychain cua tung profile.
  * Luu y quan trong:
@@ -594,7 +663,8 @@ export function formatRemainDuration(remainMs) {
  */
 export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now(), opts = {}) {
   if (profile.vendor !== 'anthropic' || !profile.configDir) return null;
-  const { tokenReader, httpFetcher = globalThis.fetch } = opts;
+  const { tokenReader, httpFetcher = globalThis.fetch, onFailure } = opts;
+  const fail = (reason) => { try { onFailure?.(reason); } catch (err) { logStructured('warn', 'quota_on_failure_threw', { error: err?.message }); } return null; };
 
   let oauth = null;
   if (typeof tokenReader === 'function') {
@@ -611,17 +681,17 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
       oauth = JSON.parse(raw)?.claudeAiOauth || null;
     } catch (err) {
       logStructured('warn', 'keychain_quota_read_skipped', { profileId: profile.id, error: err?.message });
-      return null;
+      return fail('no_credentials');
     }
   }
 
   const token = oauth?.accessToken || '';
-  if (!token) return null;
+  if (!token) return fail('no_credentials');
 
   // Neu tai khoan dang o che do standby va accessToken da het han -> bo qua khong spam /api/oauth/usage gay 429
   if (typeof oauth?.expiresAt === 'number' && oauth.expiresAt > 0 && oauth.expiresAt <= nowMs) {
     logStructured('info', 'oauth_token_expired_skip_usage_poll', { profileId: profile.id });
-    return null;
+    return viaUsageCli(profile, nowMs, opts, fail);
   }
 
   try {
@@ -636,47 +706,18 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
 
     if (res.status === 200) {
       const body = await res.json().catch(() => ({}));
-      const usedPct = Math.min(100, Math.max(0, Math.round(Number(body?.five_hour?.utilization ?? 0))));
-      const remainingPct = Math.max(0, 100 - usedPct);
-      const rawResetIso =
-        body?.five_hour?.resets_at ||
-        body?.limits?.find((l) => l.group === 'session')?.resets_at ||
-        '';
-      const rawResetMs = rawResetIso ? Date.parse(rawResetIso) : 0;
-      // Luon giu moc gio reset 5h (resets_at) do Anthropic OAuth Usage API tra ve de hien thi ⏰ dong nhat tren ca 3 tai khoan
-      const resetAtMs = Number.isFinite(rawResetMs) && rawResetMs > 0 ? rawResetMs : 0;
-      const weeklyUsed = Number(
-        body?.seven_day?.utilization ??
-          body?.limits?.find((l) => l.group === 'weekly')?.percent ??
-          0,
-      );
-      const weeklyRemainingPct = Math.max(0, 100 - Math.round(weeklyUsed));
-      const rawWeeklyIso =
-        body?.seven_day?.resets_at ||
-        body?.limits?.find((l) => l.group === 'weekly')?.resets_at ||
-        '';
-      const rawWeeklyMs = rawWeeklyIso ? Date.parse(rawWeeklyIso) : 0;
-      const weeklyResetAtMs = Number.isFinite(rawWeeklyMs) && rawWeeklyMs > 0 ? rawWeeklyMs : 0;
-      return {
-        remainingPct,
-        usedPct,
-        resetAtMs,
-        weeklyRemainingPct,
-        weeklyResetAtMs,
-        isRateLimited: remainingPct <= 0,
-        source: 'anthropic_oauth',
-        updatedAtMs: nowMs,
-      };
+      return quotaFromUsageBody(body, nowMs);
     }
 
     if (res.status === 429) {
       logStructured('warn', 'usage_endpoint_throttled_429', { profileId: profile.id });
-      return null;
+      return fail('throttled');
     }
+    return fail(res.status === 401 || res.status === 403 ? 'token_expired' : 'network');
   } catch (err) {
     logStructured('warn', 'anthropic_quota_fetch_failed', { profileId: profile.id, error: err?.message });
+    return fail('network');
   }
-  return null;
 }
 
 /**
@@ -697,9 +738,10 @@ export async function syncLiveQuotas(opts = {}) {
   }
 
   const fetched = [];
+  const failures = {};
   for (const p of DEFAULT_PROFILES) {
     try {
-      fetched.push([p, await quotaFetcher(p, nowMs)]);
+      fetched.push([p, await quotaFetcher(p, nowMs, { stateDir, onFailure: (reason) => { failures[p.id] = reason; } })]);
     } catch (err) {
       logStructured('warn', 'sync_profile_quota_error', { profileId: p.id, error: err?.message });
     }
@@ -708,7 +750,14 @@ export async function syncLiveQuotas(opts = {}) {
   // Doc lai state sau khi cho mang: thao tac chay xen (POST action, daemon xoay do 429) khong bi ghi de bang ban cu.
   const fresh = loadSwitcherState(stateDir);
   let updated = false;
+  fresh.quotaIssues = fresh.quotaIssues && typeof fresh.quotaIssues === 'object' ? fresh.quotaIssues : {};
   for (const [p, q] of fetched) {
+    if (q && typeof q.remainingPct === 'number') {
+      if (fresh.quotaIssues[p.id]) { delete fresh.quotaIssues[p.id]; updated = true; }
+    } else if (failures[p.id] && fresh.quotaIssues[p.id]?.reason !== failures[p.id]) {
+      fresh.quotaIssues[p.id] = { reason: failures[p.id], atMs: nowMs };
+      updated = true;
+    }
     // Moc dong bang bi ghi xen trong luc cho mang (daemon 429) moi hon quota vua do: khong ghi/xoa de len.
     const freezeUntouched = fresh.frozenUntil[p.id] === state.frozenUntil[p.id];
     if (q && typeof q.remainingPct === 'number') {
@@ -1020,8 +1069,21 @@ export function balanceRepoAccounts(opts = {}) {
 /**
  * Tong hop bao cao trang thai 6 profile kem % Quota con lai, thanh tien trinh, gio mo khoa va phan bo 6 repo.
  */
+/** Email tai khoan Claude dang dang nhap trong thu muc cau hinh (oauthAccount trong .claude.json; khong doc token). null neu khong doc duoc. */
+export function readLoggedInEmail(profile) {
+  if (!profile?.configDir) return null;
+  try {
+    const email = JSON.parse(fs.readFileSync(path.join(profile.configDir, '.claude.json'), 'utf8'))?.oauthAccount?.emailAddress;
+    return typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
+  } catch (err) {
+    if (err?.code !== 'ENOENT') logStructured('warn', 'logged_in_email_read_failed', { profileId: profile.id, error: err?.message });
+    return null;
+  }
+}
+
 export function getStatusReport(opts = {}) {
-  const { stateDir, nowMs = Date.now(), repos } = opts;
+  // stateDir tuy chinh = moi truong thu/co lap: khong doc thu muc dang nhap that cua may (chi can accountReader tuong minh).
+  const { stateDir, nowMs = Date.now(), repos, accountReader = stateDir ? () => null : readLoggedInEmail } = opts;
   const state = loadSwitcherState(stateDir);
   const usage = readUsageStatsFromDb(stateDir);
   const repoAssignments = getRepoAssignments({ repos, stateDir });
@@ -1052,11 +1114,18 @@ export function getStatusReport(opts = {}) {
     const quotaStale = Boolean(
       cachedQuota && cachedQuota.source === 'anthropic_oauth' && nowMs - (cachedQuota.updatedAtMs || 0) > QUOTA_STALE_MS,
     );
-    if (quotaStale && !isFrozen) remainingPct = null;
+    // Thu muc dang nhap tai khoan khac thi so lieu quota la cua nguoi khac: khong hien.
+    const actualEmail = p.expectedEmail ? accountReader(p) : null;
+    const accountMismatch = actualEmail && actualEmail !== p.expectedEmail.toLowerCase()
+      ? { expected: p.expectedEmail, actual: actualEmail }
+      : null;
+    if ((quotaStale || accountMismatch) && !isFrozen) remainingPct = null;
+    if (accountMismatch) remainingPct = null;
     const usedPct = remainingPct === null ? null : Math.max(0, 100 - remainingPct);
     const weeklyResetAtMs = cachedQuota?.weeklyResetAtMs || 0;
     let weeklyRemainingPct = cachedQuota?.weeklyRemainingPct ?? null;
     if (weeklyRemainingPct !== null && weeklyResetAtMs > 0 && weeklyResetAtMs <= nowMs && !quotaStale) weeklyRemainingPct = 100;
+    if (accountMismatch) weeklyRemainingPct = null;
     const resetTimeFormatted = effectiveResetMs > nowMs ? formatLocalTimeHHMM(effectiveResetMs) : '';
     const resetRemainHuman = effectiveResetMs > nowMs ? formatRemainDuration(effectiveResetMs - nowMs) : '';
 
@@ -1070,7 +1139,9 @@ export function getStatusReport(opts = {}) {
       assignedRepoCount,
       status: isFrozen
         ? `LIMIT 0% (Mở ${resetTimeFormatted || `${freezeRemainMin}p`})`
-        : remainingPct === null
+        : accountMismatch
+          ? 'SAI TÀI KHOẢN (đăng nhập lại)'
+          : remainingPct === null
           ? 'SỐ LIỆU CŨ (không làm mới được)'
           : isParallelActive
             ? `ACTIVE (${remainingPct}%)`
@@ -1082,7 +1153,9 @@ export function getStatusReport(opts = {}) {
       weeklyRemainingPct: quotaStale ? null : weeklyRemainingPct,
       weeklyResetAtMs: weeklyResetAtMs > nowMs ? weeklyResetAtMs : 0,
       weeklyResetFormatted: weeklyResetAtMs > nowMs ? formatLocalWeekdayTime(weeklyResetAtMs) : '',
-      quotaStale,
+      quotaStale: quotaStale || Boolean(accountMismatch),
+      quotaIssue: accountMismatch ? 'wrong_account' : quotaStale ? (state.quotaIssues?.[p.id]?.reason || '') : '',
+      accountMismatch,
       resetAtMs: effectiveResetMs,
       resetTimeFormatted,
       resetRemainHuman,

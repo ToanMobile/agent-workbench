@@ -2768,7 +2768,7 @@ def open_phone_tunnel(state_dir: str) -> str:
 # Bảng điều khiển CC Switcher (đã chuyển từ Telegram sang đây): trang /cc-switcher, dữ liệu và thao tác gọi lại CLI JSON của
 # cc-switcher-mcp (node bin/cc-switcher-mcp.js --panel-json / --panel-action), không chép logic đổi tài khoản sang Python.
 # Chỉ phục vụ chính máy Mac: qua tunnel điện thoại (kể cả có key) trả 403, vì trang đổi được tài khoản Claude.
-CC_ACTIONS = {"refresh", "switch", "rotate", "limit", "unfreeze", "balance", "cooldown",
+CC_ACTIONS = {"refresh", "switch", "login", "rotate", "limit", "unfreeze", "balance", "cooldown",
               "repo_assign", "repo_add", "repo_remove"}
 # repo chỉ gán được tài khoản Claude; id cũ (finos, finos_team, max, antigravity) vẫn nhận làm bí danh, cc-switcher-mcp chuẩn hoá sang id mới
 CC_CLAUDE_ACCOUNTS = {"finos_toan", "finos_linh", "finos_toan_max", "finos_lua", "finos", "finos_team", "max"}
@@ -2802,6 +2802,11 @@ def cc_switcher_args(body: dict) -> list:
         args += ["--target", target]
         if body.get("force") is True:
             args.append("--force")
+    elif action == "login":
+        target = body.get("target")
+        if target not in CC_CLAUDE_ACCOUNTS:
+            raise ValueError("Chọn một tài khoản Claude hợp lệ")
+        args += ["--target", target]
     elif action == "balance":
         mode = body.get("mode", "even")
         if mode not in CC_BALANCE_MODES:
