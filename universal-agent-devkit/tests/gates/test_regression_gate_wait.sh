@@ -1,49 +1,65 @@
 #!/usr/bin/env bash
-# Regression test: how long the Stop hook (hooks/regression_gate.sh) waits for the project's
-# test_run.lock another run holds. Measured on 4 repos (2026-09-26..10-04): 73 BUSY outcomes, each a
-# full 120 s wait that ran nothing; the waits that did end in a test run were few. The hook's DEFAULT
-# wait is WAIT_DEFAULT_S, TEST_RUN_LOCK_WAIT_S overrides it. BUSY stays what it was: exit 0, the
-# "lock held" message, nothing cached, no PASS, no block, no full-PASS receipt.
-# The default VALUE is checked without waiting it out (the constant in the hook, and the value the hook
-# hands the gate when the lock is free); the lock BEHAVIOUR is checked with small overrides, so the
-# whole file runs in about 15 s.
+# Regression test (ported to gate speed v26 mục 1, 07/11): the Stop hook (hooks/regression_gate.sh) never waits on the project's
+# test_run.lock. Before v26 the hook ran the gate, which waited up to TEST_RUN_LOCK_WAIT_S (hook default 45 s) for the lock another run
+# held, then said BUSY (measured on 4 repos, 2026-09-26..10-04: 73 BUSY outcomes, each a full wait that ran nothing). v26: the Stop runs
+# NO suite and starts no gate; it only reads the receipt / outcome of the tree, so a held lock changes nothing and costs no time.
+#   W1 lock held by another process, no receipt: the Stop blocks with the gate command at once (no BUSY wording), starts nothing
+#   W2 lock held, a receipt of this tree: the Stop allows at once, starts nothing
+#   W3 lock held, TEST_RUN_LOCK_WAIT_S=120 in the environment: still at once (the hook hands no wait to anything), blocked, nothing started
+#   W4 the hook holds no TEST_RUN_LOCK_WAIT_S lookup (the old default wait lived there)
+# Every Stop runs under a watchdog (LIMIT_S; a hook that outlives it is killed and reported TIMEOUT) and must end within MAX_S.
+# The kit under test is a COPY whose bin/post-fix-gate.py counts its starts when GATE_SPAWNS names a file (only the hook's Stops set it).
+# bash 3.2 compatible; LOCKWAIT_KIT=<kit dir> tests another copy of the kit (a mutant, or the pre-v26 kit, must go red).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
 export WORKTREE_TRUNK_MODE=0   # K12 (18/10): các ca ở đây là phiên sửa thẳng main (không trunk mode); ở trunk mode Stop tại main không gate (test_regression_gate_trunk_main.sh)
 
-WAIT_DEFAULT_S=45      # the hook's default lock wait (hooks/regression_gate.sh)
-MARGIN_S=15            # process start-up, the gate's own work, one 0.5 s poll, and 10 tests running at once
-LIMIT_S=30             # watchdog: a hook still running after this long is stuck on a long wait
+MAX_S=10               # a Stop that reads files only: process start-up and a few git calls, with room for a loaded machine
+LIMIT_S=20             # watchdog: a hook still running after this long is waiting on the lock
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-HOOK="$DEVKIT_DIR/hooks/regression_gate.sh"
+SRC_KIT="${LOCKWAIT_KIT:-$DEVKIT_DIR}"
 TMP="$(mktemp -d)"
+case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
+if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
 trap '[ -n "${b_holder:-}" ] && kill "$b_holder" 2>/dev/null; rm -rf "$TMP"' EXIT   # never `kill 0`: that signals the whole process group
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+unset CLAUDE_CODE_SESSION_ID DEVKIT_SESSION_ID CLAUDE_SESSION_ID REGRESSION_GATE_MAX_ATTEMPTS DEVKIT_GATE_CACHE_MAX_S TEST_RUN_LOCK_WAIT_S
+export FLAKY_RETRY=0 VACUITY_REVERT=0 DEVKIT_GATE_CACHE=0
 
-# ── 1. the default value, read from the hook (anchored on the env lookup; exactly one) ─────────
-found="$(grep -o 'os.environ.get("TEST_RUN_LOCK_WAIT_S", "[0-9]*")' "$HOOK" | sed 's/.*, "\([0-9]*\)")/\1/')"
-if [ "$found" = "$WAIT_DEFAULT_S" ]; then
-  ok "the hook's default lock wait is ${WAIT_DEFAULT_S} s (one TEST_RUN_LOCK_WAIT_S lookup in the hook)"
-else
-  fail "the hook's default lock wait is '${found:-none}', want ${WAIT_DEFAULT_S}"
-fi
+KIT="$TMP/kit"
+if ! { mkdir -p "$KIT" && cp -R "$SRC_KIT/hooks" "$KIT/hooks" && cp -R "$SRC_KIT/bin" "$KIT/bin"; }; then echo "✖ cannot copy the kit $SRC_KIT"; exit 1; fi
+for d in scripts profiles templates rules; do [ -e "$SRC_KIT/$d" ] && ln -s "$SRC_KIT/$d" "$KIT/$d"; done   # what the gate imports (scripts/governance ...)
+python3 -I -c 'import sys
+p = sys.argv[1]; src = open(p, encoding="utf-8").read().split("\n")
+i = next(n for n, l in enumerate(src) if l.startswith("import "))
+src.insert(i, "import os as _spawn_os; _spawn_os.environ.get(\"GATE_SPAWNS\") and open(_spawn_os.environ[\"GATE_SPAWNS\"], \"a\").write(\"x\")")
+open(p, "w", encoding="utf-8").write("\n".join(src))' "$KIT/bin/post-fix-gate.py" || { echo "✖ cannot instrument the gate copy"; exit 1; }
+HOOK="$KIT/hooks/regression_gate.sh"
+GATE="$KIT/bin/post-fix-gate.py"
+SPAWNS="$TMP/spawns"; : > "$SPAWNS"
+spawns() { wc -c < "$SPAWNS" | tr -d ' '; }
+
+# ── W4: no lock wait in the hook ─────────────────────────────────────────────────────────────
+n_wait="$(grep -c 'TEST_RUN_LOCK_WAIT_S' "$SRC_KIT/hooks/regression_gate.sh" | tr -d ' ')"
+[ "$n_wait" = 0 ] && ok "W4: the hook holds no TEST_RUN_LOCK_WAIT_S lookup (no lock wait to hand to a gate)" \
+  || fail "W4: the hook still names TEST_RUN_LOCK_WAIT_S ($n_wait lines)"
 
 B="$TMP/busy"; mkdir -p "$B/src" "$B/.agents" && cd "$B" || exit 1
-git init -q . && git config user.email t@t && git config user.name t
+git init -q -b main . && git config user.email t@t && git config user.name t
+printf '.claude/\n.agents/CHECKLIST.md\n.agents/regression_status.json\n.agents/regression_checklist.md\n' > .gitignore
 echo "fun ok() = 1" > src/Core.kt
-printf 'printf %%s "${TEST_RUN_LOCK_WAIT_S:-unset}" > "%s"\n' "$TMP/b_wait" > wait.sh
 cat > .agents/regression_matrix.active.json <<'JSON'
 {"project":"t","adopted":true,"rules":[{"component":"Core","watch_files":["src/Core.kt"],
- "mandatory_regression_tests":[{"id":"REG-B","name":"core","command":"sh wait.sh"}]}]}
+ "mandatory_regression_tests":[{"id":"REG-B","name":"core","command":"true"}]}]}
 JSON
 git add -A && git commit -qm init
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix it"},"uuid":"u1","sessionId":"b-1"}' > "$TMP/b.jsonl"
 STATE="$B/.claude/audit-gate/regression_gate.state.json"
-LOG="$B/.claude/audit-gate/regression_gate.log"
-BUSY_MSG="một lượt chạy test khác đang giữ khoá dự án — chạy lại sau"
+BUSY_MSG="đang giữ khoá"
+CMD="post-fix-gate.py --run-tests --scoped --brief"
 
 # Hold the very lock file the gate uses (post-fix-gate acquire_test_run_lock) for $1 seconds.
 hold_lock() { rm -f "$TMP/b_held"
@@ -58,10 +74,10 @@ PY
   b_holder=$!
   for _ in $(seq 1 50); do [ -f "$TMP/b_held" ] && break; sleep 0.1; done; }
 
-# One Stop, with a watchdog. Sets T_RC (TIMEOUT when the hook outlived LIMIT_S, its process group is
-# then killed) and T_SEC. $@ = extra env assignments (NAME=value); TEST_RUN_LOCK_WAIT_S is unset unless given.
+# One Stop, with a watchdog. Sets T_RC (TIMEOUT when the hook outlived LIMIT_S, its process group is then killed) and T_SEC.
+# $@ = extra env assignments (NAME=value); TEST_RUN_LOCK_WAIT_S is unset unless given.
 timed_stop() {
-  python3 - "$HOOK" "$B" "$TMP/b.jsonl" "$LIMIT_S" "$TMP/out" "$TMP/err" "$@" <<'PY' >"$TMP/timed"
+  python3 - "$HOOK" "$B" "$TMP/b.jsonl" "$LIMIT_S" "$TMP/out" "$TMP/err" "GATE_SPAWNS=$SPAWNS" "$@" <<'PY' >"$TMP/timed"
 import json, os, signal, subprocess, sys, time
 hook, repo, tp, limit, out, err = sys.argv[1:7]
 env = {k: v for k, v in os.environ.items() if k != "TEST_RUN_LOCK_WAIT_S"}
@@ -83,67 +99,46 @@ with open(out, "w") as fo, open(err, "w") as fe:
 print(rc, "%.1f" % (time.monotonic() - t0))
 PY
   read -r T_RC T_SEC < "$TMP/timed"; }
-
-state_clean() { python3 -c 'import json,os,sys
-d = json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1]) else {}
-bad = d.get("untested_fp") or d.get("pass_fp") or any(s.get("result") in ("untested", "pass") for s in d.get("sessions", {}).values())
-sys.exit(1 if bad else 0)' "$STATE"; }
-no_receipt() { [ ! -e "$B/.git/postfix-gate/full_pass.json" ]; }
 within() { python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) else 1)' "$1" "$2"; }
+gaterun() {
+  local vh; vh="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verified_head") or "")' "$STATE" 2>/dev/null)"
+  git cat-file -e "${vh:-none}^{commit}" 2>/dev/null || vh=""
+  ( cd "$B" && CLAUDE_PROJECT_DIR="$B" python3 "$GATE" --run-tests --scoped --brief ${vh:+--diff "$vh"} ) >"$TMP/gate.out" 2>&1; GRC=$?
+}
 
-# ── 2. lock held, override 3 s: BUSY after ~3 s, nothing left behind ───────────────────────────
-echo "fun ok() = 2" > src/Core.kt; rm -f "$TMP/b_wait"
-hold_lock 60
-timed_stop TEST_RUN_LOCK_WAIT_S=3
-if [ "$T_RC" = 0 ] && within "$T_SEC" $((3 + MARGIN_S)) && ! within "$T_SEC" 2.7; then
-  ok "lock held, TEST_RUN_LOCK_WAIT_S=3: BUSY after ${T_SEC}s (waited, then gave up)"
+timed_stop   # clean tree: verified_head = the start point
+
+# ── W1: lock held, no receipt ───────────────────────────────────────────────────────────────
+echo "fun ok() = 2" > src/Core.kt
+hold_lock 120
+timed_stop
+if [ "$T_RC" = 2 ] && within "$T_SEC" "$MAX_S" && grep -q -- "$CMD" "$TMP/err" && ! grep -q "$BUSY_MSG" "$TMP/out" "$TMP/err" && [ "$(spawns)" = 0 ]; then
+  ok "W1: lock held, no receipt: blocked with the gate command after ${T_SEC}s (no wait, no BUSY), nothing started"
 else
-  fail "held lock: rc=$T_RC after ${T_SEC}s, want rc 0 in 3-$((3 + MARGIN_S))s"
+  fail "W1: rc=$T_RC after ${T_SEC}s (want 2 within ${MAX_S}s) spawns=$(spawns) out='$(head -c 200 "$TMP/out")' err='$(head -c 300 "$TMP/err")'"
 fi
-grep -q "$BUSY_MSG" "$TMP/out" && [ ! -s "$TMP/err" ] && [ ! -f "$TMP/b_wait" ] \
-  && ok "BUSY: stop allowed (no block, nothing on stderr), the lock-held message, no suite ran" \
-  || fail "BUSY output (out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")' ran=$([ -f "$TMP/b_wait" ] && echo yes || echo no))"
-state_clean && ! grep -q ' pass ' "$LOG" && no_receipt \
-  && ok "BUSY: no cache entry (pass_fp/untested_fp), no pass note, no full-PASS receipt" \
-  || fail "BUSY left a verdict behind: state=$(cat "$STATE" 2>/dev/null) log=$(cat "$LOG" 2>/dev/null)"
-grep -q ' busy ' "$LOG" && ok "BUSY: logged as busy" || fail "no busy note in the hook log"
+
+# ── W3: lock held, a long TEST_RUN_LOCK_WAIT_S in the environment ───────────────────────────
+echo "fun ok() = 3" > src/Core.kt
+timed_stop TEST_RUN_LOCK_WAIT_S=120
+if [ "$T_RC" = 2 ] && within "$T_SEC" "$MAX_S" && grep -q -- "$CMD" "$TMP/err" && [ "$(spawns)" = 0 ]; then
+  ok "W3: lock held, TEST_RUN_LOCK_WAIT_S=120: still blocked at once (${T_SEC}s), nothing started"
+else
+  fail "W3: rc=$T_RC after ${T_SEC}s (want 2 within ${MAX_S}s) spawns=$(spawns) err='$(head -c 300 "$TMP/err")'"
+fi
 kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
 
-# ── 3. lock released during the wait: the suite runs and the normal verdict follows ────────────
-hold_lock 2
-timed_stop TEST_RUN_LOCK_WAIT_S=8
-if [ "$T_RC" = 0 ] && [ "$(cat "$TMP/b_wait" 2>/dev/null)" = 8 ] && ! grep -q "$BUSY_MSG" "$TMP/out" && within "$T_SEC" $((8 + MARGIN_S)); then
-  ok "lock released after ~2s: the suite ran, no BUSY, done in ${T_SEC}s"
-else
-  fail "released lock: rc=$T_RC after ${T_SEC}s wait='$(cat "$TMP/b_wait" 2>/dev/null)' out='$(cat "$TMP/out")'"
-fi
-grep -q ' pass ' "$LOG" && ok "released lock: the ordinary pass verdict was recorded" || fail "no pass note: $(cat "$LOG")"
-wait "$b_holder" 2>/dev/null
-
-# ── 4. a failing suite after the wait still blocks (BUSY must not turn into a PASS or a skip) ──
-echo "fun ok() = 3" > src/Core.kt; echo 'exit 1' >> wait.sh
-git add -A && git commit -qm "failing suite" && echo "fun ok() = 4" > src/Core.kt
-hold_lock 2
-timed_stop TEST_RUN_LOCK_WAIT_S=8
-if [ "$T_RC" = 2 ] && grep -q "REG-B" "$TMP/err"; then
-  ok "lock released, suite fails: the Stop is blocked (exit 2) naming REG-B"
-else
-  fail "failing suite after the wait: rc=$T_RC err='$(head -3 "$TMP/err")'"
-fi
-wait "$b_holder" 2>/dev/null
-
-# ── 5. default reaches the gate when the lock is free; an override reaches it unchanged ────────
-git checkout -q HEAD~1 -- wait.sh && git add -A && git commit -qm "suite green again"
-echo "fun ok() = 5" > src/Core.kt; rm -f "$TMP/b_wait"
+# ── W2: a receipt of this tree, then the lock held: allowed at once ──────────────────────────
+echo "fun ok() = 4" > src/Core.kt
+gaterun; g2=$GRC
+hold_lock 120
 timed_stop
-[ "$T_RC" = 0 ] && [ "$(cat "$TMP/b_wait" 2>/dev/null)" = "$WAIT_DEFAULT_S" ] \
-  && ok "lock free, no override: the hook hands the gate TEST_RUN_LOCK_WAIT_S=$WAIT_DEFAULT_S" \
-  || fail "default not handed to the gate: rc=$T_RC wait='$(cat "$TMP/b_wait" 2>/dev/null)'"
-echo "fun ok() = 6" > src/Core.kt; rm -f "$TMP/b_wait"
-timed_stop TEST_RUN_LOCK_WAIT_S=120
-[ "$T_RC" = 0 ] && [ "$(cat "$TMP/b_wait" 2>/dev/null)" = 120 ] \
-  && ok "override TEST_RUN_LOCK_WAIT_S=120 is handed to the gate as 120 (above the default 45: not capped to it)" \
-  || fail "override not honoured: rc=$T_RC wait='$(cat "$TMP/b_wait" 2>/dev/null)'"
+if [ "$g2" = 0 ] && [ "$T_RC" = 0 ] && within "$T_SEC" "$MAX_S" && [ ! -s "$TMP/err" ] && ! grep -q "$BUSY_MSG" "$TMP/out" && [ "$(spawns)" = 0 ]; then
+  ok "W2: lock held, a receipt of this tree: allowed after ${T_SEC}s, nothing started"
+else
+  fail "W2: gate=$g2 rc=$T_RC after ${T_SEC}s spawns=$(spawns) out='$(head -c 200 "$TMP/out")' err='$(head -c 300 "$TMP/err")'"
+fi
+kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
 
 cd "$TMP" || exit 1
 if [ "$FAILS" -ne 0 ]; then echo "regression gate lock wait: $FAILS FAILED"; exit 1; fi

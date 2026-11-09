@@ -4,7 +4,8 @@
   "description": "Mobile iOS application engineering focusing on Swift 6, SwiftUI, Swift Concurrency (@MainActor), retain cycle elimination ([weak self]), and memory management.",
   "essential_mcps": [
     "codebase-memory-mcp",
-    "context7"
+    "context7",
+    "mobile-mcp"
   ],
   "active_councils": [
     "01-subsystem-shared-flow.md",
@@ -29,7 +30,8 @@
     "video2dsprite"
   ],
   "exclude_agents": [
-    "android-principal-architect"
+    "android-principal-architect",
+    "game-gc-rendering-auditor"
   ],
   "source_extensions": [
     ".swift",

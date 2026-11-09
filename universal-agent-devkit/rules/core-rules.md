@@ -157,7 +157,7 @@ Mọi dòng mã sinh ra hoặc sửa đổi BẮT BUỘC phải tuân thủ 5 ng
    - AI Agent BẮT BUỘC phải chủ động phân tích ngữ cảnh, yêu cầu và phạm vi ảnh hưởng của tác vụ để nạp và thực thi các Kỹ năng chuyên biệt (`skills/`) phù hợp.
    - TUYỆT ĐỐI KHÔNG bắt người dùng phải gõ lệnh slash command (như `/fix`, `/qc`, `/ocr`, `/giao`) hay chạy thủ công bằng tay.
 2. **Tự Động Chuỗi Hóa Quy Trình (Autonomous Skill Chaining):**
-   - **Mọi yêu cầu đầu vào:** **[hook]** `prompt_context.sh` tự chèn ngữ cảnh `context-enricher` (loại việc, yêu cầu ngầm định, bẫy instincts khớp kèm số dòng, luật RED→GREEN) — đọc và làm theo; tự dò AST/Graph cho vùng code liên quan trước khi viết dòng code đầu tiên.
+   - **Mọi yêu cầu đầu vào:** **[hook]** `prompt_context.sh` tự chèn ngữ cảnh `context-enricher` (loại việc, ngõ cụt phần cứng đã đo, bẫy instincts khớp kèm số dòng, luật RED→GREEN) — đọc và làm theo; tự dò AST/Graph cho vùng code liên quan trước khi viết dòng code đầu tiên.
    - **Khi sửa bug:** Tự động kết hợp `fixbugs` (Paired Executable Oracle RED ➔ GREEN) ➔ `observability-instrumentation` (log audit) ➔ `verification-before-completion`.
    - **Khi thiết kế / refactor:** Tự động kết hợp `grill-plan` (stress-test) ➔ `deep-module-design` (interface seam) / `deprecation-migration` ➔ `documentation-and-adrs` (ghi ADR).
    - **Khi làm việc với Android:** Tự động kích hoạt `android-real-device-qa` (đo FPS SurfaceFlinger, dump view hierarchy, ANR logcat triage, DEX scan).
@@ -227,18 +227,28 @@ lệnh và số dòng vào PROGRESS và file duyệt.
 
 ## 19. Gate, proof and Git mechanics (moved from the essentials, 2026-11-02)
 The essentials keep the obligation; this section keeps how the tools carry it out.
-- **Step 3 scope**: `bin/scoped_gate.py` maps the branch's diff since the trunk to its tests through the import graph, plus the
-  fixed smoke group; never `--full` (#741): a `.agents/gate-core.txt` file runs the tests that reach it (`core-touched`), a file
-  no test reaches or a graph error adds `[core-smoke]`. The merge queue / train runs one `--scoped` for the union of the batch's
-  diffs; push and XONG accept its receipt for that tree. The `gate-full` skill runs `--full` on main every night at 00:00
-  (launchd) and bisects a red one into a P1 card.
+- **Step 3 scope**: `bin/scoped_gate.py` maps the branch's diff since the trunk to its tests through the import graph; never
+  `--full` (#741). Only direct tests block (gate speed v26): the top-ranked test of each changed code file, tests changed in the
+  diff, non-kit suites and suites watching a changed non-kit path; a `.agents/gate-core.txt` file runs the tests that reach it
+  (`core-touched`), a file no test reaches or a graph error adds `[core-smoke]`; every other selected test is `deferred_to_heavy`
+  (printed, in the receipt, not run). At a merge point the `[merge-guard]` ids of `.agents/gate-core.txt` (∪ the base's) always
+  run for real, last for the timed ones; a run red only on guards re-runs each once. The Stop and commit hooks run no suite.
+  The merge queue / train runs one `--scoped` for the union of the batch's diffs; push and XONG accept its receipt for that
+  tree. The `gate-full` skill (heavy gate) runs `--full` on main Monday and Thursday at 00:00 (launchd) and bisects each new red.
 - **Step 3 cache**: a suite whose content key (its inputs + environment, `bin/suite_cache.py`, shared by every worktree) already
   PASSed is reused, the rest run; Gradle/Unity/device suites, network commands and `"cache": false` always run; `--no-cache` runs
   them all. A later gate run on the same tree, mode and suite list reuses `<git-dir>/postfix-gate/rerun_skip.json` and returns 0
-  without the test lock, unless `--force`, `--no-cache` or `DEVKIT_GATE_CACHE=0`.
+  without the test lock, unless `--force`, `--no-cache` or `DEVKIT_GATE_CACHE=0`. A merge guard is never reused.
 - **Step 3 load**: suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores (`bin/capacity.py`;
   `DEVKIT_SLOT_LOAD_MAX` / `DEVKIT_CAPACITY` override) they start at once, above it they wait up to 600 s and run anyway; only
-  Unity and device suites hold an exclusive lock.
+  Unity and device suites hold an exclusive lock. Merge-point levers are on by default (load test 2026-11-08, both levers together, met its thresholds):
+  under a 1-minute load of 2 × cores the parallel group widens to `DEVKIT_MERGE_PARALLEL` (6), a merge-priority run gets at least
+  2 gate slots, and the optimistic merge verify leaves the last gate slot to the locked verify only at or above that load.
+  `DEVKIT_MERGE_WIDE_LOAD_MAX=0` and `DEVKIT_MERGE_GATE_SLOTS=0` turn the first two off; `SB_MERGE_OPT_LOAD_MAX=<cores>` restores
+  the earlier 1 × cores reserve (0 removes the reserve entirely, which reopens the 2026-11-05 locked-verify starvation).
+  Rollback: when a week of `runs.jsonl` shows merge-priority `gate_slot.waited_s` p90 above 300 s or merge-point load1 p90
+  above 24 (the load-test thresholds), set the first two to 0 and `SB_MERGE_OPT_LOAD_MAX` to the core count, then file the
+  numbers on the gate-speed issue.
 - **Step 4 waiver**: the profile was backend when the turn started (committed, or an uncommitted profile file written before the
   turn), or every file changed since HEAD at the turn start (commits, merges, pulls included; new files too) is under a
   top-level `.agents/ .claude/ .gemini/ .github/ .githooks/ .codebase-memory/ docs/ reports/ scripts/ bin/ tools/`, a top-level

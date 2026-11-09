@@ -103,7 +103,7 @@ SUM="$T/logs/summary-latest.md"
 TJ="$T/logs/trace-latest.json"
 
 run_gf() {   # run_gf <mode> [gate_full.py]: một lượt, in exit code
-  rm -f "$T/reruns" "$T/card.args" "$TJ"
+  rm -f "$T/reruns" "$T/card.args" "$TJ" "$COMMON/postfix-gate/nightly/history.jsonl"   # v26 mục 6: mỗi ca là đỏ MỚI
   FAKE_MODE="$1" python3 "${2:-$GF}" run --repo "$T/repo" --timeout 30 >"$T/out.$1" 2>&1
   echo $?
 }

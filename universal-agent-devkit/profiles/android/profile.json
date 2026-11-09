@@ -8,7 +8,7 @@
     "context7",
     "android-code-search",
     "android-skills",
-    "replicant-mcp"
+    "mobile-mcp"
   ],
   "active_councils": [
     "01-subsystem-shared-flow.md",
@@ -38,5 +38,8 @@
     ".cpp",
     ".h",
     ".hpp"
+  ],
+  "exclude_agents": [
+    "game-gc-rendering-auditor"
   ]
 }
