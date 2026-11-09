@@ -59,9 +59,13 @@ def halt_path():
     override = os.environ.get('SB_GITHUB_HALT_FILE')
     if override:
         return Path(override)
-    result = subprocess.run(['git', 'rev-parse', '--git-common-dir'], capture_output=True,
-                            text=True, timeout=5, cwd=os.environ.get('SB_REPO_PATH'))
     cwd = Path(os.environ.get('SB_REPO_PATH') or Path.cwd())
+    try:
+        result = subprocess.run(['git', 'rev-parse', '--git-common-dir'], capture_output=True,
+                                text=True, timeout=5, cwd=os.environ.get('SB_REPO_PATH'))
+    except (subprocess.TimeoutExpired, OSError):
+        # #1034: git quá chậm (máy tải nặng) hoặc không chạy được: dùng đường dẫn mặc định thay vì Traceback.
+        return cwd / '.claude/super-board/github-halt.json'
     common = Path(result.stdout.strip())
     if result.returncode != 0:
         return cwd / '.claude/super-board/github-halt.json'
