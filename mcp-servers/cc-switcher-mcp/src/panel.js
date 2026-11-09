@@ -107,6 +107,7 @@ function profileView(p, state, nowMs) {
     weeklyResetAtMs: p.weeklyResetAtMs,
     weeklyResetFormatted: p.weeklyResetFormatted,
     quotaStale: p.quotaStale,
+    quotaIssue: p.quotaIssue || '',
     resetAtMs: p.resetAtMs,
     resetTimeFormatted: p.resetTimeFormatted,
     resetRemainHuman: p.resetRemainHuman,

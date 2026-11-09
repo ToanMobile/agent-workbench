@@ -169,6 +169,7 @@ export function loadSwitcherState(stateDir) {
     frozenUntil: canonicalKeys(existing?.frozenUntil),
     quotaCache: canonicalKeys(existing?.quotaCache),
     quotaFetchedAtMs: existing?.quotaFetchedAtMs || 0,
+    quotaIssues: canonicalKeys(existing?.quotaIssues), // ly do lan lay quota gan nhat that bai, theo profile
     switchHistory: Array.isArray(existing?.switchHistory) ? existing.switchHistory.slice(-50) : [],
     policy: {
       ...DEFAULT_POLICY,
@@ -594,7 +595,8 @@ export function formatRemainDuration(remainMs) {
  */
 export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now(), opts = {}) {
   if (profile.vendor !== 'anthropic' || !profile.configDir) return null;
-  const { tokenReader, httpFetcher = globalThis.fetch } = opts;
+  const { tokenReader, httpFetcher = globalThis.fetch, onFailure } = opts;
+  const fail = (reason) => { try { onFailure?.(reason); } catch (err) { logStructured('warn', 'quota_on_failure_threw', { error: err?.message }); } return null; };
 
   let oauth = null;
   if (typeof tokenReader === 'function') {
@@ -611,17 +613,17 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
       oauth = JSON.parse(raw)?.claudeAiOauth || null;
     } catch (err) {
       logStructured('warn', 'keychain_quota_read_skipped', { profileId: profile.id, error: err?.message });
-      return null;
+      return fail('no_credentials');
     }
   }
 
   const token = oauth?.accessToken || '';
-  if (!token) return null;
+  if (!token) return fail('no_credentials');
 
   // Neu tai khoan dang o che do standby va accessToken da het han -> bo qua khong spam /api/oauth/usage gay 429
   if (typeof oauth?.expiresAt === 'number' && oauth.expiresAt > 0 && oauth.expiresAt <= nowMs) {
     logStructured('info', 'oauth_token_expired_skip_usage_poll', { profileId: profile.id });
-    return null;
+    return fail('token_expired');
   }
 
   try {
@@ -671,12 +673,13 @@ export async function fetchAnthropicProfileQuotaLive(profile, nowMs = Date.now()
 
     if (res.status === 429) {
       logStructured('warn', 'usage_endpoint_throttled_429', { profileId: profile.id });
-      return null;
+      return fail('throttled');
     }
+    return fail(res.status === 401 || res.status === 403 ? 'token_expired' : 'network');
   } catch (err) {
     logStructured('warn', 'anthropic_quota_fetch_failed', { profileId: profile.id, error: err?.message });
+    return fail('network');
   }
-  return null;
 }
 
 /**
@@ -697,9 +700,10 @@ export async function syncLiveQuotas(opts = {}) {
   }
 
   const fetched = [];
+  const failures = {};
   for (const p of DEFAULT_PROFILES) {
     try {
-      fetched.push([p, await quotaFetcher(p, nowMs)]);
+      fetched.push([p, await quotaFetcher(p, nowMs, { onFailure: (reason) => { failures[p.id] = reason; } })]);
     } catch (err) {
       logStructured('warn', 'sync_profile_quota_error', { profileId: p.id, error: err?.message });
     }
@@ -708,7 +712,14 @@ export async function syncLiveQuotas(opts = {}) {
   // Doc lai state sau khi cho mang: thao tac chay xen (POST action, daemon xoay do 429) khong bi ghi de bang ban cu.
   const fresh = loadSwitcherState(stateDir);
   let updated = false;
+  fresh.quotaIssues = fresh.quotaIssues && typeof fresh.quotaIssues === 'object' ? fresh.quotaIssues : {};
   for (const [p, q] of fetched) {
+    if (q && typeof q.remainingPct === 'number') {
+      if (fresh.quotaIssues[p.id]) { delete fresh.quotaIssues[p.id]; updated = true; }
+    } else if (failures[p.id] && fresh.quotaIssues[p.id]?.reason !== failures[p.id]) {
+      fresh.quotaIssues[p.id] = { reason: failures[p.id], atMs: nowMs };
+      updated = true;
+    }
     // Moc dong bang bi ghi xen trong luc cho mang (daemon 429) moi hon quota vua do: khong ghi/xoa de len.
     const freezeUntouched = fresh.frozenUntil[p.id] === state.frozenUntil[p.id];
     if (q && typeof q.remainingPct === 'number') {
@@ -1083,6 +1094,7 @@ export function getStatusReport(opts = {}) {
       weeklyResetAtMs: weeklyResetAtMs > nowMs ? weeklyResetAtMs : 0,
       weeklyResetFormatted: weeklyResetAtMs > nowMs ? formatLocalWeekdayTime(weeklyResetAtMs) : '',
       quotaStale,
+      quotaIssue: quotaStale ? (state.quotaIssues?.[p.id]?.reason || '') : '',
       resetAtMs: effectiveResetMs,
       resetTimeFormatted,
       resetRemainHuman,
