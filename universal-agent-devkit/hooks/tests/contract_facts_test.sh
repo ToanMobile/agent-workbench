@@ -14,7 +14,7 @@
 #       hooks on the same events UNDER THE SAME MATCHERS (2026-09-23: a hook
 #       wired for `Bash` but not for the MCP matcher in one registry
 #       used to pass), and each routes mobile-mcp's device tools through
-#       hardware_safety_gate.sh (no registry still routes replicant-mcp, removed 09/11) (the adb device policy must not be bypassable
+#       hardware_safety_gate.sh (no registry still routes legacy-device-mcp, removed 09/11) (the adb device policy must not be bypassable
 #       through MCP).
 #   F2. Every hooks/*.sh is either wired in hooks/hooks.json or says
 #       "OPT-IN HELPER" in its header — no silent orphans.
@@ -61,10 +61,10 @@ REGISTRIES = {
     ".claude/settings.json": "dogfood config",
 }
 
-def routes_replicant(mt):
-    """True when the matcher selects a replicant-mcp tool. A matcher like "*" is not a regex: skipped (it names no tool)."""
+def routes_legacy_device(mt):
+    """True when the matcher selects a legacy-device-mcp tool. A matcher like "*" is not a regex: skipped (it names no tool)."""
     try:
-        return bool(re.fullmatch(mt, "mcp__replicant-mcp__adb-shell"))
+        return bool(re.fullmatch(mt, "mcp__legacy-device-mcp__adb-shell"))
     except re.error:
         return False
 
@@ -95,9 +95,9 @@ for path, label in REGISTRIES.items():
 ref = wired.get("hooks/hooks.json", ({}, [], {}))[0]
 ref_m = wired.get("hooks/hooks.json", ({}, [], {}))[2]
 for path, (ev_map, _, by_m) in wired.items():
-    # replicant-mcp is removed from the kit (09/11/2026): no registry may still route its tools to the device guard.
-    gone = not any(routes_replicant(mt) for (ev, mt) in by_m)
-    check(gone, f"{path} has no matcher for mcp__replicant-mcp__*")
+    # legacy-device-mcp is removed from the kit (09/11/2026): no registry may still route its tools to the device guard.
+    gone = not any(routes_legacy_device(mt) for (ev, mt) in by_m)
+    check(gone, f"{path} has no matcher for mcp__legacy-device-mcp__*")
     # mobile-mcp is the device MCP: every tool but get_more_tools is mobile_<name>, and install / uninstall /
     # clear data / batch commands reach the device: the same guard must see them in every registry.
     routed = all(any(ev == "PreToolUse" and "hardware_safety_gate.sh" in hooks and re.fullmatch(mt, t)
@@ -123,8 +123,8 @@ for path, (ev_map, _, by_m) in wired.items():
 ROOT_REG = "../.claude/settings.json"   # the agent-workbench dogfood copy, when this kit sits inside the repo
 if os.path.exists(ROOT_REG):
     root_matchers = [m.get("matcher") or "" for arr in (json.load(open(ROOT_REG)).get("hooks") or {}).values() for m in arr]
-    check(not any(routes_replicant(mt) for mt in root_matchers if mt),
-          f"{ROOT_REG} has no matcher for mcp__replicant-mcp__*")
+    check(not any(routes_legacy_device(mt) for mt in root_matchers if mt),
+          f"{ROOT_REG} has no matcher for mcp__legacy-device-mcp__*")
 print()
 
 print("F2. no silent orphans")

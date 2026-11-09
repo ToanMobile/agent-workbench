@@ -822,7 +822,7 @@ hwcase 0 'adb shell pkill logcat' "${AUTO}"
 hwcase 0 'adb shell "pkill -f logcat"' "${AUTO}"
 hwcase 0 'adb shell pidof logcat' "${AUTO}"
 hwcase 2 'adb shell logcat -f /data/local/tmp/l.txt & sleep 5; echo "x &"' "${AUTO}"
-# replicant-mcp was removed from the kit (09/11/2026): its tools are no longer mapped to an adb command, so the guard lets them pass.
+# legacy-device-mcp was removed from the kit (09/11/2026): its tools are no longer mapped to an adb command, so the guard lets them pass.
 # mobile-mcp (the only device MCP) is covered in depth by tests/gates/test_hw_mobile_mcp.sh; here only the hook contract.
 mcpcase() { # want tool input-json [ENV=VAL ...]
   want="$1"; tool="$2"; input="$3"; shift 3
@@ -835,7 +835,7 @@ mcpcase 0 mobile-mcp__mobile_uninstall_app '{"device":"emulator-5554","packageNa
 mcpcase 2 mobile-mcp__mobile_clear_app_data '{"device":"RFCW504KFKJ","packageName":"com.shop.app"}' "${DENY}"
 mcpcase 0 mobile-mcp__mobile_clear_app_data '{"device":"IVI01","packageName":"com.shop.app"}' "${DENY}"
 mcpcase 2 mobile-mcp__mobile_launch_app '{"packageName":"com.shop.app"}'
-mcpcase 0 replicant-mcp__adb-shell '{"command":"pm uninstall --user 0 com.android.systemui"}'
+mcpcase 0 legacy-device-mcp__adb-shell '{"command":"pm uninstall --user 0 com.android.systemui"}'
 # An MCP payload never takes the Bash fast path (its device is a parameter, not a command line).
 run_case "hw-gate: mcp payload skips the fast path (no python3)" hardware_safety_gate.sh 2 \
   '{"tool_name":"mcp__mobile-mcp__mobile_uninstall_app","tool_input":{"device":"emulator-5554","packageName":"com.android.systemui"}}' PATH="${NOJQ_BIN}"
