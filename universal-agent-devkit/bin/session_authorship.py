@@ -90,11 +90,23 @@ READ_ONLY_TOOLS = frozenset((
     # pm_ack records an acknowledged warning in the PM's task.json (state), no project file.
     "mcp__antigravity-pm__pm_ack",
     # replicant (Android device) reads: the UI tree. ui-action drives the device: not listed.
-    "mcp__replicant-mcp__ui-query"))
+    "mcp__replicant-mcp__ui-query",
+    # mobile-mcp (replaces replicant-mcp, 08/11/2026) reads: the device list, the screen and the crash reports. Full names carry
+    # mobile_, so MCP_READ_RE (get_/list_ at the start) does not match them. Tools that drive the device, and
+    # mobile_batch_commands (it runs any of them), are not listed: opaque. get_more_tools reads by its own name.
+    "mcp__mobile-mcp__mobile_list_available_devices", "mcp__mobile-mcp__mobile_list_apps",
+    "mcp__mobile-mcp__mobile_get_foreground_app", "mcp__mobile-mcp__mobile_get_screen_size",
+    "mcp__mobile-mcp__mobile_list_elements_on_screen", "mcp__mobile-mcp__mobile_take_screenshot",
+    "mcp__mobile-mcp__mobile_get_orientation", "mcp__mobile-mcp__mobile_list_crashes",
+    "mcp__mobile-mcp__mobile_get_crash"))
 # Tools that write exactly the one file their input names: that path counts as written by the
 # session (like Write). Without an absolute path the tool is opaque. ui-capture reads the screen
 # and, with localPath, saves it there.
-PATH_WRITE_TOOLS = {"mcp__replicant-mcp__ui-capture": "localPath"}
+PATH_WRITE_TOOLS = {"mcp__replicant-mcp__ui-capture": "localPath",
+                    # mobile-mcp: the one file the call names (saveTo / output); without it nothing is written in the project
+                    "mcp__mobile-mcp__mobile_save_screenshot": "saveTo",
+                    "mcp__mobile-mcp__mobile_get_device_logs": "saveTo",
+                    "mcp__mobile-mcp__mobile_start_screen_recording": "output"}
 # An MCP tool (mcp__<server>__<tool>) counts as read-only when its own name clearly reads:
 # get_/read-/… (snake, kebab) or getJiraIssue/searchJiraIssuesUsingJql (camelCase) — and none
 # of its words writes (getOrCreateFile, searchAndReplace stay write-capable).

@@ -57,8 +57,59 @@ REPLICANT_HOST_ONLY = {"gradle-build", "gradle-test", "gradle-list", "gradle-get
 REPLICANT_APP = {"uninstall": "shell pm uninstall", "clear-data": "shell pm clear",
                  "stop": "shell am force-stop", "launch": "shell monkey -p", "list": "shell pm list packages"}
 
+# ── mobile-mcp (@mobilenext/mobile-mcp 1.0.16, lib/server.js, 08/11/2026): the device is the string parameter `device` (a serial, or the
+# AVD name on an emulator). Every tool is mobile_<name> but get_more_tools. mobile_batch_commands runs other tools as steps: a step own
+# `device` replaces the batch one, listElementsAtEnd lists the screen of the BATCH device, the cloud tools are batchable.
+MOBILE_PFX = "mcp__mobile-mcp__"
+MOBILE_CLOUD = {"mobile_login_to_cloud_provider", "mobile_list_remote_devices", "mobile_allocate_remote_device",
+                "mobile_release_remote_device"}
+MOBILE_NO_DEVICE = {"mobile_list_available_devices", "get_more_tools"}
+MOBILE_APP = {"mobile_uninstall_app": "shell pm uninstall", "mobile_clear_app_data": "shell pm clear",
+              "mobile_terminate_app": "shell am force-stop", "mobile_launch_app": "shell monkey -p"}
+# What PATTERNS (below, MCP calls only) refuse: a marker only this mapping writes, never a command a user types.
+MM_CLOUD, MM_INVALID = "@@mobile-mcp-cloud@@", "@@mobile-mcp-invalid@@"
+
+def _q(v):
+    return shlex.quote(v) if isinstance(v, str) and v else ""
+
+def mobile_cmd(name, args, device):
+    """The adb command a mobile-mcp tool amounts to ("" = no device touched; a marker = refused whatever the device is)."""
+    if name in MOBILE_CLOUD:
+        return MM_CLOUD + " " + name
+    if name in MOBILE_NO_DEVICE:
+        return ""
+    if not isinstance(device, str) or not device.strip():
+        return MM_INVALID + " " + name + ": no device"
+    adb = "adb -s " + shlex.quote(device)
+    if name == "mobile_install_app":
+        return adb + " install " + _q(args.get("path"))
+    if name in MOBILE_APP:
+        return " ".join((adb, MOBILE_APP[name], _q(args.get("packageName"))))
+    return adb + " get-state"
+
+def mobile_as_adb(name, inp):
+    if name != "mobile_batch_commands":
+        return mobile_cmd(name, inp, inp.get("device"))
+    steps, parent = inp.get("steps"), inp.get("device")
+    if not isinstance(steps, list) or not steps or not isinstance(parent, str) or not parent.strip():
+        return MM_INVALID + " " + name + ": no device or no steps"
+    cmds = [mobile_cmd("mobile_list_elements_on_screen", {}, parent)]   # the batch device is always touched (listElementsAtEnd)
+    for st in steps:
+        if not isinstance(st, dict) or not isinstance(st.get("arguments"), dict):   # not an object: the packageName / device in it is unread
+            cmds.append(MM_INVALID + " " + name + ": invalid step")
+            continue
+        sname, sargs = st.get("name"), st["arguments"]
+        if not isinstance(sname, str) or sname == "mobile_batch_commands" or not (
+                sname in MOBILE_CLOUD or sname in MOBILE_NO_DEVICE or sname.startswith("mobile_")):
+            cmds.append(MM_INVALID + " " + name + ": unknown step")
+            continue
+        cmds.append(mobile_cmd(sname, sargs, sargs["device"] if "device" in sargs else parent))   # the server: {device, ...step.arguments}
+    return "; ".join(c for c in cmds if c)
+
 def mcp_as_adb(tool, inp):
-    """The adb command line a replicant-mcp call amounts to ("" = no device touched)."""
+    """The adb command line a replicant-mcp / mobile-mcp call amounts to ("" = no device touched)."""
+    if tool.startswith(MOBILE_PFX) and isinstance(inp, dict):
+        return mobile_as_adb(tool[len(MOBILE_PFX):], inp)
     if not tool.startswith("mcp__replicant-mcp__") or not isinstance(inp, dict):
         return ""
     name = tool[len("mcp__replicant-mcp__"):]
@@ -66,7 +117,7 @@ def mcp_as_adb(tool, inp):
                    and re.search(r"serial|device_?id", k, re.I)), "")
     adb = "adb -s " + shlex.quote(serial) if serial else "adb"
     op = inp.get("operation") or ""
-    q = lambda v: shlex.quote(v) if isinstance(v, str) and v else ""
+    q = _q
     if name in REPLICANT_HOST_ONLY:
         return ""
     if name == "adb-shell":
@@ -127,7 +178,10 @@ TEXTS = [CMD_LIVE] + ([CMD_NOJOIN] if CMD_NOJOIN != CMD_LIVE else [])
 STRICT_SRC = {CMD_LIVE: shell_norm.join_continuations(cmd), CMD_NOJOIN: cmd}
 
 # Options adb/fastboot accept before the subcommand (with or without a value).
-ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+\S+|-[adeU]|--\S+(?:\s+\S+)?|wait-for-[\w-]+))*"   # wait-for-device remount (15/10)
+#   (08/11) the value of -s is ONE shell word that may hold quoted spaces: mobile-mcp names an emulator by its AVD name ('Pixel 7 API 34',
+#   "Toan's Pixel 8" quoted by shlex as 'Toan'"'"'s Pixel 8'); disjoint alternatives, so linear.
+SHELL_WORD = r"(?:\x27[^\x27]*\x27|\x22[^\x22]*\x22|\\.|[^\s\x27\x22\\])+"
+ADB_OPTS = r"(?:\s+(?:-[sHPtL]\s+" + SHELL_WORD + r"|-[adeU]|--\S+(?:\s+\S+)?|wait-for-[\w-]+))*"   # wait-for-device remount (15/10)
 FB_OPTS = r"(?:\s+(?:-[sSciopn]\s+\S+|-w|-u|--\S+(?:=\S+)?))*"
 # first alternative: / or a system partition, then / whitespace end ; & |; second: a glob in the FIRST path component (/*, /data*,
 # /sys*, /s*, /dat?, /syste[m], /?ystem) can reach a system partition, while /sdcard/* and /tmp/x* cannot
@@ -193,6 +247,12 @@ PATTERNS = [
     # refuses it too (15/10, review: bash <(echo rm -rf /) was allowed by this gate)
     (r"(?:^|[\s;&|(])(?:ba|z|da|k)?sh(?:\s+-\S+)*\s+(?:<\s*)?<\(", "shell chạy văn bản do process substitution sinh ra (bash <(…)): cổng không đọc được nội dung"),
 ]
+
+# mobile-mcp (MCP calls only, so a Bash command that merely names a marker is not refused): cloud devices, and a call whose device
+# cannot be known. Refused with or without a device denylist (T0001 plan_review).
+if MCP:
+    PATTERNS.insert(0, (re.escape(MM_CLOUD), "mobile-mcp cloud (thiết bị từ xa + đăng nhập tài khoản ngoài): cấm mặc định"))
+    PATTERNS.insert(1, (re.escape(MM_INVALID), "mobile-mcp: lời gọi không nêu rõ thiết bị (device thiếu/rỗng, steps rỗng hoặc sai kiểu)"))
 
 # /data/local/tmp is adb scratch space (pushed APKs, logcat dumps): clearing it cannot brick a device (user, 2026-10-12: allow).
 # Only the folder itself or a path under it, with no `..` leaving it and nothing the shell expands at run time ($, backtick).
@@ -2203,15 +2263,28 @@ if MCP and not label:   # (2026-10-13) the command of replicant adb-shell runs o
 
 
 # ── Device policy: which serial may adb touch ─────────────────────────────────
+def policy_entries(text, deny, one_per_line=False):
+    """The device names in one policy text. A name may hold spaces ('Pixel 7 API 34', "Toan's Pixel 8": the AVD name mobile-mcp
+    passes as `device`, audit 09/11). Denylist: every word (as before) AND every whole entry between , or ; : listing more
+    only refuses more. Allowlist: listing more would let more through, so the words of a name with spaces must NOT be allowed
+    by themselves ("Pixel 7 API 34" must not allow a device called "API", review 09/11): a file line is ONE entry, and a text
+    with , or ; is split there only; only a plain space-separated text (ADB_ALLOW_SERIALS="A B", the old form) is split into words."""
+    words = {t for t in re.split(r"[\s,;]+", text) if t}
+    whole = {e.strip() for e in re.split(r"[,;]+", text) if e.strip()}
+    if deny:
+        return words | whole
+    return whole if one_per_line or re.search(r"[,;]", text) else words
+
 def serial_set(env_name, file_name):
-    out = {t for t in re.split(r"[\s,;]+", os.environ.get(env_name, "")) if t}
+    deny = file_name == "denylist"
+    out = policy_entries(os.environ.get(env_name, ""), deny)
     cfg = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
                        "universal-agent-devkit", "adb-" + file_name)
     for path in (cfg, os.path.join(os.environ.get("REPO_ROOT", "."), ".adb-" + file_name)):
         try:
             with open(path, encoding="utf-8") as fh:
                 for line in fh:
-                    out.update(t for t in re.split(r"[\s,;]+", line.split("#", 1)[0]) if t)
+                    out.update(policy_entries(line.split("#", 1)[0], deny, True))
         except OSError:   # no such file (the usual case) or unreadable: no serial from it
             pass
     return out
@@ -2431,8 +2504,10 @@ def sdk_adb():
     homes = [os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT")]
     try:
         with open(os.path.join(os.environ.get("REPO_ROOT", "."), ".mcp.json"), encoding="utf-8") as fh:
-            srv_env = (json.load(fh).get("mcpServers", {}).get("replicant-mcp", {}).get("env") or {})
-        homes += [srv_env.get("ANDROID_HOME"), srv_env.get("ANDROID_SDK_ROOT")]
+            servers = json.load(fh).get("mcpServers", {})
+        for key in ("mobile-mcp", "replicant-mcp"):
+            srv_env = servers.get(key, {}).get("env") or {}
+            homes += [srv_env.get("ANDROID_HOME"), srv_env.get("ANDROID_SDK_ROOT")]
     except (OSError, ValueError, AttributeError):
         pass
     homes += [os.path.expanduser("~/Library/Android/sdk"), os.path.expanduser("~/Android/Sdk")]
@@ -2516,7 +2591,7 @@ def target_serial(exe, opts, env_serial, lits=None, strict=True):
     adb = exe if "/" in exe and os.access(exe, os.X_OK) else (shutil.which("adb") or sdk_adb())
     if not adb:
         # A Bash adb call then fails on its own; replicant-mcp finds its adb elsewhere.
-        return (None, "không tìm thấy adb để biết replicant-mcp dùng thiết bị nào — đặt ANDROID_HOME") if MCP else (None, None)
+        return (None, "không tìm thấy adb để biết MCP (mobile-mcp / replicant-mcp) dùng thiết bị nào — đặt ANDROID_HOME") if MCP else (None, None)
     env = dict(os.environ)
     if env_serial:
         env["ANDROID_SERIAL"] = env_serial
@@ -2556,7 +2631,8 @@ def device_violation(text):
             serial, why = memo[key]
         if why:
             return "không xác định được thiết bị đích (" + why + ") — " + (
-                "chọn thiết bị bằng adb-device select" if MCP else "ghi rõ adb -s <SERIAL>")
+                ("ghi rõ tham số device (mobile_list_available_devices)" if tool.startswith(MOBILE_PFX)
+                 else "chọn thiết bị bằng adb-device select") if MCP else "ghi rõ adb -s <SERIAL>")
         if serial and serial in deny:
             return "thiết bị " + serial + " nằm trong denylist (máy cá nhân / cấm đụng)"
         if serial and allow and serial not in allow:

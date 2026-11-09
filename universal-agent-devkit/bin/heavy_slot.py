@@ -670,7 +670,7 @@ def _scan_programs(text: str, project_dir: str, top: bool, cwd0: str, found: dic
 # Bản sao của post-fix-gate.py HARD_DEVICE_SUITE (giữ hai bản đồng bộ): classify tự nhận suite thiết bị khi người gọi không nói.
 # Lớp "device" chỉ để ghi nhãn: không còn khoá thiết bị (review 20/10).
 HARD_DEVICE = re.compile(r"\badb\b|connected\w*(?:Test|Check)|\bemulator\b|\bsimctl\b|"
-                         r"\bxcodebuild\b[^\n]*\btest\b|replicant|-testPlatform[ =]+(?!EditMode\b|PlayMode\b)\w+", re.I)
+                         r"\bxcodebuild\b[^\n]*\btest\b|replicant|mobile-mcp|mobilecli|-testPlatform[ =]+(?!EditMode\b|PlayMode\b)\w+", re.I)
 
 
 def classify(command: str, project_dir: str = ".", recorded_s: Optional[float] = None, device: Optional[bool] = None,

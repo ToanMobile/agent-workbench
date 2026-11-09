@@ -81,6 +81,13 @@
 #     measurement dies with it (GeelyEx2 INSTINCT-099). Allowed: a dump that exits
 #     (-d -c -g -t -L -G -S), or a logcat detached on the car that writes there
 #     (`adb shell "nohup logcat -f /data/local/tmp/x.txt &"`, `… > /sdcard/x.log &"`).
+#   • the same device checks through mobile-mcp (@mobilenext/mobile-mcp 1.0.16, PreToolUse `mcp__mobile-mcp__.*`, 08/11/2026):
+#     the string `device` of each call (a serial, or the AVD name of an emulator) is checked against the device policy like
+#     `adb -s <device>`; mobile_install_app / uninstall_app / clear_app_data are read as the adb command they run (a system
+#     package is refused); mobile_batch_commands is opened step by step (a step's own `device` replaces the batch one, and
+#     listElementsAtEnd touches the batch device); the four cloud tools and any call that names no device are refused.
+#     A denylist entry must be written the way the device is NAMED to the tool: list both the adb serial and the AVD name /
+#     Simulator UDID. An MCP tool name anywhere in the payload sends it to the parser, never the fast path (tests/gates/test_hw_mobile_mcp.sh).
 #   • the same device checks through replicant-mcp (PreToolUse `mcp__replicant-mcp__.*`;
 #     tool names and schemas from replicant-mcp 1.6.7 dist/tools/*.js). Each call is
 #     turned into the adb command it runs: adb-shell {command} → `adb shell <command>`,
@@ -114,6 +121,11 @@ INPUT="$(cat)"
 # An MCP payload never takes it: its "command" is a DEVICE shell command (adb-shell).
 fast_allow() { # $1 = trigger ERE
   local re='"command"[[:space:]]*:[[:space:]]*"((\\.|[^"\\])*)"' c bash_re='"tool(_n|N)ame"[[:space:]]*:[[:space:]]*"Bash"'
+  local mcp_re='"tool(_n|N)ame"[[:space:]]*:[[:space:]]*"mcp__'
+  # (09/11, audit T0001) the two regexes below read the WHOLE payload, so an MCP call whose arguments carry {"tool_name":"Bash",
+  # "command":"ls"} (mobile_batch_commands steps take any key) looked like a Bash call and skipped the parser. An MCP tool name
+  # anywhere in the payload sends it to the parser.
+  [[ $INPUT =~ $mcp_re ]] && return 1
   [[ $INPUT =~ $bash_re ]] || return 1
   [[ $INPUT =~ $re ]] || return 1
   c="${BASH_REMATCH[1]}"

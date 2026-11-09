@@ -843,6 +843,53 @@ fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" mcp__replican
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
 check "ui-action (drives the device) stays opaque -> UNVERIFIED" 2 $? "$out" "PASS —"
 
+# mobile-mcp (replaces replicant-mcp, 08/11/2026): full names are mcp__mobile-mcp__mobile_<name> (the snake-case read rule does not
+# match them: they start with mobile_). Reads of the screen are read-only; save_screenshot / get_device_logs / start_screen_recording
+# write the one file their path names; everything that drives the device, and mobile_batch_commands, stays opaque.
+for tool in mcp__mobile-mcp__mobile_list_available_devices mcp__mobile-mcp__mobile_list_apps \
+            mcp__mobile-mcp__mobile_get_foreground_app mcp__mobile-mcp__mobile_get_screen_size \
+            mcp__mobile-mcp__mobile_list_elements_on_screen mcp__mobile-mcp__mobile_take_screenshot \
+            mcp__mobile-mcp__mobile_get_orientation mcp__mobile-mcp__mobile_list_crashes mcp__mobile-mcp__mobile_get_crash \
+            mcp__mobile-mcp__get_more_tools; do
+  existing_test_repo
+  set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+  fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" "$tool"
+  out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+  check "mobile read tool ${tool##*__} + another session's window -> warning (PASS)" 0 $? "$out"
+done
+for tool in mcp__mobile-mcp__mobile_click_on_screen_at_coordinates mcp__mobile-mcp__mobile_batch_commands \
+            mcp__mobile-mcp__mobile_install_app mcp__mobile-mcp__mobile_clear_app_data; do
+  existing_test_repo
+  set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+  fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" "$tool"
+  out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+  check "mobile tool ${tool##*__} drives the device -> attribution off, UNVERIFIED" 2 $? "$out" "PASS —"
+done
+existing_test_repo
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+FAKE_INPUT='{"device":"PhoneConnect","saveTo":"'"$TMP"'/repo/reports/proof-1.png"}' \
+  fake_session s-me "$TMP/me.jsonl" x mcp__mobile-mcp__mobile_save_screenshot
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "mobile_save_screenshot to reports/*.png + another session's window -> warning (PASS)" 0 $? "$out"
+existing_test_repo
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+FAKE_INPUT='{"device":"PhoneConnect","saveTo":"'"$TMP"'/repo/src/test/CoreTest.kt"}' \
+  fake_session s-me "$TMP/me.jsonl" x mcp__mobile-mcp__mobile_save_screenshot
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "mobile_save_screenshot whose saveTo is the test -> this session's write, UNVERIFIED" 2 $? "$out" "PASS —"
+existing_test_repo
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+FAKE_INPUT='{"device":"PhoneConnect","saveTo":"'"$TMP"'/repo/src/test/CoreTest.kt"}' \
+  fake_session s-me "$TMP/me.jsonl" x mcp__mobile-mcp__mobile_get_device_logs
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "mobile_get_device_logs whose saveTo is the test -> this session's write, UNVERIFIED" 2 $? "$out" "PASS —"
+existing_test_repo
+set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
+FAKE_INPUT='{"device":"PhoneConnect","output":"'"$TMP"'/repo/src/test/CoreTest.kt"}' \
+  fake_session s-me "$TMP/me.jsonl" x mcp__mobile-mcp__mobile_start_screen_recording
+out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
+check "mobile_start_screen_recording whose output is the test -> this session's write, UNVERIFIED" 2 $? "$out" "PASS —"
+
 existing_test_repo   # this session wrote it, then backdated it with touch -t (mtime before the session)
 set_mtime src/test/CoreTest.kt -3600; ledger_window s-me m1 -590 -589
 fake_session s-me "$TMP/me.jsonl" "touch -t 202001010000 src/test/CoreTest.kt" Bash
