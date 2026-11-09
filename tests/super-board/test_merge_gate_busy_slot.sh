@@ -10,7 +10,9 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MERGE_GATE="$ROOT/.claude/bin/super-board-merge-gate.sh"
 TRAIN="$ROOT/.claude/bin/super-board-merge-train.sh"
 PFG="$ROOT/universal-agent-devkit/bin/post-fix-gate.py"
-. "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
+for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
+  if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
+done
 
 # Bắt buộc gỡ CLAUDE_PROJECT_DIR / TARGET_DIR và SB_HEAVY_SLOT_HELD / DEVKIT_GATE_SLOT_HELD sau khi nạp clean_git_env.sh để kiểm tra khoá hàng đợi thật trên scratch
 unset CLAUDE_PROJECT_DIR TARGET_DIR SB_HEAVY_SLOT_HELD DEVKIT_GATE_SLOT_HELD DEVKIT_GATE_SLOTS DEVKIT_GATE_SLOT_WAIT_S \

@@ -9,7 +9,10 @@
 # Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-. "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_* / DEVKIT_CAPACITY* của người gọi
+for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
+  if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
+done
+# không thừa hưởng GIT_* / DEVKIT_CAPACITY* của người gọi
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }

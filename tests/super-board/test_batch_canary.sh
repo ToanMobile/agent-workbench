@@ -6,8 +6,11 @@ set -u
 export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$ROOT/universal-agent-devkit"
+[ -d "$KIT" ] || KIT="$ROOT/.agents/devkit"
 CANARY="$KIT/bin/batch_canary.py"
-. "$KIT/tests/lib/clean_git_env.sh"
+for _dk in "$KIT" "$ROOT/.agents/devkit"; do
+  if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
+done
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }

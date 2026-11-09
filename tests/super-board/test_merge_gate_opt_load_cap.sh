@@ -19,7 +19,9 @@ export SB_NOTIFY_SKIP=1
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MERGE_GATE="$ROOT/.claude/bin/super-board-merge-gate.sh"
 PFG="$ROOT/universal-agent-devkit/bin/post-fix-gate.py"
-. "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
+for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
+  if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
+done
 unset CLAUDE_PROJECT_DIR TARGET_DIR SB_HEAVY_SLOT_HELD DEVKIT_GATE_SLOT_HELD DEVKIT_GATE_SLOTS DEVKIT_GATE_SLOT_WAIT_S \
       DEVKIT_SLOT_PRIORITY DEVKIT_CAPACITY DEVKIT_CAPACITY_LOAD SB_MERGE_OPTIMISTIC SB_MERGE_OPT_LOAD_MAX SB_MERGE_OPT_SLOT_WAIT_S
 

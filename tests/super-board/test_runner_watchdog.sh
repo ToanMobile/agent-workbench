@@ -816,8 +816,11 @@ st=$( ( cd "$R" && run_env bash "$BIN/super-board-watchdog.sh" status t ) 2>&1 )
   && ok "uninstall unloads and removes the plist" || fail "uninstall left $PL or did not bootout"
 
 # ── 9. super_board_all.py stop gọi stop.sh cả khi runner đã chết (để marker luôn được ghi) ──────────────────────────
-SBA="$ROOT/universal-agent-devkit/scripts/governance/super_board_all.py"
-if [ -f "$SBA" ]; then
+SBA=""
+for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
+  if [ -f "$_dk/scripts/governance/super_board_all.py" ]; then SBA="$_dk/scripts/governance/super_board_all.py"; break; fi
+done
+if [ -n "$SBA" ]; then
   mkdir -p "$TMP/all/.claude/bin"
   printf '#!/usr/bin/env bash\necho "stop $*" >> "%s"\n' "$TMP/all.calls" > "$TMP/all/.claude/bin/super-board-stop.sh"
   python3 - "$SBA" "$TMP/all" > "$TMP/all.out" 2>&1 <<'PY'
