@@ -162,7 +162,12 @@ def test_wait_for_server_survives_slow_start(tmp_path):
         srv.close()
 
     threading.Thread(target=_listen_late, daemon=True).start()
-    _wait_for_server("127.0.0.1", port, _Alive(), str(log), timeout=8.0)
+    started = time.monotonic()
+    result = _wait_for_server("127.0.0.1", port, _Alive(), str(log), timeout=8.0)
+    waited = time.monotonic() - started
+    assert result is None  # returned normally once the port opened: no TimeoutError / RuntimeError
+    assert waited >= 1.0  # it really waited for the late listener (opens after 1.5 s), not a first-try success
+    assert waited < 8.0  # and ended when the port opened, not at the full bound
 
 
 def test_wait_for_server_reports_early_exit_at_once(tmp_path):
