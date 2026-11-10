@@ -244,7 +244,7 @@ The optional project feature verifier, the runtime performance and memory checks
 2. For each unresolved `[qa]` thread: apply fix to test files → resolve thread via `gh api graphql resolveReviewThread`.
 3. Re-run full test suite for the ticket.
 4. Save evidence to `runs/issue-<N>-qa-v<N+1>/`.
-5. Commit in the QA worktree, then push by the Tester push rule above (a bare `git push` or `HEAD:<PR branch>` is refused). If any command exits non-zero, or `git ls-remote origin <PR branch>` is not <sha>, do not retry or force: Block the card. Verify ALL `[qa]` threads resolved.
+5. Commit in the QA worktree, then push by the Tester push rule above (from the detached QA worktree a bare `git push` or `HEAD:<PR branch>` is refused). If any command exits non-zero, or `git ls-remote origin <PR branch>` is not <sha>, do not retry or force: Block the card. Verify ALL `[qa]` threads resolved.
 6. Update the PR's `ac`, `history`, `status` blocks; post `[qa] [report]` PR + issue comments (writing-standard.md § 4). Move QA → Review.
 
 ### Failure → `root-cause-hash:` line required

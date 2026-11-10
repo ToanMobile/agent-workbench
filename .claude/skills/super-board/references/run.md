@@ -437,7 +437,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
 3. For each unresolved `[qa]` thread: apply fix to test files, resolve thread.
 4. Re-run full test suite for the ticket.
 5. Save evidence to `runs/issue-<N>-qa-v<N+1>/`.
-6. Commit in the QA worktree, then push by the Tester push rule above (a bare `git push` or `HEAD:<PR branch>` is refused). If any command exits non-zero, or `git ls-remote origin <PR branch>` is not <sha>, do not retry or force: Block the card. Verify ALL `[qa]` threads are resolved.
+6. Commit in the QA worktree, then push by the Tester push rule above (from the detached QA worktree a bare `git push` or `HEAD:<PR branch>` is refused). If any command exits non-zero, or `git ls-remote origin <PR branch>` is not <sha>, do not retry or force: Block the card. Verify ALL `[qa]` threads are resolved.
 7. Update `ac`, `history`, `status`; post `[qa] [report]` PR + issue comments. Move QA → Review. Clean up worktree.
 
 ### Reviewer

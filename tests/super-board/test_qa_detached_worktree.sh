@@ -142,6 +142,12 @@ done
 ! grep -qF 'screenshots to the issue branch' "$EVID" && grep -qF 'Commit the screenshots in the QA worktree' "$EVID" \
   && ok "tester-verifiers-evidence: screenshots committed in the QA worktree" || fail "tester-verifiers-evidence still commits screenshots to the issue branch"
 
+# A bare git push is only refused from the detached QA worktree; after git switch it is rc 0, so the rebuild Tester steps must say where.
+for f in "$RUNMD" "$QA"; do
+  grep -qF 'from the detached QA worktree a bare `git push` or `HEAD:<PR branch>` is refused' "$f" && ! grep -qF '(a bare `git push` or' "$f" \
+    && ok "$(basename "$f"): the bare-push refusal is scoped to the detached QA worktree" || fail "$(basename "$f") says a bare git push is refused everywhere"
+done
+
 # #526 + #473: build worktree holds a renamed branch and an uncommitted agent-memory file.
 # The command is the one the qa hint actually gives, so this is red while that hint checks out a branch.
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
