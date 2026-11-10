@@ -1362,7 +1362,7 @@ lane_worktree_hint() {
   local cmd
   case "$1" in
     review) cmd="agent-kit worktree add .claude/worktrees/issue-$2-review --lane=review --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>)" ;;
-    qa) cmd="agent-kit worktree add .claude/worktrees/issue-$2-qa --lane=qa --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>; push a QA evidence commit with git push origin HEAD:<PR branch>. The build worktree keeps the branch: do not remove it)" ;;
+    qa) cmd="agent-kit worktree add .claude/worktrees/issue-$2-qa --lane=qa --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>; push a QA evidence commit in two commands: first fast-forward the PR branch in the build worktree, git -C <build worktree> merge --ff-only <sha> (its own command, check the exit code), then git push origin <PR branch>; the DevKit hook refuses a HEAD:<PR branch> refspec from a detached worktree. The build worktree keeps the branch: do not remove it. Write test output to a LITERAL path (>/tmp/q-a.log), never a shell variable in a redirect target (the trunk-mode guard refuses it): run the test once per file or pipe the output instead of looping with a variable log name.)" ;;
     *) cmd="agent-kit worktree add .claude/worktrees/issue-$2-$1 issue-$2-<slug> --lane=$1 --base=origin/<config.base_branch> (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused)" ;;
   esac
   # #557: QA không checkout nhánh nên không được bảo gỡ worktree build. Build và review giữ nguyên câu Exit 1.
