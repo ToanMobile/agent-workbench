@@ -13,6 +13,9 @@ the repo and invisible to other agents. `autoMemoryDirectory` (read from
     note it does not list yet.
 
 --check: exit 1 when autoMemoryDirectory does not point into the project.
+--check-index: read-only; exit 1 and name the lines when MEMORY.md would be cut at load
+  (Claude Code keeps whole lines up to 25,000 UTF-16 code units or 200 lines — not bytes)
+  or a line is over 200 chars; exit 0 and print nothing otherwise. Never edits the file.
 """
 import json
 import os
@@ -50,6 +53,29 @@ def note_line(path):
     return f"- [{name[:-3]}]({name})" + (f" — {desc}" if desc else "")
 
 
+MAX_UNITS = 25_000     # Claude Code's MEMORY.md load limit (UTF-16 code units, "24.4KB")
+MAX_LINES = 200
+MAX_LINE_CHARS = 200   # advice in Claude Code's own warning text
+
+
+def index_problems(text):
+    """Human-readable violations of the MEMORY.md load limits (empty list = clean)."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    out, total, cut = [], 0, None
+    for n, line in enumerate(lines, 1):
+        total += len(line.encode("utf-16-le")) // 2 + (1 if n > 1 else 0)
+        if cut is None and (n > MAX_LINES or total > MAX_UNITS):
+            cut = n
+        if len(line) > MAX_LINE_CHARS:
+            out.append(f"line {n} has {len(line)} chars (> {MAX_LINE_CHARS})")
+    if cut is not None:
+        out.insert(0, f"cut at load starting at line {cut} of {len(lines)} "
+                      f"(limit {MAX_UNITS} UTF-16 units or {MAX_LINES} lines)")
+    return out
+
+
 def settings_dir(project):
     try:
         return json.load(open(os.path.join(project, ".claude", "settings.local.json"), encoding="utf-8")).get("autoMemoryDirectory")
@@ -61,6 +87,16 @@ def main(argv):
     args = [a for a in argv[1:] if not a.startswith("-")]
     project = os.path.realpath(args[0] if args else os.getcwd())
     target = os.path.join(project, REL)
+    if "--check-index" in argv:
+        index = os.path.join(target, "MEMORY.md")
+        try:
+            text = open(index, encoding="utf-8", errors="replace").read()
+        except OSError:
+            return 0
+        problems = index_problems(text)
+        for p in problems:
+            print(f"MEMORY.md: {p}")
+        return 1 if problems else 0
     current = settings_dir(project)
     if "--check" in argv:
         return 0 if current and os.path.realpath(current).startswith(project + os.sep) else 1
