@@ -102,11 +102,11 @@ def own_repo():
     try:
         r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True, timeout=10, cwd=where)
     except (OSError, subprocess.SubprocessError) as e:
-        print(f"ac-check: cannot read origin ({e}); every owner/repo#N counts as another repo", file=sys.stderr)
+        print(f"[ac-check] cannot read origin ({type(e).__name__}); every owner/repo#N counts as another repo", file=sys.stderr)
         return ""
     m = GITHUB_SLUG.search(r.stdout.strip()) if r.returncode == 0 else None
     if not m:
-        print(f"ac-check: origin of {where or '.'} is not a GitHub repo (exit {r.returncode}); every owner/repo#N counts as another repo",
+        print(f"[ac-check] origin of {os.path.basename(os.path.abspath(where or '.'))} is not a GitHub repo (exit {r.returncode}); every owner/repo#N counts as another repo",
               file=sys.stderr)
     return m.group(1).lower() if m else ""
 
@@ -118,7 +118,6 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
     card = int(card.group(1))
     # Body PR là Markdown: từ khoá trong code không đóng issue. Message commit là văn bản thô: mọi từ khoá đều tính.
     found = CLOSES.findall(prose(pr_body) + "\n" + (msg or ""))
-    closes = {int(n) for _, n in found}
     # #724: thẻ Closes mà body mang marker đợt của chính thẻ nhánh là thành viên đợt (một nhánh, một PR, một gate). Chỉ Closes
     # của repo này (`#32`, hoặc `<origin>#32`): `Closes x/y#32` đóng issue của repo khác, body thẻ #32 ở đây không nói gì về nó.
     members = dict(batch_bodies or {})
@@ -189,7 +188,7 @@ def main():
     ap.add_argument("--branch", default="")
     ap.add_argument("--rewrite-closes")
     ap.add_argument("--card", type=int)
-    ap.add_argument("--foreign", action="store_true", help="with --rewrite-closes: rewrite every card but --card")
+    ap.add_argument("--foreign", action="store_true", help="with --rewrite-closes: rewrite every card but --card, and every Closes of another repo (keeps this repo's --card)")
     a = ap.parse_args()
     if a.rewrite_closes:
         if a.card is None:
