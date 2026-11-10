@@ -16,6 +16,22 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 REPO="$TMP/repo"
 stop() { printf '{"session_id":"s-1","hook_event_name":"Stop"}' \
   | CLAUDE_PROJECT_DIR="$REPO" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+# Gate speed v26 mục 1: the Stop runs no suite. The agent's gate turn runs the command a block prints, once on the final tree, and
+# writes a receipt (exit 0) or an outcome (<git dir>/postfix-gate/outcomes/<fp>.json); the Stop only reads them. What a Stop run used
+# to report (REG-1 failed, UNCOVERED, a secret's file:line) is now said by that gate run; the Stop allows or blocks on what it wrote.
+# gaterun <repo> [extra args]: that run (output in $TMP/gate.out, exit code in GRC). Every fixture here sits on its trunk branch, where
+# the block prints `--diff <verified_head>` once the hook has recorded one (the commits since it are part of what is handed over).
+gaterun() {
+  local vh; vh="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verified_head") or "")' "$1/.claude/audit-gate/regression_gate.state.json" 2>/dev/null)"
+  git -C "$1" cat-file -e "${vh:-none}^{commit}" 2>/dev/null || vh=""
+  ( cd "$1" && CLAUDE_PROJECT_DIR="$1" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --scoped --brief ${vh:+--diff "$vh"} "${@:2}" ) >"$TMP/gate.out" 2>&1; GRC=$?; }
+# baseline <repo>: the fixture's setup commits are the verified starting point (verified_head = HEAD), not part of the change: with
+# --diff <verified_head> a rewritten matrix or a helper script committed by the setup would otherwise be judged as this change.
+baseline() { python3 -c 'import json,os,subprocess,sys
+p = os.path.join(sys.argv[1], ".claude/audit-gate/regression_gate.state.json")
+d = json.load(open(p)) if os.path.exists(p) else {}
+d["verified_head"] = subprocess.run(["git", "-C", sys.argv[1], "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+os.makedirs(os.path.dirname(p), exist_ok=True); json.dump(d, open(p, "w"))' "$1"; }
 
 mkdir -p "$REPO/src" "$REPO/templates" && cd "$REPO" || exit 1
 git init -q . && git config user.email t@t && git config user.name t
@@ -45,10 +61,10 @@ cat > templates/regression_matrix.json <<'JSON'
  "mandatory_regression_tests":[{"id":"REG-1","name":"core flow","command":"sh result.sh"}]}]}
 JSON
 echo 'exit 1' > result.sh
-git add -A && git commit -qm "own matrix"
+git add -A && git commit -qm "own matrix"; baseline "$REPO"
 echo "fun ok() = 3" > src/Core.kt
-stop; rc=$?
-[ "$rc" = 2 ] && grep -q "REG-1" "$TMP/err" && ok "failing related test blocks the stop (reason names REG-1)" || fail "failing test not blocked (rc=$rc)"
+gaterun "$REPO"; stop; rc=$?
+[ "$rc" = 2 ] && [ "$GRC" = 1 ] && grep -q "REG-1" "$TMP/gate.out" && ok "failing related test: the gate run names REG-1 (exit 1) and the stop is blocked" || fail "failing test not blocked (rc=$rc gate=$GRC)"
 grep -q '❌ FAIL | REG-1' .agents/regression_checklist.md && ok "checklist records the real FAIL" || fail "checklist not updated"
 
 # Loop guard: same change blocks MAX_ATTEMPTS(2) times, then releases with a visible warning.
@@ -59,17 +75,17 @@ stop; rc3=$?
 
 # Fixed => allowed, and the result is cached for the same diff (no re-run).
 echo 'exit 0' > result.sh
-git add result.sh && git commit -qm "fix test"
+git add result.sh && git commit -qm "fix test"; baseline "$REPO"
 echo "fun ok() = 4" > src/Core.kt
-stop; [ $? = 0 ] && ok "green related test: allowed" || fail "green test still blocked"
-runs_before="$(grep -c ' pass ' .claude/audit-gate/regression_gate.log)"
-stop
-[ "$(grep -c ' pass ' .claude/audit-gate/regression_gate.log)" = "$runs_before" ] && ok "same diff not re-tested (cached)" || fail "cache not used"
+gaterun "$REPO"; stop; [ $? = 0 ] && [ "$GRC" = 0 ] && ok "green related test: allowed (the gate run's receipt)" || fail "green test still blocked (gate=$GRC)"
+runs_before="$(grep -c 'allow fp=' .claude/audit-gate/regression_gate.log)"
+stop; rc=$?
+[ "$rc" = 0 ] && [ "$(grep -c 'allow fp=' .claude/audit-gate/regression_gate.log)" = "$runs_before" ] && ok "same diff not judged again (pass_fp cached)" || fail "cache not used (rc=$rc)"
 
 # A changed source file no test watches => block with UNCOVERED.
 echo "fun other() = 1" > src/Other.kt
-stop; rc=$?
-[ "$rc" = 2 ] && grep -q "UNCOVERED:src/Other.kt" "$TMP/err" && ok "uncovered source file blocks the stop" || fail "uncovered not blocked (rc=$rc)"
+gaterun "$REPO"; stop; rc=$?
+[ "$rc" = 2 ] && [ "$GRC" != 0 ] && grep -q "UNCOVERED:src/Other.kt" "$TMP/gate.out" && ok "uncovered source file: the gate run names it and the stop is blocked" || fail "uncovered not blocked (rc=$rc gate=$GRC)"
 
 # Escape hatch.
 REGRESSION_GATE=0 bash -c "printf '{}' | CLAUDE_PROJECT_DIR='$REPO' bash '$HOOK'"; [ $? = 0 ] && ok "REGRESSION_GATE=0 skips" || fail "escape hatch ignored"
@@ -84,8 +100,8 @@ cat > .agents/regression_matrix.active.json <<'JSON'
 JSON
 git add -A && git commit -qm init
 echo "fun ok() = 2" > src/Core.kt
-stop; rc=$?
-[ "$rc" = 2 ] && grep -q "REG-A" "$TMP/err" && ok ".agents/regression_matrix.active.json is enforced" || fail "active matrix ignored (rc=$rc)"
+gaterun "$REPO"; stop; rc=$?
+[ "$rc" = 2 ] && grep -q "REG-A" "$TMP/gate.out" && ok ".agents/regression_matrix.active.json is enforced" || fail "active matrix ignored (rc=$rc gate=$GRC)"
 
 # A profile matrix marked enforce_as_is (web: auto-detects the project's runner) is
 # enforced exactly as installed — here it fails because there is no package.json.
@@ -95,8 +111,8 @@ echo "export const a = 1" > src/app.ts
 cp "$DEVKIT_DIR/profiles/web/regression_matrix.json" .agents/regression_matrix.active.json
 git add -A && git commit -qm init
 echo "export const a = 2" > src/app.ts
-stop; rc=$?
-[ "$rc" = 2 ] && grep -q "REG-WEB-01" "$TMP/err" && ok "web profile matrix (enforce_as_is) is enforced as installed" || fail "web matrix not enforced (rc=$rc)"
+gaterun "$REPO"; stop; rc=$?
+[ "$rc" = 2 ] && grep -q "REG-WEB-01" "$TMP/gate.out" && ok "web profile matrix (enforce_as_is) is enforced as installed" || fail "web matrix not enforced (rc=$rc)"
 
 # Undetected runner (Unity): `agent-kit profile game` keeps the profile's SAMPLE matrix
 # as .agents/regression_matrix.active.json — gate off, never blocks, but said so.
@@ -128,8 +144,9 @@ F2="$TMP/finding"; mkdir -p "$F2/src" "$F2/templates"
 JSON
   git add -A && git commit -qm init
   printf 'fun ok() = 2\nval token = "%s"\n' "hf_$(python3 -c 'print("z"*34, end="")')" > src/Core.kt )
+gaterun "$F2"
 printf '{"session_id":"s-f","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$F2" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rc=$?
-[ "$rc" = 2 ] && grep -q "secrets src/Core.kt:2" "$TMP/err" && ok "block reason names the secret's file:line" || fail "finding location missing (rc=$rc): $(head -4 "$TMP/err")"
+[ "$rc" = 2 ] && [ "$GRC" = 1 ] && grep -q "src/Core.kt:2" "$TMP/gate.out" && ok "a secret: the gate run names its file:line, the stop is blocked" || fail "finding location missing (rc=$rc gate=$GRC): $(head -4 "$TMP/gate.out")"
 
 # Deleting the committed matrix must not silently switch the gate off: block once, then warn.
 D="$TMP/deleted"; mkdir -p "$D/src" "$D/.agents"
@@ -151,7 +168,7 @@ U="$TMP/untested"; mkdir -p "$U/src" "$U/templates"
 JSON
   git add -A && git commit -qm init && echo "fun ok() = 2" > src/Core.kt )
 ustop() { printf '{"session_id":"s-u","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$U" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
-ustop; rc=$?
+gaterun "$U"; ustop; rc=$?
 [ "$rc" = 0 ] && grep -q "UNTESTED" "$TMP/out" && grep -q "REG-U" "$TMP/out" && grep -q "KHÔNG phải PASS" "$TMP/out" \
   && ok "UNTESTED test: stop allowed with a 'not a PASS' warning naming it" || fail "UNTESTED handling (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
 ustop; rc=$?
@@ -172,14 +189,14 @@ E="$TMP/envblocked"; mkdir -p "$E/src" "$E/templates"
 JSON
   git add -A && git commit -qm init && echo "fun ok() = 2" > src/Core.kt )
 estop() { printf '{"session_id":"s-e","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$E" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
-estop; rc=$?
+gaterun "$E"; estop; rc=$?
 [ "$rc" = 0 ] && grep -q "REG-E" "$TMP/out" && grep -q "KHÔNG phải PASS" "$TMP/out" \
   && ok "environment-blocked test: stop allowed with a 'not a PASS' warning naming it" || fail "env-blocked handling (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
 estop; rc=$?
 [ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && ok "environment-blocked warning once per change" || fail "env-blocked warning repeated (rc=$rc)"
-( cd "$E" && sed -i.bak 's/sh env.sh/sh compile.sh/' templates/regression_matrix.json && rm -f templates/regression_matrix.json.bak && git commit -qam compile && echo "fun ok() = 3" > src/Core.kt )
-estop; rc=$?
-[ "$rc" = 2 ] && grep -q "REG-E" "$TMP/err" && ok "compile error in the change: still blocks" || fail "compile error not blocked (rc=$rc)"
+( cd "$E" && sed -i.bak 's/sh env.sh/sh compile.sh/' templates/regression_matrix.json && rm -f templates/regression_matrix.json.bak && git commit -qam compile && echo "fun ok() = 3" > src/Core.kt ); baseline "$E"
+gaterun "$E"; estop; rc=$?
+[ "$rc" = 2 ] && [ "$GRC" = 1 ] && grep -q "REG-E" "$TMP/gate.out" && ok "compile error in the change: still blocks" || fail "compile error not blocked (rc=$rc)"
 
 # Matrix not trusted because it is UNCOMMITTED (the only problem): the cure is to commit
 # it — not "fix code/test" — and the files it watches are not UNCOVERED. Zero tests ran
@@ -195,7 +212,7 @@ mkdir -p .agents && cat > .agents/regression_matrix.active.json <<'JSON'
 JSON
 echo "fun ok() = 2" > src/Core.kt
 mstop() { printf '{"session_id":"s-m","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$1" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
-mstop "$M5"; rc=$?
+gaterun "$M5"; mstop "$M5"; rc=$?
 [ "$rc" = 0 ] && grep -q systemMessage "$TMP/out" && grep -q 'commit .agents/regression_matrix.active.json' "$TMP/out" \
   && grep -q 'agent-kit matrix' "$TMP/out" && ok "uncommitted matrix only: allowed, message says commit .agents/regression_matrix.active.json" \
   || fail "uncommitted matrix (rc=$rc out='$(cat "$TMP/out")' err='$(head -5 "$TMP/err")')"
@@ -204,7 +221,7 @@ mstop "$M5"; rc=$?
 mstop "$M5"; rc=$?
 [ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && [ ! -s "$TMP/err" ] && ok "uncommitted matrix: warning once per change" || fail "uncommitted-matrix warning repeated (rc=$rc)"
 echo "fun o() = 2" > src/Other.kt
-mstop "$M5"; rc=$?
+gaterun "$M5"; mstop "$M5"; rc=$?
 [ "$rc" = 0 ] && grep -q 'src/Other.kt' "$TMP/out" && ! grep -q 'src/Core.kt' "$TMP/out" \
   && ok "uncommitted matrix: a file no rule of it watches is still named (Core.kt is not)" || fail "unwatched file not named (rc=$rc out='$(cat "$TMP/out")')"
 
@@ -215,7 +232,7 @@ cd "$M5" && git checkout -q -- src && mkdir -p templates && cat > templates/regr
  "mandatory_regression_tests":[{"id":"REG-T","name":"core","command":"exit 1"}]}]}
 JSON
 git add templates && git commit -qm "committed matrix" && echo "fun ok() = 3" > src/Core.kt
-mstop "$M5"; rc=$?
+gaterun "$M5"; mstop "$M5"; rc=$?
 [ "$rc" = 2 ] && grep -q 'templates/regression_matrix.json' "$TMP/err" && grep -q 'regression_matrix.active.json' "$TMP/err" \
   && ok "uncommitted matrix shadowing a committed one: blocked, both named" || fail "shadowing matrix (rc=$rc err='$(head -5 "$TMP/err")')"
 
@@ -231,7 +248,7 @@ JSON
 git add -A && git commit -qm init
 sed -i.bak 's/"true"/"true; true"/' .agents/regression_matrix.active.json && rm -f .agents/regression_matrix.active.json.bak
 echo "fun ok() = 2" > src/Core.kt
-mstop "$M6"; rc=$?
+gaterun "$M6"; mstop "$M6"; rc=$?
 [ "$rc" = 2 ] && grep -q 'review' "$TMP/err" && ! grep -q 'regression_matrix.json hoặc' "$TMP/err" && ! grep -q 'UNCOVERED' "$TMP/err" \
   && ok "edited committed matrix: blocked, cure = review the matrix edit (no 'add a test', no UNCOVERED)" \
   || fail "edited matrix (rc=$rc err='$(cat "$TMP/err")')"
@@ -249,8 +266,9 @@ M7="$TMP/adopted"; mkdir -p "$M7/src" "$M7/.agents" && cd "$M7" || exit 1
 git init -q . && git config user.email t@t && git config user.name t
 echo "fun ok() = 1" > src/Core.kt && cp "$FK/profiles/x/regression_matrix.json" .agents/regression_matrix.active.json
 git add -A && git commit -qm init && echo "fun ok() = 2" > src/Core.kt
+gaterun "$M7"
 printf '{"session_id":"s-ad","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$M7" bash "$FK/hooks/regression_gate.sh" >"$TMP/out" 2>"$TMP/err"; rc=$?
-[ "$rc" = 2 ] && grep -q 'REG-AD' "$TMP/err" && ok "\"adopted\": true: enforced although byte-identical to a sample" \
+[ "$rc" = 2 ] && [ "$GRC" = 1 ] && grep -q 'REG-AD' "$TMP/gate.out" && ok "\"adopted\": true: enforced although byte-identical to a sample" \
   || fail "adopted matrix not enforced (rc=$rc out='$(cat "$TMP/out")')"
 python3 - "$FK/profiles/x/regression_matrix.json" <<'PY'
 import json, sys
@@ -293,13 +311,17 @@ gstop g-0 channel_closed; rc=$?
 [ "$rc" = 0 ] && [ "$(runs)" = 0 ] && ok "Grok session-end Stop (reason channel_closed): allowed, no test run" \
   || fail "session-end Stop ran the gate (rc=$rc runs=$(runs))"
 
-gstop g-1; rc1=$?; n1="$(runs)"; gstop g-1; rc2=$?; n2="$(runs)"
-[ "$rc1" = 2 ] && [ "$rc2" = 2 ] && [ "$n1" -gt 0 ] && [ "$n2" = "$n1" ] && grep -q "REG-G" "$TMP/err" \
-  && ok "degraded: same tree twice in a session → tests run once, the cached REJECT is re-used" \
-  || fail "result not reused (rc1=$rc1 rc2=$rc2 runs ${n1} then ${n2})"
-echo "x" > src/NewTest.kt; gstop g-1; n3="$(runs)"; echo "y" > src/NewTest.kt; gstop g-1; n4="$(runs)"; rm -f src/NewTest.kt
-[ "$n3" -gt "$n2" ] && [ "$n4" -gt "$n3" ] && ok "degraded: a new or edited untracked file is a new tree (suite re-runs)" \
-  || fail "untracked content ignored by the reuse key (runs ${n2} then ${n3} then ${n4})"
+# v26 mục 1: the Stop runs no suite, so the per-session reuse of the last suite result is gone; a failing gate run (no receipt) blocks.
+gaterun "$G"; n0="$(runs)"; gstop g-1; rc1=$?; gstop g-1; rc2=$?; n2="$(runs)"
+[ "$rc1" = 2 ] && [ "$rc2" = 2 ] && [ "$GRC" = 1 ] && [ "$n0" -gt 0 ] && [ "$n2" = "$n0" ] && grep -q "REG-G" "$TMP/gate.out" \
+  && ok "degraded: the gate run fails REG-G; the same tree twice in a session → both stops blocked, neither runs a suite" \
+  || fail "degraded failing tree (rc1=$rc1 rc2=$rc2 gate=$GRC runs ${n0} then ${n2})"
+# A receipt names the tree: a new or edited untracked file is another tree, which that receipt does not cover.
+echo 0 > "$TMP/g_exit"; echo "x" > src/NewTest.kt; gaterun "$G"; gstop g-1; rx=$?
+echo "y" > src/NewTest.kt; gstop g-1; ry=$?
+rm -f src/NewTest.kt; echo 1 > "$TMP/g_exit"
+[ "$GRC" = 0 ] && [ "$rx" = 0 ] && [ "$ry" = 2 ] && ok "degraded: an edited untracked file is a new tree (the receipt of the old one does not allow it)" \
+  || fail "untracked content ignored by the receipt key (gate=$GRC rcs $rx $ry)"
 
 CAP_RCS=""; for v in 1 2 3 4; do echo "fun ok() = 1$v" > src/Core.kt; gstop g-2; CAP_RCS="$CAP_RCS$?"; done
 [ "$CAP_RCS" = 2220 ] && grep -q systemMessage "$TMP/out" && grep -q "g-2" "$TMP/out" && grep -q "KHÔNG phải PASS" "$TMP/out" \
@@ -309,7 +331,7 @@ echo "fun ok() = 99" > src/Core.kt; gstop g-2; rc=$?
 [ "$rc" = 0 ] && grep -q systemMessage "$TMP/out" && ok "degraded: stays released for the rest of the session (still said)" \
   || fail "released session blocked again (rc=$rc)"
 
-echo 0 > "$TMP/g_exit"; echo "fun ok() = 100" > src/Core.kt; gstop g-2; rc=$?
+echo 0 > "$TMP/g_exit"; echo "fun ok() = 100" > src/Core.kt; gaterun "$G"; gstop g-2; rc=$?
 echo 1 > "$TMP/g_exit"; echo "fun ok() = 101" > src/Core.kt; gstop g-2; rc2=$?
 [ "$rc" = 0 ] && [ "$rc2" = 2 ] && ok "degraded: a pass resets the session count — the next failure blocks again" \
   || fail "pass did not reset the session cap (pass rc=$rc, next rc=$rc2)"
@@ -355,14 +377,9 @@ open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
         {"type": "tool_use", "id": "e0", "name": "Edit", "input": {"file_path": os.path.join(repo, "src/Core.kt"),
                                                                    "old_string": "1", "new_string": "2"}}]}}]))
 PY
-ystop() { printf '{"session_id":"s-y","hook_event_name":"Stop","transcript_path":"%s"}' "$1" \
-  | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
-ystop "$TMP/y.jsonl"; rc=$?
-[ "$rc" = 0 ] && grep -q systemMessage "$TMP/out" && grep -q "src/test/CoreTest.kt" "$TMP/out" \
-  && ok "existing test edited by another session: stop allowed, warning names the file" \
-  || fail "another session's test edit blocked this one (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
-ystop "$TMP/y.jsonl"; rc=$?
-[ "$rc" = 0 ] && [ ! -s "$TMP/out" ] && ok "another session's test edit: warned once per change" || fail "warning repeated (rc=$rc)"
+# v26: the two cases that ran here ("another session's edit: allowed with a warning, once per change") are gone at the Stop: the
+# agent's gate run takes no --session (plan v26 mục 1; residual "Another session's edited test blocks up to MAX_ATTEMPTS at Stop").
+# The gate still tells the two apart when it is given the session (post-fix-gate split_tests_by_author).
 python3 - "$X" "$TMP/y2.jsonl" <<'PY'
 import json, sys, time
 repo, tp = sys.argv[1], sys.argv[2]
@@ -373,9 +390,10 @@ open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
         "input": {"file_path": repo + "/src/test/CoreTest.kt", "old_string": "a", "new_string": "b"}}]}}]))
 PY
 echo "fun ok() = 3" > src/Core.kt
+gaterun "$X"
 printf '{"session_id":"s-y2","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/y2.jsonl" \
   | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rc=$?
-[ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && ok "the same edit made by this session (Edit): still blocked" \
+[ "$rc" = 2 ] && [ "$GRC" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && ok "the same edit made by this session (Edit): still blocked" \
   || fail "own test edit not blocked (rc=$rc err='$(head -3 "$TMP/err")')"
 # Only a person can clear "an existing test was edited" (review the diff, or commit it): the
 # agent is told once per change; later stops of the same change go through with a reminder
@@ -385,7 +403,7 @@ y2stop() { printf '{"session_id":"s-y2","hook_event_name":"Stop","transcript_pat
 y2stop; rc=$?
 [ "$rc" = 0 ] && grep -q "src/test/CoreTest.kt" "$TMP/out" && ok "own test edit awaiting human review: second stop allowed with a reminder" \
   || fail "human-review-only block repeated (rc=$rc err='$(head -2 "$TMP/err")')"
-echo "fun ok() = 4" > src/Core.kt; y2stop; rc=$?
+echo "fun ok() = 4" > src/Core.kt; gaterun "$X"; y2stop; rc=$?
 [ "$rc" = 2 ] && ok "a new change with the test edit still pending: blocked once again" || fail "new change not blocked (rc=$rc)"
 
 # The same edit made by this session with a write-capable MCP tool (no Edit/Write, no Bash
@@ -407,15 +425,17 @@ open(tp, "w").write("".join(json.dumps(r) + "\n" for r in [
          "input": {"pathInProject": "src/test/CoreTest.kt", "oldText": "a", "newText": "b"}}]}}]))
 PY
 echo "fun ok() = 5" > src/Core.kt
+gaterun "$X"
 printf '{"session_id":"s-y3","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/y3.jsonl" \
   | CLAUDE_PROJECT_DIR="$X" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; rc=$?
 [ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && ok "existing test edited by this session via an MCP write tool: blocked" \
   || fail "MCP-tool test edit let through (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
 
 # ── Another run holds the project's test-run lock (BUSY) ──────────────────────────────
-# The Stop hook hands the gate a short lock wait (TEST_RUN_LOCK_WAIT_S=45 unless set: 900
-# plus the suites could pass the hook's own 1800 s timeout), says the real cause — not
-# "missing tool" — and caches nothing: the next stop runs the suite.
+# v26 mục 1: the Stop runs no gate, so it takes no test-run lock and never waits for one: the Stop cases that lived here (BUSY said,
+# not cached, the hook's TEST_RUN_LOCK_WAIT_S=45, the 3 s BUSY of a Stop behind a live gate, the degraded BUSY) left with the gate call.
+# The lock behaviour of the gate run the agent makes stays: it waits its own TEST_RUN_LOCK_WAIT_S behind a live gate, and a stale lock
+# (a dead gate's record, nobody holds it) is taken over.
 B="$TMP/busy"; mkdir -p "$B/src" "$B/.agents" && cd "$B" || exit 1
 git init -q . && git config user.email t@t && git config user.name t
 echo "fun ok() = 1" > src/Core.kt
@@ -425,58 +445,7 @@ cat > .agents/regression_matrix.active.json <<'JSON'
  "mandatory_regression_tests":[{"id":"REG-B","name":"core","command":"sh wait.sh"}]}]}
 JSON
 git add -A && git commit -qm init
-printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix it"},"uuid":"u1","sessionId":"b-1"}' > "$TMP/b.jsonl"
-hold_lock() { rm -f "$TMP/b_held"
-  python3 - "$B" "$TMP/b_held" <<'PY' &
-import fcntl, os, sys, time
-os.makedirs(sys.argv[1] + "/.claude/audit-gate", exist_ok=True)
-with open(sys.argv[1] + "/.claude/audit-gate/test_run.lock", "w") as f:
-    fcntl.flock(f, fcntl.LOCK_EX)
-    open(sys.argv[2], "w").close()
-    time.sleep(60)
-PY
-  b_holder=$!
-  for _ in $(seq 1 50); do [ -f "$TMP/b_held" ] && break; sleep 0.1; done; }
-bstop() { printf '{"session_id":"b-1","hook_event_name":"Stop","transcript_path":"%s"}' "$TMP/b.jsonl" \
-  | CLAUDE_PROJECT_DIR="$B" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
-no_untested_fp() { python3 -c 'import json,os,sys
-d = json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1]) else {}
-sys.exit(1 if d.get("untested_fp") or any(s.get("result") == "untested" for s in d.get("sessions", {}).values()) else 0)' \
-  "$B/.claude/audit-gate/regression_gate.state.json"; }
-BUSY_MSG="một lượt chạy test khác đang giữ khoá dự án — chạy lại sau"
-echo "fun ok() = 2" > src/Core.kt; rm -f "$TMP/b_wait"
-hold_lock
-TEST_RUN_LOCK_WAIT_S=1 bstop; rc=$?
-[ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" && ! grep -q "thiếu công cụ" "$TMP/out" && [ ! -f "$TMP/b_wait" ] \
-  && ok "lock held by another run: stop allowed, says the lock is held (not a missing tool)" \
-  || fail "BUSY message (rc=$rc out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
-no_untested_fp && ok "BUSY is not cached as UNTESTED for the tree" || fail "BUSY cached: $(cat "$B/.claude/audit-gate/regression_gate.state.json")"
-TEST_RUN_LOCK_WAIT_S=1 bstop; rc=$?
-[ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" && ok "BUSY again on the same tree: said again (not once-per-change)" \
-  || fail "second BUSY stop silent (rc=$rc out='$(cat "$TMP/out")')"
-kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
-bstop; rc=$?
-[ "$rc" = 0 ] && [ "$(cat "$TMP/b_wait" 2>/dev/null)" = 45 ] \
-  && ok "lock free: the same tree's suite runs on the next stop, with TEST_RUN_LOCK_WAIT_S=45 from the hook" \
-  || fail "suite not re-run after BUSY, or wrong wait (rc=$rc wait='$(cat "$TMP/b_wait" 2>/dev/null)')"
-# Degraded mode (Grok-shaped Stop) reuses the last result per tree: BUSY must not be that result.
-kstop() { printf '{"hookEventName":"stop","hook_event_name":"Stop","sessionId":"k-1","session_id":"k-1","workspaceRoot":"%s","transcript_path":"%s","reason":"end_turn","stopHookActive":false}' \
-    "$B" "$TMP/updates.jsonl" \
-  | GROK_HOOK_EVENT=stop GROK_SESSION_ID=k-1 CLAUDE_PROJECT_DIR="$B" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
-echo "fun ok() = 3" > src/Core.kt; rm -f "$TMP/b_wait"
-hold_lock
-TEST_RUN_LOCK_WAIT_S=1 kstop; rc=$?
-[ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" && no_untested_fp \
-  && ok "degraded: BUSY said, not stored as the session's result for the tree" \
-  || fail "degraded BUSY (rc=$rc out='$(cat "$TMP/out")' state=$(cat "$B/.claude/audit-gate/regression_gate.state.json"))"
-kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
-kstop; rc=$?
-[ "$rc" = 0 ] && [ -f "$TMP/b_wait" ] && ok "degraded: the same tree runs its suite once the lock is free" \
-  || fail "degraded: BUSY result reused, suite not run (rc=$rc)"
-# Audit 2026-10-25 B5: 41 BUSY Stop runs in 54 h each waited the whole 45 s first (six in a row behind one gate). When the holder is a LIVE
-# post-fix-gate run (the pid + start time it records in the lock file, checked like session_lock checks its holder), the Stop says BUSY
-# after DEVKIT_REUSE_LOCK_WAIT_S (3 s); a holder it cannot name (another tool, a dead or recycled pid) keeps the long wait; a lock nobody
-# holds is taken as before; the CLI (no Stop hook) keeps its own wait whoever holds the lock.
+BUSY_MSG="một lượt chạy test khác đang giữ khoá dự án"   # the gate's own wording (the hook's ended with the Stop gate call)
 hold_gate_lock() {   # hold_gate_lock <pid in the record: "self" = the holder, else that number>
   rm -f "$TMP/b_held"
   python3 - "$B" "$TMP/b_held" "$DEVKIT_DIR/bin" "$1" <<'PY' &
@@ -493,42 +462,19 @@ PY
   b_holder=$!
   for _ in $(seq 1 50); do [ -f "$TMP/b_held" ] && break; sleep 0.1; done; }
 secs() { python3 -c 'import time; print(time.time())'; }
-lockwait() {   # the gate's own `lock` step (seconds waiting for test_run.lock) of its last run, from runs.jsonl
-  python3 -c 'import json,sys
-rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
-print(round(float((rows[-1].get("steps") or {}).get("lock", -1)), 1))' "$(git -C "$B" rev-parse --path-format=absolute --git-common-dir)/postfix-gate/runs.jsonl" 2>/dev/null || echo -1; }
 echo "fun ok() = 4" > src/Core.kt; rm -f "$TMP/b_wait"
 hold_gate_lock self
-t0="$(secs)"; bstop; rc=$?; dt="$(python3 -c 'import sys,time; print(round(time.time()-float(sys.argv[1]),1))' "$t0")"; lw="$(lockwait)"
-python3 -c 'import sys; sys.exit(0 if 0 <= float(sys.argv[1]) < 5 and float(sys.argv[2]) < 15 else 1)' "$lw" "$dt" && [ "$rc" = 0 ] \
-  && grep -q "$BUSY_MSG" "$TMP/out" && [ ! -f "$TMP/b_wait" ] \
-  && ok "B5: lock held by a live gate run: BUSY after a ${lw} s lock wait (< 5 s; whole Stop ${dt} s), nothing cached" \
-  || fail "B5: live gate holder: rc=$rc, lock wait ${lw} s, Stop ${dt} s (want BUSY after < 5 s), out='$(head -2 "$TMP/out")'"
-no_untested_fp || fail "B5: the short BUSY was cached as UNTESTED"
 t0="$(secs)"; ( cd "$B" && env -u TEST_RUN_LOCK_BUSY_FAST TEST_RUN_LOCK_WAIT_S=4 CLAUDE_PROJECT_DIR="$B" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --json >/dev/null 2>&1 )
 dt="$(python3 -c 'import sys,time; print(round(time.time()-float(sys.argv[1]),1))' "$t0")"
 python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= 4 else 1)' "$dt" && ok "B5: the CLI (no Stop hook) still waits its own TEST_RUN_LOCK_WAIT_S behind a live gate (${dt} s)" \
   || fail "B5: the CLI gave up after ${dt} s behind a live gate (want >= 4 s)"
 kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
 dead="$(python3 -c 'import subprocess; p = subprocess.Popen(["true"]); p.wait(); print(p.pid)')"
-hold_gate_lock "$dead"
-t0="$(secs)"; TEST_RUN_LOCK_WAIT_S=4 bstop; rc=$?; dt="$(python3 -c 'import sys,time; print(round(time.time()-float(sys.argv[1]),1))' "$t0")"
-python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= 4 else 1)' "$dt" && [ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" \
-  && ok "B5: a record naming a dead pid while the lock is held: the holder is unknown, the long wait stays (${dt} s)" \
-  || fail "B5: unknown holder cut short: rc=$rc after ${dt} s (want BUSY after >= 4 s)"
-kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
-hold_lock
-t0="$(secs)"; TEST_RUN_LOCK_WAIT_S=4 bstop; rc=$?; dt="$(python3 -c 'import sys,time; print(round(time.time()-float(sys.argv[1]),1))' "$t0")"
-python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= 4 else 1)' "$dt" && [ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" \
-  && ok "B5: a holder that wrote no record (another tool): the long wait stays (${dt} s)" \
-  || fail "B5: record-less holder cut short: rc=$rc after ${dt} s (want BUSY after >= 4 s)"
-kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
 printf '{"pid": %s, "pid_start": "x"}\n' "$dead" > "$B/.claude/audit-gate/test_run.lock"   # the record a killed gate left behind
-rm -f "$TMP/b_wait"; bstop; rc=$?
-[ "$rc" = 0 ] && [ "$(cat "$TMP/b_wait" 2>/dev/null)" = 45 ] && ! grep -q "$BUSY_MSG" "$TMP/out" \
-  && ok "B5: a stale lock (a dead gate's record, nobody holds it) is taken over: the suite runs" \
-  || fail "B5: stale lock not taken over (rc=$rc wait='$(cat "$TMP/b_wait" 2>/dev/null)' out='$(head -2 "$TMP/out")')"
-
+rm -f "$TMP/b_wait"; gaterun "$B"
+[ "$GRC" = 0 ] && [ -f "$TMP/b_wait" ] && ! grep -q "$BUSY_MSG" "$TMP/gate.out" \
+  && ok "B5: a stale lock (a dead gate's record, nobody holds it) is taken over by the gate run: the suite runs" \
+  || fail "B5: stale lock not taken over (gate=$GRC wait='$(cat "$TMP/b_wait" 2>/dev/null)' out='$(head -2 "$TMP/gate.out")')"
 # ── UNTESTED (untested_exit) advances verified_head; the same content is not re-run ─────
 # 2026-09-29 (GeelyEx2: REG-QC-05 "test on the real car" always exits 2): exit 4 left
 # verified_head stuck, so every Stop re-ran every suite for the growing --since range (4-5 min,
@@ -565,12 +511,12 @@ with open(sys.argv[1] + "/.claude/audit-gate/test_run.lock", "w") as f:
 PY
 v_holder=$!
 for _ in $(seq 1 50); do [ -f "$TMP/v_held" ] && break; sleep 0.1; done
-TEST_RUN_LOCK_WAIT_S=1 vstop; rc=$?
-[ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" && [ "$(vhead)" = "$base" ] && [ "$(vruns)" = 0 ] \
-  && ok "BUSY on a --since range: verified_head not advanced, nothing ran" \
-  || fail "BUSY advanced or ran (rc=$rc vh=$(vhead) base=$base runs=$(vruns) out='$(cat "$TMP/out")')"
+TEST_RUN_LOCK_WAIT_S=1 gaterun "$V"; vstop; rc=$?
+[ "$rc" = 2 ] && [ "$GRC" = 4 ] && grep -q "$BUSY_MSG" "$TMP/gate.out" && [ "$(vhead)" = "$base" ] && [ "$(vruns)" = 0 ] \
+  && ok "BUSY on a --since range (the gate run writes no receipt or outcome): the stop blocks, verified_head not advanced, nothing ran" \
+  || fail "BUSY advanced or ran (rc=$rc vh=$(vhead) base=$base runs=$(vruns) gate='$(tail -3 "$TMP/gate.out")')"
 kill "$v_holder" 2>/dev/null; wait "$v_holder" 2>/dev/null
-vstop; rc=$?; n1="$(vruns)"
+gaterun "$V"; vstop; rc=$?; n1="$(vruns)"
 [ "$rc" = 0 ] && grep -q "UNTESTED" "$TMP/out" && grep -q "REG-CAR" "$TMP/out" && grep -q "KHÔNG phải PASS" "$TMP/out" \
   && [ "$n1" = 1 ] && ok "UNTESTED on a --since range: stop allowed, warning names REG-CAR, runnable suite ran once" \
   || fail "UNTESTED range stop (rc=$rc runs=$n1 out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")')"
@@ -580,7 +526,7 @@ vstop; rc=$?; n2="$(vruns)"
 [ "$rc" = 0 ] && [ "$n2" = "$n1" ] && [ ! -s "$TMP/out" ] \
   && ok "UNTESTED, same content next Stop: gate not re-run, warning not repeated" \
   || fail "UNTESTED same content re-ran the gate (rc=$rc runs ${n1} then ${n2} out='$(cat "$TMP/out")')"
-echo "fun ok() = 3" > src/Core.kt; vstop; rc=$?; n3="$(vruns)"
+echo "fun ok() = 3" > src/Core.kt; gaterun "$V"; vstop; rc=$?; n3="$(vruns)"
 [ "$rc" = 0 ] && [ "$n3" -gt "$n2" ] && grep -q "UNTESTED" "$TMP/out" \
   && ok "UNTESTED, new content: the gate runs again and says UNTESTED again" \
   || fail "UNTESTED new content not re-run/said (rc=$rc runs ${n2} then ${n3} out='$(cat "$TMP/out")')"
@@ -609,8 +555,8 @@ os.makedirs(os.path.join(gd, "postfix-gate"), exist_ok=True)
 json.dump({"exit": 0, "fingerprint": devkit_harness.tree_fingerprint(repo)}, open(os.path.join(gd, "postfix-gate", "full_pass.json"), "w"))
 PY
 stop; rc=$?
-[ "$rc" = 2 ] && grep -q "REG-1" "$TMP/err" \
-  && ok "a bare exit-0 full_pass.json does not end the Stop: the gate runs and the failing REG-1 blocks" \
+[ "$rc" = 2 ] && grep -q "chưa có biên nhận" "$TMP/err" \
+  && ok "a bare exit-0 full_pass.json does not end the Stop: no receipt for this tree, the stop blocks" \
   || fail "the hook trusted a bare full_pass.json and skipped the gate (rc=$rc)"
 
 # The skip keys (pass_fp / untested_fp) must cover the CONTENT of untracked files: fp hashes
@@ -629,10 +575,10 @@ for kind in pass untested; do
 JSON
   echo "fun ok() = 1" > src/Core.kt; git add -A && git commit -qm init
   echo "fun n() = 1" > src/New.kt          # untracked, clean
-  stop; rc1=$?
+  gaterun "$REPO"; stop; rc1=$?
   echo "fun n() = BUG" > src/New.kt        # same untracked file, content now fails REG-OK
-  stop; rc2=$?
-  [ "$rc1" = 0 ] && [ "$rc2" = 2 ] && grep -q "REG-OK" "$TMP/err" \
+  stop; rc2=$?; gaterun "$REPO"
+  [ "$rc1" = 0 ] && [ "$rc2" = 2 ] && [ "$GRC" = 1 ] && grep -q "REG-OK" "$TMP/gate.out" \
     && ok "$kind: an edit inside an untracked file is not skipped — REG-OK runs and blocks" \
     || fail "$kind: untracked content edit skipped the suites (rc $rc1 then $rc2)"
 done
@@ -654,13 +600,13 @@ printf 'OK=1\n' > .env
 # FLAKY_RETRY would run the failing command a second time; this case counts runs of ok.sh.
 # export: a bare assignment is not visible to the hook's child processes.
 export FLAKY_RETRY=0
-stop; rc1=$?; n1=$(grep -c x "$TMP/env_runs" | tr -d ' ')
+gaterun "$REPO"; stop; rc1=$?; n1=$(grep -c x "$TMP/env_runs" | tr -d ' ')
 stop; rc_same=$?; n_same=$(grep -c x "$TMP/env_runs" | tr -d ' ')
 printf 'OK=0\n' > .env
-stop; rc2=$?; n2=$(grep -c x "$TMP/env_runs" | tr -d ' ')
+stop; rc2=$?; gaterun "$REPO"; n2=$(grep -c x "$TMP/env_runs" | tr -d ' ')
 unset FLAKY_RETRY
 [ "$rc1" = 0 ] && [ "$n1" = 1 ] && [ "$rc_same" = 0 ] && [ "$n_same" = 1 ] \
-  && [ "$rc2" = 2 ] && [ "$n2" = 2 ] && grep -q "REG-OK" "$TMP/err" \
+  && [ "$rc2" = 2 ] && [ "$n2" = 2 ] && [ "$GRC" = 1 ] && grep -q "REG-OK" "$TMP/gate.out" \
   && ok "pass_fp: a gitignored .env change is not skipped — REG-OK runs again and blocks" \
   || fail "pass_fp skipped a .env change (rc $rc1/$rc_same/$rc2 runs $n1/$n_same/$n2 err=$(head -3 "$TMP/err"))"
 # ── A mid-work Stop runs no test, whatever the session wrote; a handover is always tested ────
@@ -737,24 +683,26 @@ wtrace w_op '{"name":"mcp__foo__do_thing","input":{}}'
 newtree 8; n0="$(wruns)"; wstop w-op w_op; rc=$?
 [ "$rc" = 0 ] && [ "$(wruns)" = "$n0" ] && ok "a tool that may write unseen (opaque MCP tool), mid-work: not tested yet" || fail "opaque-tool session tested mid-work (rc=$rc)"
 
+# v26 mục 1: a handover is judged on the gate receipt of the tree (the Stop runs no suite): with REG-W red there is none, so it blocks.
+NORCPT="chưa có biên nhận gate"
 newtree 10; n0="$(wruns)"; wstop w-xong w_ro "XONG"; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "read-only session whose reply claims XONG: gated (a claim is verified)" || fail "XONG reply skipped (rc=$rc)"
+[ "$rc" = 2 ] && grep -q "$NORCPT" "$TMP/err" && ok "read-only session whose reply claims XONG: gated (a claim is verified)" || fail "XONG reply skipped (rc=$rc)"
 newtree 11; n0="$(wruns)"; wstop w-empty w_ro ""; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "read-only session with no reply text: gated (fail closed)" || fail "empty reply skipped (rc=$rc)"
+[ "$rc" = 2 ] && grep -q "$NORCPT" "$TMP/err" && ok "read-only session with no reply text: gated (fail closed)" || fail "empty reply skipped (rc=$rc)"
 newtree 12; n0="$(wruns)"; wtrace w_push '{"name":"Bash","input":{"command":"git push origin main"}}'; wstop w-push w_push; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "read-only session that pushed this turn: gated (a push is a handover)" || fail "push turn skipped (rc=$rc)"
+[ "$rc" = 2 ] && grep -q "$NORCPT" "$TMP/err" && ok "read-only session that pushed this turn: gated (a push is a handover)" || fail "push turn skipped (rc=$rc)"
 newtree 13; n0="$(wruns)"; DEVKIT_GATE_EVERY_STOP=1 wstop w-every w_ro; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && ok "DEVKIT_GATE_EVERY_STOP=1: even a read-only session is gated" || fail "EVERY_STOP ignored (rc=$rc)"
-newtree 9; n0="$(wruns)"; wtrace w_edx '{"name":"Edit","input":{"file_path":"@REPO@/src/Core.kt","old_string":"a","new_string":"b"}}'
-wstop w-edx w_edx "XONG"; rc=$?
-[ "$rc" = 2 ] && [ "$(wruns)" -gt "$n0" ] && grep -q REG-W "$TMP/err" && ok "session that edited a changed file and claims XONG: gated (the handover)" || fail "Edit + XONG not gated (rc=$rc runs=$(wruns))"
+[ "$rc" = 2 ] && grep -q "$NORCPT" "$TMP/err" && ok "DEVKIT_GATE_EVERY_STOP=1: even a read-only session is gated" || fail "EVERY_STOP ignored (rc=$rc)"
+newtree 9; wtrace w_edx '{"name":"Edit","input":{"file_path":"@REPO@/src/Core.kt","old_string":"a","new_string":"b"}}'
+gaterun "$W"; n0="$(wruns)"; wstop w-edx w_edx "XONG"; rc=$?
+[ "$rc" = 2 ] && [ "$GRC" = 1 ] && [ "$(wruns)" = "$n0" ] && grep -q REG-W "$TMP/gate.out" && ok "session that edited a changed file and claims XONG: gated (the handover)" || fail "Edit + XONG not gated (rc=$rc runs=$(wruns))"
 cd "$TMP" || exit 1
 
 # ── A total time budget for one Stop run ─────────────────────────────────────────────────
 # 2026-10-02 (agent-workbench): ~10 suites in a row, 600 s each and no total cap — a Stop ran 27 minutes
-# until the hook's own 1800 s timeout cut it without a word. GATE_TOTAL_BUDGET_S (the hook passes
-# REGRESSION_GATE_BUDGET_S, default 900) stops STARTING suites once the time is spent: the rest are
-# UNTESTED (label BUDGET), never PASS, exit 4, and nothing is cached for the tree (the next Stop runs again).
+# until the hook's own 1800 s timeout cut it without a word. GATE_TOTAL_BUDGET_S stops STARTING suites once the
+# time is spent: the rest are UNTESTED (label BUDGET), never PASS, exit 4, and nothing is cached for the tree.
+# (v26 mục 1: the Stop no longer runs the gate, so it passes no REGRESSION_GATE_BUDGET_S.)
 BG="$TMP/budget"; mkdir -p "$BG/src" "$BG/.agents" && cd "$BG" || exit 1
 git init -q . && git config user.email t@t && git config user.name t
 echo "fun ok() = 1" > src/Core.kt
@@ -783,25 +731,26 @@ assert st["REG-B1"][0] == "PASS", st
 assert st["REG-B2"] == ("UNTESTED", "BUDGET") and st["REG-B3"] == ("UNTESTED", "BUDGET"), st
 PY
 
-# the Stop hook: says so, lets the stop through (nothing to fix in the change), caches nothing
+# the Stop hook (v26 mục 1: it runs no suite and passes no budget): a budget-cut gate run writes no receipt and no outcome, so the
+# stop is blocked and nothing is cached for the tree; the next gate run on the same tree runs its suites again
 : > "$TMP/bg_runs"; echo "fun ok() = 3" > src/Core.kt
-REGRESSION_GATE_BUDGET_S=3 bgstop; rc=$?
-[ "$rc" = 0 ] && [ "$(bgruns)" = 2 ] && grep -q systemMessage "$TMP/out" && grep -q 'ngân sách' "$TMP/out" && grep -q 'REG-B3' "$TMP/out" && grep -q 'KHÔNG phải PASS' "$TMP/out" \
-  && ok "hook: budget spent mid-run — stop allowed, the message names the suite left, not a PASS" \
-  || fail "hook budget (rc=$rc runs=$(bgruns) out='$(cat "$TMP/out")' err='$(head -2 "$TMP/err")')"
+GATE_TOTAL_BUDGET_S=3 gaterun "$BG"; bgstop; rc=$?
+[ "$rc" = 2 ] && [ "$GRC" = 4 ] && [ "$(bgruns)" = 2 ] && grep -q "chưa có biên nhận" "$TMP/err" \
+  && ok "hook: budget spent mid-run (gate exit 4, 2 suites ran) — no receipt, the stop is blocked" \
+  || fail "hook budget (rc=$rc gate=$GRC runs=$(bgruns) out='$(cat "$TMP/out")' err='$(head -2 "$TMP/err")')"
 python3 -c 'import json,sys
 d = json.load(open(sys.argv[1]))
 sys.exit(1 if d.get("pass_fp") or d.get("untested_fp") or any(s.get("result") for s in d.get("sessions", {}).values()) else 0)' \
   "$BG/.claude/audit-gate/regression_gate.state.json" && ok "hook: a budget-cut run is cached as nothing (no pass_fp / untested_fp / session result)" \
   || fail "budget cut cached: $(cat "$BG/.claude/audit-gate/regression_gate.state.json")"
-n0="$(bgruns)"; REGRESSION_GATE_BUDGET_S=3 bgstop
-[ "$(bgruns)" -gt "$n0" ] && ok "hook: the same tree runs its suites again on the next stop" || fail "budget-cut tree not re-run (runs $n0 then $(bgruns))"
+n0="$(bgruns)"; GATE_TOTAL_BUDGET_S=3 gaterun "$BG"
+[ "$(bgruns)" -gt "$n0" ] && ok "gate: the same tree runs its suites again on the next run" || fail "budget-cut tree not re-run (runs $n0 then $(bgruns))"
 
-# without a budget in the way (default 900 s) every suite runs
+# without a budget in the way every suite runs, and the receipt allows the stop
 : > "$TMP/bg_runs"; echo "fun ok() = 4" > src/Core.kt
-bgstop; rc=$?
-[ "$rc" = 0 ] && [ "$(bgruns)" = 3 ] && ! grep -q 'ngân sách' "$TMP/out" && ok "hook: default budget (900 s) does not cut a short run — all 3 suites ran" \
-  || fail "default budget cut the run (rc=$rc runs=$(bgruns) out='$(cat "$TMP/out")')"
+gaterun "$BG"; bgstop; rc=$?
+[ "$rc" = 0 ] && [ "$GRC" = 0 ] && [ "$(bgruns)" = 3 ] && ok "no budget: all 3 suites ran, the stop is allowed on the receipt" \
+  || fail "unbudgeted run (rc=$rc gate=$GRC runs=$(bgruns) out='$(cat "$TMP/out")')"
 cd "$TMP" || exit 1
 
 if [ "$FAILS" -ne 0 ]; then echo "regression gate hook: $FAILS FAILED"; exit 1; fi

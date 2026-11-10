@@ -29,7 +29,7 @@
 1	1	xong rồi, kiểm lại nhánh 4 repo đi
 1	1	cài lên 3 repo cho tôi đi
 1	1	List mcp hiện có mcp nào ko chạy được trên 5 repo
-1	1	codebase-memory-mcp, context7, agentmemory,  play-store,  replicant-mcp, open code review đều phải chạy trên cả 5 repo này
+1	1	codebase-memory-mcp, context7, agentmemory,  play-store,  mobile-mcp, open code review đều phải chạy trên cả 5 repo này
 0	1	tôi luôn làm nhiều phiên cùng lúc audit thêm có nên mặc định mỗi phiên 1 worktree riêng xong nào thì merge vô main tránh bị khoá ko
 0	1	mặc định 3 repo của tôi là gì note vô luôn đi ngoài ra thêm 1 repo này nữa là 4 nha <PATH> lần sau tôi nhắc 4 repo tự hiểu 4 cái nào
 0	1	tôi đang hỏi chất lượng dev kit ko hỏi vấn đề của project đó bị gì 3 repo đó là tham khảo để cải thiện chất lượng dev kit thôi

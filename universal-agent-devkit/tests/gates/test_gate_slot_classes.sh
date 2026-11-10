@@ -389,12 +389,10 @@ fi
 release_all; echo 1 > "$TMP/load"
 
 # ── 14. Stop hook đặt ngân sách chờ tải ngắn (review 20/10): tải ≥ 100 kéo dài, lượt Stop có GATE_TOTAL_BUDGET_S 900 từng chờ tải tới
-#       600 s (DEVKIT_SLOT_ADVISORY_BUDGET_S mặc định) rồi các suite sau thành BUDGET (exit 4). Hook phải truyền mặc định 120.
-if grep -Eq '"DEVKIT_SLOT_ADVISORY_BUDGET_S": *os\.environ\.get\("DEVKIT_SLOT_ADVISORY_BUDGET_S", *"120"\)' "$DEVKIT_DIR/hooks/regression_gate.sh"; then
-  ok "14. Stop hook truyền DEVKIT_SLOT_ADVISORY_BUDGET_S (mặc định 120) cho gate"
-else
-  fail "14. hooks/regression_gate.sh không truyền DEVKIT_SLOT_ADVISORY_BUDGET_S mặc định 120 cho gate"
-fi
+#       600 s (DEVKIT_SLOT_ADVISORY_BUDGET_S mặc định) rồi các suite sau thành BUDGET (exit 4). Hook từng truyền mặc định 120.
+#       v26 mục 1 bỏ lời gọi gate của Stop (grep 07/11: mọi subprocess của hooks/regression_gate.sh là git; chỉ PROBE nạp module gate,
+#       không chạy suite), nên ca này bỏ. Hành vi thay thế (Stop không gọi gate, không chờ slot) do test_gate_slot_queue.sh ca (h) và
+#       test_regression_gate_receipt.sh ca a giữ.
 
 # ── 15. stale_rerun.main (SessionStart, chạy nền) không chờ tải (review 20/10): run_one chờ tải trong lúc giữ test_run.lock của dự án,
 #       Stop gate của người dùng chờ khoá đó 45 s rồi ra BUSY. main đặt mặc định DEVKIT_SLOT_LOAD_WAIT_S=0, giá trị người gọi đặt vẫn giữ.
@@ -620,5 +618,25 @@ else
   printf '%s\n' "$OUT" | grep -E "heavy-slot|xếp hàng|KẾT LUẬN" | head -4
 fi
 release_all
+
+# 22. legacy-device-mcp was removed from the kit (09/11/2026): the device-suite regexes (heavy_slot.HARD_DEVICE and
+# post-fix-gate.HARD_DEVICE_SUITE, kept in sync) still know mobile-mcp / mobilecli but a command naming only legacy-device-mcp is not a device suite.
+RX_OUT="$(python3 -I - "$DEVKIT_DIR" <<'PY'
+import importlib.util, sys
+d = sys.argv[1]; sys.path.insert(0, d + "/bin")
+def load(name, f):
+    spec = importlib.util.spec_from_file_location(name, d + "/bin/" + f); m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m); return m
+pats = {"heavy_slot.HARD_DEVICE": load("hs", "heavy_slot.py").HARD_DEVICE,
+        "post-fix-gate.HARD_DEVICE_SUITE": load("pfg", "post-fix-gate.py").HARD_DEVICE_SUITE}
+bad = []
+for name, rx in pats.items():
+    for cmd, want in (("npx mobile-mcp@1.0.16", True), ("mobilecli devices", True), ("run legacy-device-mcp ui-query", False)):
+        if bool(rx.search(cmd)) != want:
+            bad.append(f"{name} {cmd!r} want {want}")
+print("; ".join(bad) or "ok")
+PY
+)"
+if [ "$RX_OUT" = ok ]; then ok "22. regex suite thiết bị: mobile-mcp/mobilecli có, legacy-device-mcp không"; else fail "22. regex suite thiết bị: $RX_OUT"; fi
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_slot_classes: all passed" || { echo "❌ test_gate_slot_classes: $FAILS failed"; exit 1; }

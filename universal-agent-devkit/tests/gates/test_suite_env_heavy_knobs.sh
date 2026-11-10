@@ -30,6 +30,17 @@ done
 printf '%s\n' "$kept" | grep -qx DEVKIT_GATE_SLOT_HELD && ok "suite_env keeps DEVKIT_GATE_SLOT_HELD (T0056)" \
   || fail "suite_env drops DEVKIT_GATE_SLOT_HELD (T0056: gate lồng phải biết slot đã giữ)"
 
+# Lane D2 (07/11): ngân sách của MỘT lượt gate không lọt xuống suite. GATE_TOTAL_BUDGET_S lọt làm gate lồng tưởng mình là lượt Stop (_stop_like)
+# và chạy shard tuần tự ⇒ REG-DK-GATE-SHARD-GROUP-01 đỏ ở mọi lượt có ngân sách. DEVKIT_SLOT_PRIORITY / DEVKIT_SLOT_LOAD_WAIT_S cố ý truyền xuống:
+# suite nặng của merge gate đứng đầu hàng đợi heavy (super-board-merge-gate.sh); test tự gỡ chúng (tests/lib/clean_git_env.sh).
+kept="$(probe GATE_TOTAL_BUDGET_S=900 DEVKIT_SLOT_ADVISORY_BUDGET_S=5 DEVKIT_SLOT_PRIORITY=merge DEVKIT_SLOT_LOAD_WAIT_S=0 DEVKIT_PROBE_KEEP=1)"
+for v in GATE_TOTAL_BUDGET_S DEVKIT_SLOT_ADVISORY_BUDGET_S; do
+  printf '%s\n' "$kept" | grep -qx "$v" && fail "suite_env keeps $v" || ok "suite_env drops $v"
+done
+for v in DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_LOAD_WAIT_S; do
+  printf '%s\n' "$kept" | grep -qx "$v" && ok "suite_env keeps $v (hàng đợi heavy của merge gate)" || fail "suite_env drops $v"
+done
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_suite_env_heavy_knobs: PASS"; exit 0; }
 echo "test_suite_env_heavy_knobs: FAIL ($FAILS)"

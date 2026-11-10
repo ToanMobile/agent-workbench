@@ -17,7 +17,7 @@
 #   8. a PASS that did not run the suite's full command (impacted, package, module, resource, BUDGET, UNTESTED) is never recorded as PASS
 #  8b. code edited WHILE run 1 ran is not the code tested: no record, run 2 runs everything
 #   9. a FIFO planted at the record path never hangs the gate
-#  10. the Stop hook end to end: run 1 cut and said so, run 2 on the same tree runs only REG-3 and lets the Stop through
+#  10. end to end (v26: the agent's gate run, then the Stop): run 1 cut, the Stop blocks; run 2 on the same tree runs only REG-3 and its receipt lets the Stop through
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 unset DEVKIT_UNITY_REUSE_MAX_S DEVKIT_GATE_CACHE DEVKIT_GATE_CACHE_MAX_S GATE_TOTAL_BUDGET_S REGRESSION_GATE_BUDGET_S
@@ -242,14 +242,17 @@ JSON
 git add -A && git commit -qm init
 echo "fun ok() = 2" > src/Core.kt
 LAST="0:0:0"
-bgstop() { printf '{"session_id":"bg-1","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$H" REGRESSION_GATE_BUDGET_S=$BUDGET bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
-bgstop; rc1=$?; delta; d1="$D"
-grep -q 'ngân sách' "$TMP/out" && grep -q 'REG-3' "$TMP/out" && c1=yes || c1=no
-bgstop; rc2=$?; delta; d2="$D"
-if [ "$rc1" = 0 ] && [ "$d1" = "1:1:0" ] && [ "$c1" = yes ]; then ok "10a: hook Stop 1: budget spent, the Stop is let through with the UNTESTED message naming REG-3 (runs $d1)"
-else bad "10a: hook Stop 1 rc=$rc1 runs=$d1 message=$c1 out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")'"; fi
-if [ "$rc2" = 0 ] && [ "$d2" = "0:0:1" ] && ! grep -q 'ngân sách' "$TMP/out"; then ok "10b: hook Stop 2 on the same tree ran only REG-3 and ended the budget cycle (runs $d2)"
-else bad "10b: hook Stop 2 rc=$rc2 runs=$d2 out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")'"; fi
+# v26 mục 1: the Stop runs no gate (and passes no REGRESSION_GATE_BUDGET_S): the budget-cut run is the agent's gate run, with its
+# time budget, and the Stop reads what it wrote. A cut run writes no receipt (BUDGET is no outcome either): the Stop blocks.
+bgrun() { ( cd "$H" && CLAUDE_PROJECT_DIR="$H" GATE_TOTAL_BUDGET_S=$BUDGET python3 "$GATE" --run-tests --scoped --brief ) >"$TMP/gout" 2>&1; }
+bgstop() { printf '{"session_id":"bg-1","hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$H" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+bgrun; g1=$?; bgstop; rc1=$?; delta; d1="$D"
+grep -q 'REG-3' "$TMP/gout" && c1=yes || c1=no
+bgrun; g2=$?; bgstop; rc2=$?; delta; d2="$D"
+if [ "$g1" = 4 ] && [ "$rc1" = 2 ] && [ "$d1" = "1:1:0" ] && [ "$c1" = yes ]; then ok "10a: gate run 1: budget spent (exit 4, names REG-3), no receipt: the Stop blocks (runs $d1)"
+else bad "10a: gate run 1 rc=$g1, Stop rc=$rc1 runs=$d1 message=$c1 out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")'"; fi
+if [ "$g2" = 0 ] && [ "$rc2" = 0 ] && [ "$d2" = "0:0:1" ]; then ok "10b: gate run 2 on the same tree ran only REG-3, exit 0: its receipt lets the Stop through (runs $d2)"
+else bad "10b: gate run 2 rc=$g2, Stop rc=$rc2 runs=$d2 out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")' gate='$(tail -5 "$TMP/gout")'"; fi
 cd "$TMP" || exit 1
 }
 

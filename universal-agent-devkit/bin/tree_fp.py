@@ -235,6 +235,199 @@ def _big_untracked(project_dir):
 tree_fingerprint.error = ""   # why the last call returned "" (git's stderr), for the gate to print
 
 
+# Gate speed v26 mục 1: Stop hook không chạy suite nữa, nó chỉ hỏi "cây này có biên nhận exit 0 không". Một hàm cho cả ba loại biên nhận
+# (full, scoped, task), cùng luật kiểm với post-fix-gate (result_format, gate_sha, matrix_sha, local_sha), không nạp post-fix-gate.py.
+TASK_RECEIPT = "task_pass.json"
+TASK_STORE_DIR = "task_receipts"
+RECEIPT_JSON_MAX = 1 << 20
+_MATRIX_CANDIDATES = (".agents/regression_matrix.active.json", "templates/regression_matrix.active.json",
+                      ".agents/active-profile/regression_matrix.json", "templates/regression_matrix.json")
+
+
+def _sha256_file(path):
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except (OSError, TypeError):
+        return ""
+
+
+def _result_format(gate):
+    """RESULT_FORMAT của post-fix-gate.py ở `gate` (đọc dòng gán, không exec file 9 k dòng); None khi không đọc được."""
+    import re
+    try:
+        with open(gate, encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r"RESULT_FORMAT = (\d+)\b", line)
+                if m:
+                    return int(m.group(1))
+    except (OSError, UnicodeDecodeError):
+        return None
+    return None
+
+
+def _devkit_scripts_on_path():
+    scripts = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "scripts")
+    for sub in ("git", "governance", "context", ""):
+        p = os.path.join(scripts, sub) if sub else scripts
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+
+def local_state_sha(project_dir, skip=()):
+    """Cùng công thức post-fix-gate local_state_sha (LOCAL_CONFIG bị git ignore + build_inputs, ngoài SKIP_WALK); "?" khi không liệt kê được."""
+    import fnmatch
+    try:
+        _devkit_scripts_on_path()
+        from worktree import LOCAL_CONFIG  # noqa: PLC0415
+        from build_inputs import SKIP_WALK, build_inputs  # noqa: PLC0415
+        specs = []
+        for p in LOCAL_CONFIG:
+            specs.extend([p, "**/" + p])
+        out = subprocess.run(["git", "-C", str(project_dir), "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--"] + specs,
+                             capture_output=True, text=True, errors="surrogateescape").stdout
+        files = {r for r in out.split("\0") if r and not r.endswith("/")
+                 and any(fnmatch.fnmatch(os.path.basename(r), p) for p in LOCAL_CONFIG) and not SKIP_WALK.intersection(r.split("/")[:-1])}
+        files |= set(build_inputs(project_dir))
+        sums = {rel: _sha256_file(os.path.join(str(project_dir), rel)) for rel in files}
+    except Exception:   # như post-fix-gate: không liệt kê được thì không có biên nhận dùng được
+        return "?"
+    h = hashlib.sha256()
+    for rel in sorted(set(sums) - set(skip)):
+        h.update(os.fsencode(rel) + b"\0" + sums[rel].encode() + b"\0")
+    return h.hexdigest()
+
+
+def _regen_allowed(paths):
+    """post-fix-gate regen_allowed: local config và build input mặc định không bao giờ được bỏ khỏi local_sha."""
+    import fnmatch
+    _devkit_scripts_on_path()
+    from worktree import LOCAL_CONFIG  # noqa: PLC0415
+    from build_inputs import DEFAULT_INPUTS  # noqa: PLC0415
+    pats = [q for p in DEFAULT_INPUTS for q in (p, p[3:] if p.startswith("**/") else p)]
+    return sorted(rel for rel in paths if not any(fnmatch.fnmatch(os.path.basename(rel), p) for p in LOCAL_CONFIG)
+                  and not any(fnmatch.fnmatch(rel, p) for p in pats))
+
+
+def _load_receipt(path):
+    import json
+    import stat
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, encoding="utf-8") as fh:
+            st = os.fstat(fh.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_size > RECEIPT_JSON_MAX:
+                return None
+            data = json.load(fh)
+    except (OSError, ValueError, RecursionError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def receipt_for_tree(project_dir, gate=None, matrix=None, fp=None, max_age_s=None, why=None, covers=None, kinds=("full", "scoped", "task")):
+    """Biên nhận exit 0 của post-fix-gate cho CÂY hiện tại của project_dir (full, scoped hay task), hoặc None. Trả bản sao dict của biên
+    nhận, thêm "_kind" (full | scoped | task), "_path" và "_base" (sha mà lượt gate kiểm từ đó tới cây; "" với full: cả cây).
+    Kiểm: exit 0, dấu vân tay = fp của cây, result_format = RESULT_FORMAT của `gate`, gate_sha = sha256(gate) (khi có gate), matrix_sha =
+    sha256 ma trận của dự án (matrix, hoặc cùng thứ tự dò như post-fix-gate), local_sha = local_state_sha (trừ local_regen được phép),
+    tested_at trong DEVKIT_GATE_CACHE_MAX_S, không suite FAIL / TIMEOUT. tests rỗng chỉ nhận ở biên nhận scoped không có test liên quan
+    (scoped_tests, smoke, core_smoke đều rỗng) và ở biên nhận task (lượt không có suite nào). why: list nhận lý do từ chối (log).
+    covers: hàm(base) -> bool; biên nhận hợp lệ mà base không đạt thì xét biên nhận kế tiếp (nhiều biên nhận cùng cây, base khác nhau).
+    kinds: loại biên nhận được xét (automerge của worktree không nhận biên nhận task: T0061)."""
+    import time
+    def no(msg):
+        if isinstance(why, list):
+            why.append(msg)
+        return None
+    fp = fp or tree_fingerprint(project_dir)
+    if not fp:
+        return no("fp")
+    own = receipt_path(project_dir)
+    common = tree_receipt_dir(project_dir)
+    if not own or not common:
+        return no("git")
+    own_dir, store = os.path.dirname(own), os.path.dirname(common)
+    if max_age_s is None:
+        try:
+            max_age_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "259200"))
+        except ValueError:
+            max_age_s = 0.0
+    if matrix is None:
+        matrix = next((os.path.join(str(project_dir), c) for c in _MATRIX_CANDIDATES if os.path.exists(os.path.join(str(project_dir), c))), "")
+    fmt = _result_format(gate) if gate else None
+    gate_sha = _sha256_file(gate) if gate else None
+    matrix_sha = _sha256_file(matrix) if matrix else ""
+    local_cache = {}
+    cands = (("full", os.path.join(own_dir, RECEIPT)), ("full", os.path.join(store, "tree_receipts", fp + ".json")),
+             ("scoped", os.path.join(own_dir, SCOPED_RECEIPT)), ("scoped", os.path.join(store, SCOPED_STORE_DIR, fp + ".json")),
+             ("task", os.path.join(own_dir, TASK_RECEIPT)), ("task", os.path.join(store, TASK_STORE_DIR, fp + ".json")))
+    now = time.time()
+    for kind, path in cands:
+        if kind not in kinds:
+            continue
+        r = _load_receipt(path)
+        if r is None:
+            continue
+        scope = r.get("scope", "full")
+        if scope != kind:
+            no("%s: scope %s" % (path, scope))
+            continue
+        if r.get("exit") != 0 or isinstance(r.get("exit"), bool):
+            no("%s: exit" % path)
+            continue
+        if r.get("fp" if kind == "task" else "fingerprint") != fp:
+            no("%s: fp" % path)
+            continue
+        if gate and (fmt is None or r.get("result_format") != fmt):
+            no("%s: result_format" % path)
+            continue
+        if gate and r.get("gate_sha") != gate_sha:
+            no("%s: gate_sha" % path)
+            continue
+        if r.get("matrix_sha") != matrix_sha:
+            no("%s: matrix_sha" % path)
+            continue
+        t = r.get("tested_at")
+        if isinstance(t, bool) or not isinstance(t, (int, float)) or not (-1e15 < t < 1e15) or t > now + 60 or now - t > max_age_s:
+            no("%s: tested_at" % path)
+            continue
+        tests = r.get("tests")
+        if kind == "task" and tests is None:
+            tests = []
+        if not isinstance(tests, list) or not all(isinstance(x, dict) for x in tests) \
+                or any(x.get("status") in ("FAIL", "TIMEOUT") for x in tests):
+            no("%s: tests" % path)
+            continue
+        if not tests and kind == "full":
+            no("%s: tests empty" % path)
+            continue
+        if not tests and kind == "scoped" and any(r.get(k) for k in ("scoped_tests", "smoke", "core_smoke")):
+            no("%s: tests empty with related tests" % path)
+            continue
+        regen = r.get("local_regen") or []
+        if not isinstance(regen, list) or not all(isinstance(p, str) for p in regen):
+            no("%s: local_regen" % path)
+            continue
+        try:
+            skip = tuple(_regen_allowed(regen)) if regen else ()
+        except Exception:
+            no("%s: local_regen" % path)
+            continue
+        if skip not in local_cache:
+            local_cache[skip] = local_state_sha(project_dir, skip)
+        if r.get("local_sha") in (None, "?") or r.get("local_sha") != local_cache[skip]:
+            no("%s: local_sha" % path)
+            continue
+        base = "" if kind == "full" else r.get("diff_base" if kind == "task" else "base")
+        if kind != "full" and not (isinstance(base, str) and base):
+            no("%s: base" % path)
+            continue
+        if covers is not None and not covers(base):
+            no("%s: covers base %s" % (path, str(base)[:12]))
+            continue
+        return dict(r, _kind=kind, _path=path, _base=base)
+    return no("none")
+
+
 # Proof image scope (rules/essentials.md step 4). The image is waived only for a change that
 # surely never reaches a screen; anything else, of any extension at any depth, needs it.
 NO_SCREEN_PROFILES = {"backend"}

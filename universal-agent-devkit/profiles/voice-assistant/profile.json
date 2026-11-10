@@ -34,5 +34,9 @@
     ".h",
     ".hpp",
     ".py"
+  ],
+  "exclude_agents": [
+    "game-gc-rendering-auditor",
+    "mobile-release-auditor"
   ]
 }

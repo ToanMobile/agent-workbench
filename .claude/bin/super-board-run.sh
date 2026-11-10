@@ -245,12 +245,19 @@ fetch_project_items() {
   # lại) từng giết runner ngay. Đọc lại có backoff + jitter (SB_FETCH_RETRY_DELAYS, giây). Mã halt có chủ đích
   # (RUNNER_HALT_CODES, vd 79: github-read halt sau lỗi mạng lặp lại) trả về ngay, không đọc lại.
   # Hỏng hết lượt: trả mã của lần đọc cuối, cache cũ giữ nguyên.
-  local fresh rc=0 d pause delays
+  local fresh rc=0 d pause delays foreign
   read -r -a delays <<< "${SB_FETCH_RETRY_DELAYS-10 30 60}"   # tách theo khoảng trắng, không glob ("*" là một giá trị)
   for d in ${delays[@]+"${delays[@]}"} ""; do
     rc=0
-    fresh=$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" items) || rc=$?
-    if [ "$rc" -eq 0 ]; then PROJECT_ITEMS_JSON="$fresh"; CARD_WRITE_BLOCKED=""; return 0; fi   # board mới: thẻ đã Blocked nằm đúng cột
+    fresh=$(SB_CARD_HOME_REPO=$(jq -r '.repo.remote // empty' "${CONFIG_PATH:-/dev/null}" 2>/dev/null) \
+      "$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" items) || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      PROJECT_ITEMS_JSON="$fresh"; CARD_WRITE_BLOCKED=""   # board mới: thẻ đã Blocked nằm đúng cột
+      foreign=$(printf '%s' "$fresh" | jq -c '.skippedForeign // []' 2>/dev/null) || foreign=""
+      if [ -n "$foreign" ] && [ "$foreign" != "[]" ] && [ "$foreign" != "${SKIPPED_FOREIGN:-[]}" ]; then log "⚠ board has cards of another repo, skipped: $foreign"; fi
+      SKIPPED_FOREIGN="${foreign:-${SKIPPED_FOREIGN:-[]}}"
+      return 0
+    fi
     case "$RUNNER_HALT_CODES" in *" $rc "*) return "$rc" ;; esac
     [ -n "$d" ] || break
     case "$d" in *[!0-9]*|?????*) d=10 ;; esac   # giá trị lạ (1.5, chữ, quá dài): dùng 10s, không để lỗi số học giết runner
@@ -963,6 +970,7 @@ note_worker_limit() {
   # mà pool đọc. Chỉ ghi file của account đó, không ghi usage.json chung (file chung kéo theo `switch` credential
   # toàn cục của người dùng). Lỗi ở đây không bao giờ chặn runner.
   [ -f "$1" ] || return 0
+  worker_ended_clean "$1" && return 0   # a finished turn's report may quote a limit message; only a death pauses an account
   local out
   out=$(python3 - "$1" "$SB_ACCOUNT_STATE_DIR" <<'PY' 2>/dev/null
 import datetime, json, os, re, sys, time
@@ -972,7 +980,7 @@ acct = re.search(r'^account_pool: engine=\S+ account=([A-Za-z0-9_.-]+)', section
 tail = '\n'.join([l for l in section.splitlines() if l.strip() and not l.startswith('worker_exit:')][-3:])
 # Claude Code: "You've hit your session limit · resets 10:50pm (Asia/Saigon)" (đo 16/10). Ba mẫu sau là mã quota của
 # Gemini/xAI, chưa đo trên agy/grok thật.
-hit = re.search(r"hit your (?:\w+ )?limit|usage limit reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded", tail, re.I)
+hit = re.search(r"hit your (?:[\w-]+ )?limit|usage[ _]limit[ _]reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded", tail, re.I)
 if not acct or not hit:
     sys.exit(0)
 now = int(time.time())
@@ -1354,7 +1362,7 @@ lane_worktree_hint() {
   local cmd
   case "$1" in
     review) cmd="agent-kit worktree add .claude/worktrees/issue-$2-review --lane=review --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>)" ;;
-    qa) cmd="agent-kit worktree add .claude/worktrees/issue-$2-qa --lane=qa --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>; push a QA evidence commit with git push origin HEAD:<PR branch>. The build worktree keeps the branch: do not remove it)" ;;
+    qa) cmd="agent-kit worktree add .claude/worktrees/issue-$2-qa --lane=qa --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>; push a QA evidence commit in two forms the DevKit hook accepts (it refuses a HEAD:<PR branch> refspec from a detached worktree). <sha> is the QA worktree HEAD sha: record it with git rev-parse HEAD right after you commit the evidence there and before any git switch (a switch moves HEAD to the branch tip, so a sha read afterwards is the old tip and the evidence commit is lost). Find the worktree that holds the PR branch with git worktree list. A worktree holds it: fast-forward it there, git -C <build worktree> merge --ff-only <sha> (its own command, check the exit code), then git push origin <PR branch>. None holds it (the build worktree was removed, or its branch was renamed): in the QA worktree run git switch <PR branch> (checks out the local branch, or creates it from origin), then git merge --ff-only <sha>, then git push origin <PR branch>, each as its own command. If any command exits non-zero, or after the push git ls-remote origin <PR branch> is not <sha>, do not retry or force: Block the card naming it. The build worktree keeps the branch: do not remove it. Write test output to a LITERAL path (>/tmp/qa-<repo>-$2-<file>.log, the repo name, issue number and test file name keep parallel QA runs apart), never a shell variable in a redirect target (the trunk-mode guard refuses it): run the test once per file or pipe the output instead of looping with a variable log name.)" ;;
     *) cmd="agent-kit worktree add .claude/worktrees/issue-$2-$1 issue-$2-<slug> --lane=$1 --base=origin/<config.base_branch> (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused)" ;;
   esac
   # #557: QA không checkout nhánh nên không được bảo gỡ worktree build. Build và review giữ nguyên câu Exit 1.
@@ -1371,7 +1379,9 @@ worktree_disk_room() {
   # chờ người dọn tay. Dưới sàn lane nào cũng dừng ở bước tạo worktree, nên không nhận thẻ và không mở một phiên claude mỗi tick.
   # Worktree lane đã có (git còn nhận nó: không phải thư mục rỗng sót lại, cũng không phải .git trỏ vào admin dir đã bị prune) thì
   # add --lane dùng lại, không tốn thêm đĩa. Kiểm không được (không DevKit, python lỗi): coi là còn chỗ, nhưng ghi log (OCR 19/10).
-  [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && return 0
+  # 10/11: a reused lane worktree still builds, so it still gets the cache prune (below); it is never refused for the floor.
+  local reuse=0
+  [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && reuse=1
   # Under the floor a full `worktree gc` runs once, then rests 300 s: a gc that freed nothing frees nothing more a tick later, and every
   # lane of every tick ran one (OCR batch 19/10). While it rests only the free space is read, so a disk a person cleans is seen at the
   # next check. DISK_GC_NEXT lives in the runner shell (dispatch_lane is called there, not in a subshell). No knob for the 300 s: an
@@ -1379,12 +1389,20 @@ worktree_disk_room() {
   local rc=0 err now gc=1
   now=$(date +%s)
   [ "$now" -lt "${DISK_GC_NEXT:-0}" ] && gc=0
-  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" "$gc" 2>&1 >/dev/null <<'PY'
+  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" "$gc" "$reuse" 2>&1 >/dev/null <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 free = m.free_gib(sys.argv[3])
+prune = getattr(m, "CACHE_PRUNE_GIB", 0)   # a kit before 10/11 has no cache prune: nothing to do
+if sys.argv[5] == "1" or (free is not None and m.DISK_MIN_GIB and free >= m.DISK_MIN_GIB):
+    # Above the floor (or a reused worktree): only the cache prune, then the same 300 s rest as gc (exit 5 = pruned, room) so a Gradle
+    # build that refills its cache is not cut every tick.
+    if free is not None and prune and free < prune and sys.argv[4] == "1":
+        m._prune_caches()
+        sys.exit(5)
+    sys.exit(0)
 if free is not None and m.DISK_MIN_GIB and free < m.DISK_MIN_GIB:   # gc only when already under the floor: above it the own add of the lane does it
     if sys.argv[4] == "1":
         m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) still under the floor after gc
@@ -1399,6 +1417,7 @@ PY
   esac
   case "$rc" in
     0) ;;
+    5) log "worktree_disk_room: disk under the DevKit cache-prune line: rebuildable build caches pruned" ;;
     4) log "worktree_disk_room: $(printf '%s' "$err" | tail -1 | cut -c1-200)" ;;   # the DevKit's own line: free GiB and the floor
     *) log "⚠ worktree_disk_room: DevKit disk check failed (rc=${rc}: $(printf '%s' "$err" | tail -1 | cut -c1-200)) — assuming room" ;;
   esac
@@ -1939,7 +1958,7 @@ EOF
         prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
       elif merge_queue_on; then
       # Pha 2 (Q1): reviewer vào hàng thay cho gọi merge gate; super-board-merge-queue.sh gom và merge cả đợt, rồi chuyển thẻ Done.
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; the cross-review is Antigravity's. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: run an Antigravity audit of the PR head through the antigravity-pm MCP (pm_task_create with project = the config repo.path, pm_dispatch kind=audit on that task, read its audit-agent.json, and only when Antigravity's verdict is pass record pm_verdict kind=audit verdict=pass auditedHead=<the 40-char head sha>), then post a PR comment whose first line is exactly approved-head:<the 40-char head sha you reviewed> and whose second line is approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"<the builder lane id>\",\"task_id\":\"<that T… task id>\",\"gate_receipt\":\"<impacted task receipt id: output of .claude/bin/super-board-gate-receipt.sh <the 40-char head sha>>\"}. Antigravity unavailable (MCP tools absent, pm_dispatch errors, verdict not pass): post no approval, leave the card in Review with a [reviewer] comment whose last line is blocked-by: - (never a bare approved-head line: the git guard blocks it). After the approval, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; the cross-review is Antigravity's. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: run an Antigravity audit of the PR head through the antigravity-pm MCP (pm_task_create with project = the config repo.path, pm_dispatch kind=audit on that task, read its audit-agent.json, and only when Antigravity's verdict is pass record pm_verdict kind=audit verdict=pass auditedHead=<the 40-char head sha>), then post a PR comment whose first line is exactly approved-head:<the 40-char head sha you reviewed> and whose second line is approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"<the builder lane id>\",\"task_id\":\"<that T… task id>\",\"gate_receipt\":\"<impacted task receipt id: output of .claude/bin/super-board-gate-receipt.sh <the 40-char head sha>>\"}. No Antigravity pass: post no approval, leave the card in Review with a [reviewer] comment. Last line blocked-by: agent when Antigravity is absent, erroring or limited (MCP tools absent, pm_dispatch errors); last line blocked-by: - when the audit ran and the verdict is not pass (a person must look) (never a bare approved-head line: the git guard blocks it). After the approval, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
       else
       prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; a cross-review-approved marker (gate exit 7/8) is posted only after an Antigravity audit pass of the head (run.md → Reviewer lifecycle). When ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
       fi ;;
@@ -2355,8 +2374,13 @@ print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED
   # #393: a worker that moved its card to Blocked (hold, sequence, too big) ended on purpose, not by a crash. The cache predates
   # that move, so ask the board once (a rare path). Unreadable: keep counting it.
   # #465: a QA worker that passed its card to Review or closed it (Done) in under 120 s finished its job the same way.
+  # #1032: any quick exit that moved the card off the column its lane works ended with a verdict, not a crash: qa-fail sends a built
+  # card QA → Ready, a Reviewer bounce sends Review → Ready/QA, a Builder hands Building → QA/Review. A QA worker that took the card
+  # from Ready (a qa-labelled card) and left it there never started (its lane moves it to QA first), so that one keeps counting; the
+  # lock's FROM_COL decides, not the board cache (empty or card missing there would fail open). FROM_COL unknown: keep counting.
   case "${LANE:-}:$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" status "$1" 2>/dev/null || true)" in
-    *:Blocked | *:Done | qa:Review) return 0 ;;
+    *:Blocked | *:Done | qa:Review | build:QA | build:Review | review:Ready | review:QA) return 0 ;;
+    qa:Ready) [ "${FROM_COL:-}" = QA ] && return 0 ;;
   esac
   now=$(date +%s)
   f=$(early_death_file "$1")

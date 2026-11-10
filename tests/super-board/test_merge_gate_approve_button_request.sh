@@ -186,6 +186,16 @@ clear_comments 5
 gate 5 -- --config "$CFG_HUMAN_OFF" --expect-head "$H" --dry-run
 [ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 0 ] && ! grep -q ' pr comment ' "$TMP/gh.calls" \
   && ok "--dry-run: no PR comment, exit 7" || fail "dry-run: $(why)"
+# Humans-vs.-UFOs PR #129 (08/11): dry-run gửi nút cho head mới mà không đăng request, bấm thì bot báo "Yêu cầu duyệt mới nhất
+# không phải cho PR #129 head …". Ca này đòi: dry-run chưa có request hiện hành thì không gửi nút.
+[ "$(napprove)" = 0 ] && grep -q 'button not sent' "$TMP/err" \
+  && ok "--dry-run, no current request: no dead Approve button" || fail "dry-run dead button: $(why)"
+# Request hiện hành đã có (đang chờ done): dry-run vẫn gửi nút, nút đó dùng được.
+mkdir -p "$TMP/pr5.comments"; printf '[merge-gate] [blocker] 🛑 needs a person\n%s' "$REQ5" > "$TMP/pr5.comments/001"
+gate 5 -- --config "$CFG_HUMAN_OFF" --expect-head "$H" --dry-run
+[ "$RC" -eq 7 ] && [ "$(ncomments 5)" = 1 ] && [ "$(napprove)" = 1 ] \
+  && ok "--dry-run, request current: button sent, exit 7" || fail "dry-run current request: $(why)"
+clear_comments 5
 
 # ── 7. (a) Block 🙋 của lane trên issue liên kết đã mang đúng dòng request: request hiện hành có rồi → không đăng lên PR (đăng thì PR
 #       giữ block mới nhất và `done` trên issue bị bỏ qua); nút vẫn gửi, exit 7.

@@ -9,7 +9,7 @@
 #   u7. `gen --write-core` (write_core_auto) giữ nguyên mục [core-smoke];
 #   u5. base sai (đồ thị lỗi) ⇒ scoped, smoke + [core-smoke]; u6. file thường có test ⇒ không thêm [core-smoke];
 #   r.  [core-smoke] của repo có trần: mọi mục là file thật, có trong tests/lib/test_durations.txt, tổng ≤ 120 s;
-#   e1. `--run-tests --scoped --brief --json` sửa file lõi: chạy test của nó, runs.jsonl mode scoped + core_touched, dòng "core-touched" sau
+#   e1. `--run-tests --scoped --brief --json` sửa file lõi: chạy test của nó, không chạy [smoke] (v26 5b), runs.jsonl mode scoped + core_touched, dòng "core-touched" sau
 #       KẾT LUẬN (còn trong --brief), khoá core_touched trong --json;
 #   e2. file lõi không test: [core-smoke] chạy, biên nhận scoped ghi core_smoke;
 #   e3. POSTFIX_GATE_FULL=1 / POSTFIX_GATE_FORCE_FULL=1 / CI=true không đè --scoped;
@@ -194,9 +194,9 @@ echo 'C = 2' > src/core.py
 gate --scoped --brief --json
 L1="$(last)"
 J1="$(printf '%s\n' "$GOUT" | tail -1 | python3 -c 'import json,sys; print(",".join(json.loads(sys.stdin.read()).get("core_touched", ["NO-KEY"])))' 2>/dev/null)"
-if [ "$RC" = 0 ] && [ "$L1" = "mode=scoped|core=src/core.py|reason=" ] && ran core && ran smoke && printf '%s\n' "$GOUT" | grep -q "core-touched.*src/core.py" \
+if [ "$RC" = 0 ] && [ "$L1" = "mode=scoped|core=src/core.py|reason=" ] && ran core && ! ran smoke && printf '%s\n' "$GOUT" | grep -q "core-touched.*src/core.py" \
    && [ "$J1" = src/core.py ]; then
-  ok "e1. --scoped sửa file lõi: chạy test của nó + smoke, runs.jsonl mode scoped + core_touched, core-touched trong --brief và --json"
+  ok "e1. --scoped sửa file lõi: chạy test của nó, không [smoke] (gate speed v26 mục 5b), runs.jsonl mode scoped + core_touched, core-touched trong --brief và --json"
 else fail "e1. --scoped sửa file lõi: exit $RC, runs.jsonl {$L1}, --json core_touched '$J1', ran: $(tr '\n' ' ' < "$TMP/ran" 2>/dev/null)"
   printf '%s\n' "$GOUT" | grep -E "scoped|full|core" | tail -5; fi
 git checkout -q -- src/core.py 2>/dev/null || git -C "$R" restore -q src/core.py

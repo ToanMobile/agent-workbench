@@ -14,7 +14,9 @@ export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$ROOT/.claude/bin/super-board-merge-gate.sh"
 HOOK="$ROOT/universal-agent-devkit/hooks/proof_gate.sh"
-. "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
+for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
+  if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
+done
 unset WORKTREE_TRUNK_MODE CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID DEVKIT_SESSION_ID SB_MERGE_QUEUE SB_BOARD_WORKER SB_MERGE_CALLER
 FAILS=0
 ok() { echo "✔ $1"; }

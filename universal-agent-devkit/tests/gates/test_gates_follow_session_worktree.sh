@@ -210,17 +210,31 @@ regression_stop() {   # regression_stop <session>: regression_gate's Stop in the
   python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session_id":sys.argv[1],"cwd":sys.argv[2],"transcript_path":sys.argv[3]}))' "$1" "$W2" "$TMP/y63.jsonl" \
     | CLAUDE_PROJECT_DIR="$M2" bash "$DEVKIT_DIR/hooks/regression_gate.sh" >"$TMP/out" 2>"$TMP/err"
 }
-ledger_main s-x -305 -295 s63 -590 -589; regression_stop s63; rc=$?
-[ "$rc" = 0 ] && grep -q systemMessage "$TMP/out" && grep -q "src/test/CoreTest.kt" "$TMP/out" \
-  && ok "regression_gate: a test changed in the worktree inside another session's window (main's ledger): stop allowed, the warning names the file" \
-  || fail "regression_gate ledger: another session's window, rc=$rc (want 0 and a warning) out='$(head -c 300 "$TMP/out")' err='$(head -c 300 "$TMP/err")'"
+# v26 mục 1: the Stop runs no gate; the agent runs the command the block prints, in its worktree, WITHOUT --session (coordinator, 07/11:
+# the block command stays session-less). gate_wt [args]: that run (output in $TMP/gate.out, exit code in GRC).
+gate_wt() { ( cd "$W2" && CLAUDE_PROJECT_DIR="$W2" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --scoped --brief "$@" ) >"$TMP/gate.out" 2>&1; GRC=$?; }
+ledger_main s-x -305 -295 s63 -590 -589
+gate_wt; regression_stop s63; rc=$?
+[ "$GRC" = 2 ] && [ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" \
+  && ok "regression_gate: the session-less gate run cannot tell whose the test edit is: it fails closed (exit 2) and the Stop blocks once, naming the file" \
+  || fail "regression_gate fail-closed: gate=$GRC rc=$rc (want 2 and 2) out='$(head -c 300 "$TMP/out")' err='$(head -c 300 "$TMP/err")'"
+# The gate itself still reads main's ledger from a worktree when it is given the session (734ab234), with no DEVKIT_LEDGER_ROOT. Main's
+# ledger has no worktree column, so from it the gate trusts only THIS session's windows (d67aeb8b, as test_gate_ledger_main_from_worktree.sh
+# l2): a change inside another session's window there does not release the edited test, it stays blocked (exit 2), naming the file.
+gate_wt --session s63 --transcript "$TMP/y63.jsonl"
+[ "$GRC" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/gate.out" \
+  && ok "  … the gate given the session reads main's ledger from the worktree: another session's window there does not release it (exit 2)" \
+  || fail "gate ledger from a worktree: exit $GRC (want 2, fail closed, naming CoreTest.kt) $(grep -m3 -E 'CoreTest|KẾT LUẬN' "$TMP/gate.out")"
+echo "fun ok() = 3" > "$W2/src/Core.kt"   # a new tree
+ledger_main s64 -590 -589
+# (a session-ful run starts the suites; the session-less one stops at the edited test) DEVKIT_LEDGER_ROOT set: it must not reach a suite
+rm -f "$TMP/suite_env_leak"; DEVKIT_LEDGER_ROOT="$M2" gate_wt --session s64 --transcript "$TMP/y63.jsonl"; grc64=$GRC
 [ "$(cat "$TMP/suite_env_leak" 2>/dev/null)" = 0 ] \
   && ok "  … the suite it ran did not inherit the ledger root (a gate nested in a kit test judges its own ledger)" \
   || fail "regression_gate suite env: DEVKIT_LEDGER_ROOT leaked into the suites (count='$(cat "$TMP/suite_env_leak" 2>/dev/null)', want 0)"
-echo "fun ok() = 3" > "$W2/src/Core.kt"   # a new tree: the first stop's verdict is not reused
-ledger_main s64 -590 -589; regression_stop s64; rc=$?
-[ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && ok "  … with no window around the change it stays blocked (nobody else's)" \
-  || fail "regression_gate no window: rc=$rc (want 2) err='$(head -c 300 "$TMP/err")'"
+gate_wt; regression_stop s64; rc=$?
+[ "$grc64" = 2 ] && [ "$rc" = 2 ] && grep -q "src/test/CoreTest.kt" "$TMP/err" && ok "  … with no window around the change it stays blocked (nobody else's)" \
+  || fail "regression_gate no window: gate(session)=$grc64 rc=$rc (want 2) err='$(head -c 300 "$TMP/err")'"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_gates_follow_session_worktree: PASS"; exit 0; } || { echo "test_gates_follow_session_worktree: FAIL ($FAILS)"; exit 1; }

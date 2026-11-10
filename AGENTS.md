@@ -159,11 +159,11 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
   Quyền công cụ (allow/deny, permission mode) do người dùng cấp: agent không tự nới, không lách
   lệnh bị từ chối; ghi CHƯA XONG cho bước đó kèm quyền cần và lý do, làm hết phần còn lại.
 - An edited existing test needs cross-approval by another agent: commit, then
-  `pm_dispatch kind=audit agent=grok` on the PR head; the PM records the pass with its
-  `auditedHead` and the gate reads that record itself (an Antigravity audit: `agent-kit
-  approve-tests <task-id>`). The editor never approves its own test
-  (`--auto-approve-tests` and `AUTO-APPROVE:` approve nothing); never ask the user.
-- Clean up what you create (2026-10-09: 33 GB of scratch filled the disk): delete a repo copy, stage
+  `pm_dispatch kind=audit agent=grok` on the PR head; the gate reads the PM's pass record
+  (an Antigravity audit: `agent-kit approve-tests <task-id>`). The editor never approves its
+  own test (`--auto-approve-tests`, `AUTO-APPROVE:` approve nothing); never ask the user: the
+  author cannot post `approved-head`: start a reviewer session to post it.
+- Clean up what you create (33 GB filled a disk): delete a repo copy, stage
   kit or fixture once served; what must outlive the session lives in the ignored `.agents/local/`.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages

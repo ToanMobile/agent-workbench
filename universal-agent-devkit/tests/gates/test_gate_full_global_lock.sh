@@ -67,6 +67,8 @@ free="$(python3 -c 'import fcntl,os,sys; fd=os.open(sys.argv[1],os.O_RDWR); fcnt
 chk "a7. khoá toàn máy không còn ai giữ" '[ "$free" = free ]'
 
 # b. khoá toàn máy bị giữ lâu ⇒ skip sau GLOBAL_WAIT_S ----------------------------------------------------------------------------
+# v26 mục 6: lượt a vừa xanh cùng sha + cùng kit sẽ bỏ lượt TRƯỚC khoá toàn máy; bỏ mốc kit để ca này vẫn tới khoá toàn máy
+rm -f "$(common a)/postfix-gate/last_full_green_kit"
 : >"$T/gate.calls"
 python3 -c 'import fcntl,os,sys,time; fd=os.open(sys.argv[1],os.O_RDWR|os.O_CREAT); fcntl.flock(fd,fcntl.LOCK_EX); os.ftruncate(fd,0); os.write(fd,b"{\"pid\": 1, \"repo\": \"/x/khac\"}"); open(sys.argv[2],"w").close(); time.sleep(60)' "$T/global.lock" "$T/held" & HOLD_PID=$!
 for _ in $(seq 1 50); do [ -e "$T/held" ] && break; sleep 0.1; done

@@ -131,9 +131,28 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
         logStructured('warn', 'telegram_answer_cbq_failed', { error: err?.message });
       }
 
-      // Nut cua bang dieu khien cu: go hang nut khoi tin nhan (bang dieu khien da chuyen sang web)
       const msgId = cbq.message?.message_id;
-      if (msgId && cbResult.clearButtons) {
+      // Chu repo 08/11: duyet xong thi chinh tin do doi sang "da duyet" va bo nut (khong con trong nhu dang cho).
+      // Tin khong co `text` (da xoa: MaybeInaccessibleMessage, hay tin caption) thi chi bo nut, khong ghi de noi dung goc.
+      if (msgId && cbResult.approved && typeof cbq.message?.text === 'string') {
+        const at = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+        try {
+          await apiCaller(cfg.botToken, 'editMessageText', {
+            chat_id: fromChatId,
+            message_id: msgId,
+            text: `${cbq.message.text}\n\n✅ Đã duyệt lúc ${at} (đã ghi done)`,
+            reply_markup: { inline_keyboard: [] },
+          });
+          continue;
+        } catch (err) {
+          // Bam hai lan cung phut: Telegram tra "message is not modified", khong phai loi.
+          if (/not modified/i.test(String(err?.message || ''))) continue;
+          // Loi khac (mang, 429): roi xuong nhanh duoi de van bo nut, tin khong con trong nhu dang cho.
+          logStructured('warn', 'telegram_mark_approved_failed', { error: err?.message });
+        }
+      }
+      // Nut cua bang dieu khien cu (clearButtons), hay tin duyet khong co text: go hang nut khoi tin nhan.
+      if (msgId && (cbResult.clearButtons || cbResult.approved)) {
         try {
           await apiCaller(cfg.botToken, 'editMessageReplyMarkup', {
             chat_id: fromChatId,
@@ -166,11 +185,16 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
 
     // Bang dieu khien da chuyen sang web: moi tin nhan nhan lai link va go ban phim ghim cu khoi day man hinh.
     const reply = await handleTelegramCommand(text, { stateDir });
-    await apiCaller(cfg.botToken, 'sendMessage', {
-      chat_id: fromChatId,
-      text: reply,
-      reply_markup: REMOVE_REPLY_KEYBOARD,
-    });
+    // Loi gui tra loi khong duoc lam mat cac update con lai cua batch (vd nut sb:ap: duyet), offset da ghi truoc do.
+    try {
+      await apiCaller(cfg.botToken, 'sendMessage', {
+        chat_id: fromChatId,
+        text: reply,
+        reply_markup: REMOVE_REPLY_KEYBOARD,
+      });
+    } catch (err) {
+      logStructured('warn', 'telegram_reply_failed', { error: maskSecret(err?.message, [cfg.botToken]) });
+    }
   }
   return nextOffset;
 }

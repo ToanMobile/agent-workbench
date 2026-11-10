@@ -102,7 +102,7 @@ AGENTS_SPEC = [
     # Council 9: MCP Configuration & Tool Contract Interoperability
     (41, "McpJsonSchemaAuditor", "Kiểm tra cấu hình .mcp.json và mcp_config.json đúng định dạng JSON", "mcp_config.json", r"mcpServers"),
     (42, "CodebaseMemoryMcpAuditor", "Kiểm tra cấu hình MCP codebase-memory hỗ trợ đồ thị tri thức mã nguồn", "mcp_config.json", r"codebase-memory-mcp"),
-    (43, "AndroidMcpToolAuditor", "Kiểm tra MCP android-code-search và replicant-mcp sẵn sàng cho mobile", "profiles/android/profile.json", r"android-code-search|replicant-mcp"),
+    (43, "AndroidMcpToolAuditor", "Kiểm tra MCP android-code-search và mobile-mcp sẵn sàng cho mobile", "profiles/android/profile.json", r"android-code-search|mobile-mcp"),
     (44, "GameMcpToolAuditor", "Kiểm tra MCP unity và blender sẵn sàng cho phát triển game", "profiles/game/profile.json", r"unity|blender"),
     (45, "Context7DocumentationMcpAuditor", "Kiểm tra MCP context7 sẵn sàng tra cứu tài liệu thư viện thời gian thực", "profiles/universal/profile.json", r"context7"),
 

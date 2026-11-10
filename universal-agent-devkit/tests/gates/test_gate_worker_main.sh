@@ -45,7 +45,7 @@ run_hook() {
 # Không có cờ worker: suite đỏ chặn Stop.
 change; rm -f ran.marker
 run_hook "$DEVKIT_DIR/hooks/regression_gate.sh"; rc=$?
-[ "$rc" = 2 ] && [ -e ran.marker ] && ok "no worker flag: failing suite runs (rc 2)" \
+[ "$rc" = 2 ] && [ ! -e ran.marker ] && grep -q -- "--run-tests --scoped" "$TMP/err" && ok "no worker flag: gated (rc 2, v26: no suite at Stop, the gate command named)" \
   || fail "no worker flag: rc $rc (want 2), marker=$( [ -e ran.marker ] && echo yes || echo no); err=$(head -c 400 "$TMP/err")"
 
 # Worker trên main: không chạy suite, log có SB_BOARD_WORKER.
@@ -68,8 +68,8 @@ WT_PAYLOAD="{\"session_id\":\"s-5\",\"hook_event_name\":\"Stop\",\"cwd\":\"$REPO
 printf '%s' "$WT_PAYLOAD" | env -u WORKTREE_TRUNK_MODE SB_BOARD_WORKER=1 REGRESSION_GATE_MAX_SESSION_BLOCKS=99 \
   CLAUDE_PROJECT_DIR="$REPO" bash "$DEVKIT_DIR/hooks/regression_gate.sh" >"$TMP/out" 2>"$TMP/err"
 rc=$?
-[ "$rc" = 2 ] && [ -e "$REPO/.claude/worktrees/w5/ran.marker" ] \
-  && ok "worker in linked worktree: suite still runs there (rc 2)" \
+[ "$rc" = 2 ] && [ ! -e "$REPO/.claude/worktrees/w5/ran.marker" ] && grep -q -- "--run-tests --scoped" "$TMP/err" \
+  && ok "worker in linked worktree: still gated there (rc 2, v26: no suite at Stop, the gate command named)" \
   || fail "worker in linked worktree: rc $rc, marker=$( [ -e "$REPO/.claude/worktrees/w5/ran.marker" ] && echo yes || echo no); err=$(head -c 400 "$TMP/err")"
 
 # Năm hook còn lại, worker trên main: rc 0 và log có SB_BOARD_WORKER.

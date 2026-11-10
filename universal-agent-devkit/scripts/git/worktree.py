@@ -25,8 +25,8 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py list
   worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
 
-add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (3) free (no count of worktrees, #607); under
-WORKTREE_DISK_WARN_GIB (10) it runs gc first and warns (0 turns each off). Then `git worktree add` on <branch> when one is named (created from --base or HEAD when it
+add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (15) free (no count of worktrees, #607); under
+WORKTREE_DISK_WARN_GIB (25) it runs gc first and warns, under WORKTREE_CACHE_PRUNE_GIB (25) it deletes rebuildable build caches (0 turns each off). Then `git worktree add` on <branch> when one is named (created from --base or HEAD when it
 does not exist); with none, a DETACHED worktree at --base or HEAD — the project keeps one
 branch, and the work comes back with `diff | git apply --3way`. `--lane=build|qa|review` (a super-board lane, agent-workbench#93; only
 at .claude/worktrees/issue-<N>[-<lane>]): a branch only origin has
@@ -778,8 +778,14 @@ def _env_limit(name, default):
 
 # W1 R5c (docs/workflow-improvements.md I.0): `add` runs `gc` and warns under the warning line and creates nothing under the floor.
 # 0 turns each off. SessionStart (hooks/session_context.sh) reads the same numbers. #607: no count of worktrees any more.
-DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 10.0)
-DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 3.0)
+DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 25.0)
+DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 15.0)
+# 10/11 (chủ repo): dưới CACHE_PRUNE_GIB, `add` xoá cache build dựng lại được của máy trước khi tạo worktree (Gradle build-cache 20-30 GB
+# làm đĩa còn < 5 GB, runner nghẽn). Chỉ cache mà công cụ tự dựng lại khi thiếu; không đụng dependency đã tải (~/.gradle/caches/modules-2),
+# không đụng /private/tmp (scratchpad của phiên Claude đang chạy nằm ở đó), không đụng ~/.cache/uv (môi trường chạy của MCP server `uvx`
+# đang sống nằm trong đó; `uv cache clean` lại chờ khoá của chúng không giới hạn).
+CACHE_PRUNE_GIB = _env_limit("WORKTREE_CACHE_PRUNE_GIB", 25.0)
+PRUNE_CACHE_DIRS = (".gradle/caches/build-cache-1", ".npm/_cacache", "Library/Caches/go-build", ".cache/go-build")
 NO_ROOM = 4   # add's exit code when it refuses for want of disk: what a hook that creates worktrees tells apart from a usage error
 ADD_LOCK = "devkit-worktree-add.lock"
 ADD_LOCK_WAIT_S = 600.0
@@ -795,16 +801,32 @@ def free_gib(path):
         return None
 
 
+def _prune_caches():
+    """Xoá các cache build dựng lại được dưới HOME (PRUNE_CACHE_DIRS); in từng thư mục đã xoá. Lỗi xoá không chặn `add`, chỉ báo."""
+    home = os.path.expanduser("~")
+    for rel in PRUNE_CACHE_DIRS:
+        p = os.path.join(home, rel)
+        if os.path.islink(p) or not os.path.isdir(p):
+            continue
+        shutil.rmtree(p, ignore_errors=True)
+        print(("✔ " + tr("đã tỉa cache: ", "cache pruned: ") if not os.path.exists(p)
+               else "⚠ " + tr("không xoá hết cache: ", "could not delete all of the cache: ")) + p)
+
+
 def _make_room(main, wt):
     """Under DISK_WARN_GIB free: `gc` (the leftovers git no longer knows), then a warning; still under DISK_MIN_GIB: refuse (NO_ROOM)."""
     free = free_gib(wt)
     if free is None:
         print("• " + tr("không đọc được dung lượng đĩa trống; bỏ qua kiểm đĩa", "cannot read the free disk space; disk check skipped"))
         return
-    if free >= max(DISK_WARN_GIB, DISK_MIN_GIB):   # each line holds on its own: the floor still applies with the warning off
+    if free >= max(DISK_WARN_GIB, DISK_MIN_GIB, CACHE_PRUNE_GIB):   # each line holds on its own: the floor still applies with the warning off
         return
-    cmd_gc(main, ["--log=" + os.path.join(main, ".claude", "audit-gate", "worktree_gc.log")])   # silent when another gc of this repo runs
-    free = free_gib(wt)
+    if free < max(DISK_WARN_GIB, DISK_MIN_GIB):
+        cmd_gc(main, ["--log=" + os.path.join(main, ".claude", "audit-gate", "worktree_gc.log")])   # silent when another gc of this repo runs
+        free = free_gib(wt)
+    if free is not None and CACHE_PRUNE_GIB and free < CACHE_PRUNE_GIB:
+        _prune_caches()
+        free = free_gib(wt)
     if free is None:   # as on the first read: cannot say, so no refusal
         return
     if free < DISK_MIN_GIB:
@@ -3971,7 +3993,7 @@ def super_board_repo(main):
     return bool(glob.glob(os.path.join(main, ".claude", "super-board", "configs", "*.json")))
 
 
-def automerge(cwd, wt, keep=False):
+def automerge(cwd, wt, keep=False, run_gate=True):
     """Merge a worktree's work into the main branch and remove it (`keep`: leave it in place, W1 R3). (status, message, extra); status: merged | nothing | conflict | blocked.
     Main's working tree is only ever touched by `git merge --ff-only`, so another session's uncommitted or staged files are safe (its index
     only for paths whose uncommitted copy is identical to what the merge brings: _stage_identical_overlap)."""
@@ -4019,14 +4041,40 @@ def automerge(cwd, wt, keep=False):
         return "blocked", tr("một lần tự gộp khác của worktree này đang chạy", "another automatic merge of this worktree is running"), {"running": True}
     held = []   # K8: khoá gate gộp của repo nếu _automerge_locked đã lấy; nhả ở đây khi nó trả về giữa vòng gộp
     try:
-        return _automerge_locked(cwd, main, wt, keep, held)
+        return _automerge_locked(cwd, main, wt, keep, held, run_gate)
     finally:
         for h in held:
             h.close()
         lock.close()
 
 
-def _automerge_locked(cwd, main, wt, keep=False, held=None):
+def _receipt_merge_ok(wt, main_head, matrix):
+    """v26 mục 1: automerge ở Stop không chạy suite. True khi worktree có biên nhận full hoặc scoped (task thì không: T0061) của ĐÚNG cây
+    hiện tại, và base của biên nhận scoped là tổ tiên của HEAD main (lượt gate đã kiểm mọi thứ worktree mang thêm so với main).
+    matrix: ma trận của MAIN (_gate_matrix, như _merge_gate): biên nhận lấy với ma trận khác (worktree sửa ma trận của nó) không được nhận."""
+    try:
+        bin_dir = os.path.join(DEVKIT, "bin")
+        if bin_dir not in sys.path:
+            sys.path.insert(0, bin_dir)
+        import tree_fp  # noqa: PLC0415 - module anh em trong bin/
+        rec = tree_fp.receipt_for_tree(wt, gate=os.path.join(DEVKIT, "bin", "post-fix-gate.py"), matrix=matrix, kinds=("full", "scoped"),
+                                       covers=lambda base: base == "" or _is_ancestor(wt, base, main_head))
+        return rec is not None
+    except Exception as e:   # không đọc được biên nhận: như không có (needs_gate), không bao giờ gộp mà không gate
+        print("• " + tr(f"không xét được biên nhận gate của worktree ({e!r})", f"cannot read the worktree's gate receipt ({e!r})"), file=sys.stderr)
+        return False
+
+
+def _needs_gate(wt):
+    return "needs_gate", tr(f"chưa có biên nhận gate (full / scoped) của worktree phủ main hiện tại, hoặc main cần gộp vào trước: Stop không chạy "
+                            f"suite. Chạy `agent-kit worktree finish {shlex.quote(wt)}` (gộp, gate, rồi fast-forward main)",
+                            f"no gate receipt (full / scoped) of the worktree covers main as it is now, or main must be merged in first: the Stop "
+                            f"runs no suite. Run `agent-kit worktree finish {shlex.quote(wt)}` (merge, gate, then fast-forward main)"), {"needs_gate": True}
+
+
+def _automerge_locked(cwd, main, wt, keep=False, held=None, run_gate=True):
+    """run_gate False (automerge ở Stop, v26 mục 1): không chạy suite nào. Có ma trận gate: chỉ fast-forward khi main là tổ tiên của HEAD
+    worktree và _receipt_merge_ok; còn lại trả needs_gate, không đổi gì (finish giữ gate). Không ma trận: gộp như cũ."""
     held = [] if held is None else held
     try:
         state = _read_state(wt)
@@ -4053,6 +4101,14 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
             return "blocked", tr("không kết thúc được merge đang mở trong worktree: ", "cannot conclude the merge open in the worktree: ") + (r.stdout + r.stderr).strip()[-400:], {}
     elif busy:
         return "blocked", tr(f"worktree đang dở một {busy}: hoàn tất hoặc huỷ nó trước", f"a {busy} is in progress in the worktree: finish or abort it first"), {}
+    main_matrix = _gate_matrix(main) if not run_gate else ""
+    no_gate = not run_gate and bool(main_matrix)   # None (matrix gone from main's HEAD) is refused below, as before
+    if no_gate:   # decided before anything is committed or merged: needs_gate leaves the worktree and main as they are
+        main_head = git(main, "rev-parse", "HEAD").stdout.strip()
+        w_head = git(wt, "rev-parse", "HEAD").stdout.strip()
+        if not _is_ancestor(main, w_head, main_head) and not _squashed_on_origin(main, w_head) \
+                and not (_is_ancestor(main, main_head, w_head) and _receipt_merge_ok(wt, main_head, main_matrix)):
+            return _needs_gate(wt)
     refusal = _commit_pending(wt, state)
     if refusal:
         return refusal
@@ -4082,6 +4138,8 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
                                  "commits are not merged into main automatically - bring the rest back in a new PR"), {}
         w_before, merged_in = w_head, False   # K8: HEAD worktree trước khi gộp main ở vòng này
         if not _is_ancestor(main, main_head, w_head):
+            if no_gate:   # main moved since the check: merging it in would need a gate run
+                return _needs_gate(wt)
             if merges >= MERGE_ROUNDS:
                 return "blocked", tr(f"main đi tiếp {merges} lần trong lúc gộp và chạy gate: chạy lại", f"main moved on {merges} times while merging and gating: run it again"), {"moved": True}
             merges += 1
@@ -4116,8 +4174,10 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
         if matrix and isinstance(last, dict) and last.get("worktree") == w_head and last.get("main") == main_head and last.get("why") \
                 and isinstance(last.get("at"), (int, float)) and 0 <= time.time() - last["at"] < MERGE_GATE_RESULT_TTL_S:
             return _gate_refusal(wt, str(last["why"]) + tr(" (kết quả lần trước: chưa đổi gì từ đó)", " (the last verdict: nothing changed since)"))
-        if gated == (w_head, main_head):
-            why, verdict = None, False   # this very pair passed a moment ago (a --ff-only that failed for a passing reason): no second run
+        if gated == (w_head, main_head) or no_gate:
+            # this very pair passed a moment ago (a --ff-only that failed for a passing reason): no second run; no_gate: the worktree's
+            # receipt stands for the gate (_receipt_merge_ok above; main can only have moved to an ancestor of the worktree since)
+            why, verdict = None, False
         else:
             # K8 (17/10, Unity: gate 1–6 phút, chạy lại bị cắt ở 900 s): cặp (HEAD worktree, main cũ) vừa PASS ở vòng trước, và từ đó worktree
             # chỉ nhận đúng commit gộp main mới của vòng này => chỉ gate phần main mới mang vào (`--diff <HEAD đã PASS>`): post-fix-gate chỉ chạy
@@ -4321,10 +4381,10 @@ def _automerge_args(cwd, args, usage):
     return os.path.abspath(os.path.join(cwd, pos[0])), "--keep" in args
 
 
-def _run_automerge(cwd, args, usage):
+def _run_automerge(cwd, args, usage, run_gate=True):
     wt, keep = _automerge_args(cwd, args, usage)
     try:
-        status, message, extra = automerge(cwd, wt, keep)
+        status, message, extra = automerge(cwd, wt, keep, run_gate)
     except SystemExit as e:
         status, message, extra = "blocked", str(e.code), {}
     except OSError as e:   # a lock path that is no regular file, an admin dir removed meanwhile: still the one JSON line the Stop hook reads
@@ -4333,9 +4393,10 @@ def _run_automerge(cwd, args, usage):
 
 
 def cmd_automerge(cwd, args):
-    wt, status, message, extra = _run_automerge(cwd, args, "usage: agent-kit worktree automerge <path> [--keep]")
+    # v26 mục 1: the Stop hook's automerge runs no suite (run_gate False): a receipt stands for the gate, else needs_gate (exit 4)
+    wt, status, message, extra = _run_automerge(cwd, args, "usage: agent-kit worktree automerge <path> [--keep]", run_gate=False)
     print(json.dumps(dict(extra, status=status, message=message, path=wt), ensure_ascii=False))
-    return {"merged": 0, "nothing": 0, "conflict": 3}.get(status, 1)
+    return {"merged": 0, "nothing": 0, "conflict": 3, "needs_gate": 4}.get(status, 1)
 
 
 FINISH_RETRIES = int(_env_limit("WORKTREE_FINISH_RETRIES", 4))   # 17/10: many sessions finishing at once keep moving main; 0 = no retry
@@ -4755,6 +4816,23 @@ def _remote_ref(main, branch):
     return r.returncode != 0 or bool(r.stdout.strip())
 
 
+def _prune_stale_remote_refs(main, timeout=20):
+    """`git remote prune <r>` for every remote: drops only the remote-tracking refs whose branch is gone on the remote (GitHub's "delete
+    branch on merge"). Nothing ever pruned them, so every finished branch kept a ref, `_remote_ref` kept its local branch and the
+    session-start hook reported it as unmerged (agent-workbench 2026-11-08: 46 stale refs). Network trouble or a timeout: refs stay
+    (the sweep is then as conservative as before); never raises."""
+    try:
+        names = git(main, "remote", check=False).stdout.split()
+    except Exception:  # noqa: BLE001 - cannot list remotes: nothing pruned
+        return
+    for name in names:
+        try:
+            subprocess.run(["git", "-C", main, "remote", "prune", name], capture_output=True, text=True, timeout=timeout,
+                           env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": os.environ.get("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")})
+        except (OSError, subprocess.SubprocessError):
+            continue   # ssh hung / git missing: the refs stay
+
+
 def _open_pr_names(main):
     """The branch names OPEN pull requests use, as head or as base (a stacked PR), per `gh`; None when gh cannot say (missing, failing,
     over 15 s, unreadable, or as many rows as the limit: one may be cut off)."""
@@ -4865,6 +4943,8 @@ def _reap_merged(main, here, dry, log, logged):
             continue
         acted += 1
         record("✔ gc: " + tr("đã gỡ worktree đã tích hợp ", "removed integrated worktree ") + p)
+    if not dry:
+        _prune_stale_remote_refs(main)   # BEFORE the branch sweep: a stale refs/remotes/origin/<b> reads as "a remote still has it" (_remote_ref)
     try:
         entries = _worktree_entries(main)
         heads = git(main, "for-each-ref", "--format=%(refname)", "refs/heads").stdout.split()

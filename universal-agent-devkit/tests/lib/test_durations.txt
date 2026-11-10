@@ -86,6 +86,7 @@
 3 hooks/tests/test_prompt_dedupe.sh
 3 tests/context_memory/test_budgets.sh
 4 tests/context_memory/test_giao_default.sh
+2 tests/context_memory/test_prompt_hook_dead_hints.sh
 3 tests/verification/test_ui_ux_pro_max_data.sh
 3 tests/verification/test_inbox_req.sh
 3 tests/verification/test_red_proof_hash.sh
@@ -523,3 +524,4 @@
 3 tests/gates/test_unity_proof_shared_lock.sh
 # 04/11: duyệt test sửa tra thẳng biên bản antigravity-pm (không comment / json / trailer)
 37 tests/gates/test_gate_pm_direct_approval.sh
+3 tests/gates/test_review_gate_repeat_short.sh

@@ -533,7 +533,7 @@ Kho 36 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter 
 | **`impeccable`** | `/impeccable` | Thiết kế & kiểm toán chất lượng UI/UX chống AI slop (24 verb như `/impeccable shape`, `/impeccable critique`, `/impeccable audit`, `/impeccable polish` kèm trình quét `impeccable detect` 62 rule về typography, màu OKLCH, nhịp bố cục và a11y). |
 | **`ui-ux-pro-max`** | `/ui-ux-pro-max` | Tra cứu dữ liệu thiết kế UI/UX (style, bảng màu, font, luật UX) và guideline theo stack gồm SwiftUI, Flutter, Compose, Unity 6 uGUI (`scripts/search.py --stack`). |
 | **`taste-mobile-app`** | `/taste-mobile-app` | Dùng khi thiết kế màn hình, luồng mobile mới hoặc làm lại UI rập khuôn (3 dial, 4 trạng thái, Zero-Slop). |
-| **`android-real-device-qa`** | `/android-qa` | Kiểm thử thiết bị thật/emulator qua ADB/Replicant: đo FPS SurfaceFlinger, dump view hierarchy, triage ANR logcat. |
+| **`android-real-device-qa`** | `/android-qa` | Kiểm thử thiết bị thật/emulator qua ADB/mobile-mcp: đo FPS SurfaceFlinger, dump view hierarchy, triage ANR logcat. |
 
 ---
 
@@ -654,7 +654,6 @@ universal-agent-devkit/mcp/
     ├── context7/
     ├── android-code-search/
     ├── android-skills/
-    ├── replicant-mcp/
     └── play-store/
 ```
 
@@ -664,7 +663,7 @@ universal-agent-devkit/mcp/
 | **`context7`** | npx | Tra cứu tài liệu chính thức của thư viện theo version thực tế (`resolve-library-id`, `query-docs`). |
 | **`android-code-search`** | npx | Tìm kiếm mã nguồn và symbol trong toàn bộ Android Open Source Project (`search_android_code`). |
 | **`android-skills`** | npx | Tra cứu kỹ năng phát triển Android chính thức (`list_skills`, `get_skill`). |
-| **`replicant-mcp`** | npx | Điều khiển ADB, capture màn hình, query UI node, click/swipe UI, đọc logcat, chạy Gradle. |
+| **`mobile-mcp`** | npx | Điều khiển Android/iOS (08/11/2026): liệt kê thiết bị, mở app, bấm theo ref, gõ, cuộn, chụp màn hình, đọc log. Guard thiết bị xét mọi tool, kể cả từng bước của `mobile_batch_commands`. |
 | **`play-store`** | Python stdio | Triển khai APK/AAB, track crash rate, ANR rate, review response, vitals summary. |
 
 ---
