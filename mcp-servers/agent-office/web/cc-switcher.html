@@ -368,7 +368,7 @@
     if (loading) return loading;
     if (!state) setSync('off', 'Đang tải…');
     else setSync('warn', refresh ? 'Đang đọc quota thật…' : 'Đang cập nhật…');
-    return (loading = api('/api/cc-switcher/state' + (refresh ? '?refresh=1' : ''), { cache: 'no-store' }).then(function (j) {
+    return (loading = api('/api/cc-switcher/state' + (refresh ? '?refresh=1' : ''), { cache: 'no-store', headers: { 'X-Agent-Office': '1' } }).then(function (j) {
       state = j; loadedAt = Date.now(); clearError(); render();
       setSync('', 'Cập nhật lúc ' + fmtTime(Date.now()) + ':' + String(new Date().getSeconds()).padStart(2, '0'));
     }).catch(function (e) {
@@ -701,8 +701,13 @@
     });
   });
   $('#btnRefresh').addEventListener('click', function () {
-    var b = this; b.setAttribute('aria-busy', 'true'); b.disabled = true;
-    load(true).finally(function () { b.removeAttribute('aria-busy'); b.disabled = false; });
+    var b = this, t0 = Date.now();
+    if (b.disabled) return;
+    b.setAttribute('aria-busy', 'true'); b.disabled = true;
+    // a background load in flight carries no ?refresh=1: wait for it, then ask for the real quota read (never report "updated" without it)
+    (loading ? loading.then(function () { return load(true); }) : load(true)).finally(function () {
+      setTimeout(function () { b.removeAttribute('aria-busy'); b.disabled = false; }, Math.max(0, 1000 - (Date.now() - t0)));
+    });
   });
   // "Thử lại": khoá ngay khi bấm (disabled + aria-busy), mở lại sớm nhất 1000 ms sau cú bấm dù máy chủ trả lời nhanh hơn (c39f91d4e7)
   $('#btnRetry').addEventListener('click', function () {
