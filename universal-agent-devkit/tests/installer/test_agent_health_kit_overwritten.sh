@@ -48,6 +48,25 @@ echo "$out" | grep -E "$RED" | grep -q 'scripts/testing/capture_3d_proof.py' && 
   || fail "deleted kit file not reported: $(echo "$out" | grep -E '⚠|✖' | head -5 | tr '\n' ' ')"
 (cd "$K" && git checkout -q -- scripts/testing/capture_3d_proof.py)
 
+# #828: `git commit -- <path>` runs the pre-commit on a TEMP index (GIT_INDEX_FILE=$GIT_DIR/next-index-*.lock) that holds the commit's own
+# work; the real index lacks it, so a kit file being committed looked "overwritten" and health REJECTed the commit. The pre-commit hands
+# that index to health as DEVKIT_PRECOMMIT_INDEX (a name suite_env keeps): files it stages are the developer's own work.
+echo '# edited by the developer' >> "$K/scripts/testing/capture_3d_proof.py"
+echo '# stray edit outside the commit' >> "$K/hooks/guard-protected-push.py"
+GD="$(cd "$K" && git rev-parse --absolute-git-dir)"
+TMPIDX="$GD/next-index-828.lock"
+(cd "$K" && cp "$GD/index" "$TMPIDX" && GIT_INDEX_FILE="$TMPIDX" git add scripts/testing/capture_3d_proof.py)
+out="$(DEVKIT_PRECOMMIT_INDEX="$TMPIDX" health)"
+echo "$out" | grep -E "$RED" | grep -q 'capture_3d_proof.py' && fail "a kit file staged in the commit's temp index is reported (#828)" \
+  || ok "pathspec commit: the file being committed is not reported (#828)"
+echo "$out" | grep -E "$RED" | grep -q 'hooks/guard-protected-push.py' && ok "a kit file outside the commit still goes red (#462 kept)" \
+  || fail "the stray edit outside the commit is no longer reported"
+out="$(DEVKIT_PRECOMMIT_INDEX="$TMP/elsewhere/x.lock" health)"
+echo "$out" | grep -E "$RED" | grep -q 'capture_3d_proof.py' && ok "an index path outside this kit's git dir is ignored" \
+  || fail "an index path outside this kit's git dir was trusted"
+rm -f "$TMPIDX"
+(cd "$K" && git checkout -q -- scripts/testing/capture_3d_proof.py hooks/guard-protected-push.py)
+
 out="$(health)"
 echo "$out" | grep -qE "$RED" && fail "a restored kit is still reported" || ok "restored kit: nothing reported"
 
