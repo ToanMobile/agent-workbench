@@ -146,7 +146,12 @@ WAITING_ON_COLOR = "FBCA04"   # cùng LABEL_COLOR của .claude/bin/super-board-
 PATH_RE = re.compile(r"[\w.\-]+(?:/[\w.\-]+)+\.\w{1,5}")
 # PR mở nhắc thẻ (#735): từ khoá đóng của GitHub hoặc Refs trước `#N` / `owner/repo#N`. Số trùng của repo khác chỉ làm bỏ thêm
 # một thẻ khỏi việc gom (thẻ riêng — hướng an toàn).
-PR_MENTION_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?):?\s+(?:[\w.-]+/[\w.-]+)?#(\d+)\b", re.I)
+# #812: quét sau khi bỏ code fence/span (ví dụ `Closes #7` trong code không phải lời nhắc thật) và bắt cả danh sách `#1, #2 and #3`
+# sau một từ khoá: PR_MENTION_RE khớp cả cụm, PR_REF_RE rút từng số.
+_PR_REF = r"(?:[\w.-]+/[\w.-]+)?#\d+\b"
+PR_MENTION_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?):?\s+" + _PR_REF
+                           + r"(?:\s*(?:,|&|\band\b)\s*" + _PR_REF + r")*", re.I)
+PR_REF_RE = re.compile(r"#(\d+)\b")
 
 # Mỗi lệnh gh có hạn (#305): mạng treo không được làm createTask treo theo. Quá hạn = lỗi exit 124 (như lệnh thất bại).
 def gh_timeout_s():
@@ -260,7 +265,7 @@ def build_body(problem, context=None, fix=None, ac=None, risk=None, blocked_by=N
         lines.extend(ac)
     else:
         lines.append("- [ ] Đã sửa đúng nguyên nhân gốc rễ và pass paired oracle RED→GREEN.")
-        lines.append("- [ ] post-fix-gate --run-tests --full --brief đạt exit 0.")
+        lines.append("- [ ] post-fix-gate --run-tests --scoped --brief đạt exit 0.")
     lines.append("")
     lines.append("## Risk")
     lines.append(risk.strip() if risk else "🟢 **Low** · Thay đổi cục bộ có test bảo vệ.")
@@ -291,6 +296,15 @@ def auto_labels(title, labels=None):
         return ["bug"]
     return ["qa"] if "[qa]" in lower_title else ["feature"]
 
+def _same_repo(ref, repo):
+    """closingIssuesReferences[].repository ({name, owner:{login}}) là `repo` (owner/name, không phân biệt hoa thường)? Thiếu → True."""
+    if not isinstance(ref, dict):
+        return True
+    owner = (ref.get("owner") or {}).get("login") if isinstance(ref.get("owner"), dict) else None
+    if not owner or not ref.get("name"):
+        return True
+    return f"{owner}/{ref['name']}".lower() == repo.lower()
+
 def ready_started(repo):
     """Số issue có PR mở: head `issue-<n>-`, hoặc PR nhắc thẻ dù nhánh tên tuỳ ý (#735: body Closes/Fixes/Resolves/Refs #n,
     closingIssuesReferences — PR #730 chạy #721 #722 #723 trên nhánh fix-stop-hold-fixture-now). Lỗi đọc, JSON hỏng, hoặc đủ 100
@@ -316,9 +330,11 @@ def ready_started(repo):
         m = re.match(r"issue-(\d+)-", str(p.get("headRefName") or ""))
         if m:
             started.add(int(m.group(1)))
-        started.update(int(n) for n in PR_MENTION_RE.findall(str(p.get("body") or "")))
+        prose = CODE_SPAN.sub("", FENCE_BLOCK.sub("", str(p.get("body") or "")))
+        started.update(int(n) for m in PR_MENTION_RE.finditer(prose) for n in PR_REF_RE.findall(m.group(0)))
+        # #812: chỉ tham chiếu của repo này (thiếu repository → giữ, hướng an toàn: bỏ thêm một thẻ khỏi việc gom).
         started.update(int(i["number"]) for i in p.get("closingIssuesReferences") or []
-                       if isinstance(i, dict) and str(i.get("number")).isdigit())
+                       if isinstance(i, dict) and str(i.get("number")).isdigit() and _same_repo(i.get("repository"), repo))
     return started
 
 def board_items(cfg):
@@ -363,8 +379,9 @@ def backlog_cards(cfg, repo, items=None):
             cards = [c for c in cards if not (c["status"] == "Ready" and int(c["number"]) in started)]
     return cards
 
-def fresh_body(repo, n):
+def fresh_body(repo, n, linked_ok=False):
     """Body hiện tại của issue #n nếu còn mở và chưa có PR nào sắp đóng nó, ngược lại None (không đọc được, đã đóng, đang chạy).
+    `linked_ok` (lần đọc kiểm sau khi ghi, #812): chỉ cần body + state, PR vừa liên kết không làm lần ghi thành hỏng.
 
     #731: backlog_cards chỉ đọc PR mở khi có thẻ Ready, nên thẻ Backlog có PR mở `Closes #n` nhánh tên tuỳ ý (31/10: #723 ở
     PR #730) chỉ lộ ra ở đây — closedByPullRequestsReferences trong cùng lời gọi, không thêm lệnh mạng."""
@@ -374,7 +391,8 @@ def fresh_body(repo, n):
         d = json.loads(res.stdout) if res.returncode == 0 else {}
     except ValueError:
         d = {}
-    return d.get("body") if d.get("state") == "OPEN" and not d.get("closedByPullRequestsReferences") else None
+    linked = d.get("closedByPullRequestsReferences") and not linked_ok
+    return d.get("body") if d.get("state") == "OPEN" and not linked else None
 
 def scope_of(title):
     """Phần giữa `]` và `:` của tiêu đề (`🐛 [fix] gate: …` → "gate"); scope chung chung (task, misc…) như không có."""
@@ -902,7 +920,7 @@ def main():
                               check=False)
                 mark = f"{BATCH_HEADING}{title}"
                 # Ghi thành công = edit exit 0 VÀ số mục cùng tên tăng (thẻ đã có mục trùng tên thì "có mặt" chưa chứng minh gì, #330).
-                if res.returncode == 0 and (fresh_body(repo, n) or "").count(mark) > current.count(mark):
+                if res.returncode == 0 and (fresh_body(repo, n, linked_ok=True) or "").count(mark) > current.count(mark):
                     print(f"\n🧺 Đã gom \"{title}\" vào thẻ chưa chạy #{n} ({card['title']}): một PR, một gate. "
                           "Việc độc lập cần PR riêng thì thêm --new-card \"<lý do>\".")
                     sys.exit(0)
