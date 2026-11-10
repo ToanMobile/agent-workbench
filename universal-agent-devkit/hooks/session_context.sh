@@ -24,6 +24,18 @@
 set -u
 
 [ "${SESSION_CONTEXT:-1}" = "0" ] && exit 0
+
+# (#867) shim adb: đưa shims/ lên đầu PATH của mọi lệnh Bash trong phiên (Claude Code nạp $CLAUDE_ENV_FILE trước mỗi lệnh).
+# Lớp bổ sung cho hardware_safety_gate: kiểm thiết bị lúc adb chạy, không đọc chuỗi lệnh. Tắt: ADB_SHIM=0. Một dòng cho mỗi shims/.
+if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ "${ADB_SHIM:-1}" != "0" ]; then
+  _sr="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+  for _sd in "$_sr/.agents/devkit/shims" "$_sr/shims"; do
+    if [ -x "$_sd/adb" ]; then
+      grep -qsF "$_sd" "$CLAUDE_ENV_FILE" 2>/dev/null || printf 'export PATH="%s:$PATH"\n' "$_sd" >> "$CLAUDE_ENV_FILE"
+      break
+    fi
+  done
+fi
 command -v python3 >/dev/null 2>&1 || exit 0
 INPUT="$(cat)"  # only the session id (worktree heal below) and the start source (network fetch) are used
 
