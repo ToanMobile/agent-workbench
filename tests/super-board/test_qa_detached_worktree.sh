@@ -90,6 +90,27 @@ grep -q -- '--lane=qa' "$QA" && grep -qF "$FF" "$QA" && grep -qF "$PUSH" "$QA" &
   && ! grep -q 'issue-<N>-qa issue-<N>-<slug> --lane=qa' "$QA" \
   && ok "super-qa SKILL: detached, does not check out the branch" || fail "super-qa SKILL still checks out the issue branch"
 
+# Round 3 of the review of #1105: every QA step that pushes must use the hook-accepted form, not a bare "Commit + push".
+EVID="$ROOT/.claude/skills/super-qa/references/tester-verifiers-evidence.md"
+case "$hint" in
+  *"If no worktree holds the PR branch"*) ok "qa hint: a removed build worktree means Block" ;;
+  *) fail "qa hint does not say what to do when no worktree holds the PR branch" ;;
+esac
+for f in "$WAVE" "$RUNMD" "$QA"; do
+  grep -qF 'If no worktree holds the PR branch' "$f" && ok "$(basename "$f"): removed build worktree means Block" \
+    || fail "$(basename "$f") lacks the removed-build-worktree stop rule"
+done
+! grep -qF 'as in step 2' "$QA" && grep -qF 'push it as in step 1' "$QA" \
+  && ok "super-qa SKILL: evidence push points at step 1" || fail "super-qa SKILL step 5 does not point at the step that holds the push rule"
+for f in "$RUNMD" "$QA"; do
+  ! grep -E 'Commit \+ push\.? Verify ALL `\[qa\]`' "$f" >/dev/null \
+    && ok "$(basename "$f"): rebuild Tester step has no bare Commit + push" || fail "$(basename "$f") rebuild Tester step still says bare Commit + push"
+done
+! grep -qF 'screenshots to the issue branch' "$RUNMD" && grep -qF 'Commit the screenshots in the QA worktree' "$RUNMD" \
+  && ok "run.md Tester step 5: screenshots are committed in the QA worktree" || fail "run.md Tester step 5 still commits screenshots to the issue branch"
+! grep -qF 'screenshots to the issue branch' "$EVID" && grep -qF 'Commit the screenshots in the QA worktree' "$EVID" \
+  && ok "tester-verifiers-evidence: screenshots committed in the QA worktree" || fail "tester-verifiers-evidence still commits screenshots to the issue branch"
+
 # #526 + #473: build worktree holds a renamed branch and an uncommitted agent-memory file.
 # The command is the one the qa hint actually gives, so this is red while that hint checks out a branch.
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
