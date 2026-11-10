@@ -9,6 +9,8 @@ FF='git -C <build worktree> merge --ff-only <sha>'
 PUSH='git push origin <PR branch>'
 OLD='git push origin HEAD:<PR branch>'
 LIT='LITERAL path'
+STOP='branch --show-current'
+BLOCK='Block the card'
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
   if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
@@ -43,6 +45,10 @@ esac
 case "$hint" in
   *"$OLD"*) fail "qa hint still tells the worker to push HEAD:<PR branch> (the hook refuses it)" ;;
   *) ok "qa hint does not give the refused HEAD:<PR branch> push" ;;
+esac
+case "$hint" in
+  *"$STOP"*"$BLOCK"*) ok "qa hint: renamed branch or failed ff means Block, not push" ;;
+  *) fail "qa hint lacks the rename / failed-ff stop rule" ;;
 esac
 case "$hint" in
   *"$LIT"*"redirect target"*) ok "qa hint: test output goes to literal paths, no variable in a redirect target" ;;
@@ -112,7 +118,7 @@ else
 fi
 if [ "$rc" = 0 ]; then
   echo evidence > "$QAWT/evidence.txt" && G "$QAWT" add evidence.txt && G "$QAWT" commit -qm evidence
-  # the exact two commands the hint gives: ff the local PR branch to the evidence sha, then a plain push of the branch
+  # #526: the build branch was renamed, so the plain push of <PR branch> does not apply (hint: Block); this step only proves the evidence lands
   G "$REPO/.claude/worktrees/issue-7-build" merge -q --ff-only "$(G "$QAWT" rev-parse HEAD)" \
     && G "$QAWT" push -q origin issue-7-slug-renamed:issue-7-slug && [ "$(G "$REPO" rev-parse origin/issue-7-slug)" = "$(G "$QAWT" rev-parse HEAD)" ] \
     && [ -f "$REPO/.claude/worktrees/issue-7-build/.claude/agent-memory/note.txt" ] \
