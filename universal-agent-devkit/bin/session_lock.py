@@ -2215,15 +2215,27 @@ def _expand_static_vars(target, cmd):
 
 def _leaf_var_outside_main(target, main, sw):
     """`target` (a redirect word with `$NAME` / `${NAME}`) names only the FILE through the variable: every `$` sits in the last path
-    component, after an absolute directory without `..` that is not content of main. No substitution, no backtick. ponytail: a value with a
-    slash (`x/../..`) needs a directory of that name already made under the scratch prefix; upgrade to a real expansion if that is seen."""
+    component, after an absolute directory without `..` that is not content of main. No substitution, no backtick. The VALUE of the variable
+    is unknown and may hold `/` or `..` (review 2026-11-10), so the leaf must start with a literal prefix (`q-$t`, never `$t` alone), the
+    directory must neither contain main nor lie inside it (an ancestor or an ignored dir reaches tracked files by `..`), a brace expansion
+    in the directory is refused, and no existing entry the prefix could name may be a link into main. ponytail: a value with a slash still
+    needs a directory made under that literal prefix, which no link into main reaches; upgrade to a real expansion if that is seen."""
     i = target.find("$")
-    if i < 0 or "`" in target or "/" in target[i:] or re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", target):
+    if i <= 0 or "`" in target or "/" in target[i:] or re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", target):
         return False   # (the redirect word stops at `(`, so `$(date)` arrives as a bare `$`: only a named variable passes)
-    d = os.path.dirname(target[:i])
-    if not d.startswith("/") or ".." in d.split("/") or "$" in d:
+    d, prefix = os.path.split(target[:i])
+    if not d.startswith("/") or ".." in d.split("/") or "{" in d or not prefix:
         return False
-    return not _lands_in_main(d, main, sw)
+    if _inside(d, main) or _inside(main, d):
+        return False
+    import glob  # noqa: PLC0415 - only on this rare path; the hook runs before every tool call
+    try:
+        for entry in glob.glob(glob.escape(target[:i]) + "*"):   # an existing link or directory the name could be: where does it lead
+            if _inside(entry, main):
+                return False
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):

@@ -32,6 +32,12 @@ sh("git", "-C", MAIN, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q
 WT = os.path.join(tmp, "wt")
 sh("git", "-C", MAIN, "worktree", "add", "-q", "-b", "lane", WT)
 sh("git", "-C", MAIN, "config", "devkit.trunkMode", "true")
+os.makedirs(os.path.join(MAIN, "build"))
+with open(os.path.join(MAIN, ".gitignore"), "w", encoding="utf-8") as f:
+    f.write("build/\n")
+LINKDIR = os.path.join(tmp, "links")   # outside main, holds a symlink l-x that points at a file of main
+os.makedirs(LINKDIR)
+os.symlink(os.path.join(MAIN, ".gitignore"), os.path.join(LINKDIR, "l-x"))
 
 
 def hook(cmd):
@@ -54,6 +60,12 @@ cases = [
     ("variable first, no known directory",               'bash x.sh >$T/q.log 2>&1',                               2),
     ("leaf variable inside main",                        'bash x.sh >%s/docs/$f 2>&1' % MAIN,                      2),
     ("leaf variable under a dotdot directory",          'bash x.sh >/tmp/../%s/$f 2>&1' % MAIN.lstrip("/"),        2),
+    # review 2026-11-10: the VALUE of the variable may hold `/` or `..`, so these must not pass (each one really lands in main)
+    ("leaf is only the variable (value ../main/README)", 'for t in x; do echo p >/tmp/$t; done',                    2),
+    ("directory is an ancestor of main",                 'for f in x; do echo p >%s/ma$f; done' % os.path.dirname(MAIN), 2),
+    ("directory is an ignored dir inside main",          'for f in x; do echo p >%s/build/$f; done' % MAIN,         2),
+    ("directory part has a brace expansion",             'echo p | tee /tmp/{q,r}/x-$t',                            2),
+    ("existing leaf symlink into main",                  'for t in x; do echo p >%s/l-$t; done' % LINKDIR,          2),
     ("command substitution in the name",                 'bash x.sh >/tmp/q-$(date).log 2>&1',                     2),
 ]
 bad = 0
