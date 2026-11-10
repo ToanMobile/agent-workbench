@@ -102,7 +102,7 @@ class CcSwitcherPanel(unittest.TestCase):
         self.assertEqual(code, 200)
 
     def test_state_has_six_accounts_and_no_secrets(self):
-        code, raw = self.req("GET", "/api/cc-switcher/state")
+        code, raw = self.req("GET", "/api/cc-switcher/state", headers={"X-Agent-Office": "1"})
         self.assertEqual(code, 200, raw[:300])
         st = json.loads(raw)
         self.assertTrue(st["ok"])
@@ -112,6 +112,45 @@ class CcSwitcherPanel(unittest.TestCase):
         text = raw.decode("utf-8")
         self.assertNotIn(SECRET, text)
         self.assertNotIn("55667788", text)
+
+    def test_state_needs_agent_office_header(self):
+        # #900 R1: a foreign page open on the Mac must not trigger ?refresh=1 (node process + real quota read) without the header
+        for path in ("/api/cc-switcher/state", "/api/cc-switcher/state?refresh=1"):
+            code, _ = self.req("GET", path)
+            self.assertEqual(code, 403, path)
+        code, _ = self.req("GET", "/api/cc-switcher/state", headers={"X-Agent-Office": "1"})
+        self.assertEqual(code, 200)
+
+    def test_non_string_values_are_400_not_dropped_connection(self):
+        # #900: a list/dict value used to raise TypeError (unhashable) and the client saw a dead connection
+        bad = [{"action": ["switch"]}, {"action": {"a": 1}}, {"action": "switch", "target": ["grok"]},
+               {"action": "switch", "target": {"a": 1}}, {"action": "login", "target": ["finos_toan"]},
+               {"action": "balance", "mode": ["even"]}, {"action": "balance", "mode": {"a": 1}},
+               {"action": "repo_assign", "repo": "/x", "account": ["finos_toan"]},
+               {"action": "repo_add", "repo": "/x", "account": {"a": 1}}]
+        for body in bad:
+            code, raw = self.post(body)
+            self.assertEqual(code, 400, body)
+            self.assertTrue(json.loads(raw)["error"], body)
+
+    def test_page_is_not_frameable(self):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        c.putrequest("GET", "/cc-switcher", skip_host=True)
+        c.putheader("Host", "ai-factory.localhost:4317")
+        c.endheaders()
+        r = c.getresponse(); r.read(); c.close()
+        self.assertEqual(r.status, 200)
+        self.assertEqual(r.getheader("X-Frame-Options"), "DENY")
+        self.assertIn("frame-ancestors 'none'", r.getheader("Content-Security-Policy") or "")
+
+    def test_clients_send_header_and_phone_hides_menu_button(self):
+        web = os.path.join(HERE, "web")
+        ccs = open(os.path.join(web, "cc-switcher.html"), encoding="utf-8").read()
+        idx = open(os.path.join(web, "index.html"), encoding="utf-8").read()
+        self.assertIn("'/api/cc-switcher/state' + (refresh ? '?refresh=1' : ''), { cache: 'no-store', headers: { 'X-Agent-Office': '1' } }", ccs)
+        self.assertIn("fetch('api/cc-switcher/state', { headers: apiHeaders({ 'X-Agent-Office': '1' }) })", idx)
+        self.assertIn("$('#btnCcs').hidden = !onMac;", idx)
+        self.assertNotIn(".catch(() => {})", idx)
 
     def test_switch_cooldown_and_validation(self):
         code, raw = self.post({"action": "switch", "target": "grok"})
@@ -143,7 +182,7 @@ class CcSwitcherPanel(unittest.TestCase):
         # DNS rebinding: Host lạ bị chặn
         code, _ = self.req("GET", "/api/cc-switcher/state", host="evil.example")
         self.assertEqual(code, 403)
-        st = json.loads(self.req("GET", "/api/cc-switcher/state")[1])
+        st = json.loads(self.req("GET", "/api/cc-switcher/state", headers={"X-Agent-Office": "1"})[1])
         self.assertEqual(st["activeProfileId"], "finos_toan")
 
 
@@ -166,7 +205,7 @@ class CcSwitcherPanel(unittest.TestCase):
         code, raw = self.post({"action": "repo_assign", "repo": self.repo, "account": "max"})
         self.assertEqual(code, 200, raw[:300])
         self.assertEqual(self.settings(), {"hooks": {"Stop": []}, "account": "finos_toan_max"})
-        st = json.loads(self.req("GET", "/api/cc-switcher/state")[1])
+        st = json.loads(self.req("GET", "/api/cc-switcher/state", headers={"X-Agent-Office": "1"})[1])
         self.assertEqual(st["repoAssignments"][0]["account"], "finos_toan_max")
 
         for bad in ({"action": "repo_assign", "repo": self.repo, "account": "grok"},
