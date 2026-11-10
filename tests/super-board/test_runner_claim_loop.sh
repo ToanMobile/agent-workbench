@@ -219,13 +219,15 @@ rm -f "$TMP/bin/super-board-card.sh"
 #    crash: qa-fail sends a built card QA → Ready (rebuild), a Reviewer bounce sends Review → Ready/QA, a Builder hands Building → QA.
 #    A qa-labelled card still in Ready never started, so it stays an early death.
 rm -f "$INFLIGHT_DIR"/early-deaths/*; : > "$TMP/log"
-printf '#!/usr/bin/env bash\ncase "$*" in *"status 80") echo Ready ;; *"status 81") echo Ready ;; *"status 82") echo Ready ;; *"status 83") echo QA ;; *"status 84") echo Review ;; *) exit 1 ;; esac\n' > "$TMP/bin/super-board-card.sh"
+printf '#!/usr/bin/env bash\ncase "$*" in *"status 80") echo Ready ;; *"status 81") echo Ready ;; *"status 82") echo Ready ;; *"status 83") echo QA ;; *"status 84") echo Review ;; *"status 85") echo Ready ;; *"status 86") echo Ready ;; *"status 87") echo QA ;; *) exit 1 ;; esac\n' > "$TMP/bin/super-board-card.sh"
 chmod +x "$TMP/bin/super-board-card.sh"
 PROJECT_ITEMS_JSON='{"items":[
  {"id":"PVTI_80","status":"Ready","labels":["bug"],"content":{"type":"Issue","number":80,"assignees":[]}},
  {"id":"PVTI_81","status":"Ready","labels":["qa"],"content":{"type":"Issue","number":81,"assignees":[]}}]}'
-for spec in 80:qa 81:qa 82:review 83:build 84:build; do
-  printf 'PID=%s\nLANE=%s\nSTARTED=%s\n' "$DEAD" "${spec#*:}" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/${spec%:*}"
+# lock spec = issue:lane:FROM_COL (the column the lane took the card from)
+for spec in 80:qa:QA 81:qa:Ready 82:review:Review 83:build:Ready 84:build:Ready 85:qa:Ready 86:qa:QA 87:review:Review; do
+  IFS=: read -r n ln fc <<< "$spec"
+  printf 'PID=%s\nLANE=%s\nSTARTED=%s\nFROM_COL=%s\n' "$DEAD" "$ln" "$(date -u +%FT%TZ)" "$fc" > "$INFLIGHT_DIR/$n"
 done
 ( reap_finished_locks )
 [ ! -s "$INFLIGHT_DIR/early-deaths/80" ] && ! grep -q "#80.*early end" "$TMP/log" \
@@ -235,6 +237,10 @@ done
 [ ! -s "$INFLIGHT_DIR/early-deaths/82" ] && ok "  … a Reviewer bounce to Ready is not one" || fail "#1032: review bounce to Ready was counted"
 [ ! -s "$INFLIGHT_DIR/early-deaths/83" ] && ok "  … nor a Builder handing the card to QA" || fail "#1032: build → QA was counted"
 [ ! -s "$INFLIGHT_DIR/early-deaths/84" ] && ok "  … nor a Builder handing it to Review" || fail "#1032: build → Review was counted"
+# the board cache lists only 80/81: for 85/86 the card is missing there, the lock's FROM_COL still decides (reviewer R1/R2)
+[ -s "$INFLIGHT_DIR/early-deaths/85" ] && ok "  … a qa worker taken from Ready that left the card in Ready counts even when the cache lacks the card" || fail "#1032: qa:Ready (FROM_COL=Ready) with the card missing from the cache failed open"
+[ ! -s "$INFLIGHT_DIR/early-deaths/86" ] && ok "  … a qa-fail from QA back to Ready is no early death even with the card missing from the cache" || fail "#1032: qa-fail with FROM_COL=QA was counted"
+[ ! -s "$INFLIGHT_DIR/early-deaths/87" ] && ok "  … a Reviewer bounce Review → QA is not one" || fail "#1032: review → QA was counted"
 rm -f "$TMP/bin/super-board-card.sh"
 
 # ── 7. per lane: two quick build deaths hold the card back from the Builder, not from its Reviewer

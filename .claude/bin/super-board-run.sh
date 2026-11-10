@@ -2364,11 +2364,12 @@ print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED
   # that move, so ask the board once (a rare path). Unreadable: keep counting it.
   # #465: a QA worker that passed its card to Review or closed it (Done) in under 120 s finished its job the same way.
   # #1032: any quick exit that moved the card off the column its lane works ended with a verdict, not a crash: qa-fail sends a built
-  # card QA → Ready, a Reviewer bounce sends Review → Ready/QA, a Builder hands Building → QA/Review. A qa-labelled card still in
-  # Ready never started (its lane moves it to QA first), so that one keeps counting.
+  # card QA → Ready, a Reviewer bounce sends Review → Ready/QA, a Builder hands Building → QA/Review. A QA worker that took the card
+  # from Ready (a qa-labelled card) and left it there never started (its lane moves it to QA first), so that one keeps counting; the
+  # lock's FROM_COL decides, not the board cache (empty or card missing there would fail open). FROM_COL unknown: keep counting.
   case "${LANE:-}:$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" status "$1" 2>/dev/null || true)" in
     *:Blocked | *:Done | qa:Review | build:QA | build:Review | review:Ready | review:QA) return 0 ;;
-    qa:Ready) [ "$(card_lane "$1")" = qa ] || return 0 ;;
+    qa:Ready) [ "${FROM_COL:-}" = QA ] && return 0 ;;
   esac
   now=$(date +%s)
   f=$(early_death_file "$1")
