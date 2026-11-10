@@ -544,7 +544,18 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
             base = sha
             PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
             break
-    return not test_change_is_append_only(base, repo_path, runner=runner)
+    if not test_change_is_append_only(base, repo_path, runner=runner):
+        return True
+    # #838: a net change of zero against `since` hides a local commit that undid what the merged-in upstream added. Judge the
+    # file against the newest LANDED version in the range too: the last upstream commit (as of the merge base with it) touching it.
+    if upstream and base == since:
+        mb = subprocess.run(["git", "-C", root, "merge-base", upstream, "HEAD"], capture_output=True, text=True).stdout.strip()
+        if mb:
+            landed = subprocess.run(["git", "-C", root, "rev-list", "-1", mb, "--not", since, "--", repo_path],
+                                    capture_output=True, text=True).stdout.strip()
+            if landed and not test_change_is_append_only(landed, repo_path, runner=runner):
+                return True
+    return False
 
 
 def _push_gate():
@@ -7045,6 +7056,12 @@ def main():
                 local = set(lg.stdout.decode("utf-8", errors="surrogateescape").split("\0")) if lg.returncode == 0 else None
                 if local is not None:
                     _BASE_REF_FOR.update((f, "HEAD") for f in since_paths if f not in local)
+                    # #838: a test a LOCAL commit touched but whose net change <since>→HEAD is empty (main's assertion merged in, a
+                    # local commit removed it again) is in no diff: join it, since_test_weakened compares it with the landed base.
+                    hidden = sorted(f for f in local if f and f not in since_paths and is_test_path(f) and not is_test_doc(f)
+                                    and not is_devkit_artifact(f) and os.path.exists(os.path.join(str(get_project_dir()), f)))
+                    since_paths.extend(hidden)
+                    all_changed = sorted(set(all_changed) | set(hidden))
             for dst, src in list(RENAME_SOURCES.items()):
                 if dst not in _BASE_REF_FOR:
                     RENAME_SOURCES[dst] = since_renames.get(src, src)
