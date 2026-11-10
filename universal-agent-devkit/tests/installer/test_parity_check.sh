@@ -60,6 +60,14 @@ fi
 grep -q "guard-protected-push.py" "$DEVKIT/hooks/hooks.json" && ok "hooks.json có guard-protected-push" || fail "hooks.json thiếu guard-protected-push"
 grep -q "guard-protected-push.py" "$P/.claude/settings.json" && ok "settings.json sau init có guard-protected-push" || fail "settings.json thiếu guard-protected-push"
 python3 "$DEVKIT/bin/parity_check.py" "$P" 2>&1 | grep -q "hook-missing.*guard-protected-push" && fail "parity báo hook-missing cho guard-protected-push" || ok "parity không báo hook-missing cho guard-protected-push"
+# 1d') guard-protected-push thiếu file ⇒ fail closed (exit 2), không im lặng cho qua
+python3 - "$DEVKIT/hooks/hooks.json" "$TMP" <<'PY' > "$TMP/guard-missing.rc" 2>/dev/null
+import json, os, subprocess, sys
+cmd = next(h["command"] for e in json.load(open(sys.argv[1]))["hooks"]["PreToolUse"] for h in e["hooks"] if "guard-protected-push.py" in h["command"])
+env = dict(os.environ, CLAUDE_PLUGIN_ROOT=os.path.join(sys.argv[2], "no-such-kit"))
+print(subprocess.run(["bash", "-c", cmd], env=env, capture_output=True).returncode)
+PY
+[ "$(cat "$TMP/guard-missing.rc")" = 2 ] && ok "guard-protected-push thiếu file: fail closed exit 2" || fail "guard thiếu file không exit 2: $(cat "$TMP/guard-missing.rc")"
 
 # 2) repo vừa cài, không config super-board (không có gì để so bản sao): khớp kit, exit 0
 mv "$P/.claude/super-board" "$TMP/sb-aside"

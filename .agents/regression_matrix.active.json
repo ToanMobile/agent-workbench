@@ -4349,6 +4349,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-init-parity-sync",
+      "watch_files": [
+        "universal-agent-devkit/bin/parity_check.py",
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/hooks/hooks.json",
+        "universal-agent-devkit/tests/installer/test_parity_check.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-INIT-PARITY-SYNC-01",
+          "name": "#774: init đồng bộ super-board (drift exit 0, giữ file chỉ có ở repo), cài lịch gate-full đêm, đăng ký guard-protected-push fail closed",
+          "command": "bash universal-agent-devkit/tests/installer/test_parity_check.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
