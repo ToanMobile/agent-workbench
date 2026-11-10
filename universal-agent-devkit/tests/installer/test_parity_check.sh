@@ -64,10 +64,21 @@ python3 "$DEVKIT/bin/parity_check.py" "$P" 2>&1 | grep -q "hook-missing.*guard-p
 python3 - "$DEVKIT/hooks/hooks.json" "$TMP" <<'PY' > "$TMP/guard-missing.rc" 2>/dev/null
 import json, os, subprocess, sys
 cmd = next(h["command"] for e in json.load(open(sys.argv[1]))["hooks"]["PreToolUse"] for h in e["hooks"] if "guard-protected-push.py" in h["command"])
-env = dict(os.environ, CLAUDE_PLUGIN_ROOT=os.path.join(sys.argv[2], "no-such-kit"))
+env = dict(os.environ, CLAUDE_PLUGIN_ROOT=os.path.join(sys.argv[2], "no-such-kit"), CLAUDE_PROJECT_DIR=os.path.join(sys.argv[2], "no-such-proj"))
 print(subprocess.run(["bash", "-c", cmd], env=env, capture_output=True).returncode)
 PY
 [ "$(cat "$TMP/guard-missing.rc")" = 2 ] && ok "guard-protected-push thiếu file: fail closed exit 2" || fail "guard thiếu file không exit 2: $(cat "$TMP/guard-missing.rc")"
+# 1d'') repo đã có lệnh guard hai đường (kit rồi .claude/hooks): init gộp, không thêm hook exit 2 thứ hai
+P2="$TMP/proj2"; mkdir -p "$P2/.claude" && (cd "$P2" && git init -q && git config user.email t@t && git config user.name t \
+  && git config commit.gpgsign false && echo x > a && git add a && git commit -qm init)
+python3 - "$P2/.claude/settings.json" <<'PY'
+import json, sys
+cmd = 'p="$CLAUDE_PROJECT_DIR"/universal-agent-devkit/hooks/guard-protected-push.py; f="$CLAUDE_PROJECT_DIR"/.claude/hooks/guard-protected-push.py; [ -f "$p" ] && exec python3 "$p"; [ -f "$f" ] && exec python3 "$f"; echo "⛔ DevKit: guard-protected-push.py is missing ($p and $f): tool call blocked (fail closed). Reinstall: agent-kit init" >&2; exit 2'
+json.dump({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": cmd}]}]}}, open(sys.argv[1], "w"))
+PY
+bash "$DEVKIT/bin/install.sh" -t "$P2" -y -p universal --agents=claude --no-githooks -m symlink > "$TMP/i1e.out" 2>&1
+c=$(python3 -c 'import json,sys; print(sum(1 for e in json.load(open(sys.argv[1]))["hooks"]["PreToolUse"] for h in e["hooks"] if "guard-protected-push.py is missing" in h["command"]))' "$P2/.claude/settings.json")
+[ "$c" = 1 ] && ok "init trên repo có lệnh guard hai đường: đúng 1 hook guard (không thêm exit 2 thứ hai)" || fail "init thêm hook guard thứ hai: $c"
 
 # 2) repo vừa cài, không config super-board (không có gì để so bản sao): khớp kit, exit 0
 mv "$P/.claude/super-board" "$TMP/sb-aside"
