@@ -79,6 +79,32 @@ grep -q 'unset DEVKIT_PRECOMMIT_INDEX' "$K/scripts/git/git-pre-commit.sh" && ok 
 rm -f "$TMPIDX"
 (cd "$K" && git checkout -q -- scripts/testing/capture_3d_proof.py hooks/guard-protected-push.py)
 
+# R2: a REAL `git commit -- <path>` through the real hook. A second kit copy K2 has post-fix-gate swapped for a stub that does what
+# suite_env does (drops GIT_INDEX_FILE, keeps DEVKIT_PRECOMMIT_INDEX) and runs health; deleting the export in git-pre-commit.sh turns this red.
+K2="$TMP/kit2"; mkdir -p "$K2"
+(cd "$DEVKIT_DIR" && git ls-files -z . | tar --null -T - -cf -) | tar -xf - -C "$K2"
+cat > "$K2/bin/post-fix-gate.py" <<'STUB'
+#!/usr/bin/env python3
+import json, os, subprocess, sys
+env = {k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"}
+out = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent-health.py"), "-t", os.environ["HEALTH_TARGET"]],
+                     capture_output=True, text=True, env=env).stdout
+open(os.environ["HEALTH_OUT"], "w").write(out)
+print(json.dumps({"mode": "staged", "static_ok": True, "tests_ok": True}))
+sys.exit(2)
+STUB
+(cd "$K2" && git init -q && git config user.email t@t && git config user.name t && git add -A && git commit -qm kit --no-verify)
+printf '#!/bin/sh\nexec bash "%s/scripts/git/git-pre-commit.sh"\n' "$K2" > "$K2/.git/hooks/pre-commit"; chmod +x "$K2/.git/hooks/pre-commit"
+echo '# committed via pathspec' >> "$K2/scripts/testing/capture_3d_proof.py"
+echo '# stray edit outside the commit' >> "$K2/hooks/guard-protected-push.py"
+HEALTH_TARGET="$W" HEALTH_OUT="$TMP/h2.txt" git -C "$K2" commit -q -m pathspec -- scripts/testing/capture_3d_proof.py >"$TMP/c2.txt" 2>&1
+rc=$?
+[ "$rc" = 0 ] && [ -s "$TMP/h2.txt" ] || fail "setup: the pathspec commit did not reach health (rc=$rc): $(tail -3 "$TMP/c2.txt" | tr '\n' ' ')"
+strip < "$TMP/h2.txt" | grep -E "$RED" | grep -q 'capture_3d_proof.py' && fail "real pathspec commit: the committed kit file was reported (R2)" \
+  || ok "real pathspec commit: the committed kit file is not reported (R2)"
+strip < "$TMP/h2.txt" | grep -E "$RED" | grep -q 'hooks/guard-protected-push.py' && ok "real pathspec commit: the stray edit still goes red (R2, #462 kept)" \
+  || fail "real pathspec commit: the stray edit was hidden (R2)"
+
 out="$(health)"
 echo "$out" | grep -qE "$RED" && fail "a restored kit is still reported" || ok "restored kit: nothing reported"
 
