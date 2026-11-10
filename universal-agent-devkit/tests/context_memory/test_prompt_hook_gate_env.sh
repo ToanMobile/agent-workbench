@@ -94,10 +94,7 @@ case "$OUT" in *"Bug đã ghi vào checklist: "*) ok "env gate: hook vẫn ghi b
   *) fail "env gate: hook không còn ghi bug (output: $(printf '%s' "$OUT" | head -c 300))" ;; esac
 [ "$(cached_rc "$G")" -ge 1 ] && ok "env gate: bytecode regression_checklist được giữ trong TMPDIR sau lần chạy đầu" \
   || fail "env gate: không giữ bytecode nào của regression_checklist dưới $G — mỗi prompt compile lại 3517 dòng + stdlib"
-# GitHub Actions macOS runners are shared VMs: the same hook took 154 ms CPU there (run 42733580223) against ~100 ms on a dev Mac.
-# Only that runner gets the wider budget (250 ms); a dev machine and the gate keep 150 ms.
-BUDGET=150; [ -n "${GITHUB_ACTIONS:-}" ] && BUDGET=250
-within "env gate, ma trận cỡ #742: prompt hook with bug capture" "$BUDGET" \
+within "env gate, ma trận cỡ #742: prompt hook with bug capture" 150 \
   "$(TMPDIR="$G" PYTHONPYCACHEPREFIX="$G/pyc" PYTHONDONTWRITEBYTECODE=1 STDIN_FILE="$TMP/prompt.json" median_ms bash "$HOOK")"
 
 # 2) Env hook của Claude Code: PYTHONDONTWRITEBYTECODE=1, không prefix — bytecode của kit vẫn phải được giữ ngoài cây kit.

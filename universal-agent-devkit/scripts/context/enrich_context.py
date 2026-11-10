@@ -84,15 +84,40 @@ def word_set(text):
     return out
 
 
+# Một regex cho cả danh sách từ khoá, nhớ theo danh sách: mỗi prompt gọi mentions hàng chục lần và
+# re.compile từng từ (cache stdlib chỉ 512 mẫu) làm hook ~60 ms ở máy dev, ~200 ms CPU trên runner (#781).
+_MENTIONS_RE = {}
+
+
+def _mentions_re(keywords):
+    key = tuple(keywords)
+    try:
+        return _MENTIONS_RE[key]
+    except KeyError:
+        pass
+    short, long = [], []
+    for k in key:
+        k = normalize(k)
+        if k:
+            (short if len(k) <= 3 else long).append(re.escape(k))
+    alts = []
+    if long:   # "crash" khớp "crashed": không chặn ký tự sau từ dài
+        alts.append(r"(?<!\w)(?:" + "|".join(long) + ")")
+    if short:  # ≤3 ký tự phải là cả từ (thêm s số nhiều): "ui" không nằm trong "build"
+        alts.append(r"(?<!\w)(?:" + "|".join(short) + r")s?(?!\w)")
+    pat = re.compile("|".join(alts)) if alts else None
+    if len(_MENTIONS_RE) >= 256:
+        _MENTIONS_RE.clear()
+    _MENTIONS_RE[key] = pat
+    return pat
+
+
 def mentions(text, keywords):
     """text (normalized) names one of keywords as a word or the start of one ("crash"
     finds "crashed"). A keyword of three characters or fewer must be a whole word
     (plural s allowed): "pr" is not in "PlayerPrefs", "ui" not in "build"."""
-    for k in keywords:
-        k = normalize(k)
-        if re.search(r"(?<!\w)" + re.escape(k) + (r"s?(?!\w)" if len(k) <= 3 else ""), text):
-            return True
-    return False
+    pat = _mentions_re(keywords)
+    return bool(pat and pat.search(text))
 
 
 # A defect report names what went wrong, not the word "bug": "bị xóa", "bị mất",

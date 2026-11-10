@@ -31,5 +31,12 @@ jobs:
           git config --global user.name "ci"
           git config --global user.email "ci@users.noreply.github.com"
 
+      # macos-26 keeps Go in the tool cache, not on PATH. test_matrix_detect.sh runs a real `go test` (no stub, #781 R3).
+      # cache: false — the suite does not restore a module cache, and this job's token is contents:read only.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: "1.26"
+          cache: false
+
       - name: DevKit tests (whole suite)
         run: bash universal-agent-devkit/tests/run_impacted.sh --all
