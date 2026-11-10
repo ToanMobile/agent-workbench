@@ -25,8 +25,8 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py list
   worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
 
-add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (3) free (no count of worktrees, #607); under
-WORKTREE_DISK_WARN_GIB (10) it runs gc first and warns (0 turns each off). Then `git worktree add` on <branch> when one is named (created from --base or HEAD when it
+add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (15) free (no count of worktrees, #607); under
+WORKTREE_DISK_WARN_GIB (25) it runs gc first and warns, under WORKTREE_CACHE_PRUNE_GIB (25) it deletes rebuildable build caches (0 turns each off). Then `git worktree add` on <branch> when one is named (created from --base or HEAD when it
 does not exist); with none, a DETACHED worktree at --base or HEAD — the project keeps one
 branch, and the work comes back with `diff | git apply --3way`. `--lane=build|qa|review` (a super-board lane, agent-workbench#93; only
 at .claude/worktrees/issue-<N>[-<lane>]): a branch only origin has
@@ -778,8 +778,13 @@ def _env_limit(name, default):
 
 # W1 R5c (docs/workflow-improvements.md I.0): `add` runs `gc` and warns under the warning line and creates nothing under the floor.
 # 0 turns each off. SessionStart (hooks/session_context.sh) reads the same numbers. #607: no count of worktrees any more.
-DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 10.0)
-DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 3.0)
+DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 25.0)
+DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 15.0)
+# 10/11 (chủ repo): dưới CACHE_PRUNE_GIB, `add` xoá cache build dựng lại được của máy trước khi tạo worktree (Gradle build-cache 20-30 GB
+# làm đĩa còn < 5 GB, runner nghẽn). Chỉ cache mà công cụ tự dựng lại khi thiếu; không đụng dependency đã tải (~/.gradle/caches/modules-2),
+# không đụng /private/tmp (scratchpad của phiên Claude đang chạy nằm ở đó). uv có trên PATH thì `uv cache clean` (chờ khoá của uv).
+CACHE_PRUNE_GIB = _env_limit("WORKTREE_CACHE_PRUNE_GIB", 25.0)
+PRUNE_CACHE_DIRS = (".gradle/caches/build-cache-1", ".npm/_cacache", "Library/Caches/go-build", ".cache/go-build", ".cache/uv")
 NO_ROOM = 4   # add's exit code when it refuses for want of disk: what a hook that creates worktrees tells apart from a usage error
 ADD_LOCK = "devkit-worktree-add.lock"
 ADD_LOCK_WAIT_S = 600.0
@@ -795,16 +800,38 @@ def free_gib(path):
         return None
 
 
+def _prune_caches():
+    """Xoá các cache build dựng lại được dưới HOME (PRUNE_CACHE_DIRS); in từng thư mục đã xoá. Lỗi xoá không chặn `add`, chỉ báo."""
+    home = os.path.expanduser("~")
+    uv = shutil.which("uv")
+    for rel in PRUNE_CACHE_DIRS:
+        p = os.path.join(home, rel)
+        if os.path.islink(p) or not os.path.isdir(p):
+            continue
+        if rel == ".cache/uv" and uv:
+            r = _run([uv, "cache", "clean"], bounded=False)
+            if r.returncode == 0:
+                print("✔ " + tr("đã tỉa cache: ", "cache pruned: ") + p + " (uv cache clean)")
+                continue
+        shutil.rmtree(p, ignore_errors=True)
+        print(("✔ " + tr("đã tỉa cache: ", "cache pruned: ") if not os.path.exists(p)
+               else "⚠ " + tr("không xoá hết cache: ", "could not delete all of the cache: ")) + p)
+
+
 def _make_room(main, wt):
     """Under DISK_WARN_GIB free: `gc` (the leftovers git no longer knows), then a warning; still under DISK_MIN_GIB: refuse (NO_ROOM)."""
     free = free_gib(wt)
     if free is None:
         print("• " + tr("không đọc được dung lượng đĩa trống; bỏ qua kiểm đĩa", "cannot read the free disk space; disk check skipped"))
         return
-    if free >= max(DISK_WARN_GIB, DISK_MIN_GIB):   # each line holds on its own: the floor still applies with the warning off
+    if free >= max(DISK_WARN_GIB, DISK_MIN_GIB, CACHE_PRUNE_GIB):   # each line holds on its own: the floor still applies with the warning off
         return
-    cmd_gc(main, ["--log=" + os.path.join(main, ".claude", "audit-gate", "worktree_gc.log")])   # silent when another gc of this repo runs
-    free = free_gib(wt)
+    if free < max(DISK_WARN_GIB, DISK_MIN_GIB):
+        cmd_gc(main, ["--log=" + os.path.join(main, ".claude", "audit-gate", "worktree_gc.log")])   # silent when another gc of this repo runs
+        free = free_gib(wt)
+    if free is not None and CACHE_PRUNE_GIB and free < CACHE_PRUNE_GIB:
+        _prune_caches()
+        free = free_gib(wt)
     if free is None:   # as on the first read: cannot say, so no refusal
         return
     if free < DISK_MIN_GIB:
