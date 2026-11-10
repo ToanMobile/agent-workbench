@@ -2979,7 +2979,7 @@ let ccState = null, ccBusyId = null;
 async function loadQuick() {
   if (!onMac) return;
   try {
-    const res = await fetch('api/cc-switcher/state', { headers: apiHeaders() });
+    const res = await fetch('api/cc-switcher/state', { headers: apiHeaders({ 'X-Agent-Office': '1' }) });
     const j = await res.json();
     ccState = res.ok && j && j.ok ? j : null;
   } catch (e) { ccState = null; console.warn('CC Switcher: không đọc được tài khoản', e); }
@@ -3049,6 +3049,7 @@ $('#btnNext').onclick = () => {
   nextIdx = (nextIdx + 1) % list.length; select({ type: 'worker', id: list[nextIdx].id });
 };
 // CC Switcher: bảng điều khiển 6 tài khoản AI nằm ở trang riêng /cc-switcher (chỉ mở trên máy Mac)
+$('#btnCcs').hidden = !onMac; // qua tunnel điện thoại trang trả 403: không hiện nút
 $('#btnCcs').addEventListener('click', () => { location.href = '/cc-switcher'; });
 function syncThemeBtn() { $('#btnTheme').setAttribute('aria-checked', String(document.documentElement.dataset.theme === 'dark')); } // nhãn cố định "Ca đêm", bật = tối
 $('#btnTheme').onclick = () => {
@@ -3057,7 +3058,7 @@ $('#btnTheme').onclick = () => {
   try { localStorage.setItem('agent-office-theme', next); } catch (e) { console.warn('Không lưu được giao diện', e); }
   syncThemeBtn(); if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
 };
-$('#btnRefresh').onclick = () => { fetch('api/refresh', { headers: apiHeaders() }).catch(() => {}); const t = $('#btnRefresh .mi-t'); t.textContent = 'Đang tải…'; setTimeout(() => { t.textContent = 'Tải lại GitHub'; }, 2500); toast('Đang đọc lại GitHub Project…'); };
+$('#btnRefresh').onclick = () => { fetch('api/refresh', { headers: apiHeaders() }).catch((e) => console.warn('Tải lại GitHub: không gọi được máy chủ', e)); const t = $('#btnRefresh .mi-t'); t.textContent = 'Đang tải…'; setTimeout(() => { t.textContent = 'Tải lại GitHub'; }, 2500); toast('Đang đọc lại GitHub Project…'); };
 
 // Menu "Điện thoại" (chỉ trên máy Mac): QR của Cloudflare tunnel kèm key để mở xưởng trên điện thoại ở mạng khác.
 // Server chỉ trả link cho chính máy Mac; mở qua tunnel thì ẩn nút (server cũng trả 403).
