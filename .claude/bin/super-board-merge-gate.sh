@@ -1428,8 +1428,16 @@ verify_log_busy() {
   [ -n "$line" ] && printf '%s' "$line" | jq -e '.exit_code == 4 and .busy == true' >/dev/null 2>&1
 }
 # DEVKIT_MERGE_POINT=1: dấu điểm gộp cho post-fix-gate (at_merge_point cần cả dấu lẫn đường dẫn .merge-scratch-*; suite_env bỏ nó).
+# gradle_env_for_verify (#969, từ GeelyEx2 REG-GATE-118): scratch có gradlew thì dùng cache Gradle của user và bật daemon;
+# repo không Gradle giữ nguyên môi trường. Trần timeout suite vẫn là SB_BASE_SUITE_TIMEOUT_S (900).
+gradle_env_for_verify() {
+  [ -n "${SCRATCH:-}" ] && [ -f "$SCRATCH/gradlew" ] || return 0
+  export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+  [[ "${GRADLE_OPTS:-}" == *"-Dorg.gradle.daemon=true"* ]] || export GRADLE_OPTS="${GRADLE_OPTS:+$GRADLE_OPTS }-Dorg.gradle.daemon=true"
+}
 run_verify_cmd_inner() {
   local c="$1" ow total rc=0
+  gradle_env_for_verify
   if [[ "$c" == *"post-fix-gate.py"* ]]; then
     total="${DEVKIT_GATE_SLOT_WAIT_S:-1800}"
     opt_gate_slots
