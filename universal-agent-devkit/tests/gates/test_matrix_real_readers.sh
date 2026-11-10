@@ -19,6 +19,10 @@ from scoped_gate import MATRIX_FILE, is_test  # noqa: E402
 MX = re.compile(r"\.agents(?:/|[\"']\s*[,/]\s*[\"'])regression_matrix\.active\.json")
 # VAR="$(cd "$(dirname "$0")/../.." && pwd)" (cả ${BASH_SOURCE[0]})
 DEF = re.compile(r"\b([A-Za-z_]\w*)=\"?\$\(\s*cd\s+\"?\$\(dirname\s+\"?\$\{?(?:0|BASH_SOURCE(?:\[0\])?)\}?\"?\)([^\"&)\s]*)")
+# VAR=$(git rev-parse --show-toplevel) ⇒ gốc repo
+TOP = re.compile(r"\b([A-Za-z_]\w*)=\"?\$\(\s*git\b[^)\n]*rev-parse\b[^)\n]*--show-toplevel")
+# VAR = Path(__file__)[.resolve()].parents[N] ⇒ lên N cấp từ thư mục của test
+PARENTS = re.compile(r"\b([A-Za-z_]\w*)\s*=\s*(?:pathlib\.)?Path\(\s*__file__\s*\)(?:\.resolve\(\))?\.parents\[(\d+)\]")
 # phần trước đường dẫn ma trận (bỏ nháy, khoảng trắng): $VAR/  ${VAR}/..  VAR+/  VAR,  Path(VAR)/
 PRE = re.compile(r"(?:\$\{?(\w+)\}?|(?<![\w$])(\w+)\)?(?:\+|,|/))((?:/?\.\.)*)/?$")
 
@@ -30,6 +34,13 @@ def real_reader(rel, text):
         d = posixpath.normpath(posixpath.join(posixpath.dirname(rel), m.group(2).lstrip("/")))
         roots.setdefault(m.group(1), d)               # định nghĩa đầu tiên của biến thắng
         roots.setdefault(m.group(1).lower(), d)       # root trong heredoc Python nhận "$ROOT"
+    for m in TOP.finditer(text):
+        roots.setdefault(m.group(1), ".")
+        roots.setdefault(m.group(1).lower(), ".")
+    for m in PARENTS.finditer(text):
+        d = posixpath.normpath(posixpath.join(posixpath.dirname(rel), *([".."] * int(m.group(2)))))
+        roots.setdefault(m.group(1), d)
+        roots.setdefault(m.group(1).lower(), d)
     for line in text.splitlines():
         for m in MX.finditer(line):
             p = PRE.search(re.sub(r"[\"'\s]", "", line[:m.start()]))
@@ -55,12 +66,16 @@ chk(all(real_reader("tests/a/test_x.sh", D2 + s) for s in (
     'cat "$ROOT/.agents/regression_matrix.active.json"\n',
     'python3 - "$ROOT" <<P\nroot = sys.argv[1]\ncur = json.load(open(root + "/.agents/regression_matrix.active.json"))\nP\n',
     'p = os.path.join(root, ".agents", "regression_matrix.active.json")\n',
-    'D="$(cd "$(dirname "$0")/.." && pwd)"\ncat "$D/../.agents/regression_matrix.active.json"\n')),
+    'D="$(cd "$(dirname "$0")/.." && pwd)"\ncat "$D/../.agents/regression_matrix.active.json"\n',
+    'TOP="$(git rev-parse --show-toplevel)"\ncat "$TOP/.agents/regression_matrix.active.json"\n',
+    'import pathlib\nrepo = Path(__file__).resolve().parents[2]\nopen(repo / ".agents/regression_matrix.active.json")\n',
+    'repo = Path(__file__).parents[2]\nopen(os.path.join(repo, ".agents", "regression_matrix.active.json"))\n')),
     "bộ dò bắt test đọc ma trận ở gốc repo")
 chk(not any(real_reader("tests/a/test_x.sh", D2 + s) for s in (
     'cat > "$TMP/.agents/regression_matrix.active.json" <<J\n{}\nJ\n',
     'cp "$ROOT/templates/regression_matrix.json" .agents/regression_matrix.active.json\n',
-    'D="$(cd "$(dirname "$0")/.." && pwd)"\ncat "$D/.agents/regression_matrix.active.json"\n')),
+    'D="$(cd "$(dirname "$0")/.." && pwd)"\ncat "$D/.agents/regression_matrix.active.json"\n',
+    'repo = Path(__file__).resolve().parents[1]\nopen(repo / ".agents/regression_matrix.active.json")\n')),
     "bộ dò bỏ qua ma trận giả trong fixture / thư mục không phải gốc repo")
 
 cur = json.load(open(MATRIX, encoding="utf-8"))

@@ -2,7 +2,10 @@
 # #557: QA (and the brief Review already uses) adds a detached worktree at origin/<PR branch>.
 # The build worktree keeps the branch, even after a rename (#526) and with uncommitted
 # agent-memory (#473). A QA evidence commit is pushed with git push origin HEAD:<PR branch>.
-. "$(cd "$(dirname "$0")/../.." && pwd)/universal-agent-devkit/tests/lib/clean_git_env.sh"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
+  if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
+done
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RUNNER="$ROOT/.claude/bin/super-board-run.sh"
