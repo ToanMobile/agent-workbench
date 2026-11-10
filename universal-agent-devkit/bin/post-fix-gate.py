@@ -510,18 +510,20 @@ def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = ""
     return not redefines_test(repo_path, base_text, new.decode("utf-8", errors="replace"))
 
 
-def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: bool = False) -> bool:
+def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: bool = False, old_path: str = "") -> bool:
     """True when this test existed at `since`, a LOCAL-ONLY commit of `since..HEAD` (one not
     reachable from `upstream`; no upstream → every range commit) touches it, and its change to
     the working tree is not append-only — counted from the latest range commit (any path, an empty
     one included) whose message holds a `Test-approved-by:` line that push_gate accepts and whose
     auditedHead is at or after `since` (that tree was audited), else from `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate.
-    runner: a suite runner script (A2), judged by test_change_is_append_only(runner=True)."""
+    runner: a suite runner script (A2), judged by test_change_is_append_only(runner=True).
+    old_path: the name it had at `since` when renamed in the range (#836): looked up and compared under that name."""
     root = str(get_repo_root())
-    if object_info(since, repo_path) is None:
+    old_path = old_path if old_path and old_path != repo_path else ""
+    if object_info(since, old_path or repo_path) is None:
         return False
     local = subprocess.run(["git", "-C", root, "rev-list", "-1", f"{since}..HEAD"]
-                           + (["--not", upstream] if upstream else []) + ["--", repo_path],
+                           + (["--not", upstream] if upstream else []) + ["--", repo_path] + ([old_path] if old_path else []),
                            capture_output=True, text=True)
     if local.returncode == 0 and not local.stdout.strip():
         return False                                  # only upstream commits touch it
@@ -544,7 +546,10 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
             base = sha
             PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
             break
-    return not test_change_is_append_only(base, repo_path, runner=runner)
+    # A trailer commit after the rename knows only the new name; at `since` (or before the rename) the old one.
+    if old_path and base != since and object_info(base, old_path) is None:
+        old_path = ""
+    return not test_change_is_append_only(base, repo_path, old_path, runner=runner)
 
 
 def _push_gate():
@@ -7106,7 +7111,7 @@ def main():
                             capture_output=True, text=True)
         upstream = up.stdout.strip() if up.returncode == 0 else ""
     since_touched = [f for f in since_paths if f not in tests_touched and is_test_path(f) and not is_test_doc(f)
-                     and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, upstream)]
+                     and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, upstream, old_path=prefix + since_renames[f] if f in since_renames else "")]
     # A script a base-ref suite command runs is a file of the change (A2, 2026-10-09: with scripts/check.sh set to
     # `exit 0`, `sh scripts/check.sh` passed whatever the code did). Its change counts like an edited existing test —
     # UNVERIFIED unless approved, same paths — and like a test, a pure append (a line running one more test) is no edit,
