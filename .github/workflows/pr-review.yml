@@ -1,0 +1,35 @@
+# Cổng máy cho mọi PR: chạy cả bộ test DevKit (run_impacted.sh --all) trên macOS.
+# 35 file test viết cho macOS (sed -i '', launchctl, cp -c, xcrun, stat -f) đỏ trên ubuntu (run 41209128293), nên job chạy trên
+# macos-latest (phương án (a) của #781). Phút macOS đắt ~10x ubuntu: chỉ một job, có timeout.
+# Các lớp quét khác (semgrep, gitleaks, OCR) sẽ vào workflow này bằng thẻ riêng; thẻ này không dựng lại theo trí nhớ.
+name: pr-review
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  devkit-tests:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Git identity (the worktree and automerge tests commit; the runner has none)
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@users.noreply.github.com"
+
+      - name: DevKit tests (whole suite)
+        run: bash universal-agent-devkit/tests/run_impacted.sh --all
