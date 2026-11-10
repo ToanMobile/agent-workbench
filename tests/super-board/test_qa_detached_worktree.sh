@@ -9,7 +9,8 @@ FF='git -C <build worktree> merge --ff-only <sha>'
 PUSH='git push origin <PR branch>'
 OLD='git push origin HEAD:<PR branch>'
 LIT='LITERAL path'
-STOP='branch --show-current'
+SW='git switch <PR branch>'
+MG='git merge --ff-only <sha>'
 BLOCK='Block the card'
 WTL='git worktree list'
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -56,22 +57,22 @@ case "$hint" in
   *) fail "qa hint does not say how to find <build worktree> (git worktree list)" ;;
 esac
 case "$hint" in
-  *"$STOP"*"$BLOCK"*) ok "qa hint: renamed branch or failed ff means Block, not push" ;;
-  *) fail "qa hint lacks the rename / failed-ff stop rule" ;;
+  *"None holds it"*"$SW"*"$MG"*"$PUSH"*) ok "qa hint: no worktree holds the branch (removed or renamed) -> switch in the QA worktree, ff, plain push" ;;
+  *) fail "qa hint lacks the git switch route for a branch no worktree holds" ;;
 esac
 case "$hint" in
   *"$LIT"*"redirect target"*) ok "qa hint: test output goes to literal paths, no variable in a redirect target" ;;
   *) fail "qa hint does not say to use literal redirect targets" ;;
 esac
 case "$hint" in
-  *'>/tmp/qa-7.log'*) ok "qa hint: the example log path carries the issue number (parallel QA lanes do not share it)" ;;
+  *'>/tmp/qa-<repo>-7-<file>.log'*) ok "qa hint: the example log path carries the issue number (parallel QA lanes do not share it)" ;;
   *) fail "qa hint example log path has no issue number" ;;
 esac
 case "$hint" in
   *'/tmp/q-a.log'*) fail "qa hint still gives the shared fixed path /tmp/q-a.log" ;;
   *) ok "qa hint has no shared fixed log path" ;;
 esac
-for pair in "$WAVE|>/tmp/qa-\${n}.log" "$RUNMD|>/tmp/qa-<N>.log" "$QA|>/tmp/qa-<N>.log"; do
+for pair in "$WAVE|>/tmp/qa-<repo>-\${n}-<file>.log" "$RUNMD|>/tmp/qa-<repo>-<N>-<file>.log" "$QA|>/tmp/qa-<repo>-<N>-<file>.log"; do
   f="${pair%%|*}"; want="${pair#*|}"
   grep -qF -- "$want" "$f" && ! grep -qF '/tmp/q-a.log' "$f" \
     && ok "$(basename "$f"): per-issue example log path" || fail "$(basename "$f") example log path is shared or missing ($want)"
@@ -103,10 +104,6 @@ grep -q -- '--lane=qa' "$QA" && grep -qF "$FF" "$QA" && grep -qF "$PUSH" "$QA" &
 
 # Round 3 of the review of #1105: every QA step that pushes must use the hook-accepted form, not a bare "Commit + push".
 EVID="$ROOT/.claude/skills/super-qa/references/tester-verifiers-evidence.md"
-case "$hint" in
-  *"If no worktree holds the PR branch"*) ok "qa hint: a removed build worktree means Block" ;;
-  *) fail "qa hint does not say what to do when no worktree holds the PR branch" ;;
-esac
 LSR='git ls-remote origin <PR branch>'
 case "$hint" in
   *"$LSR"*"do not retry or force"*) ok "qa hint: push must be verified with ls-remote; non-zero or mismatch means Block, no retry or force" ;;
@@ -118,8 +115,8 @@ for pair in "$WAVE|1" "$RUNMD|3" "$QA|3" "$EVID|1"; do
     && ok "$(basename "$f"): push verification stated at each push step" || fail "$(basename "$f") lacks the ls-remote push verification (need $need)"
 done
 for f in "$WAVE" "$RUNMD" "$QA"; do
-  grep -qF 'If no worktree holds the PR branch' "$f" && ok "$(basename "$f"): removed build worktree means Block" \
-    || fail "$(basename "$f") lacks the removed-build-worktree stop rule"
+  grep -qF 'None holds it' "$f" && grep -qF "$SW" "$f" && ok "$(basename "$f"): git switch route for a branch no worktree holds" \
+    || fail "$(basename "$f") lacks the git switch route"
 done
 ! grep -qF 'as in step 2' "$QA" && grep -qF 'push it as in step 1' "$QA" \
   && ok "super-qa SKILL: evidence push points at step 1" || fail "super-qa SKILL step 5 does not point at the step that holds the push rule"
@@ -184,7 +181,7 @@ if [ "$rc" = 0 ]; then
   sha8="$(G "$QA8" rev-parse HEAD)"
   # the two commands come out of the hint text, so a wrong hint fails here
   ffcmd="${hint#*git -C }"; ffcmd="${ffcmd%% (*}"
-  pushbr="${hint#*then git push origin }"; pushbr="${pushbr%%;*}"
+  pushbr="${hint#*then git push origin }"; pushbr="${pushbr%%[.;]*}"
   ffcmd="${ffcmd//<build worktree>/$B8WT}"; ffcmd="${ffcmd//<sha>/$sha8}"; pushbr="${pushbr//<PR branch>/$B8}"
   set -- $ffcmd
   if [ "$pushbr" = "$B8" ] && [ "${2:-}" = merge ] && G "$1" "${@:2}" >/dev/null 2>&1 \
@@ -197,6 +194,35 @@ if [ "$rc" = 0 ]; then
   fi
 fi
 
+
+# no worktree holds the PR branch: run the hint's git switch / ff / plain push in the QA worktree
+qa_switch_push() { # name branch qadir
+  local name="$1" br="$2" qa="$3" sha sw mg
+  echo "ev-$name" > "$qa/ev-$name.txt" && G "$qa" add "ev-$name.txt" && G "$qa" commit -qm "ev-$name"
+  sha="$(G "$qa" rev-parse HEAD)"
+  sw="${SW//<PR branch>/$br}"; mg="${MG//<sha>/$sha}"
+  case "$hint" in *"$SW"*"$MG"*) ;; *) fail "$name: hint lacks the switch / ff commands"; return ;; esac
+  set -- ${sw#git }; G "$qa" "$@" >/dev/null 2>&1 || { fail "$name: $sw failed"; return; }
+  set -- ${mg#git }; G "$qa" "$@" >/dev/null 2>&1 || { fail "$name: $mg failed"; return; }
+  G "$qa" push -q origin "$br" || { fail "$name: plain push of $br failed"; return; }
+  [ "$(G "$REPO" ls-remote origin "$br" | cut -f1)" = "$sha" ] && ok "$name: switch + ff + plain push moved origin/$br" \
+    || fail "$name: origin/$br is not the evidence sha"
+}
+if [ "$rc" = 0 ]; then
+  # #526 renamed: the build worktree holds issue-7-slug-renamed, so nobody holds issue-7-slug
+  qa_switch_push renamed issue-7-slug "$QAWT"
+  [ "$(cat "$REPO/.claude/worktrees/issue-7-build/.claude/agent-memory/note.txt" 2>/dev/null)" = "keep-me" ] \
+    && ok "renamed: build worktree memory file survives" || fail "renamed: build worktree memory file lost"
+  # the Builder removed its worktree before QA (run.md Builder step 9): the local ref survives
+  B9=issue-9-slug
+  G "$REPO" checkout -q -b $B9 main && echo pr9 > "$REPO/pr9.txt" && G "$REPO" add pr9.txt && G "$REPO" commit -qm pr9 \
+    && G "$REPO" push -q origin $B9 && G "$REPO" checkout -q main
+  (cd "$REPO" && python3 "$WT" add "$REPO/.claude/worktrees/issue-9-build" $B9 --lane=build --base=origin/main --no-init >/dev/null 2>&1) \
+    && G "$REPO" worktree remove --force "$REPO/.claude/worktrees/issue-9-build" || fail "setup: issue-9 build worktree removal"
+  (cd "$REPO" && python3 "$WT" add "$REPO/.claude/worktrees/issue-9-qa" --lane=qa --base=origin/$B9 --no-init >/dev/null 2>&1) \
+    || fail "setup: issue-9 qa worktree"
+  qa_switch_push removed $B9 "$REPO/.claude/worktrees/issue-9-qa"
+fi
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_qa_detached_worktree: PASS"; exit 0; }
