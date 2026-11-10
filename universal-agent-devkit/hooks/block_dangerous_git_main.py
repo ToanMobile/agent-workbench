@@ -254,6 +254,14 @@ def danger_in_git(sub, args):
         return "update-ref -d xoá ref"
     if sub == "update-ref" and ("--stdin" in long_ or any(p.startswith("refs/heads/") for p in pos)):
         return "update-ref ghi thẳng vào nhánh (như reset/branch -f)"
+    # (#837) refs/remotes/* is what the gate trusts as "landed" (task_trunk, origin/HEAD): an agent must not forge it. fetch/pull write it
+    # legitimately and stay allowed; `remote set-head <r> --auto` re-reads the remote's truth and stays allowed too.
+    if sub == "update-ref" and any(p.startswith("refs/remotes/") for p in pos):
+        return "update-ref ghi refs/remotes/* giả ref đã landed (dùng git fetch)"
+    if sub == "remote" and pos[:1] == ["set-head"] and not (long_ & {"--auto"} or "a" in short):
+        return "remote set-head đổi/xoá origin/HEAD giả nhánh trunk đã landed (chỉ cho --auto)"
+    if sub == "symbolic-ref" and pos[:1] and pos[0].startswith("refs/remotes/") and (len(pos) >= 2 or "d" in short or "--delete" in long_):
+        return "symbolic-ref ghi refs/remotes/* giả ref đã landed"
     if sub == "config":
         reason = config_write_danger(args)
         if reason:

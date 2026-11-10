@@ -525,3 +525,4 @@
 # 04/11: duyệt test sửa tra thẳng biên bản antigravity-pm (không comment / json / trailer)
 37 tests/gates/test_gate_pm_direct_approval.sh
 3 tests/gates/test_review_gate_repeat_short.sh
+5 tests/gates/test_guard_remote_ref_forge.sh
