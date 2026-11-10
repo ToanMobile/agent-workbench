@@ -5878,7 +5878,8 @@ def suite_env():
             "DEVKIT_TEST_POOL_DIR", "DEVKIT_JOB_POOL",
             # #528: cờ của worker board không được lọt vào suite — gate lồng sẽ bỏ qua main
             "SB_BOARD_WORKER", "SB_MERGE_CALLER", "SB_MERGE_QUEUE", "SB_REPO_PATH",
-            "SB_GITHUB_READ_STRICT"}
+            "SB_GITHUB_READ_STRICT",
+            "WORKTREE_AUTO_MERGE"}   # #811: công tắc Stop hook phiên đa lane, không lọt vào suite
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
