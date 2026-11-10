@@ -26,6 +26,10 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 G() { git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false "${@:2}"; }
 export GIT_CONFIG_GLOBAL=/dev/null
+HOOK="$ROOT/universal-agent-devkit/hooks/block-dangerous-git.sh"
+hk() { # cwd command -> exit code of the real block-dangerous-git hook (0 = allowed, 2 = refused)
+  printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"%s"}}\n' "$1" "$2" | bash "$HOOK" >/dev/null 2>&1; echo $?
+}
 
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
@@ -55,6 +59,14 @@ case "$hint" in
   *"$FF"*"$WTL"*) ok "qa hint: says how to find the build worktree" ;;
   *"$WTL"*"$FF"*) ok "qa hint: says how to find the build worktree" ;;
   *) fail "qa hint does not say how to find <build worktree> (git worktree list)" ;;
+esac
+case "$hint" in
+  *"git rev-parse HEAD"*"before any git switch"*"$SW"*) ok "qa hint: <sha> is recorded with git rev-parse HEAD before the switch" ;;
+  *) fail "qa hint does not say to record <sha> before git switch moves HEAD" ;;
+esac
+case "$hint" in
+  *"checks out the local branch, or creates it from origin"*) ok "qa hint: git switch wording covers an existing local branch" ;;
+  *) fail "qa hint says git switch only creates the branch" ;;
 esac
 case "$hint" in
   *"None holds it"*"$SW"*"$MG"*"$PUSH"*) ok "qa hint: no worktree holds the branch (removed or renamed) -> switch in the QA worktree, ff, plain push" ;;
@@ -115,7 +127,8 @@ for pair in "$WAVE|1" "$RUNMD|3" "$QA|3" "$EVID|1"; do
     && ok "$(basename "$f"): push verification stated at each push step" || fail "$(basename "$f") lacks the ls-remote push verification (need $need)"
 done
 for f in "$WAVE" "$RUNMD" "$QA"; do
-  grep -qF 'None holds it' "$f" && grep -qF "$SW" "$f" && ok "$(basename "$f"): git switch route for a branch no worktree holds" \
+  grep -qF 'before any git switch' "$f" && grep -qF 'checks out the local branch, or creates it from origin' "$f" \
+    && grep -qF 'None holds it' "$f" && grep -qF "$SW" "$f" && ok "$(basename "$f"): git switch route for a branch no worktree holds" \
     || fail "$(basename "$f") lacks the git switch route"
 done
 ! grep -qF 'as in step 2' "$QA" && grep -qF 'push it as in step 1' "$QA" \
@@ -134,10 +147,12 @@ done
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 REPO="$TMP/repo"
 mkdir -p "$REPO" && G "$REPO" init -q -b main . && G "$REPO" config user.email t@t && G "$REPO" config user.name t
-echo base > "$REPO/a.txt" && G "$REPO" add a.txt && G "$REPO" commit -qm base
+mkdir -p "$REPO/.agents" && echo '{"project":"t","rules":[]}' > "$REPO/.agents/regression_matrix.active.json"
+echo base > "$REPO/a.txt" && G "$REPO" add a.txt .agents && G "$REPO" commit -qm base
 git init -q --bare "$TMP/origin.git"
 G "$REPO" remote add origin "$TMP/origin.git"
 G "$REPO" push -q origin main
+G "$REPO" remote set-head origin main >/dev/null 2>&1
 G "$REPO" checkout -q -b issue-7-slug
 echo pr > "$REPO/pr.txt" && G "$REPO" add pr.txt && G "$REPO" commit -qm pr
 G "$REPO" push -q origin issue-7-slug
@@ -183,9 +198,11 @@ if [ "$rc" = 0 ]; then
   ffcmd="${hint#*git -C }"; ffcmd="${ffcmd%% (*}"
   pushbr="${hint#*then git push origin }"; pushbr="${pushbr%%[.;]*}"
   ffcmd="${ffcmd//<build worktree>/$B8WT}"; ffcmd="${ffcmd//<sha>/$sha8}"; pushbr="${pushbr//<PR branch>/$B8}"
+  [ "$(hk "$QA8" "git push origin HEAD:$B8")" = 2 ] && [ "$(hk "$QA8" "git -C $ffcmd")" = 0 ] \
+    && ok "hook: the held-branch ff is allowed and HEAD:<PR branch> is refused" || fail "hook verdicts differ for the held-branch commands"
   set -- $ffcmd
   if [ "$pushbr" = "$B8" ] && [ "${2:-}" = merge ] && G "$1" "${@:2}" >/dev/null 2>&1 \
-      && G "$QA8" push -q origin $pushbr \
+      && [ "$(hk "$QA8" "git push origin $pushbr")" = 0 ] && G "$QA8" push -q origin $pushbr \
       && [ "$(G "$REPO" ls-remote origin $B8 2>/dev/null | cut -f1)" = "$sha8" ] \
       && [ "$(cat "$B8WT/.claude/agent-memory/note.txt" 2>/dev/null)" = "keep-me-8" ]; then
     ok "hint commands for real: ff in the build worktree, plain git push origin <PR branch> moves origin, build memory file survives"
@@ -202,10 +219,15 @@ qa_switch_push() { # name branch qadir
   sha="$(G "$qa" rev-parse HEAD)"
   sw="${SW//<PR branch>/$br}"; mg="${MG//<sha>/$sha}"
   case "$hint" in *"$SW"*"$MG"*) ;; *) fail "$name: hint lacks the switch / ff commands"; return ;; esac
+  [ "$(hk "$qa" "git push origin HEAD:$br")" = 2 ] || { fail "$name: hook did not refuse git push origin HEAD:$br"; return; }
+  [ "$(hk "$qa" "$sw")" = 0 ] || { fail "$name: hook refused $sw"; return; }
   set -- ${sw#git }; G "$qa" "$@" >/dev/null 2>&1 || { fail "$name: $sw failed"; return; }
+  [ "$(hk "$qa" "$mg")" = 0 ] || { fail "$name: hook refused $mg"; return; }
   set -- ${mg#git }; G "$qa" "$@" >/dev/null 2>&1 || { fail "$name: $mg failed"; return; }
+  [ "$(hk "$qa" "git push origin $br")" = 0 ] || { fail "$name: hook refused git push origin $br"; return; }
   G "$qa" push -q origin "$br" || { fail "$name: plain push of $br failed"; return; }
-  [ "$(G "$REPO" ls-remote origin "$br" | cut -f1)" = "$sha" ] && ok "$name: switch + ff + plain push moved origin/$br" \
+  [ "$(G "$REPO" ls-remote origin "$br" | cut -f1)" = "$sha" ] && [ "$(G "$qa" rev-parse HEAD)" = "$sha" ] \
+    && ok "$name: hook allows switch + ff + plain push (and refuses HEAD:); origin/$br is the evidence sha" \
     || fail "$name: origin/$br is not the evidence sha"
 }
 if [ "$rc" = 0 ]; then
