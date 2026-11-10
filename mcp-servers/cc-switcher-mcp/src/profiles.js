@@ -833,8 +833,26 @@ function repoRegistryPath(stateDir) {
   return path.join(resolveStateDir(stateDir), REPO_REGISTRY_FILE);
 }
 
-export function loadRepoRegistry(stateDir) {
-  const raw = readJsonSafe(repoRegistryPath(stateDir), null) || {};
+// strict=true (addRepo/removeRepo, duong GHI): file hong ⇒ AppError. Mac dinh (duong DOC): roi ve mac dinh + log warn, giu nguyen byte.
+export function loadRepoRegistry(stateDir, { strict = false } = {}) {
+  const file = repoRegistryPath(stateDir);
+  let raw = {};
+  if (fs.existsSync(file)) {
+    // repos.json hong: AppError, giu nguyen byte (readJsonSafe -> {} lam addRepo/removeRepo ghi de mat danh sach, #897 R1)
+    const bad = (message, err) => {
+      if (strict) throw new AppError('INVALID_INPUT', message);
+      logStructured('warn', 'repos_registry_unreadable_using_defaults', { file, error: err?.name || 'not_object' });
+      return {};
+    };
+    try {
+      raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (err) {
+      raw = bad(`${file} không phải JSON hợp lệ (${err?.name}), giữ nguyên.`, err);
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      raw = bad(`${file} không phải object JSON, giữ nguyên.`);
+    }
+  }
   const custom = Array.isArray(raw.custom)
     ? raw.custom.filter((r) => r && typeof r.path === 'string' && typeof r.name === 'string')
     : [];
@@ -864,6 +882,12 @@ export function listKnownRepos(opts = {}) {
 
 function readRepoSettings(repoPath) {
   const settingsPath = path.join(repoPath, '.claude', 'settings.local.json');
+  // symlink o bien repo: .claude ra ngoai repo, hay settings.local.json la symlink, khong ghi xuyen (#897)
+  for (const p of [path.join(repoPath, '.claude'), settingsPath]) {
+    let st = null;
+    try { st = fs.lstatSync(p); } catch { /* chua co: tao moi duoc */ }
+    if (st?.isSymbolicLink()) throw new AppError('INVALID_INPUT', `${p} là symlink, không ghi xuyên qua symlink.`);
+  }
   if (!fs.existsSync(settingsPath)) return { settingsPath, exists: false, data: {} };
   let data;
   try {
@@ -915,7 +939,7 @@ export function getRepoAssignments(opts = {}) {
 const CLAUDE_ACCOUNT_IDS = () => DEFAULT_PROFILES.filter((p) => p.vendor === 'anthropic').map((p) => p.id);
 
 function findKnownRepo(opts, repoPath) {
-  const wanted = String(repoPath || '').trim();
+  const wanted = String(repoPath || '').trim().replace(/\/+$/, '') || '/';
   const repo = listKnownRepos(opts).find((r) => r.path === wanted);
   if (!repo) throw new AppError('INVALID_INPUT', 'Repo không nằm trong danh sách cc-switcher.');
   return repo;
@@ -954,6 +978,11 @@ export function addRepo(opts = {}) {
   if (repoPath === '/' || repoPath === path.resolve(os.homedir())) {
     throw new AppError('INVALID_INPUT', 'Chọn thư mục của một repo, không phải / hay thư mục home.');
   }
+  let real = repoPath;
+  try { real = fs.realpathSync(repoPath); } catch { /* xu ly ben duoi */ }
+  if (real === '/' || real === fs.realpathSync(os.homedir())) {
+    throw new AppError('INVALID_INPUT', 'Chọn thư mục của một repo, không phải / hay thư mục home.');
+  }
   let st = null;
   try { st = fs.statSync(repoPath); } catch { /* xu ly ben duoi */ }
   if (!st || !st.isDirectory()) throw new AppError('INVALID_INPUT', `Không thấy thư mục ${repoPath}.`);
@@ -965,7 +994,7 @@ export function addRepo(opts = {}) {
   if (listKnownRepos(opts).some((r) => r.path === repoPath)) throw new AppError('INVALID_INPUT', 'Repo này đã có trong danh sách.');
   readRepoSettings(repoPath); // settings.local.json hong: AppError TRUOC khi ghi repos.json, khong de repo them do dang (35f6ac7a5a)
 
-  const reg = loadRepoRegistry(opts.stateDir);
+  const reg = loadRepoRegistry(opts.stateDir, { strict: true });
   const base = Array.isArray(opts.repos) && opts.repos.length > 0 ? opts.repos : DEFAULT_REPOS;
   if (reg.hidden.includes(repoPath) && base.some((r) => r.path === repoPath)) {
     reg.hidden = reg.hidden.filter((x) => x !== repoPath); // repo mac dinh tung bi go: hien lai
@@ -983,7 +1012,7 @@ export function addRepo(opts = {}) {
  */
 export function removeRepo(opts = {}) {
   const repo = findKnownRepo(opts, opts.repoPath);
-  const reg = loadRepoRegistry(opts.stateDir);
+  const reg = loadRepoRegistry(opts.stateDir, { strict: true });
   if (repo.source === 'custom') {
     reg.custom = reg.custom.filter((c) => c.path !== repo.path);
   } else if (!reg.hidden.includes(repo.path)) {
