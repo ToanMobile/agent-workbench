@@ -34,7 +34,7 @@ The Tester's issue comment is the user's primary visibility into "is this actual
 **The canonical template lives in `.claude/skills/super-board/references/run.md` → "Screenshot embed format" (right after Tester first pass).** Do not duplicate it here; both lanes (super-board Tester + standalone super-qa) follow that exact format. Summary of rules workers must obey:
 
 - Capture screenshots at the standard viewports for UI ACs: **desktop 1920×1080, tablet 1024×768, mobile 375×667**.
-- Commit the screenshots in the QA worktree, then push the PR branch (`git -C <build worktree> merge --ff-only <sha>`, then `git push origin <PR branch>`; run.md → Tester) *before* writing the comment — inline image URLs won't render unless the file is on GitHub.
+- Commit the screenshots in the QA worktree, then push the PR branch (`git -C <build worktree> merge --ff-only <sha>`, then `git push origin <PR branch>`; if the push exits non-zero, or `git ls-remote origin <PR branch>` is not <sha>, do not retry or force: Block the card; run.md → Tester) *before* writing the comment — inline image URLs won't render unless the file is on GitHub.
 - Use the `https://github.com/<OWNER>/<REPO>/raw/<SHA>/...` URL form, `<SHA>` = the commit that added the screenshots, so images keep rendering after the branch is deleted on merge. Resolve `<OWNER>/<REPO>` from `git remote get-url origin`.
 - Embed the same screenshots in BOTH the PR timeline comment AND the issue comment — the issue page is the user's primary view.
 - Name the evidence folder once (`runs/issue-<N>-qa-v<V>/`) — no file lists.

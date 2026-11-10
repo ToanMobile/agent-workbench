@@ -28,6 +28,9 @@ export GIT_CONFIG_GLOBAL=/dev/null
 
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
+WAVE="$ROOT/.claude/workflows/super-board-wave.js"
+RUNMD="$ROOT/.claude/skills/super-board/references/run.md"
+QA="$ROOT/.claude/skills/super-qa/SKILL.md"
 
 hint="$(lane_worktree_hint qa 7)"
 case "$hint" in
@@ -61,26 +64,34 @@ case "$hint" in
   *) fail "qa hint does not say to use literal redirect targets" ;;
 esac
 case "$hint" in
+  *'>/tmp/qa-7.log'*) ok "qa hint: the example log path carries the issue number (parallel QA lanes do not share it)" ;;
+  *) fail "qa hint example log path has no issue number" ;;
+esac
+case "$hint" in
+  *'/tmp/q-a.log'*) fail "qa hint still gives the shared fixed path /tmp/q-a.log" ;;
+  *) ok "qa hint has no shared fixed log path" ;;
+esac
+for pair in "$WAVE|>/tmp/qa-\${n}.log" "$RUNMD|>/tmp/qa-<N>.log" "$QA|>/tmp/qa-<N>.log"; do
+  f="${pair%%|*}"; want="${pair#*|}"
+  grep -qF -- "$want" "$f" && ! grep -qF '/tmp/q-a.log' "$f" \
+    && ok "$(basename "$f"): per-issue example log path" || fail "$(basename "$f") example log path is shared or missing ($want)"
+done
+case "$hint" in
   *"Exit 1 naming a worktree that holds the branch"*) fail "qa hint still says to remove the worktree that holds the branch" ;;
   *) ok "qa hint does not tell the worker to remove the build worktree" ;;
 esac
 
-WAVE="$ROOT/.claude/workflows/super-board-wave.js"
-RUNMD_EARLY="$ROOT/.claude/skills/super-board/references/run.md"
-QA_EARLY="$ROOT/.claude/skills/super-qa/SKILL.md"
 grep -q 'agent-kit worktree add .claude/worktrees/issue-${n}-qa --lane=qa --base=origin/<PR branch>' "$WAVE" \
   && ok "wave: qa arm is detached" || fail "wave qa arm still checks out the issue branch"
 grep -q 'agent-kit worktree add .claude/worktrees/issue-${n}-${lane} issue-${n}-<slug> --lane=${lane}' "$WAVE" \
   && ok "wave: build arm still checks out the issue branch" || fail "wave build arm lost its branch checkout"
 grep -qF "$FF" "$WAVE" && grep -qF "$PUSH" "$WAVE" && ! grep -qF "$OLD" "$WAVE" \
   && ok "wave: qa evidence push is the hook-accepted form" || fail "wave does not name the hook-accepted evidence push"
-grep -qF "$WTL" "$WAVE" && grep -qF "$WTL" "$RUNMD_EARLY" && grep -qF "$WTL" "$QA_EARLY" \
+grep -qF "$WTL" "$WAVE" && grep -qF "$WTL" "$RUNMD" && grep -qF "$WTL" "$QA" \
   && ok "wave/run.md/super-qa: say how to find the build worktree" || fail "a copy lacks the git worktree list pointer"
 grep -qF "$LIT" "$WAVE" && grep -qF 'redirect target' "$WAVE" \
   && ok "wave: qa literal redirect paths" || fail "wave lacks the literal redirect path rule"
 
-RUNMD="$ROOT/.claude/skills/super-board/references/run.md"
-QA="$ROOT/.claude/skills/super-qa/SKILL.md"
 grep -q 'agent-kit worktree add .claude/worktrees/issue-<N>-qa --lane=qa --base=origin/<PR branch>' "$RUNMD" \
   && grep -qF "$FF" "$RUNMD" && grep -qF "$PUSH" "$RUNMD" && ! grep -qF "$OLD" "$RUNMD" \
   && grep -qF "$LIT" "$RUNMD" && grep -qF 'redirect target' "$RUNMD" \
@@ -96,6 +107,16 @@ case "$hint" in
   *"If no worktree holds the PR branch"*) ok "qa hint: a removed build worktree means Block" ;;
   *) fail "qa hint does not say what to do when no worktree holds the PR branch" ;;
 esac
+LSR='git ls-remote origin <PR branch>'
+case "$hint" in
+  *"$LSR"*"do not retry or force"*) ok "qa hint: push must be verified with ls-remote; non-zero or mismatch means Block, no retry or force" ;;
+  *) fail "qa hint lacks the push-verification rule" ;;
+esac
+for pair in "$WAVE|1" "$RUNMD|3" "$QA|3" "$EVID|1"; do
+  f="${pair%%|*}"; need="${pair#*|}"
+  [ "$(grep -oF "$LSR" "$f" | wc -l | tr -d ' ')" -ge "$need" ] && grep -qF 'do not retry or force' "$f" \
+    && ok "$(basename "$f"): push verification stated at each push step" || fail "$(basename "$f") lacks the ls-remote push verification (need $need)"
+done
 for f in "$WAVE" "$RUNMD" "$QA"; do
   grep -qF 'If no worktree holds the PR branch' "$f" && ok "$(basename "$f"): removed build worktree means Block" \
     || fail "$(basename "$f") lacks the removed-build-worktree stop rule"
@@ -157,11 +178,23 @@ if [ "$rc" = 0 ]; then
   (cd "$REPO" && python3 "$WT" add "$REPO/.claude/worktrees/issue-8-qa" --lane=qa --base=origin/$B8 --no-init >/dev/null 2>&1) \
     || fail "setup: issue-8 qa worktree"
   QA8="$REPO/.claude/worktrees/issue-8-qa"
+  B8WT="$REPO/.claude/worktrees/issue-8-build"
+  mkdir -p "$B8WT/.claude/agent-memory" && echo 'keep-me-8' > "$B8WT/.claude/agent-memory/note.txt"
   echo evidence8 > "$QA8/evidence8.txt" && G "$QA8" add evidence8.txt && G "$QA8" commit -qm evidence8
-  G "$REPO/.claude/worktrees/issue-8-build" merge -q --ff-only "$(G "$QA8" rev-parse HEAD)" \
-    && G "$QA8" push -q origin $B8 && [ "$(G "$REPO" rev-parse origin/$B8)" = "$(G "$QA8" rev-parse HEAD)" ] \
-    && ok "hint commands for real: ff in the build worktree, then plain git push origin <PR branch> moves origin" \
-    || fail "ff + plain push of an un-renamed branch did not move origin/$B8"
+  sha8="$(G "$QA8" rev-parse HEAD)"
+  # the two commands come out of the hint text, so a wrong hint fails here
+  ffcmd="${hint#*git -C }"; ffcmd="${ffcmd%% (*}"
+  pushbr="${hint#*then git push origin }"; pushbr="${pushbr%%;*}"
+  ffcmd="${ffcmd//<build worktree>/$B8WT}"; ffcmd="${ffcmd//<sha>/$sha8}"; pushbr="${pushbr//<PR branch>/$B8}"
+  set -- $ffcmd
+  if [ "$pushbr" = "$B8" ] && [ "${2:-}" = merge ] && G "$1" "${@:2}" >/dev/null 2>&1 \
+      && G "$QA8" push -q origin $pushbr \
+      && [ "$(G "$REPO" ls-remote origin $B8 2>/dev/null | cut -f1)" = "$sha8" ] \
+      && [ "$(cat "$B8WT/.claude/agent-memory/note.txt" 2>/dev/null)" = "keep-me-8" ]; then
+    ok "hint commands for real: ff in the build worktree, plain git push origin <PR branch> moves origin, build memory file survives"
+  else
+    fail "the commands taken from the hint did not move origin/$B8 (ff='$ffcmd' push='$pushbr') or lost the build memory file"
+  fi
 fi
 
 
