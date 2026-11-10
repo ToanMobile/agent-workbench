@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { addRepo, removeRepo, setRepoAccount } from '../src/profiles.js';
-import { runPanelAction } from '../src/panel.js';
+import { runPanelAction, buildPanelState } from '../src/panel.js';
 import { processIncomingTelegramUpdates } from '../src/daemon.js';
 
 function setup() {
@@ -97,5 +97,19 @@ test('sendMessage trả lời lệnh ném lỗi không làm mất update sb:ap: 
     const next = await processIncomingTelegramUpdates(updates, { stateDir: s.stateDir, apiCaller });
     assert.equal(next, 3);
     assert.ok(calls.some((c) => c.method === 'answerCallbackQuery'), 'update thứ hai phải được xử lý');
+  } finally { s.cleanup(); }
+});
+
+test('R1 đường đọc: repos.json hỏng ⇒ buildPanelState và cooldown không ném, giữ nguyên byte', async () => {
+  const s = setup();
+  try {
+    const broken = '{"custom":[';
+    const file = path.join(s.stateDir, 'repos.json');
+    fs.writeFileSync(file, broken);
+    const state = await buildPanelState({ stateDir: s.stateDir, sync: false });
+    assert.ok(state);
+    const res = await runPanelAction('cooldown', { minutes: '7' }, { stateDir: s.stateDir, sync: false });
+    assert.equal(res.claudeSwitchCooldownSec, 420);
+    assert.equal(fs.readFileSync(file, 'utf8'), broken);
   } finally { s.cleanup(); }
 });

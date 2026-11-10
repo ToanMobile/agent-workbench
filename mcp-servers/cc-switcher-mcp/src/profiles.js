@@ -833,18 +833,24 @@ function repoRegistryPath(stateDir) {
   return path.join(resolveStateDir(stateDir), REPO_REGISTRY_FILE);
 }
 
-export function loadRepoRegistry(stateDir) {
+// strict=true (addRepo/removeRepo, duong GHI): file hong ⇒ AppError. Mac dinh (duong DOC): roi ve mac dinh + log warn, giu nguyen byte.
+export function loadRepoRegistry(stateDir, { strict = false } = {}) {
   const file = repoRegistryPath(stateDir);
   let raw = {};
   if (fs.existsSync(file)) {
     // repos.json hong: AppError, giu nguyen byte (readJsonSafe -> {} lam addRepo/removeRepo ghi de mat danh sach, #897 R1)
+    const bad = (message, err) => {
+      if (strict) throw new AppError('INVALID_INPUT', message);
+      logStructured('warn', 'repos_registry_unreadable_using_defaults', { file, error: err?.name || 'not_object' });
+      return {};
+    };
     try {
       raw = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch (err) {
-      throw new AppError('INVALID_INPUT', `${file} không phải JSON hợp lệ (${err?.name}), giữ nguyên.`);
+      raw = bad(`${file} không phải JSON hợp lệ (${err?.name}), giữ nguyên.`, err);
     }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      throw new AppError('INVALID_INPUT', `${file} không phải object JSON, giữ nguyên.`);
+      raw = bad(`${file} không phải object JSON, giữ nguyên.`);
     }
   }
   const custom = Array.isArray(raw.custom)
@@ -988,7 +994,7 @@ export function addRepo(opts = {}) {
   if (listKnownRepos(opts).some((r) => r.path === repoPath)) throw new AppError('INVALID_INPUT', 'Repo này đã có trong danh sách.');
   readRepoSettings(repoPath); // settings.local.json hong: AppError TRUOC khi ghi repos.json, khong de repo them do dang (35f6ac7a5a)
 
-  const reg = loadRepoRegistry(opts.stateDir);
+  const reg = loadRepoRegistry(opts.stateDir, { strict: true });
   const base = Array.isArray(opts.repos) && opts.repos.length > 0 ? opts.repos : DEFAULT_REPOS;
   if (reg.hidden.includes(repoPath) && base.some((r) => r.path === repoPath)) {
     reg.hidden = reg.hidden.filter((x) => x !== repoPath); // repo mac dinh tung bi go: hien lai
@@ -1006,7 +1012,7 @@ export function addRepo(opts = {}) {
  */
 export function removeRepo(opts = {}) {
   const repo = findKnownRepo(opts, opts.repoPath);
-  const reg = loadRepoRegistry(opts.stateDir);
+  const reg = loadRepoRegistry(opts.stateDir, { strict: true });
   if (repo.source === 'custom') {
     reg.custom = reg.custom.filter((c) => c.path !== repo.path);
   } else if (!reg.hidden.includes(repo.path)) {
