@@ -782,9 +782,10 @@ DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 25.0)
 DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 15.0)
 # 10/11 (chủ repo): dưới CACHE_PRUNE_GIB, `add` xoá cache build dựng lại được của máy trước khi tạo worktree (Gradle build-cache 20-30 GB
 # làm đĩa còn < 5 GB, runner nghẽn). Chỉ cache mà công cụ tự dựng lại khi thiếu; không đụng dependency đã tải (~/.gradle/caches/modules-2),
-# không đụng /private/tmp (scratchpad của phiên Claude đang chạy nằm ở đó). uv có trên PATH thì `uv cache clean` (chờ khoá của uv).
+# không đụng /private/tmp (scratchpad của phiên Claude đang chạy nằm ở đó), không đụng ~/.cache/uv (môi trường chạy của MCP server `uvx`
+# đang sống nằm trong đó; `uv cache clean` lại chờ khoá của chúng không giới hạn).
 CACHE_PRUNE_GIB = _env_limit("WORKTREE_CACHE_PRUNE_GIB", 25.0)
-PRUNE_CACHE_DIRS = (".gradle/caches/build-cache-1", ".npm/_cacache", "Library/Caches/go-build", ".cache/go-build", ".cache/uv")
+PRUNE_CACHE_DIRS = (".gradle/caches/build-cache-1", ".npm/_cacache", "Library/Caches/go-build", ".cache/go-build")
 NO_ROOM = 4   # add's exit code when it refuses for want of disk: what a hook that creates worktrees tells apart from a usage error
 ADD_LOCK = "devkit-worktree-add.lock"
 ADD_LOCK_WAIT_S = 600.0
@@ -803,16 +804,10 @@ def free_gib(path):
 def _prune_caches():
     """Xoá các cache build dựng lại được dưới HOME (PRUNE_CACHE_DIRS); in từng thư mục đã xoá. Lỗi xoá không chặn `add`, chỉ báo."""
     home = os.path.expanduser("~")
-    uv = shutil.which("uv")
     for rel in PRUNE_CACHE_DIRS:
         p = os.path.join(home, rel)
         if os.path.islink(p) or not os.path.isdir(p):
             continue
-        if rel == ".cache/uv" and uv:
-            r = _run([uv, "cache", "clean"], bounded=False)
-            if r.returncode == 0:
-                print("✔ " + tr("đã tỉa cache: ", "cache pruned: ") + p + " (uv cache clean)")
-                continue
         shutil.rmtree(p, ignore_errors=True)
         print(("✔ " + tr("đã tỉa cache: ", "cache pruned: ") if not os.path.exists(p)
                else "⚠ " + tr("không xoá hết cache: ", "could not delete all of the cache: ")) + p)

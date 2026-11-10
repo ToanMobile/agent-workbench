@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sàn đĩa có tỉa cache: dưới WORKTREE_CACHE_PRUNE_GIB (mặc định 25) `worktree add` xoá cache build dựng lại được của máy
-# (~/.gradle/caches/build-cache-1, ~/.npm/_cacache, ~/Library/Caches/go-build, ~/.cache/uv) trước khi tạo worktree; vẫn dưới
+# (~/.gradle/caches/build-cache-1, ~/.npm/_cacache, ~/Library/Caches/go-build); ~/.cache/uv giữ (MCP `uvx` đang chạy từ đó) trước khi tạo worktree; vẫn dưới
 # WORKTREE_DISK_MIN_GIB thì exit 4. Mặc định mới: cảnh báo 25 GiB, sàn 15 GiB. HOME giả: không bao giờ đụng cache thật của máy.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -17,14 +17,14 @@ caches() {
 }
 run() { (cd "$TMP/r" && env HOME="$H" PATH="/usr/bin:/bin" WORKTREE_DISK_WARN_GIB=0 "$@" python3 "$WT" add "$TMP/$N" --no-init > "$TMP/out" 2>&1); }
 
-# 1 dưới ngưỡng tỉa: 4 cache dựng lại được bị xoá, modules-2 (dependency đã tải) giữ, worktree vẫn tạo
+# 1 dưới ngưỡng tỉa: 3 cache dựng lại được bị xoá, modules-2 (dependency đã tải) và uv giữ, worktree vẫn tạo
 caches; N=wt1
 run WORKTREE_CACHE_PRUNE_GIB=100000 WORKTREE_DISK_MIN_GIB=0; rc=$?
-gone=0; for d in .gradle/caches/build-cache-1 .npm/_cacache Library/Caches/go-build .cache/uv; do [ -e "$H/$d" ] || gone=$((gone + 1)); done
-if [ "$rc" = 0 ] && [ "$gone" = 4 ] && [ -f "$H/.gradle/caches/modules-2/blob" ] && [ -d "$TMP/wt1" ] && grep -q "build-cache-1" "$TMP/out"; then
-  ok "dưới ngưỡng tỉa: 4 cache build đã xoá, modules-2 giữ, worktree tạo, có báo"
+gone=0; for d in .gradle/caches/build-cache-1 .npm/_cacache Library/Caches/go-build; do [ -e "$H/$d" ] || gone=$((gone + 1)); done
+if [ "$rc" = 0 ] && [ "$gone" = 3 ] && [ -f "$H/.gradle/caches/modules-2/blob" ] && [ -f "$H/.cache/uv/blob" ] && [ -d "$TMP/wt1" ] && grep -q "build-cache-1" "$TMP/out"; then
+  ok "dưới ngưỡng tỉa: 3 cache build đã xoá, modules-2 và uv giữ, worktree tạo, có báo"
 else
-  fail "tỉa cache: rc=$rc gone=$gone/4: $(cat "$TMP/out")"
+  fail "tỉa cache: rc=$rc gone=$gone/3: $(cat "$TMP/out")"
 fi
 # 2 trên ngưỡng tỉa (0 = tắt): không xoá gì
 rm -rf "$H"; caches; N=wt2
