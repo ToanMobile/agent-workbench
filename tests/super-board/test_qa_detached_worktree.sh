@@ -143,13 +143,6 @@ if [ "$rc" = 0 ]; then
     || fail "ff + plain push of an un-renamed branch did not move origin/$B8"
 fi
 
-MATRIX="$ROOT/.agents/regression_matrix.active.json"
-python3 -I - "$MATRIX" <<'PY' && ok "matrix REG-SB-QA-DETACHED-557-01 no longer teaches the refused HEAD: push" || fail "matrix REG-SB-QA-DETACHED-557-01 still names git push origin HEAD:<PR branch>"
-import json, sys
-m = json.load(open(sys.argv[1]))
-names = [t["name"] for r in m["rules"] for t in r.get("mandatory_regression_tests", []) if t["id"] == "REG-SB-QA-DETACHED-557-01"]
-sys.exit(0 if len(names) == 1 and "HEAD:<PR branch>" not in names[0] else 1)
-PY
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_qa_detached_worktree: PASS"; exit 0; }

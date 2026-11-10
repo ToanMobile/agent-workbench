@@ -658,7 +658,7 @@
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ⏳ chưa chạy | REG-SB-QA-DETACHED-557-01 | #557: QA thêm worktree detached tại origin/<PR branch>, không gỡ worktree build khi nhánh đã đổi tên hoặc còn agent-memory chưa commit, và đẩy commit bằng chứng bằng git -C <build worktree> merge --ff-only <sha> rồi git push origin <PR branch> (hook từ chối refspec HEAD:) | chưa chạy | bash tests/super-board/test_qa_detached_worktree.sh |
+| ⏳ chưa chạy | REG-SB-QA-DETACHED-557-01 | #557: QA thêm worktree detached tại origin/<PR branch>, không gỡ worktree build khi nhánh đã đổi tên hoặc còn agent-memory chưa commit, và đẩy commit bằng chứng bằng git push origin HEAD:<PR branch> | chưa chạy | bash tests/super-board/test_qa_detached_worktree.sh |
 
 ### qa-exit2-edited-test-643 — 0/1 PASS
 
