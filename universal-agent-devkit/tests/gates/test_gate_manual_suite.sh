@@ -58,4 +58,9 @@ run_gate
 if [ "$RC" != 0 ] && ran m; then ok "5: without the flag the suite runs and fails the gate"
 else bad "5: unflagged (exit $RC)"; printf '%s\n' "$OUT" | tail -12; fi
 
+make_repo ',"manual":true'
+run_gate --force-full
+if [ "$RC" = 0 ] && ran ok && ! ran m && printf '%s\n' "$OUT" | grep -q 'MANUAL.*REG-M'; then ok "6: --force-full also skips the manual suite"
+else bad "6: --force-full ran or failed on manual suite (exit $RC)"; printf '%s\n' "$OUT" | tail -12; fi
+
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAILED: $FAILS"; exit 1; }

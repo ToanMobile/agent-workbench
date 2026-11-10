@@ -7317,6 +7317,9 @@ def main():
             for test in rule.get("mandatory_regression_tests", []):
                 if test.get("id") in stale:
                     stale.discard(test.get("id"))
+                    if is_manual_suite(test, args.suite):   # #729: --force-full / --full cũng không chạy suite manual
+                        MANUAL_SKIPPED.append(str(test.get("id") or "?"))
+                        continue
                     regression_tests.append({
                         "component": rule.get("component", "UnknownComponent"), "id": test.get("id"),
                         "name": test.get("name"), "command": test.get("command"),
@@ -7353,6 +7356,9 @@ def main():
                     tid = test.get("id")
                     if not tid or tid in have or tid in added_ids or not test.get("command") or not suite_cacheable(test)[0]:
                         continue
+                    if is_manual_suite(test, args.suite):   # #729
+                        MANUAL_SKIPPED.append(str(tid))
+                        continue
                     if _hs_x is None or _hs_x.classify(test["command"], str(project_dir), rec_x.get(tid),
                                                        device=bool(HARD_DEVICE_SUITE.search(test["command"])))["cls"] not in ("light", "cpu"):
                         continue
@@ -7387,6 +7393,8 @@ def main():
         for rule in rules:
             for test in rule.get("mandatory_regression_tests", []):
                 if test.get("id") in added_set and test["id"] not in have:
+                    if is_manual_suite(test, args.suite):   # #729
+                        continue
                     have.add(test["id"])
                     tail.append({
                         "component": rule.get("component", "UnknownComponent"), "id": test["id"],
