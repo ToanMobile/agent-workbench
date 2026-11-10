@@ -23,6 +23,11 @@ trap 'rm -rf "$TMP"' EXIT
 export DEVKIT_LANG=en
 unset CLAUDE_PROJECT_DIR TARGET_DIR DEVKIT_PROFILE DEVKIT_SKILLS_ALLOWED DEVKIT_AGENTS_EXCLUDED DEVKIT_MCPS_ALLOWED
 
+# The installer adds a server only when its command is on PATH. codebase-memory-mcp is a user-installed binary (CI runners
+# have none): a stub at the END of PATH stands in for it, a real one still wins. The assertions below stay as they are.
+mkdir -p "$TMP/stubbin" && printf '#!/bin/sh\n' > "$TMP/stubbin/codebase-memory-mcp" && chmod +x "$TMP/stubbin/codebase-memory-mcp"
+export PATH="$PATH:$TMP/stubbin"
+
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }

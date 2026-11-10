@@ -49,9 +49,9 @@ s4="$(state "$(probe s1 "$M")")"
 [ "$s4" = none ] && ok "trunk mode off, the session in main: its record does not move the gates (main)" || fail "record followed from main without trunk mode: $s4"
 git -C "$M" config devkit.trunkMode true; s5="$(state "$(probe s1 "$M")")"; git -C "$M" config devkit.trunkMode false
 [ "$s5" != none ] && [ -n "$s5" ] && ok "  … trunk mode on: the record alone (cwd main, no worktree in the payload) moves the gates ($s5)" || fail "record-only trigger: $s5"
-mkdir -p "$TMP/lone" && cp "$DEVKIT_DIR/hooks/regression_gate.sh" "$TMP/lone/"   # a gate with no session_worktree.py beside it
+mkdir -p "$TMP/lone" && cp "$DEVKIT_DIR/hooks/regression_gate.sh" "$TMP/lone/"   # a gate with no session_worktree.py beside it (DEVKIT_ROOT finds post-fix-gate.py: a runner has no installed kit, else state is "nogate")
 lone="$(python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session_id":"s1","cwd":sys.argv[1],"transcript_path":sys.argv[2]}))' "$W" "$TP" \
-  | CLAUDE_PROJECT_DIR="$M" REGRESSION_GATE_PROBE=1 bash "$TMP/lone/regression_gate.sh" 2>"$TMP/lone.err" | tail -1)"
+  | DEVKIT_ROOT="$DEVKIT_DIR" CLAUDE_PROJECT_DIR="$M" REGRESSION_GATE_PROBE=1 bash "$TMP/lone/regression_gate.sh" 2>"$TMP/lone.err" | tail -1)"
 grep -q "could not be resolved" "$TMP/lone.err" && [ "$(state "$lone")" = none ] && ok "a gate whose session_worktree.py is missing says so on stderr (never silent) and falls back to CLAUDE_PROJECT_DIR (main: none), although the record and cwd name the worktree" \
   || fail "missing module (state '$(state "$lone")'): $(head -c 200 "$TMP/lone.err")"   # (the fallback result is asserted too: OCR2 12)
 printf '%s\n' "$TMP/other-wt" > "$M/.claude/audit-gate/session_worktree/s3"; s3="$(state "$(probe s3 "$TMP/other-wt")")"

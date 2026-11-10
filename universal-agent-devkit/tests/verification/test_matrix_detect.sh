@@ -173,6 +173,9 @@ case "$w2" in *"shared/*.kt"*) ok "Groovy includeBuild '../shared' is followed t
 case "$w3" in *"PhoneConnect/"*) fail "commented includeBuild followed: $w3" ;; *) ok "a commented-out includeBuild is ignored" ;; esac
 
 # The regression gate runs only the suite of the module that changed.
+# This case judges WHICH suite the gate picks, not Go itself: a runner without a Go toolchain gets a stub `go` at the END of
+# PATH (a real one wins), so the selected PCConnect suite can exit 0 and the CarConnect assertion stays as strict as before.
+command -v go >/dev/null 2>&1 || { mkdir -p "$TMP/gostub" && printf '#!/bin/sh\nexit 0\n' > "$TMP/gostub/go" && chmod +x "$TMP/gostub/go"; PATH="$PATH:$TMP/gostub"; }
 P="$(proj monogate)"; (cd "$P" && git init -q . && git config user.email t@t && git config user.name t)
 mkdir -p "$P/CarConnect/app/src/main" "$P/CarConnect/app/src/test" "$P/PCConnect"
 printf '#!/bin/sh\necho "CarConnect Gradle ran"; exit 1\n' > "$P/CarConnect/gradlew"; chmod +x "$P/CarConnect/gradlew"

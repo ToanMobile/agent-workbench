@@ -16,6 +16,10 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd -P)"
 WT="$DEVKIT_DIR/scripts/git/worktree.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# Health wants the profile's essential MCPs configured, and the installer adds a server only when its command is on PATH:
+# codebase-memory-mcp is a user-installed binary (CI runners have none), so a stub at the END of PATH stands in (a real one wins).
+mkdir -p "$TMP/stubbin" && printf '#!/bin/sh\n' > "$TMP/stubbin/codebase-memory-mcp" && chmod +x "$TMP/stubbin/codebase-memory-mcp"
+export PATH="$PATH:$TMP/stubbin"
 export DEVKIT_LANG=en
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 G() { git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false "${@:2}"; }

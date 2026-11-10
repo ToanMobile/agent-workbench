@@ -43,11 +43,13 @@ python3 "$DEVKIT_DIR/scripts/governance/devkit_clean.py" "$P" --days=0 --apply >
 
 # Lock: while another writer holds the checklist lock, the gate must not write.
 python3 - "$P" "$DEVKIT_DIR" <<'PY' &
-import sys, time, pathlib
+import os, sys, time, pathlib
 sys.path.insert(0, sys.argv[2] + "/bin"); import regression_checklist as r
 with r.locked(pathlib.Path(sys.argv[1])):
     open(sys.argv[1] + "/.locked", "w").close()
-    time.sleep(3)
+    for _ in range(300):                      # held until the test releases it (a slow runner broke a fixed 3 s hold)
+        if os.path.exists(sys.argv[1] + "/.release"): break
+        time.sleep(0.1)
 PY
 HOLDER=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$P/.locked" ] && break; sleep 0.2; done
@@ -57,7 +59,7 @@ run_gate 99 &
 GATE_PID=$!
 sleep 1.5
 mid="$(python3 -c "import json;print(json.load(open('.agents/regression_status.json'))['items']['REG-CORE']['last']['at'])")"
-wait "$GATE_PID"; wait "$HOLDER"
+touch "$P/.release"; wait "$GATE_PID"; wait "$HOLDER"
 after="$(python3 -c "import json;print(json.load(open('.agents/regression_status.json'))['items']['REG-CORE']['last']['at'])")"
 [ "$mid" = "$before" ] && [ "$after" != "$before" ] && ok "gate waits for the checklist lock, then records" \
   || fail "lock ignored: before=$before mid=$mid after=$after"
