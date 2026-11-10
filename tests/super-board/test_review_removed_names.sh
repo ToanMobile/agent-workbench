@@ -56,6 +56,10 @@ if [ "$n" = 3 ]; then
   case "$OUT" in *"(+2 tên nữa"*) ok "--max-names 2 ⇒ 2 dòng + dòng tóm tắt" ;; *) fail "thiếu dòng tóm tắt: '$OUT'" ;; esac
 else fail "muốn 3 dòng, được $n: '$OUT'"; fi
 
+# 5a. mặc định (không cờ) ≤ 2 dòng tên + 1 dòng tóm tắt (AC2 #980: PR gỡ hàng loạt như #1073 không quá 2 dòng nhiễu)
+run; n="$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')"
+if [ "$n" = 3 ]; then ok "mặc định ⇒ 2 dòng tên + 1 dòng tóm tắt"; else fail "mặc định muốn 3 dòng, được $n: '$OUT'"; fi
+
 # 5b. file diff chạm mà còn sót tên cũ trong chính nó: reviewer thấy ngay trong diff ⇒ không liệt kê (chỉ chỗ dùng ngoài diff)
 branch touched; w dup.txt 'EEE_dup'; git -C "$REPO" commit -qam partial
 run; case "$OUT" in *"EEE_dup"*) fail "liệt kê chỗ dùng trong file diff đã chạm: '$OUT'" ;; *) ok "sót tên cũ trong file diff chạm ⇒ không liệt kê" ;; esac

@@ -57,7 +57,7 @@ def main():
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--head", default="HEAD")
     ap.add_argument("--max-files", type=int, default=12)
-    ap.add_argument("--max-names", type=int, default=3, help="số dòng tối đa (PR gỡ hàng loạt không làm ngập reviewer)")
+    ap.add_argument("--max-names", type=int, default=2, help="số dòng tối đa (PR gỡ hàng loạt không làm ngập reviewer)")
     a = ap.parse_args()
 
     mb = git("merge-base", a.base, a.head).strip()
