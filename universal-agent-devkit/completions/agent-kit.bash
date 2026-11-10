@@ -50,6 +50,9 @@ _agent_kit() {
       esac
       [[ "${cur}" == -* ]] && COMPREPLY=( $(compgen -W "-y -p -a -m -s --lang=en --lang=vi --no-githooks --help" -- "${cur}") ) \
         || COMPREPLY=( $(compgen -d -- "${cur}") ) ;;
+    parity)
+      [[ "${cur}" == -* ]] && COMPREPLY=( $(compgen -W "--fix -t" -- "${cur}") ) \
+        || COMPREPLY=( $(compgen -d -- "${cur}") ) ;;
     gate|postfix|postfix-gate|audit-gate)
       COMPREPLY=( $(compgen -W "--run-tests --staged --json --dry-run --allow-no-tests --timeout --matrix --diff --record-lesson" -- "${cur}") ) ;;
     clean)

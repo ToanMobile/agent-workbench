@@ -12,6 +12,9 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/parity-check.XXXXXX")"
 TMP="$(cd "$TMP" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"; mkdir -p "$HOME"
+# #774: init cài lịch gate-full đêm cho repo có super-board; test không được đụng launchd thật
+export DEVKIT_NO_GATE_SCHEDULE=0 DEVKIT_LAUNCH_AGENTS_DIR="$TMP/la" DEVKIT_GATE_FULL_LOG_DIR="$TMP/gflog" DEVKIT_LAUNCHCTL="$TMP/launchctl-stub"
+printf '#!/bin/sh\necho "$@" >> "%s/launchctl.log"\nexit 0\n' "$TMP" > "$DEVKIT_LAUNCHCTL"; chmod +x "$DEVKIT_LAUNCHCTL"
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -32,6 +35,31 @@ want='{\n  "base_branch": "main",\n  "verify_commands": [\n    "python3 .agents/
 grep -q "^fixed: .claude/super-board/configs/proj.json — removed --auto-approve-tests, --full" "$TMP/i1.out" \
   && ok "init in dòng fixed cho config" || fail "init không in dòng fixed: $(grep -m3 -E 'parity|fixed' "$TMP/i1.out")"
 grep -q "^parity: " "$TMP/i1.out" && ok "init in tổng parity ở cuối" || fail "init không chạy parity: $(tail -3 "$TMP/i1.out")"
+
+# 1b) #774 a: init chép bản super-board của kit vào repo có configs; drift exit 0; file chỉ có ở repo giữ nguyên
+if [ -f "$DEVKIT/../.claude/bin/super-board-drift.py" ]; then
+  python3 "$DEVKIT/../.claude/bin/super-board-drift.py" --source "$DEVKIT/.." --target "$P" > "$TMP/d1.out" 2>&1; rc=$?
+  [ "$rc" -eq 0 ] && ok "init: super-board-drift.py exit 0 sau init" || fail "drift sau init exit $rc: $(head -c 300 "$TMP/d1.out")"
+  grep -q "^fixed: super-board-drift: [0-9]* file" "$TMP/i1.out" && ok "init in dòng fixed cho bản sao super-board" || fail "init không in fixed super-board"
+  echo local > "$P/.claude/bin/super-local-only.sh"
+  echo "# sua tay" >> "$P/.claude/bin/super-board-merge-gate.sh"
+  python3 "$DEVKIT/bin/parity_check.py" "$P" --fix > "$TMP/d2.out" 2>&1
+  python3 "$DEVKIT/../.claude/bin/super-board-drift.py" --source "$DEVKIT/.." --target "$P" > /dev/null 2>&1 && [ "$(cat "$P/.claude/bin/super-local-only.sh")" = local ] \
+    && ok "--fix sửa file lệch, giữ file chỉ có ở repo" || fail "--fix super-board: $(head -3 "$TMP/d2.out")"
+fi
+# 1c) #774 b: init cài lịch gate-full đêm cho repo có super-board, lần hai bỏ qua
+if [ "$(uname)" = Darwin ]; then
+  n1=$(grep -c bootstrap "$TMP/launchctl.log" 2>/dev/null); n1=${n1:-0}
+  ls "$TMP"/la/com.toanmobile.devkit.gate-full.*.plist >/dev/null 2>&1 && ok "init cài plist gate-full" || fail "init không cài plist gate-full"
+  bash "$DEVKIT/bin/gate-full-schedule.sh" status --repo "$P" 2>&1 | grep -q "^plist: $TMP/la/" && ok "gate-full-schedule status báo đã cài" || fail "status không báo đã cài"
+  bash "$DEVKIT/bin/install.sh" -t "$P" -y -p universal --agents=claude --no-githooks -m symlink > "$TMP/i1b.out" 2>&1
+  n2=$(grep -c bootstrap "$TMP/launchctl.log" 2>/dev/null); n2=${n2:-0}
+  [ "$n1" = "$n2" ] && ok "re-init: lịch đã cài thì bỏ qua" || fail "re-init cài lại lịch ($n1 → $n2)"
+fi
+# 1d) #774 c: guard-protected-push đăng ký từ hooks/hooks.json
+grep -q "guard-protected-push.py" "$DEVKIT/hooks/hooks.json" && ok "hooks.json có guard-protected-push" || fail "hooks.json thiếu guard-protected-push"
+grep -q "guard-protected-push.py" "$P/.claude/settings.json" && ok "settings.json sau init có guard-protected-push" || fail "settings.json thiếu guard-protected-push"
+python3 "$DEVKIT/bin/parity_check.py" "$P" 2>&1 | grep -q "hook-missing.*guard-protected-push" && fail "parity báo hook-missing cho guard-protected-push" || ok "parity không báo hook-missing cho guard-protected-push"
 
 # 2) repo vừa cài, không config super-board (không có gì để so bản sao): khớp kit, exit 0
 mv "$P/.claude/super-board" "$TMP/sb-aside"
@@ -70,7 +98,7 @@ python3 "$DEVKIT/bin/parity_check.py" "$Q/app" > "$TMP/q1.out" 2>&1; rc=$?
 printf '{"base_branch":"main","verify_commands":["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --force-full"]}\n' > "$CFG"
 ln -s "$TMP/nowhere" "$P/.claude/hooks/ghost.sh"
 mkdir -p "$TMP/old/universal-agent-devkit/bin" && ln -s "$TMP/old/universal-agent-devkit" "$P/.agents/old-kit"
-rm -f "$P/.claude/hooks/block-dangerous-git.sh" && echo '# ban cu' > "$P/.claude/hooks/block-dangerous-git.sh"
+rm -f "$P/.claude/bin/super-board-merge-gate.sh" "$P/.claude/hooks/block-dangerous-git.sh" && echo '# ban cu' > "$P/.claude/hooks/block-dangerous-git.sh"
 python3 - "$P/.claude/settings.json" <<'PY'
 import json, sys
 p = sys.argv[1]; s = json.load(open(p))
@@ -127,6 +155,11 @@ bash "$DEVKIT/bin/install.sh" -t "$TMP/wt" -y --no-githooks -m symlink > "$TMP/i
 [ "$rc" -eq 0 ] && [ -z "$(git -C "$TMP/wt" status --porcelain -- .claude/super-board)" ] && grep -q "^forbidden-flag: .claude/super-board/configs/proj.json" "$TMP/i3.out" \
   && ok "init vào worktree liên kết: chỉ báo cờ cấm, config đã track không bẩn" \
   || fail "worktree liên kết: exit $rc, $(git -C "$TMP/wt" status --porcelain -- .claude/super-board) $(grep -m2 -E '^(fixed|forbidden)' "$TMP/i3.out")"
+
+# 7) #774 minor: `parity -t <repo>` như health -t; completion có nhánh parity
+python3 "$DEVKIT/bin/parity_check.py" -t "$Q" > "$TMP/t0.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "matches the kit" "$TMP/t0.out" && ok "parity -t <repo> được nhận" || fail "parity -t: exit $rc, $(head -2 "$TMP/t0.out")"
+grep -q "^    parity)" "$DEVKIT/completions/agent-kit.bash" && ok "completion có nhánh đối số cho parity" || fail "completion thiếu nhánh parity"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_parity_check: PASS"; exit 0; } || { echo "test_parity_check: FAIL ($FAILS)"; exit 1; }
