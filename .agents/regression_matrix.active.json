@@ -2298,7 +2298,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-SB-QA-DETACHED-557-01",
-          "name": "#557: QA thêm worktree detached tại origin/<PR branch>, không gỡ worktree build khi nhánh đã đổi tên hoặc còn agent-memory chưa commit, và đẩy commit bằng chứng bằng git push origin HEAD:<PR branch>",
+          "name": "#557: QA thêm worktree detached tại origin/<PR branch>, không gỡ worktree build khi nhánh đã đổi tên hoặc còn agent-memory chưa commit, và đẩy commit bằng chứng bằng git -C <build worktree> merge --ff-only <sha> rồi git push origin <PR branch> (hook từ chối refspec HEAD:)",
           "command": "bash tests/super-board/test_qa_detached_worktree.sh",
           "parallel_safe": true
         }

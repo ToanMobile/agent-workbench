@@ -11,6 +11,7 @@ OLD='git push origin HEAD:<PR branch>'
 LIT='LITERAL path'
 STOP='branch --show-current'
 BLOCK='Block the card'
+WTL='git worktree list'
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
   if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
@@ -47,6 +48,11 @@ case "$hint" in
   *) ok "qa hint does not give the refused HEAD:<PR branch> push" ;;
 esac
 case "$hint" in
+  *"$FF"*"$WTL"*) ok "qa hint: says how to find the build worktree" ;;
+  *"$WTL"*"$FF"*) ok "qa hint: says how to find the build worktree" ;;
+  *) fail "qa hint does not say how to find <build worktree> (git worktree list)" ;;
+esac
+case "$hint" in
   *"$STOP"*"$BLOCK"*) ok "qa hint: renamed branch or failed ff means Block, not push" ;;
   *) fail "qa hint lacks the rename / failed-ff stop rule" ;;
 esac
@@ -60,12 +66,16 @@ case "$hint" in
 esac
 
 WAVE="$ROOT/.claude/workflows/super-board-wave.js"
+RUNMD_EARLY="$ROOT/.claude/skills/super-board/references/run.md"
+QA_EARLY="$ROOT/.claude/skills/super-qa/SKILL.md"
 grep -q 'agent-kit worktree add .claude/worktrees/issue-${n}-qa --lane=qa --base=origin/<PR branch>' "$WAVE" \
   && ok "wave: qa arm is detached" || fail "wave qa arm still checks out the issue branch"
 grep -q 'agent-kit worktree add .claude/worktrees/issue-${n}-${lane} issue-${n}-<slug> --lane=${lane}' "$WAVE" \
   && ok "wave: build arm still checks out the issue branch" || fail "wave build arm lost its branch checkout"
 grep -qF "$FF" "$WAVE" && grep -qF "$PUSH" "$WAVE" && ! grep -qF "$OLD" "$WAVE" \
   && ok "wave: qa evidence push is the hook-accepted form" || fail "wave does not name the hook-accepted evidence push"
+grep -qF "$WTL" "$WAVE" && grep -qF "$WTL" "$RUNMD_EARLY" && grep -qF "$WTL" "$QA_EARLY" \
+  && ok "wave/run.md/super-qa: say how to find the build worktree" || fail "a copy lacks the git worktree list pointer"
 grep -qF "$LIT" "$WAVE" && grep -qF 'redirect target' "$WAVE" \
   && ok "wave: qa literal redirect paths" || fail "wave lacks the literal redirect path rule"
 
@@ -116,15 +126,30 @@ if [ "$rc" = 0 ] && [ -d "$QAWT" ] && [ "$(G "$QAWT" rev-parse HEAD)" = "$origin
 else
   fail "#526/#473: rc=$rc head=$(G "$QAWT" rev-parse HEAD 2>/dev/null) $(tail -3 "$TMP/add.out")"
 fi
+# the hint's real commands, un-renamed branch: ff the local PR branch in the build worktree, then a plain push of <PR branch>
 if [ "$rc" = 0 ]; then
-  echo evidence > "$QAWT/evidence.txt" && G "$QAWT" add evidence.txt && G "$QAWT" commit -qm evidence
-  # #526: the build branch was renamed, so the plain push of <PR branch> does not apply (hint: Block); this step only proves the evidence lands
-  G "$REPO/.claude/worktrees/issue-7-build" merge -q --ff-only "$(G "$QAWT" rev-parse HEAD)" \
-    && G "$QAWT" push -q origin issue-7-slug-renamed:issue-7-slug && [ "$(G "$REPO" rev-parse origin/issue-7-slug)" = "$(G "$QAWT" rev-parse HEAD)" ] \
-    && [ -f "$REPO/.claude/worktrees/issue-7-build/.claude/agent-memory/note.txt" ] \
-    && ok "qa evidence commit pushed to the PR branch; build memory file still there" \
-    || fail "qa evidence push did not land on origin/issue-7-slug"
+  B8=issue-8-slug
+  G "$REPO" checkout -q -b $B8 main && echo pr8 > "$REPO/pr8.txt" && G "$REPO" add pr8.txt && G "$REPO" commit -qm pr8 \
+    && G "$REPO" push -q origin $B8 && G "$REPO" checkout -q main
+  (cd "$REPO" && python3 "$WT" add "$REPO/.claude/worktrees/issue-8-build" $B8 --lane=build --base=origin/main --no-init >/dev/null 2>&1) \
+    || fail "setup: issue-8 build worktree"
+  (cd "$REPO" && python3 "$WT" add "$REPO/.claude/worktrees/issue-8-qa" --lane=qa --base=origin/$B8 --no-init >/dev/null 2>&1) \
+    || fail "setup: issue-8 qa worktree"
+  QA8="$REPO/.claude/worktrees/issue-8-qa"
+  echo evidence8 > "$QA8/evidence8.txt" && G "$QA8" add evidence8.txt && G "$QA8" commit -qm evidence8
+  G "$REPO/.claude/worktrees/issue-8-build" merge -q --ff-only "$(G "$QA8" rev-parse HEAD)" \
+    && G "$QA8" push -q origin $B8 && [ "$(G "$REPO" rev-parse origin/$B8)" = "$(G "$QA8" rev-parse HEAD)" ] \
+    && ok "hint commands for real: ff in the build worktree, then plain git push origin <PR branch> moves origin" \
+    || fail "ff + plain push of an un-renamed branch did not move origin/$B8"
 fi
+
+MATRIX="$ROOT/.agents/regression_matrix.active.json"
+python3 -I - "$MATRIX" <<'PY' && ok "matrix REG-SB-QA-DETACHED-557-01 no longer teaches the refused HEAD: push" || fail "matrix REG-SB-QA-DETACHED-557-01 still names git push origin HEAD:<PR branch>"
+import json, sys
+m = json.load(open(sys.argv[1]))
+names = [t["name"] for r in m["rules"] for t in r.get("mandatory_regression_tests", []) if t["id"] == "REG-SB-QA-DETACHED-557-01"]
+sys.exit(0 if len(names) == 1 and "HEAD:<PR branch>" not in names[0] else 1)
+PY
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_qa_detached_worktree: PASS"; exit 0; }
