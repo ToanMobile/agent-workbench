@@ -364,6 +364,7 @@ count_board() {
   # This tick's column counts. Cards no lane takes (person_count) are left out of Ready and QA for dispatch and the exit test,
   # and counted in WAITING (#95).
   refresh_device_state   # #95: needs-device cards wait while no real device is online
+  READY_HELD_SEEN=""   # #1035: Ready cards ready_card_held kept back this tick are rebuilt by the dispatch scan
   READY=$(column_count "Ready")
   WAITING=$(person_count "Ready")   # #95: Ready cards only a person can move; left out of Ready for dispatch and the exit test
   READY=$((READY - WAITING))
@@ -883,6 +884,7 @@ top_card_in_column() {
       continue
     fi
     if [ "$col" = "Ready" ] && ready_card_held "$issue" "$item_id"; then   # #202
+      case " ${READY_HELD_SEEN:-} " in *" ${issue} "*) ;; *) READY_HELD_SEEN="${READY_HELD_SEEN:-} ${issue}" ;; esac   # #1035: board_only_file_wait
       [ "${SB_READY_TICK:-0}" != 1 ] || PREFLIGHT_SKIP="${PREFLIGHT_SKIP:-} ${issue}"
       continue
     fi
@@ -2186,8 +2188,10 @@ board_only_file_wait() {
   # #556: không có Building/QA/Review, không có Ready mà lane nhận được, và có ít nhất một Ready mang ⏳ hoặc waiting-on.
   # #1035: Ready chờ người (needs-you / human-gated, trừ thẻ quay lại làm việc) cũng là chờ: lane không giao được, chỉ người gỡ.
   [ -n "${PROJECT_ITEMS_JSON:-}" ] || return 1
-  printf '%s' "$PROJECT_ITEMS_JSON" | jq -e "$FOR_A_PERSON_JQ$WAITING_ON_JQ"'
-    def held: waiting_on or file_wait or for_a_person;
+  # #1035 (review): thẻ ready_card_held giữ im lặng (READY_HELD_SEEN, trùng ## Fix) và thẻ held_for_device (DEVICE_JQ) cũng là chờ.
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -e --argjson nodev "$NO_DEVICE" --arg seen "${READY_HELD_SEEN:-}" "$FOR_A_PERSON_JQ$DEVICE_JQ$WAITING_ON_JQ"'
+    ($seen | split(" ") | map(select(length > 0) | tonumber)) as $dups
+    | def held: waiting_on or file_wait or for_a_person or held_for_device("Ready") or ((.content.number // -1) as $n | $dups | index($n) != null);
     ([.items[] | select(.status == "Building" or .status == "QA" or .status == "Review")] | length) == 0
     and ([.items[] | select(.status == "Ready" and (held | not))] | length) == 0
     and ([.items[] | select(.status == "Ready" and held)] | length) > 0
