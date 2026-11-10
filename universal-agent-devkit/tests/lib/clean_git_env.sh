@@ -28,6 +28,8 @@ export GIT_CONFIG_GLOBAL=/dev/null EMAIL="${EMAIL:-devkit-test@localhost}"
 # Host policy a test must not inherit (W1 R5c): on a host under 10 GiB free every `worktree add` would run gc over the test's own
 # fixture siblings, and under 3 GiB refuse. tests/worktree_git/test_worktree_limits.sh sets these itself.
 export WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0
+# 10/11: a test never prunes the host's real build caches (~/.gradle/caches/build-cache-1 ...) under WORKTREE_CACHE_PRUNE_GIB.
+export WORKTREE_CACHE_PRUNE_GIB=0
 # The user's own ~/.antigravity-pm.json must not steer a test: `giaoDefault: true` there makes the prompt hook add the standing "GIAO MẶC ĐỊNH BẬT"
 # order to every prompt it sees (2026-10-14). A test that wants a flag sets this variable itself after sourcing. The path can never hold
 # a file (/dev/null is no directory): the guessable ${TMPDIR:-/tmp}/agpm-test-no-global-config/… it replaces could be created in a shared

@@ -1379,7 +1379,9 @@ worktree_disk_room() {
   # chờ người dọn tay. Dưới sàn lane nào cũng dừng ở bước tạo worktree, nên không nhận thẻ và không mở một phiên claude mỗi tick.
   # Worktree lane đã có (git còn nhận nó: không phải thư mục rỗng sót lại, cũng không phải .git trỏ vào admin dir đã bị prune) thì
   # add --lane dùng lại, không tốn thêm đĩa. Kiểm không được (không DevKit, python lỗi): coi là còn chỗ, nhưng ghi log (OCR 19/10).
-  [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && return 0
+  # 10/11: a reused lane worktree still builds, so it still gets the cache prune (below); it is never refused for the floor.
+  local reuse=0
+  [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && reuse=1
   # Under the floor a full `worktree gc` runs once, then rests 300 s: a gc that freed nothing frees nothing more a tick later, and every
   # lane of every tick ran one (OCR batch 19/10). While it rests only the free space is read, so a disk a person cleans is seen at the
   # next check. DISK_GC_NEXT lives in the runner shell (dispatch_lane is called there, not in a subshell). No knob for the 300 s: an
@@ -1387,12 +1389,20 @@ worktree_disk_room() {
   local rc=0 err now gc=1
   now=$(date +%s)
   [ "$now" -lt "${DISK_GC_NEXT:-0}" ] && gc=0
-  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" "$gc" 2>&1 >/dev/null <<'PY'
+  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" "$gc" "$reuse" 2>&1 >/dev/null <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 free = m.free_gib(sys.argv[3])
+prune = getattr(m, "CACHE_PRUNE_GIB", 0)   # a kit before 10/11 has no cache prune: nothing to do
+if sys.argv[5] == "1" or (free is not None and m.DISK_MIN_GIB and free >= m.DISK_MIN_GIB):
+    # Above the floor (or a reused worktree): only the cache prune, then the same 300 s rest as gc (exit 5 = pruned, room) so a Gradle
+    # build that refills its cache is not cut every tick.
+    if free is not None and prune and free < prune and sys.argv[4] == "1":
+        m._prune_caches()
+        sys.exit(5)
+    sys.exit(0)
 if free is not None and m.DISK_MIN_GIB and free < m.DISK_MIN_GIB:   # gc only when already under the floor: above it the own add of the lane does it
     if sys.argv[4] == "1":
         m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) still under the floor after gc
@@ -1407,6 +1417,7 @@ PY
   esac
   case "$rc" in
     0) ;;
+    5) log "worktree_disk_room: disk under the DevKit cache-prune line: rebuildable build caches pruned" ;;
     4) log "worktree_disk_room: $(printf '%s' "$err" | tail -1 | cut -c1-200)" ;;   # the DevKit's own line: free GiB and the floor
     *) log "⚠ worktree_disk_room: DevKit disk check failed (rc=${rc}: $(printf '%s' "$err" | tail -1 | cut -c1-200)) — assuming room" ;;
   esac
