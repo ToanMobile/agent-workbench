@@ -62,7 +62,10 @@ class WorkloadTest(unittest.TestCase):
         bad = (PS + "  107  5.0  1024  00:00:01 claude \xff\xfe\n").encode("latin-1")  # byte không phải UTF-8
         with mock.patch.object(server.subprocess, "run") as run:
             run.return_value.stdout = bad
-            server.agent_workload()  # không được ném UnicodeDecodeError (làm chết vòng đọc nền)
+            wl = server.agent_workload()  # không được ném UnicodeDecodeError (làm chết vòng đọc nền)
+        g = {x["id"]: x for x in wl["groups"]}
+        self.assertEqual(g["claude"]["count"], 3)  # dòng argv hỏng vẫn được đếm (thay ký tự lỗi), không bị bỏ cả lượt đo
+        self.assertEqual(g["gate"]["count"], 2)  # các nhóm khác không bị ảnh hưởng
 
     def test_no_ps_when_nobody_viewing(self):
         from unittest import mock
