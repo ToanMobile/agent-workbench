@@ -2213,6 +2213,19 @@ def _expand_static_vars(target, cmd):
     return None if unknown or "$" in out or "`" in out else out
 
 
+def _leaf_var_outside_main(target, main, sw):
+    """`target` (a redirect word with `$NAME` / `${NAME}`) names only the FILE through the variable: every `$` sits in the last path
+    component, after an absolute directory without `..` that is not content of main. No substitution, no backtick. ponytail: a value with a
+    slash (`x/../..`) needs a directory of that name already made under the scratch prefix; upgrade to a real expansion if that is seen."""
+    i = target.find("$")
+    if i < 0 or "`" in target or "/" in target[i:] or re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", target):
+        return False   # (the redirect word stops at `(`, so `$(date)` arrives as a bare `$`: only a named variable passes)
+    d = os.path.dirname(target[:i])
+    if not d.startswith("/") or ".." in d.split("/") or "$" in d:
+        return False
+    return not _lands_in_main(d, main, sw)
+
+
 def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
     """trunk_write for one Bash script: what its segments write, then - three levels deep - the scripts it hides from them (_nested_scripts:
     substitutions, echo / printf / cat-heredoc piped to a shell or interpreter, a here-string). A script that cannot be tokenised counts as a
@@ -2262,9 +2275,12 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
         if kind not in ("redirect", "file"):
             continue
         if "$" in t or "`" in t:
+            raw_t = t
             t = _expand_static_vars(t, cmd)
             if t is None and loose:   # cwd không phải repo: `> "$TMPDIR/x"` không phải ghi vào main (review #427 vòng 2)
                 continue
+            if t is None and _leaf_var_outside_main(raw_t, main, sw):
+                continue   # `>/tmp/q-$t.log`: the variable only names the file, inside an absolute directory that is not main
             if t is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
                 return True
         try:
