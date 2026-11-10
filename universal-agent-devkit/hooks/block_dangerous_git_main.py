@@ -102,6 +102,8 @@ ABBREV = {
     "gc": ("--prune", ""),
     "worktree": ("--force", ""),
     "update-ref": ("--stdin", ""),
+    "symbolic-ref": ("--delete", "--short --quiet --recurse --no-recurse"),
+    "remote": ("--delete --no-auto", "--auto --verbose"),
 }
 
 def expand_abbrev(sub, args):
@@ -258,10 +260,15 @@ def danger_in_git(sub, args):
     # legitimately and stay allowed; `remote set-head <r> --auto` re-reads the remote's truth and stays allowed too.
     if sub == "update-ref" and any(p.startswith("refs/remotes/") for p in pos):
         return "update-ref ghi refs/remotes/* giả ref đã landed (dùng git fetch)"
-    if sub == "remote" and pos[:1] == ["set-head"] and not (long_ & {"--auto"} or "a" in short):
-        return "remote set-head đổi/xoá origin/HEAD giả nhánh trunk đã landed (chỉ cho --auto)"
-    if sub == "symbolic-ref" and pos[:1] and pos[0].startswith("refs/remotes/") and (len(pos) >= 2 or "d" in short or "--delete" in long_):
-        return "symbolic-ref ghi refs/remotes/* giả ref đã landed"
+    if sub == "remote" and pos[:1] == ["set-head"]:
+        auto = any(len(l) >= 4 and "--auto".startswith(l) for l in long_) or "a" in short   # git accepts --au, --aut
+        if not auto or long_ & {"--no-auto", "--delete"} or "d" in short:
+            return "remote set-head đổi/xoá origin/HEAD giả nhánh trunk đã landed (chỉ cho --auto)"
+    if sub == "symbolic-ref":
+        pos = drop_redirects(pos)   # `2>/dev/null` is a shell redirect, not a ref
+        writes = len(pos) >= 2 or "d" in short or "m" in short or "--delete" in long_
+        if writes and any(p.startswith("refs/remotes/") for p in pos):
+            return "symbolic-ref ghi refs/remotes/* giả ref đã landed"
     if sub == "config":
         reason = config_write_danger(args)
         if reason:
