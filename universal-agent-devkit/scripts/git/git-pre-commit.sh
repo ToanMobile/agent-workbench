@@ -42,7 +42,10 @@ command -v python3 >/dev/null 2>&1 \
 # Gate speed v26 item 2: no suite at commit unless asked (the task gate and merge gate run them).
 export DEVKIT_PRECOMMIT_TESTS="${DEVKIT_PRECOMMIT_TESTS:-0}"
 # #828: a pathspec commit runs this hook on a temp index; suite_env drops GIT_INDEX_FILE, so hand it to agent-health under its own name.
-[ -z "${GIT_INDEX_FILE:-}" ] || export DEVKIT_PRECOMMIT_INDEX="$(cd "$(dirname "$GIT_INDEX_FILE")" 2>/dev/null && pwd -P)/$(basename "$GIT_INDEX_FILE")"
+unset DEVKIT_PRECOMMIT_INDEX   # R3: never inherit a stale value from the caller
+if [ -n "${GIT_INDEX_FILE:-}" ] && _idir="$(cd "$(dirname "$GIT_INDEX_FILE")" 2>/dev/null && pwd -P)"; then
+  export DEVKIT_PRECOMMIT_INDEX="$_idir/$(basename "$GIT_INDEX_FILE")"
+fi
 OUT="$(CLAUDE_PROJECT_DIR="$ROOT" python3 "$DEVKIT_ROOT/bin/post-fix-gate.py" --staged --json 2>&1)"
 RC=$?
 LAST="$(printf '%s\n' "$OUT" | tail -n 1)"

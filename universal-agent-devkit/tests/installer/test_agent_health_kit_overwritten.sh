@@ -64,6 +64,18 @@ echo "$out" | grep -E "$RED" | grep -q 'hooks/guard-protected-push.py' && ok "a 
 out="$(DEVKIT_PRECOMMIT_INDEX="$TMP/elsewhere/x.lock" health)"
 echo "$out" | grep -E "$RED" | grep -q 'capture_3d_proof.py' && ok "an index path outside this kit's git dir is ignored" \
   || fail "an index path outside this kit's git dir was trusted"
+# R1: a missing index path, or a symlink to one inside the git dir, must not hide the stray edit (#462 kept)
+out="$(DEVKIT_PRECOMMIT_INDEX="$GD/no-such-index.lock" health)"
+echo "$out" | grep -E "$RED" | grep -q 'hooks/guard-protected-push.py' && ok "a missing temp index is ignored (R1)" \
+  || fail "a missing temp index hid the stray edit (R1)"
+ln -s "$GD/index" "$GD/next-index-link.lock"
+out="$(DEVKIT_PRECOMMIT_INDEX="$GD/next-index-link.lock" health)"
+echo "$out" | grep -E "$RED" | grep -q 'capture_3d_proof.py' && ok "a symlinked temp index is ignored (R1)" \
+  || fail "a symlinked temp index was trusted (R1)"
+rm -f "$GD/next-index-link.lock"
+# R3: the pre-commit hook clears an inherited value before exporting its own
+grep -q 'unset DEVKIT_PRECOMMIT_INDEX' "$K/scripts/git/git-pre-commit.sh" && ok "pre-commit clears an inherited DEVKIT_PRECOMMIT_INDEX (R3)" \
+  || fail "pre-commit keeps an inherited DEVKIT_PRECOMMIT_INDEX (R3)"
 rm -f "$TMPIDX"
 (cd "$K" && git checkout -q -- scripts/testing/capture_3d_proof.py hooks/guard-protected-push.py)
 
