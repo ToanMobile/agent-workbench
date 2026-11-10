@@ -64,7 +64,8 @@ within() {  # within <label> <budget ms> "<cpu> <wall>"
 }
 
 python3 -c 'import json; print(json.dumps({"prompt": "App bị crash khi mở màn hình bản đồ lần thứ hai", "session_id": "b", "transcript_path": "/nonexistent/claude-tr.jsonl"}))' > "$TMP/prompt.json"
-within "prompt hook with bug capture" 110 "$(STDIN_FILE="$TMP/prompt.json" median_ms bash "$DEVKIT_DIR/hooks/prompt_context.sh")"
+PROMPT_BUDGET=110; [ -n "${GITHUB_ACTIONS:-}" ] && PROMPT_BUDGET=250   # shared CI runner: measured 205 ms CPU there (#781), the dev machine stays at 110
+within "prompt hook with bug capture" "$PROMPT_BUDGET" "$(STDIN_FILE="$TMP/prompt.json" median_ms bash "$DEVKIT_DIR/hooks/prompt_context.sh")"
 echo '{}' > "$TMP/empty.json"
 within "SessionStart with STALE check" 2000 "$(STDIN_FILE="$TMP/empty.json" median_ms bash "$DEVKIT_DIR/hooks/session_context.sh")"
 python3 - "$P" <<'PY'
