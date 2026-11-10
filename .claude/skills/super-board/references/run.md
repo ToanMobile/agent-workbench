@@ -438,7 +438,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
 4. Re-run full test suite for the ticket.
 5. Save evidence to `runs/issue-<N>-qa-v<N+1>/`.
 6. Commit + push. Verify ALL `[qa]` threads are resolved.
-7. Update `ac`, `history`, `status`; post `[qa] [report]` PR + issue comments. Move QA → Review. Clean up worktree.
+7. Update `ac`, `history`, `status`; post `[qa] [report]` PR + issue comments. The first line ends with `@ <sha>` of the PR head QA ran on (#979, writing-standard.md § 4): the merge gate pins on it and a stale one sends the card back here. Move QA → Review. Clean up worktree.
 
 ### Reviewer
 
@@ -589,6 +589,8 @@ at once, default 3; the queue lock is never held while a verify waits for a slot
      0 → merged; continue to step 4
      2 → verify failed on a branch BEHIND the base (the gate says "stale against <base>")
           → **rebase pass** (see below)
+     11 + every printed reason is `qa-report: stale: …` (#979: QA is behind the head, nothing else wrong)
+          → card Review → QA, no `loop:rebuild-N`, no Build round; QA re-runs on the head and writes `@ <sha>` on the first line
      11 → verify failed on a branch NOT behind the base: a rebase changes nothing.
           Open a `[builder]` thread quoting the gate's "verify failed (exit N: …)" line
           and the log tail, move the card Review → Ready with `loop:rebuild-N` (NOT
