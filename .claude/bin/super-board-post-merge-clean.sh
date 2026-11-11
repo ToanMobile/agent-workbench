@@ -448,6 +448,34 @@ if [ "$DRY" -eq 0 ] && [ "$MIN_INTERVAL" -gt 0 ] && [ -n "$STAMP" ] && [ -f "$ST
   since=$(( $(date +%s) - last ))
   [ "$since" -ge 0 ] && [ "$since" -lt "$MIN_INTERVAL" ] && exit 0
 fi
+# sweep_scratch: 10/11 — merge gate / merge train bị SIGKILL (trap EXIT không chạy) để lại .merge-scratch-XXXXXX / .train-scratch-XXXXXX
+# kèm bản clone Library Unity, hàng GB, không ai dọn. Chỉ đúng tên mktemp (6 ký tự: .merge-scratch-keep-pr* là bản giữ có chủ ý, gate tự
+# xoay vòng 2 bản), cũ hơn SB_SCRATCH_MAX_AGE_S (mặc định 7200 s: gate dài nhất ~30 phút), không tiến trình nào có cwd trong đó hay nhắc
+# đường dẫn trên dòng lệnh (gate còn sống). Scratch là của gate (merge PR + base dựng lại được từ GitHub): không cần luật không-mất-việc
+# của kit, gỡ như chính trap cleanup của gate (unlock, remove --force, rm -rf) rồi `git worktree prune`. Chỉ cục bộ: chạy cả khi
+# GitHub hỏng hay board halt, một lần mỗi lượt sweep (trước khi exec lấy khoá, cờ SB_SWEEP_LOCKED chặn lần thứ hai).
+sweep_scratch() {
+  local home="$REPO_PATH/.claude/worktrees" max="${SB_SCRATCH_MAX_AGE_S:-7200}" d cwds args n=0
+  case "$max" in ''|*[!0-9]*) max=7200 ;; esac
+  [ -d "$home" ] && [ ! -L "$home" ] && [ ! -L "$REPO_PATH/.claude" ] || return 0
+  cwds=$(lsof -w -a -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'); args=$(ps -axo args= 2>/dev/null)
+  for d in "$home"/.merge-scratch-?????? "$home"/.train-scratch-??????; do
+    [ -d "$d" ] && [ ! -L "$d" ] || continue
+    [[ "${d##*/}" =~ ^\.(merge|train)-scratch-[A-Za-z0-9]{6}$ ]] || continue
+    [ -n "$(find "$d" -maxdepth 0 -mmin +$((max / 60)) 2>/dev/null)" ] || continue
+    if printf '%s\n' "$cwds" | grep -qF -- "$d" || printf '%s\n' "$args" | grep -qF -- "$d"; then
+      echo "kept $d: a live process still uses it" >&2; continue
+    fi
+    if [ "$DRY" -eq 1 ]; then echo "would remove orphan scratch $d" >&2; continue; fi
+    chflags -R nouchg,nouappnd "$d" 2>/dev/null || true   # bản clone Library Unity giữ cờ uchg (INSTINCT-038): rm -rf không xoá được
+    git -C "$REPO_PATH" worktree unlock "$d" 2>/dev/null || true
+    git -C "$REPO_PATH" worktree remove --force "$d" 2>/dev/null || true
+    rm -rf "$d" 2>/dev/null || true
+    if [ -e "$d" ]; then echo "kept $d: could not delete it all" >&2; else echo "removed orphan scratch $d" >&2; n=$((n + 1)); fi
+  done
+  [ "$n" -eq 0 ] || git -C "$REPO_PATH" worktree prune 2>/dev/null || true
+}
+[ -n "${SB_SWEEP_LOCKED:-}" ] || sweep_scratch
 GH_READ="$(cd "$(dirname "$0")" && pwd)/super-board-github-read.py"
 if [ -f "$GH_READ" ] && ! SB_REPO_PATH="$REPO_PATH" python3 "$GH_READ" --check >/dev/null 2>&1; then
   echo "sweep skipped: GitHub reads are halted for this board (super-board-github-read.py --check)" >&2; exit 0
