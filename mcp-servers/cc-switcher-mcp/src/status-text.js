@@ -4,7 +4,7 @@ import { panelUrl, BACKUP_ORDER } from './panel.js';
 /** Cau bao dung ly do khong lay duoc quota; refresh token con thi KHONG can dang nhap lai. */
 export function quotaIssueText(reason, mismatch, idle = false) {
   if (reason === 'wrong_account') return `Sai tài khoản: thư mục đang đăng nhập ${mismatch?.actual || '?'}, cần ${mismatch?.expected || '?'} — bấm "Đăng nhập lại" trên trang cc-switcher`;
-  if (reason === 'token_expired' && idle) return 'Chưa dùng gần đây nên token đã hết hạn (bình thường). Bấm "Đăng nhập lại" khi muốn chuyển sang tài khoản này';
+  if (reason === 'token_expired' && idle) return 'Chưa dùng gần đây nên token đã hết hạn (bình thường). Mở claude với thư mục này hoặc bấm "Đăng nhập lại" khi muốn chuyển sang tài khoản này';
   if (reason === 'token_expired') return 'Token hết hạn — bấm "Đăng nhập lại" trên trang cc-switcher (hoặc chạy claude auth login với thư mục này)';
   if (reason === 'throttled') return 'Endpoint quota đang giới hạn (429), sẽ thử lại sau';
   if (reason === 'network') return 'Lỗi mạng khi lấy quota, sẽ thử lại sau';

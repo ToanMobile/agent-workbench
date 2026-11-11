@@ -28,6 +28,12 @@
      **locality**. Ask the shape question the diff raises: does this land behind a
      small interface, or does it widen one? Apply the deletion test to anything the
      diff adds that looks shallow.
+   - **Removed names (#980):** run `python3 .claude/bin/super-review-removed-names.py --base origin/<base>` once on the head.
+     It prints each identifier (function, rule id, constant, deleted/renamed file) that the diff's `-` lines drop and that
+     files the diff did not touch still use. Read the list: a use that is now wrong is a **Gap** finding (old PR #650 renamed
+     `REG-DK-ALL-01` and left it in merge-gate, merge-train, gate_speed_report: 3 follow-up cards). Empty output = nothing to
+     check; a line whose use is still correct is `No issue`. This reads outside the diff on purpose, and only for names the
+     diff removed.
    - Scope is the diff, **never the whole codebase**. A hot spot three modules away
      is not this PR's problem.
    - Check app-specific conventions from the nearest `CLAUDE.md` / `AGENTS.md`, especially:
