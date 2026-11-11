@@ -99,6 +99,9 @@ def segments(command):
 
     while i < len(command):
         c = command[i]
+        if c == "\\" and quote != "'" and command[i + 1:i + 2] == "\n":   # `\<newline>` is a line continuation (#880)
+            i += 2
+            continue
         if quote:
             if c == quote:
                 quote = None
@@ -139,8 +142,11 @@ def program(tokens):
     """tokens from the program word on: after VAR=, keywords (if/then/do/!/{), redirects, env with its options and
     assignments, and wrappers (sudo, command, nohup, nice, timeout, time, …) — shell_norm.prefix_end."""
     if shell_norm is not None:
-        tokens = shell_norm.inline_script(tokens)
-        return tokens[shell_norm.prefix_end(tokens):]
+        try:
+            tokens = shell_norm.inline_script(tokens)
+            return tokens[shell_norm.prefix_end(tokens):]
+        except RecursionError:   # >= ~990 `env -S` words: read the plain program, never fail open (#880)
+            return bare_program(tokens)
     return bare_program(tokens)
 
 
@@ -236,7 +242,7 @@ def protected_branches(project_dir):
     names = {"main", "master"}
     for p in glob.glob(os.path.join(project_dir, ".claude", "super-board", "configs", "*.json")):
         try:
-            fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))   # a FIFO never hangs the hook
+            fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)   # a FIFO never hangs the hook
             with os.fdopen(fd, "rb") as fh:
                 if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
                     continue
