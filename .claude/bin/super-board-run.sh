@@ -1362,7 +1362,7 @@ lane_worktree_hint() {
   local cmd
   case "$1" in
     review) cmd="agent-kit worktree add .claude/worktrees/issue-$2-review --lane=review --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>)" ;;
-    qa) cmd="agent-kit worktree add .claude/worktrees/issue-$2-qa --lane=qa --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>; push a QA evidence commit with git push origin HEAD:<PR branch>. The build worktree keeps the branch: do not remove it)" ;;
+    qa) cmd="agent-kit worktree add .claude/worktrees/issue-$2-qa --lane=qa --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>; push a QA evidence commit in two forms the DevKit hook accepts (it refuses a HEAD:<PR branch> refspec from a detached worktree). <sha> is the QA worktree HEAD sha: record it with git rev-parse HEAD right after you commit the evidence there and before any git switch (a switch moves HEAD to the branch tip, so a sha read afterwards is the old tip and the evidence commit is lost). Find the worktree that holds the PR branch with git worktree list. A worktree holds it: fast-forward it there, git -C <build worktree> merge --ff-only <sha> (its own command, check the exit code), then git push origin <PR branch>. None holds it (the build worktree was removed, or its branch was renamed): in the QA worktree run git switch <PR branch> (checks out the local branch, or creates it from origin), then git merge --ff-only <sha>, then git push origin <PR branch>, each as its own command. If any command exits non-zero, or after the push git ls-remote origin <PR branch> is not <sha>, do not retry or force: Block the card naming it. The build worktree keeps the branch: do not remove it. Write test output to a LITERAL path (>/tmp/qa-<repo>-$2-<file>.log, the repo name, issue number and test file name keep parallel QA runs apart), never a shell variable in a redirect target (the trunk-mode guard refuses it): run the test once per file or pipe the output instead of looping with a variable log name.)" ;;
     *) cmd="agent-kit worktree add .claude/worktrees/issue-$2-$1 issue-$2-<slug> --lane=$1 --base=origin/<config.base_branch> (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused)" ;;
   esac
   # #557: QA không checkout nhánh nên không được bảo gỡ worktree build. Build và review giữ nguyên câu Exit 1.
@@ -1379,7 +1379,9 @@ worktree_disk_room() {
   # chờ người dọn tay. Dưới sàn lane nào cũng dừng ở bước tạo worktree, nên không nhận thẻ và không mở một phiên claude mỗi tick.
   # Worktree lane đã có (git còn nhận nó: không phải thư mục rỗng sót lại, cũng không phải .git trỏ vào admin dir đã bị prune) thì
   # add --lane dùng lại, không tốn thêm đĩa. Kiểm không được (không DevKit, python lỗi): coi là còn chỗ, nhưng ghi log (OCR 19/10).
-  [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && return 0
+  # 10/11: a reused lane worktree still builds, so it still gets the cache prune (below); it is never refused for the floor.
+  local reuse=0
+  [ -e "$1/.git" ] && git -C "$1" rev-parse --git-dir >/dev/null 2>&1 && reuse=1
   # Under the floor a full `worktree gc` runs once, then rests 300 s: a gc that freed nothing frees nothing more a tick later, and every
   # lane of every tick ran one (OCR batch 19/10). While it rests only the free space is read, so a disk a person cleans is seen at the
   # next check. DISK_GC_NEXT lives in the runner shell (dispatch_lane is called there, not in a subshell). No knob for the 300 s: an
@@ -1387,12 +1389,20 @@ worktree_disk_room() {
   local rc=0 err now gc=1
   now=$(date +%s)
   [ "$now" -lt "${DISK_GC_NEXT:-0}" ] && gc=0
-  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" "$gc" 2>&1 >/dev/null <<'PY'
+  err=$(python3 - "$REPO_ROOT/.agents/devkit/scripts/git/worktree.py" "$REPO_ROOT" "$1" "$gc" "$reuse" 2>&1 >/dev/null <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 free = m.free_gib(sys.argv[3])
+prune = getattr(m, "CACHE_PRUNE_GIB", 0)   # a kit before 10/11 has no cache prune: nothing to do
+if sys.argv[5] == "1" or (free is not None and m.DISK_MIN_GIB and free >= m.DISK_MIN_GIB):
+    # Above the floor (or a reused worktree): only the cache prune, then the same 300 s rest as gc (exit 5 = pruned, room) so a Gradle
+    # build that refills its cache is not cut every tick.
+    if free is not None and prune and free < prune and sys.argv[4] == "1":
+        m._prune_caches()
+        sys.exit(5)
+    sys.exit(0)
 if free is not None and m.DISK_MIN_GIB and free < m.DISK_MIN_GIB:   # gc only when already under the floor: above it the own add of the lane does it
     if sys.argv[4] == "1":
         m._make_room(sys.argv[2], sys.argv[3])   # SystemExit(NO_ROOM=4) still under the floor after gc
@@ -1407,6 +1417,7 @@ PY
   esac
   case "$rc" in
     0) ;;
+    5) log "worktree_disk_room: disk under the DevKit cache-prune line: rebuildable build caches pruned" ;;
     4) log "worktree_disk_room: $(printf '%s' "$err" | tail -1 | cut -c1-200)" ;;   # the DevKit's own line: free GiB and the floor
     *) log "⚠ worktree_disk_room: DevKit disk check failed (rc=${rc}: $(printf '%s' "$err" | tail -1 | cut -c1-200)) — assuming room" ;;
   esac
@@ -2363,8 +2374,13 @@ print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED
   # #393: a worker that moved its card to Blocked (hold, sequence, too big) ended on purpose, not by a crash. The cache predates
   # that move, so ask the board once (a rare path). Unreadable: keep counting it.
   # #465: a QA worker that passed its card to Review or closed it (Done) in under 120 s finished its job the same way.
+  # #1032: any quick exit that moved the card off the column its lane works ended with a verdict, not a crash: qa-fail sends a built
+  # card QA → Ready, a Reviewer bounce sends Review → Ready/QA, a Builder hands Building → QA/Review. A QA worker that took the card
+  # from Ready (a qa-labelled card) and left it there never started (its lane moves it to QA first), so that one keeps counting; the
+  # lock's FROM_COL decides, not the board cache (empty or card missing there would fail open). FROM_COL unknown: keep counting.
   case "${LANE:-}:$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" status "$1" 2>/dev/null || true)" in
-    *:Blocked | *:Done | qa:Review) return 0 ;;
+    *:Blocked | *:Done | qa:Review | build:QA | build:Review | review:Ready | review:QA) return 0 ;;
+    qa:Ready) [ "${FROM_COL:-}" = QA ] && return 0 ;;
   esac
   now=$(date +%s)
   f=$(early_death_file "$1")

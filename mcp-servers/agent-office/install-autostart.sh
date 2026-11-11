@@ -16,6 +16,12 @@ chmod 700 "$HOME/.agent-office" "$APP"
 FACTORY="$(cd "$SRC/../.." && pwd)/ai-factory.sh"
 # Trang /cc-switcher gọi CLI JSON của cc-switcher-mcp ở repo thật (không chép vào bản chạy).
 CC_SWITCHER="$(cd "$SRC/.." && pwd)/cc-switcher-mcp/bin/cc-switcher-mcp.js"
+# Chạy từ worktree thì trỏ về checkout chính (worktree bị gỡ thì đường dẫn không còn, trang trả 503).
+GIT_COMMON="$(git -C "$SRC" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [ -n "$GIT_COMMON" ]; then
+  MAIN_CCS="$(dirname "$GIT_COMMON")/mcp-servers/cc-switcher-mcp/bin/cc-switcher-mcp.js"
+  [ -f "$MAIN_CCS" ] && CC_SWITCHER="$MAIN_CCS"
+fi
 "$PY" - "$PLIST" "$LABEL" "$PY" "$APP" "$HOME" "$FACTORY" "$CC_SWITCHER" <<'PYEOF'
 import plistlib, sys
 path, label, py, app, home, factory, cc_switcher = sys.argv[1:8]

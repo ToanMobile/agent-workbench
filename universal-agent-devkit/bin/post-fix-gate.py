@@ -2561,6 +2561,25 @@ def matrix_additions(base, current):
     return None if added_rules is None else [t["id"] for rule in added_rules for t in rule["mandatory_regression_tests"]]
 
 
+def _without_manual(matrix):
+    """#729: the matrix with the `manual` key dropped from every suite — what is left must be identical for a flag-only edit."""
+    if not isinstance(matrix, dict):
+        return matrix
+    rules = []
+    for rule in matrix.get("rules") or []:
+        if isinstance(rule, dict) and isinstance(rule.get("mandatory_regression_tests"), list):
+            rule = {**rule, "mandatory_regression_tests": [
+                {k: v for k, v in t.items() if k != "manual"} if isinstance(t, dict) else t for t in rule["mandatory_regression_tests"]]}
+        rules.append(rule)
+    return {**matrix, "rules": rules}
+
+
+def is_manual_suite(test, wanted=()):
+    """#729: a suite flagged `"manual": true` (real hardware, e.g. GeelyEx2 REG-QC-05) never runs in an automatic gate run; it runs only
+    when asked for by id (--suite)."""
+    return isinstance(test, dict) and test.get("manual") is True and test.get("id") not in set(wanted or ())
+
+
 def trust_additive_matrix(matrix, problem, matrix_path, base_ref: str):
     """(matrix, problem, added ids). Ma trận bị sửa so với base_ref mà chỉ THÊM rule (matrix_additions) thì gate chạy ma trận của thay đổi và
     không còn là việc của người review — với điều kiện mọi test thêm chạy XANH trong chính lượt này (main ép chạy chúng và kiểm lại trước
@@ -2581,6 +2600,10 @@ def trust_additive_matrix(matrix, problem, matrix_path, base_ref: str):
         cur = json.loads(current.decode("utf-8", errors="replace"))
     except ValueError:
         return matrix, problem, []
+    if base == matrix and cur != base and _without_manual(cur) == _without_manual(base):
+        # #729: only the `manual` flag of an existing suite changed (same ids, same commands): not a matrix_problem. The gate then runs
+        # the current matrix, which skips those suites and reports them as MANUAL.
+        return cur, None, []
     added = matrix_additions(base, cur)
     if not added or base != matrix:
         return matrix, problem, []
@@ -6856,6 +6879,9 @@ def main():
                              "reaches or a graph error adds the [core-smoke] group; only --full / --force-full asked for explicitly run in full. "
                              "A PASS writes scoped_pass.json, which merge, push and XONG accept for that tree. Build/QA/merge/push use it; "
                              "--full belongs to the gate-full skill (by hand or the 00:00 launchd job)")
+    parser.add_argument("--suite", action="append", default=[], metavar="ID",
+                        help="#729: also run this matrix suite although it is flagged \"manual\": true (repeatable). Without it a manual "
+                             "suite is skipped in every automatic run (gate, merge gate, --full) and reported as MANUAL")
     parser.add_argument("--dry-run", action="store_true", help="Only list impacted tests, do not run them (default without --run-tests; never PASS)")
     parser.add_argument("--brief", action="store_true",
                         help="Print only the verdict block, errors (✖) and failing suites with their output tail; "
@@ -7243,6 +7269,7 @@ def main():
     impacted_components = []
     regression_tests = []
     immutable_guards_protected = []
+    MANUAL_SKIPPED = []   # #729: suites flagged "manual": true that this run leaves out
 
     covers = checklist_covers()
     KEYS, KEYED_IDS = {}, set()   # P2: id(suite) → (khoá chính xác, khoá cả cây); suite PASS theo khoá
@@ -7285,6 +7312,9 @@ def main():
             continue
         impacted_components.append(comp_name)
         for test in rule.get("mandatory_regression_tests", []):
+            if is_manual_suite(test, args.suite):
+                MANUAL_SKIPPED.append(str(test.get("id") or "?"))
+                continue
             if test.get("id") == KIT_ROW_ID and not scoped_turn:
                 continue
             regression_tests.append({
@@ -7363,6 +7393,8 @@ def main():
                   + f"{RESET}")
         args.core_touched = list(scoped.get("core_touched") or [])
         for comp, test in added:
+            if is_manual_suite(test, args.suite):
+                continue
             regression_tests.append({
                 "component": comp, "id": test.get("id"), "name": test.get("name"), "command": test.get("command"),
                 "impacted_command": test.get("impacted_command"), "files": [], "untested_exit": test.get("untested_exit"),
@@ -7463,6 +7495,9 @@ def main():
             for test in rule.get("mandatory_regression_tests", []):
                 if test.get("id") in stale:
                     stale.discard(test.get("id"))
+                    if is_manual_suite(test, args.suite):   # #729: --force-full / --full cũng không chạy suite manual
+                        MANUAL_SKIPPED.append(str(test.get("id") or "?"))
+                        continue
                     regression_tests.append({
                         "component": rule.get("component", "UnknownComponent"), "id": test.get("id"),
                         "name": test.get("name"), "command": test.get("command"),
@@ -7499,6 +7534,9 @@ def main():
                     tid = test.get("id")
                     if not tid or tid in have or tid in added_ids or not test.get("command") or not suite_cacheable(test)[0]:
                         continue
+                    if is_manual_suite(test, args.suite):   # #729
+                        MANUAL_SKIPPED.append(str(tid))
+                        continue
                     if _hs_x is None or _hs_x.classify(test["command"], str(project_dir), rec_x.get(tid),
                                                        device=bool(HARD_DEVICE_SUITE.search(test["command"])))["cls"] not in ("light", "cpu"):
                         continue
@@ -7533,6 +7571,8 @@ def main():
         for rule in rules:
             for test in rule.get("mandatory_regression_tests", []):
                 if test.get("id") in added_set and test["id"] not in have:
+                    if is_manual_suite(test, args.suite):   # #729
+                        continue
                     have.add(test["id"])
                     tail.append({
                         "component": rule.get("component", "UnknownComponent"), "id": test["id"],
@@ -7557,6 +7597,9 @@ def main():
     if not rules:
         log_warn(tr("Không tìm thấy regression matrix (hoặc matrix rỗng) — không đánh giá được TIA",
                     "No regression matrix found (or it is empty) — TIA cannot be evaluated"))
+    if MANUAL_SKIPPED:
+        print(f"  • MANUAL ({len(set(MANUAL_SKIPPED))}): {', '.join(dict.fromkeys(MANUAL_SKIPPED))} — "
+              + tr("suite chạy tay, bỏ qua lượt tự động (chạy bằng --suite <id>)", "manual suite, skipped in automatic runs (run it with --suite <id>)"))
     if impacted_components:
         print(f"  • {tr('Component liên đới', 'Impacted components')}: {BOLD}{', '.join(dict.fromkeys(impacted_components))}{RESET}\n")
     else:
