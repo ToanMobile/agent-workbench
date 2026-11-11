@@ -40,7 +40,7 @@ fi
 
 # Một test source helper rồi chạy verify bọc heavy slot: phải chạy ngay, không đợi slot của máy.
 rc=0
-( . "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"; python3 "$SLOT_BIN" --nonblock -- true ) || rc=$?
+( _dk="$ROOT/universal-agent-devkit"; [ -d "$_dk" ] || _dk="$ROOT/.agents/devkit"; . "$_dk/tests/lib/clean_git_env.sh"; python3 "$SLOT_BIN" --nonblock -- true ) || rc=$?
 if [ "$rc" -eq 0 ]; then
   ok "a test that sources clean_git_env.sh runs without the machine's heavy slots"
 else

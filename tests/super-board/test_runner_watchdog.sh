@@ -817,6 +817,7 @@ st=$( ( cd "$R" && run_env bash "$BIN/super-board-watchdog.sh" status t ) 2>&1 )
 
 # ── 9. super_board_all.py stop gọi stop.sh cả khi runner đã chết (để marker luôn được ghi) ──────────────────────────
 SBA="$ROOT/universal-agent-devkit/scripts/governance/super_board_all.py"
+[ -f "$SBA" ] || SBA="$ROOT/.agents/devkit/scripts/governance/super_board_all.py"
 if [ -f "$SBA" ]; then
   mkdir -p "$TMP/all/.claude/bin"
   printf '#!/usr/bin/env bash\necho "stop $*" >> "%s"\n' "$TMP/all.calls" > "$TMP/all/.claude/bin/super-board-stop.sh"
