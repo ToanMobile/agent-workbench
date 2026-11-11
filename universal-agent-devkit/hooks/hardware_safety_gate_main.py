@@ -1713,7 +1713,8 @@ def rm_var_command(toks, i, cwds, env, depth, feed, remote, implied):
                 return None
             vals = [env.get(a or b) for a, b in parts]   # $X$Y: the words joined when all known, else rm
             names.append("".join(vals) if all(v is not None and "$" not in v for v in vals) else "rm")
-            guess.add(names[-1]) if names[-1] == "rm" and not all(v is not None and "$" not in v for v in vals) else None
+            if names[-1] == "rm" and not all(v is not None and "$" not in v for v in vals):
+                guess.add("rm")
         else:
             known = env.get(m.group(1) or m.group(2))
             names.append(known if known is not None and "$" not in known else "rm")
@@ -1735,11 +1736,17 @@ def rm_var_command(toks, i, cwds, env, depth, feed, remote, implied):
                 continue
             # (R15) a relative operand before the risky one (`$TAR -rf a.tar ~/x`) means this is no bare `rm -rf <outside>`
             # ponytail: `$X -rf build ~` stays allowed (one relative word hides it), upgrade when a real case shows
-            if any(not a.startswith(("-", "/", "~", "$", "..")) for a in args):
+            # (R18) two or more operands is tar/cp/mv-shaped (`"$CP" -rf "$SRC" "$DST"`), not one `rm -rf <outside>`
+            operands = [a for a in args if not a.startswith("-")]
+            if len(operands) >= 2 or any(not a.startswith(("-", "/", "~", "$", "..")) for a in args):
                 continue
         pre = toks[:i]   # (R9) the prefix (xargs and its options, NAME=VAL) stays: `xargs $X -rf ~` is xargs rm -rf ~
         # (R13) each reading runs on its own copy of env: a candidate that may not run (${CMD:-export} with CMD=true) must not rewrite it
+        # (R16) likewise MKDIRS: a mkdir that may not run must not make `cp -R` sources look created
+        saved_mkdirs = set(MKDIRS)
         why = rm_command_problem(pre + words + args, len(pre), cwds, dict(env), depth, feed, remote, implied)
+        MKDIRS.clear()
+        MKDIRS.update(saved_mkdirs)
         if why:
             return why
     return None
@@ -2447,21 +2454,10 @@ def cut_text_heredocs(text, work):
     out.append(text[pos:])
     return "".join(out)
 
-# (#830) ANDROID_SERIAL=X as a statement of its own (export ANDROID_SERIAL=X; ANDROID_SERIAL=X && …): the next adb inherits it
-# (R4) a value may be dynamic ($(…), ${…}, $VAR, quoted): read whole, "$" in it makes the target unknown (fail closed); export / declare -x
-# may carry other assignments first; then / do / else start a statement too
-EXPORT_SERIAL = re.compile(
-    r"(?:^|[;&|(){\n]|\b(?:then|do|else)\b)[ \t]*(?:(?:export|declare[ \t]+-x|typeset[ \t]+-x)[ \t]+(?:\w+=\S*[ \t]+)*)?"
-    r"ANDROID_SERIAL=((?:[^\s;&|()$\x22\x27]|\$\([^)]*\)|\$\{[^}]*\}|\$\w+|\x22[^\x22]*\x22|\x27[^\x27]*\x27)*)"
-    r"(?=[ \t]*(?:$|;|&|\||\)|\n))", re.M)
-CASE_PATTERN = re.compile(r"^\(?[^()]*\)$")   # `x)` of a case branch, as shlex returns it
-
-def shlex_value(v):
-    try:
-        w = shlex.split(v)
-        return w[0] if len(w) == 1 else v
-    except ValueError:
-        return v
+# (R17) no `=` in a case pattern: `ANDROID_SERIAL="a)"` is an assignment, never a case branch
+CASE_PATTERN = re.compile(r"^\(?[^()=]*\)$")   # `x)` of a case branch, as shlex returns it
+# (R18) ${ANDROID_SERIAL:-word}: the session serial (judged on its own) or word
+SERIAL_DEFAULT = re.compile(r"\$\{ANDROID_SERIAL:?-([\w.:-]+)\}")
 
 def exported_serials(toks):
     """(R7) ANDROID_SERIAL values a statement sets for the commands after it: `[export|declare -x|typeset -x] [NAME=v …] ANDROID_SERIAL=X`
@@ -2470,7 +2466,7 @@ def exported_serials(toks):
     k = 0
     if toks[:1] == ["case"] and "in" in toks:
         k = toks.index("in") + 1
-    if k < len(toks) and k and CASE_PATTERN.match(toks[k]) or (k < len(toks) and CASE_PATTERN.match(toks[k]) and toks[k].endswith(")")):
+    if k < len(toks) and CASE_PATTERN.match(toks[k]):
         k += 1
     while k < len(toks) and (toks[k].lstrip("({") in SHELL_LEAD or toks[k].lstrip("({") in ("", "!")):
         k += 1
@@ -2482,7 +2478,8 @@ def exported_serials(toks):
     while k < len(toks) and re.match(r"^[A-Za-z_]\w*=", toks[k].lstrip("({")):
         name, v = toks[k].lstrip("({").split("=", 1)
         if name == "ANDROID_SERIAL":
-            vals.append(v)
+            d = SERIAL_DEFAULT.fullmatch(v)
+            vals.append(d.group(1) if d else v)
         k += 1
     return vals if k >= len(toks) or toks[k].startswith(")") else []
 

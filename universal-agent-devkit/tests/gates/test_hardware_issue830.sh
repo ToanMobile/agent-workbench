@@ -188,6 +188,18 @@ check 2 '$UNKNOWN -rf -- ~'
 # R15: đối số tương đối (tên tar) đứng trước: không phải rm ra ngoài dự án
 check 0 '"$TAR" -rf a.tar ~/x'
 
+echo "— vòng 4 (reviewer R16–R18)"
+# R16: ứng viên ${CMD:-mkdir} không được ghi bẩn MKDIRS toàn cục (cp -R từ nguồn đó vẫn là cây có thật)
+check 2 'CMD=true; ${CMD:-mkdir} /tmp/nonexistent_830_a && cp -R /tmp/nonexistent_830_a build/o && rm -rf build/o/x'
+check 2 'X=echo; ${X-mkdir} nope_src && cp -R nope_src build/o && rm -rf build/o/'
+# R17: token gán ANDROID_SERIAL="…)" không phải nhánh case: không bị nuốt
+check 2 'ANDROID_SERIAL="$X;y)" adb reboot' ANDROID_SERIAL=emulator-5554
+check 2 'ANDROID_SERIAL="$(echo R58PHONE01))" adb reboot' ANDROID_SERIAL=emulator-5554
+# R18: không chặn nhầm so với main
+check 0 'export ANDROID_SERIAL="${ANDROID_SERIAL:-emulator-5554}"; adb shell ls' ANDROID_SERIAL=emulator-5554
+check 0 '"$TAR" -rf /tmp/a.tar ~/x'
+check 0 '"$CP" -rf "$SRC" "$DST"'
+
 # adb giả chỉ được hỏi get-serialno: lệnh thật (reboot, shell, wait-for-device …) không bao giờ chạy
 if grep -v 'get-serialno$' "$ADB_FAKE_LOG" | grep -q .; then
   fail "hook chạy adb ngoài get-serialno: $(grep -v 'get-serialno$' "$ADB_FAKE_LOG" | head -3 | tr '\n' ';')"
