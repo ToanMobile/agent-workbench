@@ -725,11 +725,26 @@ if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && [ -f "$DEVKIT_ROOT/bin/parity_check.py
   _par_gd="$(git -C "$TARGET_DIR" rev-parse --absolute-git-dir 2>/dev/null)" || true
   _par_cd="$(git -C "$TARGET_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || true
   [ "$_par_gd" = "$_par_cd" ] || _par_fix=""
+  [ -n "$_par_fix" ] || echo "  - $(L "Worktree liên kết: --fix của parity bị bỏ qua có chủ ý (chỉ báo, không sửa file đã track)" "Linked worktree: parity --fix is skipped on purpose (report only, tracked files are not edited)")"
   _par_out="$(python3 "$DEVKIT_ROOT/bin/parity_check.py" "$TARGET_DIR" $_par_fix 2>&1)" || true
   printf '%s\n' "$_par_out" | grep '^fixed: ' || true
   printf '%s\n' "$_par_out" | grep -v '^fixed: \|^parity: ' | head -10 || true
   printf '%s\n' "$_par_out" | grep '^parity: ' || true
   if printf '%s\n' "$_par_out" | grep -q '^parity: .* deviation'; then
     echo "  - $(L "Danh sách đủ" "Full list"): agent-kit parity $TARGET_DIR"
+  fi
+
+  # 9. Lịch gate-full đêm (#774): repo có super-board (configs) ở main checkout, macOS, chưa có lịch ⇒ cài; đã có ⇒ bỏ qua. Lỗi chỉ báo.
+  #    Không ở worktree liên kết: lịch neo vào worktree sẽ chạy script đã mất. DEVKIT_NO_GATE_SCHEDULE=1 tắt.
+  if [ -n "$_par_fix" ] && [ "$(uname)" = Darwin ] && [ "${DEVKIT_NO_GATE_SCHEDULE:-0}" != 1 ] \
+     && [ -d "$TARGET_DIR/.claude/super-board/configs" ] && [ -f "$DEVKIT_ROOT/bin/gate-full-schedule.sh" ]; then
+    _gf_st="$(bash "$DEVKIT_ROOT/bin/gate-full-schedule.sh" status --repo "$TARGET_DIR" 2>/dev/null || true)"   # không `| grep -q`: SIGPIPE + pipefail
+    if printf '%s\n' "$_gf_st" | grep '^plist: /' >/dev/null; then
+      echo "  - $(L "Lịch gate-full đêm đã có, bỏ qua" "Nightly gate-full schedule already installed, skipped")"
+    elif _gf_out="$(bash "$DEVKIT_ROOT/bin/gate-full-schedule.sh" install --repo "$TARGET_DIR" 2>&1)"; then
+      printf '%s\n' "$_gf_out" | head -2
+    else
+      echo "  ! $(L "Không cài được lịch gate-full đêm" "Could not install the nightly gate-full schedule"): $(printf '%s' "$_gf_out" | tail -1)"
+    fi
   fi
 fi

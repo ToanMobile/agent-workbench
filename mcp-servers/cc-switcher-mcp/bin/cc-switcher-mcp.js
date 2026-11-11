@@ -30,7 +30,13 @@ function argValue(name) {
 if (argv.includes('--panel-json') || argv.includes('--panel-action')) {
   const { buildPanelState, runPanelAction } = await import('../src/panel.js');
   const stateDir = argValue('--state-dir');
-  const print = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
+  // --state-dir thieu gia tri / rong / la co khac: khong roi ve ~/.cc-switch that (#897)
+  if (argv.includes('--state-dir') && (!stateDir || stateDir.startsWith('--'))) {
+    process.stdout.write(`${JSON.stringify({ ok: false, code: 'INVALID_INPUT', error: '--state-dir thiếu giá trị.' })}\n`);
+    process.exit(2);
+  }
+  // exit sau khi stdout xa het: pipe macOS cat o 64 KiB neu exit ngay sau write (#897)
+  const print = (obj) => new Promise((resolve) => process.stdout.write(`${JSON.stringify(obj)}\n`, resolve));
   try {
     if (argv.includes('--panel-action')) {
       const action = argValue('--panel-action');
@@ -45,9 +51,9 @@ if (argv.includes('--panel-json') || argv.includes('--panel-action')) {
       };
       const result = await runPanelAction(action, params, { stateDir });
       const state = await buildPanelState({ stateDir, sync: false });
-      print({ ...result, state });
+      await print({ ...result, state });
     } else {
-      print(await buildPanelState({
+      await print(await buildPanelState({
         stateDir,
         sync: !argv.includes('--no-sync'),
         forceRefresh: argv.includes('--refresh'),
@@ -55,7 +61,7 @@ if (argv.includes('--panel-json') || argv.includes('--panel-action')) {
     }
     process.exit(0);
   } catch (err) {
-    print({ ok: false, code: err?.code || 'INTERNAL_ERROR', error: err?.message || String(err) });
+    await print({ ok: false, code: err?.code || 'INTERNAL_ERROR', error: err?.message || String(err) });
     process.exit(err?.code === 'INVALID_INPUT' || err?.code === 'PROFILE_NOT_FOUND' ? 2 : 1);
   }
 }
