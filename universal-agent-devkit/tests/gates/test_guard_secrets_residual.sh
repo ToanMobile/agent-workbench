@@ -98,5 +98,19 @@ for body, want in (("cat " + " ".join(["{" * 4096] * 16), None),
         assert '"permissionDecision": "deny"' in p.stdout, p.stdout
 PY
 
+# R4/R5 (#873 review round 2): the two brace caps (256 results, 4096-char word) used to drop the unchecked rest and ALLOW a
+# brace-spelled dotenv name. Hitting a cap is hostile input: deny, like the shared budget (INSTINCT-044).
+python3 - "$GUARD" <<'PY' && ok "brace caps (256 results / 4096-char word) deny instead of skipping the rest" || fail "a brace cap let a brace-spelled dotenv name through"
+import json, subprocess, sys
+def verdict(body):
+    p = subprocess.run([sys.executable, sys.argv[1]], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": body}}),
+                       capture_output=True, text=True, timeout=30)
+    return "deny" if '"permissionDecision": "deny"' in p.stdout else "allow"
+name = ".e{n,n}v"
+assert verdict("cat " + name + "{1,2}" * 9) == "deny", "over 256 results"
+assert verdict("cat " + name + "A" * 5000) == "deny", "word over 4096 chars"
+assert verdict("cat a{1,2}" * 1 + " x{3,4}") == "allow", "everyday brace stays allowed"
+PY
+
 if [ "$FAILS" -ne 0 ]; then echo "guard_secrets_residual: $FAILS FAILED"; exit 1; fi
 echo "guard_secrets_residual: all checks passed"

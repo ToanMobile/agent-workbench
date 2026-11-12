@@ -309,10 +309,15 @@ def _decode_ansi_c(text):
 
 
 def _brace_expand(word, budget):
-    """Bounded brace expansion of one word ({a,b} comma lists; ${ is not a brace). Too long a word is returned as is.
-    budget = [chars left] shared by the whole command: every pass over a word spends len(word); empty -> _BraceBudget."""
-    out, todo = [], ([word] if len(word) <= BRACE_MAX_LEN else [])
-    while todo and len(out) < BRACE_MAX_OUT:
+    """Bounded brace expansion of one word ({a,b} comma lists; ${ is not a brace).
+    budget = [chars left] shared by the whole command: every pass over a word spends len(word); empty -> _BraceBudget.
+    A word over BRACE_MAX_LEN or more than BRACE_MAX_OUT results is hostile too: _BraceBudget (never skip the unchecked rest)."""
+    if len(word) > BRACE_MAX_LEN:
+        raise _BraceBudget
+    out, todo = [], [word]
+    while todo:
+        if len(out) >= BRACE_MAX_OUT:
+            raise _BraceBudget
         w = todo.pop()
         budget[0] -= len(w)
         if budget[0] < 0:
@@ -342,7 +347,7 @@ def _brace_expand(word, budget):
         cuts.append(j)
         for a, b in zip(cuts, cuts[1:]):
             todo.append(w[:i] + w[a + 1:b] + w[j + 1:])
-    return out or [word]
+    return out
 
 
 def _glob_matches_secret(pat):
