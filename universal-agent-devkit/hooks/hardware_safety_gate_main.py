@@ -1689,6 +1689,68 @@ def moves_cwd(text, cwds, remote, depth=0):
         seg = []
     return False
 
+RM_VAR_DEFAULT = re.compile(r"\$\{(\w+):?[-=]([\w./+-]*)\}")
+RM_OPTION = re.compile(r"-[rRfiIvdPx]+|--|--(?:recursive|force|interactive|verbose|dir|one-file-system|preserve-root|no-preserve-root)")
+RM_VAR_PLAIN = re.compile(r"\$(\w+)|\$\{(\w+)\}")
+
+def rm_var_command(toks, i, cwds, env, depth, feed, remote, implied):
+    """(#845) toks[i] is a variable that holds the command name. Read as every word it may be: ${x:-word} / ${x-word} the literal
+    word (the variable may be unset, or hold what the env knows); $X / ${X} what the command assigned it (X=word; $X ...), and
+    as rm when unknown: `$CMD -rf <home>` is refused like the rm it may be, `$CMD -la` is not (rm without -r removes no tree).
+    Each reading is judged as the command it spells (X="rm -rf" splits into two words)."""
+    w = toks[i].strip("\x22\x27")
+    names, guess, m = [], set(), RM_VAR_DEFAULT.fullmatch(w)
+    if m:
+        names.append(m.group(2))
+        known = env.get(m.group(1))
+        if known is not None:
+            names.append(known)
+    else:
+        m = RM_VAR_PLAIN.fullmatch(w)
+        if not m:
+            parts = re.findall(r"\$(\w+)|\$\{(\w+)\}", w) if re.fullmatch(r"(?:\$\w+|\$\{\w+\}){2,}", w) else None
+            if not parts:
+                return None
+            vals = [env.get(a or b) for a, b in parts]   # $X$Y: the words joined when all known, else rm
+            names.append("".join(vals) if all(v is not None and "$" not in v for v in vals) else "rm")
+            if names[-1] == "rm" and not all(v is not None and "$" not in v for v in vals):
+                guess.add("rm")
+        else:
+            known = env.get(m.group(1) or m.group(2))
+            names.append(known if known is not None and "$" not in known else "rm")
+            if known is None or "$" in known:
+                guess.add("rm")
+    known_names = {n for n in names if n not in guess}
+    for name in dict.fromkeys(names):
+        try:
+            words = shlex.split(name)
+        except ValueError:
+            words = [name]
+        if not words or "$" in words[0]:
+            continue
+        args = toks[i + 1:]
+        if name in guess and name not in known_names:
+            # (R9) a guess, not a known name: the command is judged as rm only when every option is one rm has ($PYTHON -m pytest -rA
+            # is not rm); only what leaves the project (/, ~, $VAR, ..) is judged: `$TAR -rf a.tar .` is not a deletion of the project
+            if any(a.startswith("-") and not RM_OPTION.fullmatch(a) for a in args):
+                continue
+            # (R15) a relative operand before the risky one (`$TAR -rf a.tar ~/x`) means this is no bare `rm -rf <outside>`
+            # ponytail: `$X -rf build ~` stays allowed (one relative word hides it), upgrade when a real case shows
+            # (R18) two or more operands is tar/cp/mv-shaped (`"$CP" -rf "$SRC" "$DST"`), not one `rm -rf <outside>`
+            operands = [a for a in args if not a.startswith("-")]
+            if len(operands) >= 2 or any(not a.startswith(("-", "/", "~", "$", "..")) for a in args):
+                continue
+        pre = toks[:i]   # (R9) the prefix (xargs and its options, NAME=VAL) stays: `xargs $X -rf ~` is xargs rm -rf ~
+        # (R13) each reading runs on its own copy of env: a candidate that may not run (${CMD:-export} with CMD=true) must not rewrite it
+        # (R16) likewise MKDIRS: a mkdir that may not run must not make `cp -R` sources look created
+        saved_mkdirs = set(MKDIRS)
+        why = rm_command_problem(pre + words + args, len(pre), cwds, dict(env), depth, feed, remote, implied)
+        MKDIRS.clear()
+        MKDIRS.update(saved_mkdirs)
+        if why:
+            return why
+    return None
+
 def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
     """rm_segment_problem for the program at toks[i]; toks[:i] is its prefix (NAME=VAL words for this command, xargs and its
     options)."""
@@ -1713,6 +1775,10 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         k += 1
     if i >= len(toks) or decl_effect(toks[i], toks[i + 1:], env):
         return None
+    if "$" in toks[i]:   # (#845) the command NAME comes from a variable: $X, ${X}, ${x:-word}, ${x-word}
+        why = rm_var_command(toks, i, cwds, env, depth, feed, remote, implied)
+        if why:
+            return why
     prog, rest = os.path.basename(toks[i]), toks[i + 1:]
     if GLOB.search(prog) and _fnm("rm", prog.lower()):
         prog = "rm"
@@ -2388,9 +2454,38 @@ def cut_text_heredocs(text, work):
     out.append(text[pos:])
     return "".join(out)
 
-def adb_calls(text, strict=True):
+# (R17) no `=` in a case pattern: `ANDROID_SERIAL="a)"` is an assignment, never a case branch
+CASE_PATTERN = re.compile(r"^\(?[^()=]*\)$")   # `x)` of a case branch, as shlex returns it
+# (R18) ${ANDROID_SERIAL:-word}: the session serial (judged on its own) or word
+SERIAL_DEFAULT = re.compile(r"\$\{ANDROID_SERIAL:?-([\w.:-]+)\}")
+
+def exported_serials(toks):
+    """(R7) ANDROID_SERIAL values a statement sets for the commands after it: `[export|declare -x|typeset -x] [NAME=v …] ANDROID_SERIAL=X`
+    taken from the words of one quote-aware segment (the text of a quoted search pattern, heredoc body or comment is one word of
+    another command and never reaches here). A bare assignment counts like an export, as before (conservative)."""
+    k = 0
+    if toks[:1] == ["case"] and "in" in toks:
+        k = toks.index("in") + 1
+    if k < len(toks) and CASE_PATTERN.match(toks[k]):
+        k += 1
+    while k < len(toks) and (toks[k].lstrip("({") in SHELL_LEAD or toks[k].lstrip("({") in ("", "!")):
+        k += 1
+    if k < len(toks) and toks[k].lstrip("({") in ("export", "declare", "typeset"):
+        k += 1
+        while k < len(toks) and re.match(r"^-\w+$", toks[k]):
+            k += 1
+    vals = []
+    while k < len(toks) and re.match(r"^[A-Za-z_]\w*=", toks[k].lstrip("({")):
+        name, v = toks[k].lstrip("({").split("=", 1)
+        if name == "ANDROID_SERIAL":
+            d = SERIAL_DEFAULT.fullmatch(v)
+            vals.append(d.group(1) if d else v)
+        k += 1
+    return vals if k >= len(toks) or toks[k].startswith(")") else []
+
+def adb_calls(text, strict=True, inherited=()):
     """(adb executable token, selection options, subcommand, ANDROID_SERIAL, words after
-    the subcommand, strict) per adb call."""
+    the subcommand, strict, waited) per adb call; waited: adb wait-for-* came before the subcommand (#830)."""
     # (02/11, r31adb2) Hai cách đọc. Bản cắt thô (strict False) cắt ở ; & | xuống dòng $( \x60 cả TRONG nháy, như trước #829:
     # mẫu tìm kiếm rg / grep -E / git grep / sed có chữ adb -s "" reboot|adb -t thành "lệnh adb". Bản này giữ đúng ngữ nghĩa
     # trước #829 (device_violation, target_serial với strict False): không lỏng hơn, không chặn thêm lệnh nào bản cũ cho qua.
@@ -2413,6 +2508,8 @@ def adb_calls(text, strict=True):
             except ValueError:
                 continue   # máy quét đọc nháy khác shell: bản cắt thô dưới đây vẫn xét segment này
         work += [b for b in bodies if "adb" in b]
+    # (R7, R8) values exported by the quote-aware statements, plus those the calling shell command already exported (bash -c / su body)
+    exported = list(dict.fromkeys([v for toks, _st in readings for v in exported_serials(toks)] + list(inherited))) if strict else []
     for seg in re.split(r"[;&|\n]+|\$\(|`", text):
         try:
             readings.append((shlex.split(seg), False))
@@ -2421,26 +2518,35 @@ def adb_calls(text, strict=True):
     for toks, st in readings:   # st: cách đọc của segment này; lệnh của bash -c / su trong nó đọc theo cùng cách
         toks = shell_norm.inline_script(toks)   # sudo -s STR, env -S STR
         env_serial = os.environ.get("ANDROID_SERIAL", "")
+        own_serial = False
         # Only the word in command position (after VAR=… and sudo/env/timeout N …):
         # `grep adb notes.txt` is not an adb call.
         i = 0
+        # (#830) case x in x) adb …;; esac: `case WORD in`, then the pattern `x)` / `b)` come before the command (a segment of
+        # `case $1 in a|b) …` starts at the last pattern word)
+        if st:
+            if toks[:1] == ["case"] and "in" in toks:
+                i = toks.index("in") + 1
+            if i < len(toks) and CASE_PATTERN.match(toks[i]):
+                i += 1
         while i < len(toks) and (re.match(r"^\w+=", toks[i]) or toks[i] in ADB_WRAPPERS or toks[i] in SHELL_LEAD
                                  or (i > 0 and toks[i - 1] in ADB_WRAPPERS and re.match(r"^(-\S*|\d+\w?)$", toks[i]))):
             if toks[i].startswith("ANDROID_SERIAL="):
                 env_serial = toks[i].split("=", 1)[1]
+                own_serial = True
             i += 1
         i = max(i, prefix_end(toks, True))   # (15/10, OCR) a wrapper option VALUE before a shell / su: sudo -u me bash -lc "adb …"
         if i < len(toks) and os.path.basename(toks[i]) in ("bash", "sh", "zsh") and "-c" in toks[i:]:
             k = toks.index("-c", i)
             if k + 1 < len(toks):
-                yield from adb_calls(toks[k + 1], st)
+                yield from adb_calls(toks[k + 1], st, exported)
             continue
         # (14/10, W3) the script of a shell or su in any spelling (bash -lc, su -c, su USER CMD …): shell_norm
         prog0 = os.path.basename(toks[i]) if i < len(toks) else ""
         ran = (shell_norm.su_command(toks[i + 1:]) if prog0 == "su"
                else ("script", shell_norm.shell_script(toks[i + 1:])) if prog0 in shell_norm.SHELLS else None)
         if ran and ran[1]:
-            yield from adb_calls(ran[1] if ran[0] == "script" else " ".join(shlex.quote(w) for w in ran[1]), st)
+            yield from adb_calls(ran[1] if ran[0] == "script" else " ".join(shlex.quote(w) for w in ran[1]), st, exported)
             continue
         if i < len(toks) and os.path.basename(toks[i].lstrip("(")) not in ("adb", "adb.exe"):
             j = prefix_end(toks, True)   # (2026-10-13) a wrapper option value before adb: sudo -u me adb -s X …
@@ -2458,11 +2564,19 @@ def adb_calls(text, strict=True):
                 opts += toks[j:j + 2]; j += 2
             else:
                 opts.append(toks[j]); j += 1
-        while j < len(toks) and re.fullmatch(r"wait-for-[\w-]+", toks[j]):   # adb wait-for-device remount
+        waited = False
+        while j < len(toks) and re.fullmatch(r"wait-for-[\w-]+", toks[j]):   # adb wait-for-device, then the command
             j += 1
+            waited = True
         # (01/11, r31adb) xargs chạy adb mà chưa có subcommand (xargs adb -s): tuỳ chọn và subcommand đến từ stdin
         from_stdin = st and j >= len(toks) and any(os.path.basename(t) == "xargs" for t in toks[:i])
-        yield toks[i], opts, (toks[j] if j < len(toks) else ("$(" if from_stdin else "")), env_serial, toks[j + 1:], st
+        sub = toks[j] if j < len(toks) else ("$(" if from_stdin else "")
+        # (#830) export ANDROID_SERIAL=X; adb …: an own ANDROID_SERIAL=… before adb wins; else every value the command exports
+        # (any order, so a later one or one in a branch is not missed) is the serial of this call, instead of the session's
+        # (R8) the session's own ANDROID_SERIAL stays one of the targets (a later export may sit in a branch that never runs)
+        envs = [env_serial] if own_serial or not st or not exported else list(dict.fromkeys([env_serial] + exported))
+        for env_serial in envs:
+            yield toks[i], opts, sub, env_serial, toks[j + 1:], st, waited
 
 def sdk_adb():
     """adb the way mobile-mcp finds it: ANDROID_HOME / ANDROID_SDK_ROOT, also from the
@@ -2570,7 +2684,34 @@ def target_serial(exe, opts, env_serial, lits=None, strict=True):
     except (OSError, subprocess.SubprocessError):
         return None, "adb get-serialno không trả lời"
     s = r.stdout.strip()
-    return (s, None) if r.returncode == 0 and s and s != "unknown" else (None, None)
+    if r.returncode == 0 and s and s != "unknown":
+        return (s, None)
+    # (#830) ANDROID_SERIAL=X names the device even when adb cannot answer now (a Wi-Fi device not connected yet): judged by X
+    # (R10) only when no option picked the device: -s "" / -d / -e / -t decide by themselves, the session's serial is not theirs
+    picked = any(o[:2] in ("-s", "-t") or o in ("-d", "-e") for o in opts)
+    return (env_serial, None) if strict and env_serial and not picked else (None, None)
+
+def tcp_target(x):
+    """(host, port or None) of a TCP serial the way adb reads a target: [tcp:|udp:]host[:port]; None for any other serial."""
+    x = re.sub(r"^(?:tcp|udp):", "", x)
+    if x.count(":") >= 2 and not x.startswith("["):   # bare IPv6: no port
+        return (x.lower(), None) if re.fullmatch(r"[0-9A-Fa-f:.]+", x) else None
+    m = re.fullmatch(r"(\[[0-9A-Fa-f:.]+\]|[^:\s\[\]]+)(?::(\d{1,5}))?", x)
+    if not m:
+        return None
+    host = m.group(1).lower().strip("[]")
+    return (host, str(int(m.group(2))) if m.group(2) else None)
+
+def serial_matches(serial, entry):
+    """(#830) a denylist entry matches the serial of a command when equal, or when adb would take them for one TCP device
+    (atransport::MatchesTarget: tcp:/udp: dropped, a target with no port takes the port of the device). An entry with no
+    port matches every port of that host; a port written on both sides must be the same one."""
+    if serial == entry:
+        return True
+    a, b = tcp_target(serial), tcp_target(entry)
+    if not a or not b or a[0] != b[0]:
+        return False
+    return a[1] is None or b[1] is None or a[1] == b[1]
 
 def device_violation(text):
     deny, allow = serial_set("ADB_DENY_SERIALS", "denylist"), serial_set("ADB_ALLOW_SERIALS", "allowlist")
@@ -2578,7 +2719,10 @@ def device_violation(text):
         return None
     lits = literal_vars(text)
     memo = {}   # (01/11, r31adb) nhiều cách đọc cho cùng lệnh adb: mỗi bộ tuỳ chọn chỉ hỏi adb get-serialno một lần
-    for exe, opts, sub, env_serial, _rest, strict in adb_calls(text):
+    seen_wait = False   # (R2) an earlier adb call of this command was `adb wait-for-*`: a later adb call runs on the device that shows up
+    for exe, opts, sub, env_serial, _rest, strict, waited in adb_calls(text):
+        waited = strict and (waited or seen_wait)   # (R1) only the quote-aware reading: the raw cut stays as before #830
+        seen_wait = seen_wait or waited
         # (01/11, r31adb) bản đọc theo nháy: biến hay lệnh con ở chỗ subcommand có thể bung ra tuỳ chọn chọn thiết bị (adb $O
         # reboot với O="-s X", adb $(echo -s X) reboot, O=-s; adb -s A $O B reboot): còn "$" sau khi bung biến đã biết, hay giá
         # trị bung ra là tuỳ chọn (bắt đầu bằng -) hoặc nhiều chữ, thì tuỳ chọn và máy đích chỉ biết lúc chạy
@@ -2596,10 +2740,14 @@ def device_violation(text):
             if key not in memo:
                 memo[key] = target_serial(exe, opts, env_serial, lits, strict)
             serial, why = memo[key]
+        if not why and waited and serial is None and (exe if "/" in exe and os.access(exe, os.X_OK) else (shutil.which("adb") or sdk_adb())):
+            # (#830) adb wait-for-* waits for a device, then runs the command on the one that shows up: with no device now,
+            # get-serialno failing is no proof the command fails on its own
+            why = "adb wait-for-* chờ máy cắm sau, chưa có máy để phân giải"
         if why:
             return "không xác định được thiết bị đích (" + why + ") — " + (
                 "ghi rõ tham số device (mobile_list_available_devices)" if MCP else "ghi rõ adb -s <SERIAL>")
-        if serial and serial in deny:
+        if serial and any(serial_matches(serial, d) if strict else serial == d for d in deny):
             return "thiết bị " + serial + " nằm trong denylist (máy cá nhân / cấm đụng)"
         if serial and allow and serial not in allow:
             return "thiết bị " + serial + " không có trong allowlist"
@@ -2628,7 +2776,7 @@ def logcat_violation(text):
     told by its "… &\x22" closing the quoted command."""
     # "… logcat … &\x22": the logcat of that quoted device command runs in the background.
     detached = re.search(r"\blogcat\b[^;&|\x22\x27\n]*&\s*[\x22\x27]\s*($|[;&|)\n])", text) is not None
-    for _exe, _opts, sub, _serial, rest, _strict in adb_calls(text, False):   # (02/11, r31adb2) chỉ bản cắt thô, như trước #829
+    for _exe, _opts, sub, _serial, rest, _strict, _waited in adb_calls(text, False):   # (02/11, r31adb2) chỉ bản cắt thô, như trước #829
         words = [w.strip("\x22\x27") for w in " ".join(rest).split()]
         if sub in ("shell", "exec-out") and "logcat" in words:
             k = words.index("logcat")
