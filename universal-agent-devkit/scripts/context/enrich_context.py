@@ -69,7 +69,15 @@ _TONE_RE = re.compile("(?:" + "|".join(_TONE_SWAP) + r")(?!\w)")
 def normalize(text):
     """Lower case, NFC, one Vietnamese tone placement."""
     text = unicodedata.normalize("NFC", text).lower()
+    if text.isascii():  # the swaps are all non-ASCII: nothing to rewrite
+        return text
     return _TONE_RE.sub(lambda m: _TONE_SWAP[m.group(0)], text)
+
+
+# Precompiled once per process (#1127): word_set runs ~220 times per prompt and each re.* call paid a cache lookup.
+_WORD_RE = re.compile(r"[\w$]+")
+_CAMEL_RE = re.compile(r"[a-z][A-Z]|[A-Z][A-Z][a-z]")
+_PART_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")
 
 
 def word_set(text):
@@ -77,10 +85,10 @@ def word_set(text):
     applyUntrustedXmlSecurity → xml…; reader_error_docx → docx. An entry that names
     `SAXReader.applyUntrustedXmlSecurity` is about XML even if it never says "XML"."""
     out = set()
-    for raw in re.findall(r"[\w$]+", unicodedata.normalize("NFC", text)):
+    for raw in _WORD_RE.findall(unicodedata.normalize("NFC", text)):
         out.add(normalize(raw))
-        if raw.isascii() and ("_" in raw or re.search(r"[a-z][A-Z]|[A-Z][A-Z][a-z]", raw)):
-            out.update(w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+", raw) if len(w) >= 3)
+        if raw.isascii() and ("_" in raw or _CAMEL_RE.search(raw)):
+            out.update(w.lower() for w in _PART_RE.findall(raw) if len(w) >= 3)
     return out
 
 
