@@ -38,6 +38,11 @@ ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.S)
 FIND_NAME = re.compile(r"-(?:i?name|i?path|i?wholename)[ \t]+(?:'([^']*)'|\"([^\"]*)\"|([^\s;&|()<>]+))")
 FIND_EXEC = re.compile(r"(?:^|\s)-(?:exec|execdir|ok|okdir)(?:\s|$)")
 BRACE_MAX_LEN, BRACE_MAX_OUT = 4096, 256
+BRACE_BUDGET = 200_000   # characters scanned by brace expansion over one whole command; more = hostile, denied (INSTINCT-044)
+
+
+class _BraceBudget(Exception):
+    pass
 
 # The one sanctioned way to ask "is KEY set?": super-board-env-check.sh prints
 # present / empty / missing per key and never a value. Allowed only as a single
@@ -303,11 +308,15 @@ def _decode_ansi_c(text):
     return ANSI_C.sub(one, text)
 
 
-def _brace_expand(word):
-    """Bounded brace expansion of one word ({a,b} comma lists; ${ is not a brace). Too long a word is returned as is."""
+def _brace_expand(word, budget):
+    """Bounded brace expansion of one word ({a,b} comma lists; ${ is not a brace). Too long a word is returned as is.
+    budget = [chars left] shared by the whole command: every pass over a word spends len(word); empty -> _BraceBudget."""
     out, todo = [], ([word] if len(word) <= BRACE_MAX_LEN else [])
     while todo and len(out) < BRACE_MAX_OUT:
         w = todo.pop()
+        budget[0] -= len(w)
+        if budget[0] < 0:
+            raise _BraceBudget
         i = next((k for k, c in enumerate(w) if c == "{" and (k == 0 or w[k - 1] != "$")), -1)
         if i < 0:
             out.append(w.replace("\x00", "{"))
@@ -380,10 +389,15 @@ def _hits_secret(text):
     decoded = _decode_ansi_c(text)
     if SECRET_RE.search(text) or SECRET_RE.search(decoded):
         return True
+    budget = [BRACE_BUDGET]
     for word in WORD.findall(decoded):
         if any(q in word for q in "'\"\\`"):
             continue   # quoted / escaped words do not glob; the plain-name regex above already judged them
-        for w in (_brace_expand(word) if "{" in word else (word,)):
+        try:
+            expanded = _brace_expand(word, budget) if "{" in word else (word,)
+        except _BraceBudget:
+            return True   # so much brace work in one command is not an everyday command: deny instead of timing out
+        for w in expanded:
             if SECRET_RE.search(w) or _glob_matches_secret(w):
                 return True
     if FIND_EXEC.search(decoded):

@@ -82,5 +82,21 @@ for body in ("cat " + "[" * 65536, "cat " + "*?" * 32768, "cat " + "[a" * 32768 
     assert time.time() - t < 3, time.time() - t
 PY
 
+# R1 (#873 review): many words of unclosed '{' used to cost O(n^2) per word (64 KB = 5 s; main 0.05 s). A slow word must not
+# hide a secret behind it (INSTINCT-044): judged in under 3 s AND the secret after it is still denied.
+python3 - "$GUARD" <<'PY' && ok "unclosed '{' words: 64 KB judged in under 3 s, secret after them still denied" || fail "unclosed '{' words too slow or secret behind them slipped"
+import json, subprocess, sys, time
+secret = "." + "env"
+for body, want in (("cat " + " ".join(["{" * 4096] * 16), None),
+                   ("cat " + " ".join(["{x" * 2048] * 16), None),
+                   ("cat " + " ".join(["{" * 4096] * 16) + " " + secret, "deny")):
+    t = time.time()
+    p = subprocess.run([sys.executable, sys.argv[1]], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": body}}),
+                       capture_output=True, text=True, timeout=30)
+    assert time.time() - t < 3, time.time() - t
+    if want:
+        assert '"permissionDecision": "deny"' in p.stdout, p.stdout
+PY
+
 if [ "$FAILS" -ne 0 ]; then echo "guard_secrets_residual: $FAILS FAILED"; exit 1; fi
 echo "guard_secrets_residual: all checks passed"
