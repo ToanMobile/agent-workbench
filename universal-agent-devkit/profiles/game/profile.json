@@ -28,11 +28,8 @@
     "android-real-device-qa",
     "compose-recomp-audit",
     "deploy",
-    "generate2dmedia",
-    "generate2dsprite",
     "impeccable",
-    "taste-mobile-app",
-    "video2dsprite"
+    "taste-mobile-app"
   ],
   "exclude_agents": [
     "android-principal-architect"
