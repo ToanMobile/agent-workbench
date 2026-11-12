@@ -4,7 +4,7 @@
 Stops secrets getting OUT -- `cat .env`, `source .env.local`, `grep KEY .env | curl`,
 or the Read tool opening a dotenv file -- so a key never lands in the transcript.
 `.env.example` and friends are deliberately allowed: that file is how an agent
-learns which keys exist. Its own errors never block a tool call.
+learns which keys exist. Its own errors DENY the call (fail closed, #873).
 
 A `git commit` MESSAGE only talks about a file, it never reads one (#352, #367): the text of
 -m / --message and a QUOTED-delimiter heredoc fed to the commit are not judged. Everything else in
@@ -28,7 +28,21 @@ SECRET_RE = re.compile("|".join([
     B + r"credentials(?:\.json)?" + E,
     r"service-account[A-Za-z0-9._-]*\.json",
     r"\.pem" + E,
-]))
+]), re.I)   # upper case too: .ENV opens the same file on a case-insensitive filesystem (#873)
+
+# Secret names a glob / brace / ANSI-C word can spell without writing the plain name (#873).
+GLOB_NAMES = (".env", ".env.local", ".env.production", ".env.prod", ".env.staging", ".env.development", ".env.dev",
+              ".env.test", ".npmrc", "id_rsa", "id_ed25519", "id_ecdsa", "credentials.json", "credentials")
+WORD = re.compile(r"[^\s;&|()<>]+")
+ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.S)
+FIND_NAME = re.compile(r"-(?:i?name|i?path|i?wholename)[ \t]+(?:'([^']*)'|\"([^\"]*)\"|([^\s;&|()<>]+))")
+FIND_EXEC = re.compile(r"(?:^|\s)-(?:exec|execdir|ok|okdir)(?:\s|$)")
+BRACE_MAX_LEN, BRACE_MAX_OUT = 4096, 256
+BRACE_BUDGET = 200_000   # characters scanned by brace expansion over one whole command; more = hostile, denied (INSTINCT-044)
+
+
+class _BraceBudget(Exception):
+    pass
 
 # The one sanctioned way to ask "is KEY set?": super-board-env-check.sh prints
 # present / empty / missing per key and never a value. Allowed only as a single
@@ -284,6 +298,120 @@ def scrub_commit_messages(cmd):
     return "".join(out)
 
 
+def _decode_ansi_c(text):
+    """text with every $'...' replaced by what the shell makes of it ($'\\x2eenv' -> the dotenv name); undecodable: kept."""
+    def one(m):
+        try:
+            return m.group(1).encode("latin-1", "backslashreplace").decode("unicode_escape")
+        except (UnicodeError, ValueError):
+            return m.group(0)
+    return ANSI_C.sub(one, text)
+
+
+def _brace_expand(word, budget):
+    """Bounded brace expansion of one word ({a,b} comma lists; ${ is not a brace).
+    budget = [chars left] shared by the whole command: every pass over a word spends len(word); empty -> _BraceBudget.
+    A word over BRACE_MAX_LEN or more than BRACE_MAX_OUT results is hostile too: _BraceBudget (never skip the unchecked rest)."""
+    if len(word) > BRACE_MAX_LEN:
+        raise _BraceBudget
+    out, todo = [], [word]
+    while todo:
+        if len(out) >= BRACE_MAX_OUT:
+            raise _BraceBudget
+        w = todo.pop()
+        budget[0] -= len(w)
+        if budget[0] < 0:
+            raise _BraceBudget
+        i = next((k for k, c in enumerate(w) if c == "{" and (k == 0 or w[k - 1] != "$")), -1)
+        if i < 0:
+            out.append(w.replace("\x00", "{"))
+            continue
+        depth, j, cuts = 0, i, [i]
+        while j < len(w):
+            if w[j] == "{":
+                depth += 1
+            elif w[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif w[j] == "," and depth == 1:
+                cuts.append(j)
+            j += 1
+        if j < len(w) and len(cuts) < 2:   # {x}: bash keeps it literal, we also judge it stripped (stricter, #873)
+            todo.append(w[:i] + w[i + 1:j] + w[j + 1:])
+            out.append(w.replace("\x00", "{"))
+            continue
+        if j >= len(w):   # unclosed: the { stays literal, look at the rest of the word
+            todo.append(w[:i] + "\x00" + w[i + 1:])
+            continue
+        cuts.append(j)
+        for a, b in zip(cuts, cuts[1:]):
+            todo.append(w[:i] + w[a + 1:b] + w[j + 1:])
+    return out
+
+
+def _glob_matches_secret(pat):
+    """True when the glob `pat` (its last path part) can spell a secret name and says enough of it: >= 3 literal characters,
+    at least half of the name. Linear in len(pat): an NFA over the (<= 17 char) name, no fnmatch, no regex backtracking.
+    ponytail: [...] counts as any one character (stricter than the shell), the half-name rule lets `cred*` through."""
+    pat = pat.rsplit("/", 1)[-1]
+    if not any(c in pat for c in "*?["):
+        return False
+    toks, i, n, last = [], 0, len(pat), pat.rfind("]")
+    while i < n:
+        c = pat[i]
+        if c == "[" and i < last:
+            k = pat.find("]", i + 2 if pat[i + 1:i + 2] in ("!", "^", "]") else i + 1)
+            i = k + 1 if k >= 0 else n
+            toks.append(("?", ""))
+            continue
+        toks.append(("*", "") if c == "*" else ("?", "") if c == "?" else ("c", c.lower()))
+        i += 1
+    literal = sum(1 for k, _ in toks if k == "c")
+    if literal < 3:
+        return False
+    for name in GLOB_NAMES:
+        if 2 * literal < len(name):
+            continue
+        states = {0}
+        for kind, ch in toks:
+            nxt = set()
+            for st in states:
+                if kind == "*":
+                    nxt.update(range(st, len(name) + 1))
+                elif st < len(name) and (kind == "?" or name[st] == ch):
+                    nxt.add(st + 1)
+            states = nxt
+            if not states:
+                break
+        if len(name) in states:
+            return True
+    return False
+
+
+def _hits_secret(text):
+    """Secret named by `text` directly, through $'..' quoting, brace expansion, a glob word or a find -name glob."""
+    decoded = _decode_ansi_c(text)
+    if SECRET_RE.search(text) or SECRET_RE.search(decoded):
+        return True
+    budget = [BRACE_BUDGET]
+    for word in WORD.findall(decoded):
+        if any(q in word for q in "'\"\\`"):
+            continue   # quoted / escaped words do not glob; the plain-name regex above already judged them
+        try:
+            expanded = _brace_expand(word, budget) if "{" in word else (word,)
+        except _BraceBudget:
+            return True   # so much brace work in one command is not an everyday command: deny instead of timing out
+        for w in expanded:
+            if SECRET_RE.search(w) or _glob_matches_secret(w):
+                return True
+    if FIND_EXEC.search(decoded):
+        for m in FIND_NAME.finditer(decoded):
+            if _glob_matches_secret(next(g for g in m.groups() if g is not None)):
+                return True
+    return False
+
+
 def subject(payload):
     """The text this tool call can expose: a shell command or a file path."""
     tool = payload.get("tool_name") or ""
@@ -314,12 +442,16 @@ def main():
         text = subject(payload)
         if payload.get("tool_name") == "Bash" and ENV_CHECK.match(text):
             return
-        if text and SECRET_RE.search(judged_text(payload)):
+        if text and _hits_secret(judged_text(payload)):
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                      "permissionDecision": "deny",
                                                      "permissionDecisionReason": REASON}}))
-    except Exception:
-        pass  # fail open rather than block every call in the project
+    except Exception as exc:   # fail CLOSED (#873): a scanner we cannot trust must not wave a tool call through
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                 "permissionDecision": "deny",
+                                                 "permissionDecisionReason":
+                                                 "Blocked by guard-secrets: internal hook error (%s), refusing "
+                                                 "to judge this call safe." % type(exc).__name__}}))
 
 
 if __name__ == "__main__":

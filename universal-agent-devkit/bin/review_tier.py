@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 L_PATHS = re.compile(r"hardware_safety_gate|block-dangerous-git|guard-review|bin/review|review_sign|merge-gate|merge_gate"
-                     r"|auth|billing|payment|migration", re.I)
+                     r"|auth|billing|payment|migration|\.gitattributes", re.I)   # #892: `-diff` trong cây PR làm numstat ra `-` (0 dòng) ⇒ ép L
 M_PATHS = re.compile(r"universal-agent-devkit/hooks/|universal-agent-devkit/bin/|post-fix-gate|\.claude/bin/", re.I)
 EXCLUDED = re.compile(r"(^|/)tests/|\.agents/regression_matrix|test_durations|\.md$")
 _RENAME_BRACE = re.compile(r"(.*)\{(.*) => (.*)\}(.*)")

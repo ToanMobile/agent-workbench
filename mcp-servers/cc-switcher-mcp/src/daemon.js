@@ -185,11 +185,16 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
 
     // Bang dieu khien da chuyen sang web: moi tin nhan nhan lai link va go ban phim ghim cu khoi day man hinh.
     const reply = await handleTelegramCommand(text, { stateDir });
-    await apiCaller(cfg.botToken, 'sendMessage', {
-      chat_id: fromChatId,
-      text: reply,
-      reply_markup: REMOVE_REPLY_KEYBOARD,
-    });
+    // Loi gui tra loi khong duoc lam mat cac update con lai cua batch (vd nut sb:ap: duyet), offset da ghi truoc do.
+    try {
+      await apiCaller(cfg.botToken, 'sendMessage', {
+        chat_id: fromChatId,
+        text: reply,
+        reply_markup: REMOVE_REPLY_KEYBOARD,
+      });
+    } catch (err) {
+      logStructured('warn', 'telegram_reply_failed', { error: maskSecret(err?.message, [cfg.botToken]) });
+    }
   }
   return nextOffset;
 }

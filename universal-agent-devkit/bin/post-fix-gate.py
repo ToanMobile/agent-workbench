@@ -510,23 +510,128 @@ def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = ""
     return not redefines_test(repo_path, base_text, new.decode("utf-8", errors="replace"))
 
 
-def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: bool = False) -> bool:
-    """True when this test existed at `since`, a LOCAL-ONLY commit of `since..HEAD` (one not
-    reachable from `upstream`; no upstream → every range commit) touches it, and its change to
-    the working tree is not append-only — counted from the latest range commit (any path, an empty
-    one included) whose message holds a `Test-approved-by:` line that push_gate accepts and whose
-    auditedHead is at or after `since` (that tree was audited), else from `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate.
-    runner: a suite runner script (A2), judged by test_change_is_append_only(runner=True)."""
+_MERGE_BASES = {}
+_TRUNK_CHANGES = {}
+
+
+def _entry(ref: str, repo_path: str):
+    """(mode, sha) của <ref>:<path>; None khi git xác nhận không có path đó; mỗi lần git lỗi là một object() mới, không bằng gì
+    (kể cả một lỗi khác) nên không bao giờ nới. Mode nằm trong khoá so sánh: `chmod -x` hay đổi thành symlink cùng blob là một thay đổi (#839).
+    --literal-pathspecs: path mở đầu ':' hay có '*' là tên file (review 6029b2f0 #834)."""
+    res = subprocess.run(["git", "--literal-pathspecs", "-C", str(get_repo_root()), "ls-tree", ref, "--", repo_path],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        return object()
+    line = res.stdout.strip().split("\t", 1)[0].split()
+    return (line[0], line[2]) if len(line) == 3 else None
+
+
+def _merge_bases(a: str, b: str) -> tuple:
+    """Mọi merge-base của a và b (--all: lịch sử criss-cross có nhiều); rỗng khi git lỗi hoặc không có."""
+    if (a, b) not in _MERGE_BASES:
+        res = subprocess.run(["git", "-C", str(get_repo_root()), "merge-base", "--all", a, b], capture_output=True, text=True)
+        _MERGE_BASES[(a, b)] = tuple(res.stdout.split()) if res.returncode == 0 else ()
+    return _MERGE_BASES[(a, b)]
+
+
+def _trunk_changes(mb: str, ref: str):
+    """(deleted, renamed) của `git diff --name-status -M -z --no-relative <mb> <ref>`: path gốc repo mà <ref> xoá thật (dòng D) và
+    map path cũ -> path mới của một lần chuyển (R). Cả hai bên cùng toạ độ gốc repo như `prefix + f`, nên monorepo không lệch với
+    since..HEAD --relative (#839). git lỗi => None (không nới).
+    ponytail: rename vượt diff.renameLimit hoặc độ giống < 50 % thì git không dò ra, hiện thành D và vẫn được nới; nâng khi gặp thật."""
+    if (mb, ref) not in _TRUNK_CHANGES:
+        res = subprocess.run(["git", "-C", str(get_repo_root()), "diff", "--name-status", "-M", "-z", "--no-relative", mb, ref],
+                             capture_output=True)
+        if res.returncode != 0:
+            _TRUNK_CHANGES[(mb, ref)] = None
+        else:
+            gone, moved, parts, i = set(), {}, res.stdout.decode("utf-8", errors="surrogateescape").split("\0"), 0
+            while i < len(parts):
+                status, i = parts[i], i + 1
+                if status[:1] in ("R", "C") and i + 1 < len(parts):
+                    if status[0] == "R":
+                        moved[parts[i]] = parts[i + 1]
+                    i += 2
+                elif status and i < len(parts):
+                    if status == "D":
+                        gone.add(parts[i])
+                    i += 1
+            _TRUNK_CHANGES[(mb, ref)] = (frozenset(gone), moved)
+    return _TRUNK_CHANGES[(mb, ref)]
+
+
+def _landed_refs(project_dir) -> list:
+    """Các ref mà commit trên đó đã qua gate của chính nó (#638): trunk của origin (task_trunk, chỉ ref refs/remotes/origin/* — main
+    local nhận được commit không gate nào thấy) và @{u} chỉ khi khớp DƯƠNG TÍNH: nhánh giống trunk (push_gate.TRUNK_LIKE) hoặc chính là
+    HEAD của remote đó. Từ #472 nhánh PR push không cần biên nhận, nên @{u} của nó (== HEAD sau `push -u`) không chứng minh gì; còn
+    `not push_gate.pr_branch()` sẽ tin mọi nhánh hàm đó nghi ngờ (pushurl, tên lạ, git lỗi). Đọc lỗi ⇒ ít ref hơn = mốc cũ, chặt hơn."""
+    proj, refs = str(project_dir), []
+    try:
+        def out(*a):
+            r = subprocess.run(["git", "-C", proj, *a], capture_output=True, text=True, timeout=30)
+            return r.stdout.strip() if r.returncode == 0 else ""
+        up = out("rev-parse", "--symbolic-full-name", "@{u}")
+        remote = max((r for r in out("remote").split() if up.startswith(f"refs/remotes/{r}/")), key=len, default="")
+        branch = up[len(f"refs/remotes/{remote}/"):] if remote else ""
+        if branch and (_push_gate().TRUNK_LIKE.fullmatch(branch)
+                       or out("symbolic-ref", "-q", f"refs/remotes/{remote}/HEAD").lower() == up.lower()):
+            refs.append(up)
+        trunk, _name = task_trunk(proj)
+        if trunk and trunk.startswith("refs/remotes/origin/") and trunk not in refs:
+            refs.append(trunk)
+    except (OSError, subprocess.SubprocessError, ImportError, AttributeError) as e:
+        log_warn(tr(f"--since: không đọc được ref đã landed ({e}) — dùng mốc cũ", f"--since: landed refs unreadable ({e}) — using the old base"))
+    return refs
+
+
+def _content_landed(since: str, repo_path: str, landed, runner: bool = False) -> bool:
+    """Bộ phân loại chung cho test (since_test_weakened) và kiểm tĩnh A1 (INSTINCT-015, #839): <path> ở HEAD chỉ là nội dung đã landed
+    khi với một ref r trong `landed`: (mode, sha) ở HEAD bằng ở ĐẦU r (đầu r đã qua gate của chính nó) VÀ bằng ở MỌI merge-base(<since>, r)
+    nó đúng như ở <since> (nhánh chưa sửa riêng; --all cho lịch sử criss-cross). Không tin commit giữa chừng trong lịch sử r (cha thứ nhất
+    của merge foxtrot, commit WIP): bản HEAD khớp chúng mà khác đầu r thì không nới. Path vắng ở HEAD chỉ nới khi r cũng vắng và r XOÁ THẬT
+    nó (dòng D); nếu r CHUYỂN nó (R) thì bản ở đích tại HEAD phải còn và chỉ nối thêm so với r:đích. Git lỗi => không nới.
+    ponytail: chỉ so với đầu r hiện tại; r tiến thêm sau lần gộp cuối thì nhánh bị đòi duyệt tới khi gộp lại r (G1, #839)."""
+    mine, head = _entry(since, repo_path), _entry("HEAD", repo_path)
+    if mine is not None and mine == head:
+        return True
+    for r in landed:
+        bases = _merge_bases(since, r)
+        tip = _entry(r, repo_path)
+        if not bases or any(_entry(b, repo_path) != mine for b in bases):
+            continue
+        if head is not None:
+            if isinstance(head, tuple) and head == tip:
+                return True
+            continue
+        if tip is not None:
+            continue
+        changes = [_trunk_changes(b, r) for b in bases]
+        if any(c is None for c in changes):
+            continue
+        if all(repo_path in c[0] for c in changes):
+            return True
+        dsts = {c[1].get(repo_path) for c in changes}
+        dst = next(iter(dsts)) if len(dsts) == 1 else None
+        if dst and _entry("HEAD", dst) is not None and test_change_is_append_only(r, dst, runner=runner):
+            return True
+    return False
+
+
+def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = False, old_path: str = "") -> bool:
+    """True khi test này đã có ở `since`, nhánh có phần đổi của riêng nó trên test trong `since..HEAD` (không chỉ là nội dung
+    đã landed — _content_landed, `landed` là chuỗi ref từ _landed_refs), và thay đổi tới cây làm việc không phải chỉ nối thêm —
+    tính từ commit mới nhất trong dải có dòng `Test-approved-by:` push_gate chấp nhận mà auditedHead không trước `since`
+    (cây đó đã audit), không có thì từ `since`. Không dùng `rev-list --not <ref> -- path`: pathspec rút gọn lịch sử (TREESAME)
+    nên commit gộp `--theirs` che commit bên kia.
+    runner: script chạy suite (A2), xét bằng test_change_is_append_only(runner=True).
+    old_path: tên nó có ở `since` khi bị đổi tên trong dải (#836): tra và so nội dung theo tên đó."""
     root = str(get_repo_root())
-    if object_info(since, repo_path) is None:
+    old_path = old_path if old_path and old_path != repo_path else ""
+    if object_info(since, old_path or repo_path) is None:
         return False
-    local = subprocess.run(["git", "-C", root, "rev-list", "-1", f"{since}..HEAD"]
-                           + (["--not", upstream] if upstream else []) + ["--", repo_path],
-                           capture_output=True, text=True)
-    if local.returncode == 0 and not local.stdout.strip():
-        return False                                  # only upstream commits touch it
-    # Không pathspec (#630): luồng audit #605 kết thúc bằng một commit RỖNG mang trailer, `-- <path>` không bao giờ liệt kê nó
-    # (_trailer_cross_review cũng quét cả range). Đổi lại phải kiểm auditedHead sau `since` như _trailer_cross_review.
+    landed = [r for r in ([landed] if isinstance(landed, str) else list(landed or ())) if r]
+    if _content_landed(since, repo_path, landed, runner=runner) and not _landed_version_undone(since, repo_path, landed, runner):
+        return False                                  # chỉ nội dung đã landed
     res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
                           "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD"],
                          capture_output=True, text=True)
@@ -544,7 +649,31 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
             base = sha
             PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
             break
-    return not test_change_is_append_only(base, repo_path, runner=runner)
+    # A trailer commit after the rename knows only the new name; at `since` (or before the rename) the old one.
+    if old_path and base != since and object_info(base, old_path) is None:
+        old_path = ""
+    if not test_change_is_append_only(base, repo_path, old_path, runner=runner):
+        return True
+    # #838: a net change of zero against `since` hides a local commit that undid what the merged-in upstream added. Judge the
+    # file against the newest LANDED version in the range too: the last upstream commit (as of the merge base with it) touching it.
+    return base == since and _landed_version_undone(since, repo_path, landed, runner)
+
+
+def _landed_version_undone(since: str, repo_path: str, landed, runner: bool = False) -> bool:
+    """#838: net change zero against `since` hides a local commit that removed what a merged-in landed ref added. True when the
+    newest commit of a landed ref (as of its merge base with HEAD) touching the file outside `since` is not append-only to HEAD's file."""
+    root = str(get_repo_root())
+    if not isinstance(_entry("HEAD", repo_path), tuple):
+        return False                                  # absent at HEAD: deletions keep their own rules (_content_landed)
+    for r in landed:
+        mb =subprocess.run(["git", "-C", root, "merge-base", r, "HEAD"], capture_output=True, text=True).stdout.strip()
+        if not mb:
+            continue
+        lv = subprocess.run(["git", "-C", root, "rev-list", "-1", mb, "--not", since, "--", repo_path],
+                            capture_output=True, text=True).stdout.strip()
+        if lv and not test_change_is_append_only(lv, repo_path, runner=runner):
+            return True
+    return False
 
 
 def _push_gate():
@@ -2561,6 +2690,25 @@ def matrix_additions(base, current):
     return None if added_rules is None else [t["id"] for rule in added_rules for t in rule["mandatory_regression_tests"]]
 
 
+def _without_manual(matrix):
+    """#729: the matrix with the `manual` key dropped from every suite — what is left must be identical for a flag-only edit."""
+    if not isinstance(matrix, dict):
+        return matrix
+    rules = []
+    for rule in matrix.get("rules") or []:
+        if isinstance(rule, dict) and isinstance(rule.get("mandatory_regression_tests"), list):
+            rule = {**rule, "mandatory_regression_tests": [
+                {k: v for k, v in t.items() if k != "manual"} if isinstance(t, dict) else t for t in rule["mandatory_regression_tests"]]}
+        rules.append(rule)
+    return {**matrix, "rules": rules}
+
+
+def is_manual_suite(test, wanted=()):
+    """#729: a suite flagged `"manual": true` (real hardware, e.g. GeelyEx2 REG-QC-05) never runs in an automatic gate run; it runs only
+    when asked for by id (--suite)."""
+    return isinstance(test, dict) and test.get("manual") is True and test.get("id") not in set(wanted or ())
+
+
 def trust_additive_matrix(matrix, problem, matrix_path, base_ref: str):
     """(matrix, problem, added ids). Ma trận bị sửa so với base_ref mà chỉ THÊM rule (matrix_additions) thì gate chạy ma trận của thay đổi và
     không còn là việc của người review — với điều kiện mọi test thêm chạy XANH trong chính lượt này (main ép chạy chúng và kiểm lại trước
@@ -2581,6 +2729,10 @@ def trust_additive_matrix(matrix, problem, matrix_path, base_ref: str):
         cur = json.loads(current.decode("utf-8", errors="replace"))
     except ValueError:
         return matrix, problem, []
+    if base == matrix and cur != base and _without_manual(cur) == _without_manual(base):
+        # #729: only the `manual` flag of an existing suite changed (same ids, same commands): not a matrix_problem. The gate then runs
+        # the current matrix, which skips those suites and reports them as MANUAL.
+        return cur, None, []
     added = matrix_additions(base, cur)
     if not added or base != matrix:
         return matrix, problem, []
@@ -5878,7 +6030,8 @@ def suite_env():
             "DEVKIT_TEST_POOL_DIR", "DEVKIT_JOB_POOL",
             # #528: cờ của worker board không được lọt vào suite — gate lồng sẽ bỏ qua main
             "SB_BOARD_WORKER", "SB_MERGE_CALLER", "SB_MERGE_QUEUE", "SB_REPO_PATH",
-            "SB_GITHUB_READ_STRICT"}
+            "SB_GITHUB_READ_STRICT",
+            "WORKTREE_AUTO_MERGE"}   # #811: công tắc Stop hook phiên đa lane, không lọt vào suite
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
@@ -6856,6 +7009,9 @@ def main():
                              "reaches or a graph error adds the [core-smoke] group; only --full / --force-full asked for explicitly run in full. "
                              "A PASS writes scoped_pass.json, which merge, push and XONG accept for that tree. Build/QA/merge/push use it; "
                              "--full belongs to the gate-full skill (by hand or the 00:00 launchd job)")
+    parser.add_argument("--suite", action="append", default=[], metavar="ID",
+                        help="#729: also run this matrix suite although it is flagged \"manual\": true (repeatable). Without it a manual "
+                             "suite is skipped in every automatic run (gate, merge gate, --full) and reported as MANUAL")
     parser.add_argument("--dry-run", action="store_true", help="Only list impacted tests, do not run them (default without --run-tests; never PASS)")
     parser.add_argument("--brief", action="store_true",
                         help="Print only the verdict block, errors (✖) and failing suites with their output tail; "
@@ -7007,7 +7163,7 @@ def main():
     except RuntimeError as e:
         log_err(str(e))
         return 2
-    since_paths = []
+    since_paths, landed = [], []
     if args.since and not STAGED:
         # Commits since the last verified HEAD (regression_gate, T0003): their files join the
         # change for test selection; the matrix reads HEAD, the edited-test check HEAD and <since>.
@@ -7031,20 +7187,30 @@ def main():
                 i += 1
         extra = [f for f in since_paths if os.path.exists(os.path.join(str(get_project_dir()), f))]
         all_changed = sorted(set(all_changed) | set(extra))
+        # #638: commit đã nằm trên ref đã landed (trunk của origin gộp vào nhánh, upstream giống trunk) đã qua gate của chính nó —
+        # chỉ since_test_weakened dùng danh sách này; kiểm tĩnh A1 bên dưới giữ nguyên luật cũ (chỉ @{u}).
+        landed = _landed_refs(get_project_dir())
         # The static checks judge the committed work too (A1, 2026-10-09): against HEAD, an AWS key or a placeholder
         # committed in <since>..HEAD was "already there" — exit 0 and a receipt. Their base is <since>; a file renamed
         # in the range (or renamed again in the tree) is read at <since> under its old path. A file only commits already
         # on the upstream touched (a teammate's, pulled in) keeps HEAD: they passed their own gate (as since_test_weakened).
+        # A1 dùng cùng bộ phân loại với since_test_weakened (_content_landed, #839): file chỉ được so với HEAD (đã có) khi nội dung ở HEAD
+        # bằng đầu một ref đã landed. Nhánh PR sau `push -u` có @{u} == HEAD nên không còn được tin (_landed_refs chỉ tin @{u} khớp trunk).
         if not args.diff:
             BASE_REF = args.since
-            up = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", "@{u}"],
-                                capture_output=True, text=True).stdout.strip()
-            if up:
+            _BASE_REF_FOR.update((f, "HEAD") for f in since_paths if _content_landed(args.since, get_project_prefix() + f, landed))
+            # #838: a test a LOCAL commit touched but whose net change <since>→HEAD is empty (main's assertion merged in, a local
+            # commit removed it again) is in no diff: join it, since_test_weakened compares it with the landed version.
+            if landed:
                 lg = subprocess.run(["git", "-C", str(get_project_dir()), "log", "--format=", "--name-only", "-z", "--cc",
-                                     "--relative", f"{args.since}..HEAD", "--not", up], capture_output=True)
-                local = set(lg.stdout.decode("utf-8", errors="surrogateescape").split("\0")) if lg.returncode == 0 else None
-                if local is not None:
-                    _BASE_REF_FOR.update((f, "HEAD") for f in since_paths if f not in local)
+                                     "--relative", f"{args.since}..HEAD", "--not", *landed], capture_output=True)
+                if lg.returncode == 0:
+                    local = set(lg.stdout.decode("utf-8", errors="surrogateescape").split("\0"))
+                    hidden = sorted(f for f in local if f and f not in since_paths and is_test_path(f) and not is_test_doc(f)
+                                    and not is_devkit_artifact(f) and os.path.exists(os.path.join(str(get_project_dir()), f))
+                                    and _landed_version_undone(args.since, get_project_prefix() + f, landed))
+                    since_paths.extend(hidden)
+                    all_changed = sorted(set(all_changed) | set(hidden))
             for dst, src in list(RENAME_SOURCES.items()):
                 if dst not in _BASE_REF_FOR:
                     RENAME_SOURCES[dst] = since_renames.get(src, src)
@@ -7100,13 +7266,9 @@ def main():
     # check above never sees it (2026-09-28). Such a path is judged against <since> too — on top
     # of the HEAD check, never instead of it. A range commit touching it with `Test-approved-by:`
     # (an Antigravity audit, rules/essentials.md Git) covers the file as of the LATEST such commit.
-    upstream = ""
-    if since_paths:
-        up = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", "@{u}"],
-                            capture_output=True, text=True)
-        upstream = up.stdout.strip() if up.returncode == 0 else ""
     since_touched = [f for f in since_paths if f not in tests_touched and is_test_path(f) and not is_test_doc(f)
-                     and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, upstream)]
+                     and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, landed,
+                                                                            old_path=prefix + since_renames[f] if f in since_renames else "")]
     # A script a base-ref suite command runs is a file of the change (A2, 2026-10-09: with scripts/check.sh set to
     # `exit 0`, `sh scripts/check.sh` passed whatever the code did). Its change counts like an edited existing test —
     # UNVERIFIED unless approved, same paths — and like a test, a pure append (a line running one more test) is no edit,
@@ -7116,7 +7278,7 @@ def main():
     runners_touched = [f for f in sorted(runner_paths) if f in modified_files and object_info(base_ref, prefix + f) is not None
                        and not test_change_is_append_only(base_ref, prefix + f, runner=True)]
     since_runners = [f for f in sorted(runner_paths) if f in since_paths and f not in runners_touched
-                     and since_test_weakened(args.since, prefix + f, upstream, runner=True)]
+                     and since_test_weakened(args.since, prefix + f, landed, runner=True)]
     tests_touched += runners_touched
     since_touched += since_runners
     runners_touched += since_runners
@@ -7136,7 +7298,9 @@ def main():
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     # Không có thay đổi thì không có gì để nghiệm thu — tuyệt đối không bịa file mẫu để ra PASS.
-    if not modified_files and args.tree is None:
+    # Một test bị xoá trong <since>..HEAD không nằm trong modified_files (file không còn trên đĩa): còn tests_touched thì đi tiếp
+    # tới phán quyết "test đã có bị sửa" (exit 2), không phải exit 3 mà regression_gate coi là đã kiểm (#638 plan review).
+    if not modified_files and not tests_touched and args.tree is None:
         if devkit_artifacts:
             log_warn(tr(f"Chỉ có {len(devkit_artifacts)} link/state do devkit cài — không phải thay đổi của người dùng.",
                         f"Only {len(devkit_artifacts)} DevKit-installed links/state files — not a change of yours."))
@@ -7243,6 +7407,7 @@ def main():
     impacted_components = []
     regression_tests = []
     immutable_guards_protected = []
+    MANUAL_SKIPPED = []   # #729: suites flagged "manual": true that this run leaves out
 
     covers = checklist_covers()
     KEYS, KEYED_IDS = {}, set()   # P2: id(suite) → (khoá chính xác, khoá cả cây); suite PASS theo khoá
@@ -7285,6 +7450,9 @@ def main():
             continue
         impacted_components.append(comp_name)
         for test in rule.get("mandatory_regression_tests", []):
+            if is_manual_suite(test, args.suite):
+                MANUAL_SKIPPED.append(str(test.get("id") or "?"))
+                continue
             if test.get("id") == KIT_ROW_ID and not scoped_turn:
                 continue
             regression_tests.append({
@@ -7363,6 +7531,8 @@ def main():
                   + f"{RESET}")
         args.core_touched = list(scoped.get("core_touched") or [])
         for comp, test in added:
+            if is_manual_suite(test, args.suite):
+                continue
             regression_tests.append({
                 "component": comp, "id": test.get("id"), "name": test.get("name"), "command": test.get("command"),
                 "impacted_command": test.get("impacted_command"), "files": [], "untested_exit": test.get("untested_exit"),
@@ -7463,6 +7633,9 @@ def main():
             for test in rule.get("mandatory_regression_tests", []):
                 if test.get("id") in stale:
                     stale.discard(test.get("id"))
+                    if is_manual_suite(test, args.suite):   # #729: --force-full / --full cũng không chạy suite manual
+                        MANUAL_SKIPPED.append(str(test.get("id") or "?"))
+                        continue
                     regression_tests.append({
                         "component": rule.get("component", "UnknownComponent"), "id": test.get("id"),
                         "name": test.get("name"), "command": test.get("command"),
@@ -7499,6 +7672,9 @@ def main():
                     tid = test.get("id")
                     if not tid or tid in have or tid in added_ids or not test.get("command") or not suite_cacheable(test)[0]:
                         continue
+                    if is_manual_suite(test, args.suite):   # #729
+                        MANUAL_SKIPPED.append(str(tid))
+                        continue
                     if _hs_x is None or _hs_x.classify(test["command"], str(project_dir), rec_x.get(tid),
                                                        device=bool(HARD_DEVICE_SUITE.search(test["command"])))["cls"] not in ("light", "cpu"):
                         continue
@@ -7533,6 +7709,8 @@ def main():
         for rule in rules:
             for test in rule.get("mandatory_regression_tests", []):
                 if test.get("id") in added_set and test["id"] not in have:
+                    if is_manual_suite(test, args.suite):   # #729
+                        continue
                     have.add(test["id"])
                     tail.append({
                         "component": rule.get("component", "UnknownComponent"), "id": test["id"],
@@ -7557,6 +7735,9 @@ def main():
     if not rules:
         log_warn(tr("Không tìm thấy regression matrix (hoặc matrix rỗng) — không đánh giá được TIA",
                     "No regression matrix found (or it is empty) — TIA cannot be evaluated"))
+    if MANUAL_SKIPPED:
+        print(f"  • MANUAL ({len(set(MANUAL_SKIPPED))}): {', '.join(dict.fromkeys(MANUAL_SKIPPED))} — "
+              + tr("suite chạy tay, bỏ qua lượt tự động (chạy bằng --suite <id>)", "manual suite, skipped in automatic runs (run it with --suite <id>)"))
     if impacted_components:
         print(f"  • {tr('Component liên đới', 'Impacted components')}: {BOLD}{', '.join(dict.fromkeys(impacted_components))}{RESET}\n")
     else:
@@ -9782,14 +9963,17 @@ def main():
 # (`retry after java.net.SocketTimeoutError:`, `✔ … with TypeError:`): dòng INFO/✔ đó chiếm 8 dòng đầu của fail_lines (#906).
 # Mọi tiền tố khác vẫn khớp: đầu dòng, Gradle `   > `, logcat `tag: `, `stack=`, `| `, `[x] ` (#901 neo đầu dòng làm mất chúng:
 # tests/gates/test_fail_line_prefixed.sh). Tuyến tính nhờ `(?<![\w.$])`: tên chỉ bắt đầu ở đầu một cụm `[\w.$]`, mỗi cụm quét
-# một lần; bỏ nó thì `Ab…` 100 KB mất hơn 40 s (tests/gates/test_fail_line_qualified.sh). Đổi lại `Uncaught TypeError:` không khớp;
+# một lần; bỏ nó thì `Ab…` 100 KB mất hơn 40 s (tests/gates/test_fail_line_qualified.sh; 40 KB: tests/gates/test_fail_line_oom_locals.sh).
+# #909: `[.$]*` đầu tên và `[.$]+` giữa tên cho `...java.lang.LinkageError:`, `Foo$$InnerError:`, `test_x.<locals>.CustomError:` (cụm tên# bắt đầu sau `>`); nhánh `(?:Terminating|Aborting) due to java.lang.OutOfMemoryError:` cho JVM -XX:+ExitOnOutOfMemoryError (tên đứng sau từ thường).
+# Đánh đổi còn lại: `Uncaught TypeError:` không khớp;
 # `Killed: N` không neo: bash in `x.sh: line N: PID Killed: 9 cmd` (tests/gates/test_fail_line_precision.sh).
 # ponytail: `^E {2,}` lấy cả diff assertion nhiều dòng của pytest, test đỏ đầu có thể chiếm hết 8 dòng đầu; bỏ nhánh này khi log thật
 # của app mất tên test đỏ sau (dòng `file:N: AssertionError` vẫn khớp nhánh AssertionError).
 FAIL_LINE = re.compile(r"✖|✘|✗|❌|\bFAILED\b|\bFAIL\b|^[ \t]*not ok\b|\bERROR\b|Traceback|AssertionError|\bException\b"
                        r"|^[ \t]*e: \S|What went wrong:|Execution failed for task|\berror (?:CS|MSB)\d{4}\b"
                        r"|:\d+(?::\d+)?: (?:fatal )?error\b|^E {2,}\S|^[ \t]*● |^npm (?:ERR!|error) |FATAL EXCEPTION"
-                       r"|(?<![a-z] )(?<![\w.$])(?:\w+[.$])*[A-Z]\w*Error:"
+                       r"|(?<![a-z] )(?<![\w.$])[.$]*(?:\w+[.$]+)*[A-Z]\w*Error:"
+                       r"|(?<![a-z] )\b(?:Terminating|Aborting) due to java\.lang\.OutOfMemoryError:"
                        r"|\b(?:Segmentation fault|Bus error|Abort trap)\b"
                        r"|\bKilled: \d")
 RED_TEST_LINE = re.compile(r"^✖ (?:hooks/)?tests/\S+\.(?:sh|py|mjs)\s*$")   # #721: dòng test đỏ của tests/run_impacted.sh (cột 0)

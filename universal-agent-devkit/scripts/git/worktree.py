@@ -25,8 +25,8 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py list
   worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
 
-add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (3) free (no count of worktrees, #607); under
-WORKTREE_DISK_WARN_GIB (10) it runs gc first and warns (0 turns each off). Then `git worktree add` on <branch> when one is named (created from --base or HEAD when it
+add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (15) free (no count of worktrees, #607); under
+WORKTREE_DISK_WARN_GIB (25) it runs gc first and warns, under WORKTREE_CACHE_PRUNE_GIB (25) it deletes rebuildable build caches (0 turns each off). Then `git worktree add` on <branch> when one is named (created from --base or HEAD when it
 does not exist); with none, a DETACHED worktree at --base or HEAD — the project keeps one
 branch, and the work comes back with `diff | git apply --3way`. `--lane=build|qa|review` (a super-board lane, agent-workbench#93; only
 at .claude/worktrees/issue-<N>[-<lane>]): a branch only origin has
@@ -778,8 +778,14 @@ def _env_limit(name, default):
 
 # W1 R5c (docs/workflow-improvements.md I.0): `add` runs `gc` and warns under the warning line and creates nothing under the floor.
 # 0 turns each off. SessionStart (hooks/session_context.sh) reads the same numbers. #607: no count of worktrees any more.
-DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 10.0)
-DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 3.0)
+DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 25.0)
+DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 15.0)
+# 10/11 (chủ repo): dưới CACHE_PRUNE_GIB, `add` xoá cache build dựng lại được của máy trước khi tạo worktree (Gradle build-cache 20-30 GB
+# làm đĩa còn < 5 GB, runner nghẽn). Chỉ cache mà công cụ tự dựng lại khi thiếu; không đụng dependency đã tải (~/.gradle/caches/modules-2),
+# không đụng /private/tmp (scratchpad của phiên Claude đang chạy nằm ở đó), không đụng ~/.cache/uv (môi trường chạy của MCP server `uvx`
+# đang sống nằm trong đó; `uv cache clean` lại chờ khoá của chúng không giới hạn).
+CACHE_PRUNE_GIB = _env_limit("WORKTREE_CACHE_PRUNE_GIB", 25.0)
+PRUNE_CACHE_DIRS = (".gradle/caches/build-cache-1", ".npm/_cacache", "Library/Caches/go-build", ".cache/go-build")
 NO_ROOM = 4   # add's exit code when it refuses for want of disk: what a hook that creates worktrees tells apart from a usage error
 ADD_LOCK = "devkit-worktree-add.lock"
 ADD_LOCK_WAIT_S = 600.0
@@ -795,16 +801,32 @@ def free_gib(path):
         return None
 
 
+def _prune_caches():
+    """Xoá các cache build dựng lại được dưới HOME (PRUNE_CACHE_DIRS); in từng thư mục đã xoá. Lỗi xoá không chặn `add`, chỉ báo."""
+    home = os.path.expanduser("~")
+    for rel in PRUNE_CACHE_DIRS:
+        p = os.path.join(home, rel)
+        if os.path.islink(p) or not os.path.isdir(p):
+            continue
+        shutil.rmtree(p, ignore_errors=True)
+        print(("✔ " + tr("đã tỉa cache: ", "cache pruned: ") if not os.path.exists(p)
+               else "⚠ " + tr("không xoá hết cache: ", "could not delete all of the cache: ")) + p)
+
+
 def _make_room(main, wt):
     """Under DISK_WARN_GIB free: `gc` (the leftovers git no longer knows), then a warning; still under DISK_MIN_GIB: refuse (NO_ROOM)."""
     free = free_gib(wt)
     if free is None:
         print("• " + tr("không đọc được dung lượng đĩa trống; bỏ qua kiểm đĩa", "cannot read the free disk space; disk check skipped"))
         return
-    if free >= max(DISK_WARN_GIB, DISK_MIN_GIB):   # each line holds on its own: the floor still applies with the warning off
+    if free >= max(DISK_WARN_GIB, DISK_MIN_GIB, CACHE_PRUNE_GIB):   # each line holds on its own: the floor still applies with the warning off
         return
-    cmd_gc(main, ["--log=" + os.path.join(main, ".claude", "audit-gate", "worktree_gc.log")])   # silent when another gc of this repo runs
-    free = free_gib(wt)
+    if free < max(DISK_WARN_GIB, DISK_MIN_GIB):
+        cmd_gc(main, ["--log=" + os.path.join(main, ".claude", "audit-gate", "worktree_gc.log")])   # silent when another gc of this repo runs
+        free = free_gib(wt)
+    if free is not None and CACHE_PRUNE_GIB and free < CACHE_PRUNE_GIB:
+        _prune_caches()
+        free = free_gib(wt)
     if free is None:   # as on the first read: cannot say, so no refusal
         return
     if free < DISK_MIN_GIB:
@@ -2607,7 +2629,7 @@ def _merged_pr_at(main, branch, tip):
     return None
 
 
-def _discard_leftovers(wt):
+def _discard_leftovers(wt, main=None):
     """Ca (a) của discard: những gì `wt` còn giữ ngoài file đã xoá và rác IDE chưa track — [] khi không mất gì. Danh sách file đổi lấy như
     `remove` (changes_since: so với setup đã ghi), cộng file git ẩn (skip-worktree / assume-unchanged); không đọc được: coi là còn."""
     try:
@@ -2624,11 +2646,14 @@ def _discard_leftovers(wt):
         return [tr(f"{wt}: không đọc được danh sách file git ẩn (skip-worktree / assume-unchanged)",
                    f"{wt}: the files git hides (skip-worktree / assume-unchanged) could not be listed")]
     left, unity = [], _unity_project(wt)
+    regen = bool(main) and _bookkeeping_regenerated(wt, main)
     for p in dict.fromkeys(changes_since(wt, state) + hidden):
         if p not in hidden and not os.path.lexists(os.path.join(wt, p)) and _index_is_head(wt, p):
             continue   # đã xoá và index không giữ bản nào khác HEAD (` D`, `D `): HEAD (hoặc setup) vẫn giữ bản của nó
         if p not in hidden and _ide_junk(wt, p, unity):
             continue   # rác IDE chưa từng được track
+        if main and p in BOOKKEEPING and p not in hidden and regen is True:
+            continue   # #1043: sổ sách tự sinh (CHECKLIST.md, BUG_ARCHIVE.md, regression_status.json) không phải việc dở, như `remove`
         left.append(p)
     if not left:
         return []
@@ -2714,6 +2739,12 @@ def cmd_discard(cwd, args):
     head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()
     try:
         in_trunk = bool(head) and _chain_in_trunk(main, head)
+        if head and not in_trunk:   # #1043: a squash that put the same content elsewhere in the file: a PR MERGED into the trunk at exactly this HEAD is the proof (as prune-branch)
+            try:
+                pr_branch = _read_state(wt).get("branch") or entry.get("branch") or ""
+            except (OSError, ValueError, SystemExit):
+                pr_branch = entry.get("branch") or ""
+            in_trunk = bool(_merged_pr_at(main, pr_branch, head))
         # `remove` so commit của worktree với HEAD của main checkout, mà PR squash trên origin để lại phía sau: UNREACHABLE của nó chỉ nói
         # "hơn main local". Bỏ qua khi trunk (local hoặc origin) đã giữ cả chuỗi và không commit nào chỉ còn trong reflog
         rows = inventory(cwd, only=wt, budget=None)   # một kiểm kê cho cả waive lẫn blocker: không lệch nhau giữa hai lần đọc
@@ -2721,7 +2752,7 @@ def cmd_discard(cwd, args):
             and git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip() == head   # HEAD không đổi giữa hai lần đọc
         refused = [text for _code, kind, text, _detail in _iter_blockers(cwd, wt, args[0], None, rows=rows)
                    if kind != "uncommitted" and not (waive and kind == "unreachable")]
-        refused += _discard_leftovers(wt)
+        refused += _discard_leftovers(wt, main)
     except UnicodeError as e:
         die(tr(f"không kiểm tra được {wt} (tên file không phải UTF-8: {e}) — không gỡ", f"cannot check {wt} (a file name that is not UTF-8: {e}) - nothing removed"), 1)
     if not in_trunk:   # một nhánh có tên giữ commit của nó, nhưng discard chỉ cho HEAD trunk đã có (audit T0044)
@@ -3494,7 +3525,26 @@ def _copied_at_add(wt):
 def _same_bytes(src, dst):
     """True when `dst` is a regular file (not a link) holding the bytes of `src`; False for anything else, also a file that cannot be read."""
     try:
-        return not os.path.islink(dst) and _read_regular(dst) == _read_regular(src)
+        if os.path.islink(dst):
+            return False
+        fds = []
+        try:   # streamed in blocks: a file over _read_regular's 32 MB limit (a red-patch) is still comparable; FIFOs/devices are refused
+            for path in (src, dst):
+                fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+                fds.append(fd)
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    return False
+            if os.fstat(fds[0]).st_size != os.fstat(fds[1]).st_size:
+                return False
+            while True:
+                a, b = os.read(fds[0], 1 << 20), os.read(fds[1], 1 << 20)
+                if a != b:
+                    return False
+                if not a:
+                    return True
+        finally:
+            for fd in fds:
+                os.close(fd)
     except OSError:
         return False
 
@@ -4087,6 +4137,7 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None, run_gate=True):
         if not _is_ancestor(main, w_head, main_head) and not _squashed_on_origin(main, w_head) \
                 and not (_is_ancestor(main, main_head, w_head) and _receipt_merge_ok(wt, main_head, main_matrix)):
             return _needs_gate(wt)
+        checked_head = w_head   # #1054: the HEAD the receipt check above judged; the merge loop below must not fast-forward another one
     refusal = _commit_pending(wt, state)
     if refusal:
         return refusal
@@ -4114,6 +4165,8 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None, run_gate=True):
                                  "commit gốc của PR vào main — đem phần còn lại về bằng PR mới",
                                  "the worktree's PR is merged on origin and main is synced to it, yet the worktree still adds changes: the PR's own "
                                  "commits are not merged into main automatically - bring the rest back in a new PR"), {}
+        if no_gate and w_head != checked_head:   # #1054: the worktree moved after the receipt check: that commit has no receipt
+            return _needs_gate(wt)
         w_before, merged_in = w_head, False   # K8: HEAD worktree trước khi gộp main ở vòng này
         if not _is_ancestor(main, main_head, w_head):
             if no_gate:   # main moved since the check: merging it in would need a gate run

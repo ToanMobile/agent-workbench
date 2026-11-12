@@ -12,7 +12,8 @@ Mỗi chỗ lệch in một dòng `<loại>: <đường dẫn> — <chi tiết>`
   hook-missing       hook kit (hooks/hooks.json) chưa đăng ký trong .claude/settings.json
   hook-dangling      .claude/settings.json đăng ký .claude/hooks/<tên> mà file không có
   super-board-drift  bản sao super-board khác bản nguồn (.claude/bin/super-board-drift.py của repo chứa kit, #368)
---fix chỉ sửa forbidden-flag: bỏ cờ khỏi chuỗi lệnh, giữ nguyên phần còn lại của file. Chỗ lệch khác cần `agent-kit init` hoặc sửa ở repo.
+--fix sửa forbidden-flag (bỏ cờ khỏi chuỗi lệnh, giữ nguyên phần còn lại của file) và super-board-drift (#774: chép file thiếu / lệch từ
+nguồn, file chỉ có ở repo giữ nguyên). Chỗ lệch khác cần `agent-kit init` hoặc sửa ở repo.
 """
 import json
 import os
@@ -264,26 +265,57 @@ def check_settings(repo):
     return out
 
 
-def check_drift(repo):
+def drift_result(repo):
+    """(missing, changed, lỗi) của bản sao super-board ở repo so với nguồn; None khi không có gì để so (repo không có configs, kit không
+    nằm cạnh .claude/bin/super-board-drift.py, repo chính là nguồn)."""
     source = os.path.dirname(KIT)
     script = os.path.join(source, ".claude", "bin", "super-board-drift.py")
     if not configs(repo) or not os.path.isfile(script) or os.path.realpath(repo) == os.path.realpath(source):
-        return []
+        return None
     try:
         r = subprocess.run([sys.executable, script, "--source", source, "--target", repo],
                            capture_output=True, text=True, timeout=60)
         res = json.loads(r.stdout)["targets"][repo]
     except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
-        return [f"super-board-drift: .claude — drift check could not run ({type(exc).__name__})"]
-    return ([f"super-board-drift: {p} — missing (the kit's super-board has it)" for p in res.get("missing", [])]
-            + [f"super-board-drift: {p} — differs from the kit's copy" for p in res.get("changed", [])])
+        return [], [], f"super-board-drift: .claude — drift check could not run ({type(exc).__name__})"
+    return res.get("missing", []), res.get("changed", []), None
+
+
+def sync_drift(repo):
+    """--fix (#774): chép đúng các file super-board thiếu / lệch từ nguồn vào repo theo danh sách của super-board-drift.py; file chỉ có ở
+    repo không đụng tới. Trả dòng `fixed:` (rỗng khi không chép gì); file không ghi được thì check_drift báo tiếp."""
+    res = drift_result(repo)
+    if not res or res[2]:
+        return []
+    source, n = os.path.dirname(KIT), 0
+    for rel in res[0] + res[1]:
+        dst = os.path.join(repo, rel)
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if os.path.islink(dst):
+                os.unlink(dst)   # link cũ trỏ đi nơi khác: thay bằng file thật, không ghi xuyên link
+            shutil.copy2(os.path.join(source, rel), dst)
+            n += 1
+        except OSError as exc:
+            print(f"parity: cannot copy {rel} ({exc})", file=sys.stderr)
+    return [f"fixed: super-board-drift: {n} file(s) copied from the kit's super-board"] if n else []
+
+
+def check_drift(repo):
+    res = drift_result(repo)
+    if not res:
+        return []
+    if res[2]:
+        return [res[2]]
+    return ([f"super-board-drift: {p} — missing (the kit's super-board has it)" for p in res[0]]
+            + [f"super-board-drift: {p} — differs from the kit's copy" for p in res[1]])
 
 
 def main(argv):
     args = [a for a in argv if not a.startswith("-")]
     opts = [a for a in argv if a.startswith("-")]
-    if [o for o in opts if o not in ("--fix",)] or len(args) > 1:
-        print("usage: parity_check.py [repo] [--fix]", file=sys.stderr)
+    if [o for o in opts if o not in ("--fix", "-t")] or len(args) > 1:   # -t như `agent-kit health -t`
+        print("usage: parity_check.py [repo | -t repo] [--fix]", file=sys.stderr)
         return 2
     # Đường dẫn nêu rõ được dùng nguyên (install.sh -t mono/app: kiểm và sửa app, không leo lên gốc git); không nêu thì gốc git của cwd
     repo = os.path.abspath(args[0]) if args else git_root(os.getcwd())
@@ -294,6 +326,8 @@ def main(argv):
         print("parity: this is the kit itself — nothing to compare")
         return 0
     flags, fixed = check_flags(repo, "--fix" in opts)
+    if "--fix" in opts:
+        fixed += sync_drift(repo)
     findings = flags + check_links(repo) + check_copied_hooks(repo) + check_settings(repo) + check_drift(repo)
     for line in fixed + findings:
         print(line)

@@ -2037,6 +2037,22 @@ def _drop_redirects(words):
     return out
 
 
+TRUNK_GENERATED_FILES = ("BUG-MUC-LUC.md",)   # self-generated files a session may put back to HEAD in the trunk main (#1043); declare more here
+
+
+def _trunk_generated_restore(seg):
+    """`git [-C dir] checkout [--] <file>` / `git restore <file>` where EVERY word is a declared generated file (TRUNK_GENERATED_FILES, as a
+    plain name or a path without `..`): a dirty copy of it otherwise blocks `pull --ff-only` and nobody may touch main. No option but one
+    `--` (no `--source`, `-f`, `-b`, a branch or `.`), so it cannot move HEAD or reach another file; any shell syntax in the segment
+    (substitution, glob, redirect, variable) refuses. ponytail: a branch named like the file."""
+    verb, args = _git_verb(seg)
+    if verb not in ("checkout", "restore") or any(c in seg for c in "$`;&|<>(){}*?[]~\\\"'"):
+        return False
+    words = [a for a in args if a != "--"]
+    return bool(words) and args.count("--") <= 1 and all(
+        not w.startswith("-") and ".." not in w.split("/") and os.path.basename(w) in TRUNK_GENERATED_FILES for w in words)
+
+
 def _trunk_unwrap(seg):
     """Lệnh bên trong của `nohup …`, `time [-p] …` và `bash|sh|zsh -c '<một lệnh>'` (tối đa 3 lớp), để _TRUNK_ALLOWED / _trunk_sync /
     _updates_checked_out_branch xét nó theo đúng luật cũ (17/10, GeelyEx2 + Goods: `nohup agent-kit worktree finish … &` để chạy nền một lần
@@ -2229,7 +2245,7 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
         inner = [_trunk_unwrap(p) if i % 2 == 0 else p for i, p in enumerate(pieces)]   # nohup / time / bash -c '<một lệnh>' gỡ ra (17/10)
         if any(i % 2 == 0 and _updates_checked_out_branch(p) for i, p in enumerate(inner)):
             return True
-        stripped = "".join(":" if i % 2 == 0 and (_TRUNK_ALLOWED.search(q) or _trunk_sync(q)) else p for i, (p, q) in enumerate(zip(pieces, inner)))
+        stripped = "".join(":" if i % 2 == 0 and (_TRUNK_ALLOWED.search(q) or _trunk_sync(q) or _trunk_generated_restore(q)) else p for i, (p, q) in enumerate(zip(pieces, inner)))
         if GIT_WRITE.search(stripped) or GATE.search(stripped):
             notes = {}
             if write_hits_locked(stripped, main, cwd, sid, notes)[0] and (not loose or notes.get("top")):

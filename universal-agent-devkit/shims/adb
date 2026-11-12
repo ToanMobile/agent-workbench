@@ -1,0 +1,123 @@
+#!/bin/bash -p
+# shims/adb — chặn adb ở điểm thực thi (#867), lớp BỔ SUNG cho hooks/hardware_safety_gate.sh (hook giữ nguyên).
+# Đứng đầu PATH của phiên agent: nhận argv shell ĐÃ TÁCH, xác định thiết bị đích, đối chiếu denylist/allowlist,
+# rồi exec adb thật với `-s <serial đã kiểm>` (không còn khe TOCTOU). Không đoán chuỗi lệnh nên heredoc / nháy lẻ /
+# comment / $"…" / script trong file / Makefile / find -exec không làm nó sai.
+#   • `bash -p`: không nhập hàm export, không đọc BASH_ENV/ENV (agent không ghi đè được shim). Chỉ dùng builtin.
+#   • Denylist/allowlist: file ghim theo vị trí của shim (repo chứa shim + ~ của user trong passwd), KHÔNG nhận đường
+#     dẫn hay cờ override từ env. Env ADB_DENY_SERIALS / ADB_ALLOW_SERIALS chỉ được THÊM (chặt hơn), không bớt.
+#   • Fail-closed: không xác định được thiết bị (adb lỗi / treo >7 s / rỗng) ⇒ từ chối.
+#   • Residual (ngoài tầm shim, hook vẫn xét): gọi adb bằng đường dẫn tuyệt đối, PATH bị đổi, env -i, ... (tests/gates/test_adb_shim.sh).
+# Thoát: 2 = từ chối; còn lại = mã của adb thật.
+
+self="${BASH_SOURCE[0]}"
+case "$self" in */*) sdir="${self%/*}" ;; *) sdir="." ;; esac
+sdir="$(cd "$sdir" 2>/dev/null && pwd -L)" || { echo "adb-shim: không đọc được thư mục shim" >&2; exit 2; }
+
+# adb thật: mục PATH đầu tiên có adb thực thi, không phải thư mục shim hay chính file này
+real=""
+IFS=: read -r -a _dirs <<< "$PATH"
+for d in "${_dirs[@]}"; do
+  [ -n "$d" ] || d="."
+  [ "$d" -ef "$sdir" ] && continue
+  if [ -x "$d/adb" ] && [ ! -d "$d/adb" ] && ! [ "$d/adb" -ef "$self" ]; then real="$d/adb"; break; fi
+done
+[ -n "$real" ] || { echo "adb-shim: không tìm thấy adb thật trong PATH" >&2; exit 2; }
+
+# ── tách tuỳ chọn toàn cục của adb (đến subcommand đầu tiên) ──
+gopts=(); sflag=0 sval="" tval="" sub=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s) gopts[${#gopts[@]}]="$1"; sflag=1
+        if [ $# -ge 2 ]; then sval="$2"; gopts[${#gopts[@]}]="$2"; shift; fi; shift ;;
+    -s?*) sflag=1; sval="${1#-s}"; gopts[${#gopts[@]}]="$1"; shift ;;
+    -t) gopts[${#gopts[@]}]="$1"; if [ $# -ge 2 ]; then tval="$2"; gopts[${#gopts[@]}]="$2"; shift; fi; shift ;;
+    -t[0-9]*) tval="${1#-t}"; gopts[${#gopts[@]}]="$1"; shift ;;
+    -H|-P|-L) gopts[${#gopts[@]}]="$1"; if [ $# -ge 2 ]; then gopts[${#gopts[@]}]="$2"; shift; fi; shift ;;
+    -*) gopts[${#gopts[@]}]="$1"; shift ;;
+    *) sub="$1"; break ;;
+  esac
+done
+# không có subcommand, hay lệnh chỉ nói chuyện với server adb: không chạm thiết bị
+case "$sub" in
+  ""|devices|version|help|start-server|kill-server|connect|disconnect|pair|mdns|keygen|host-features|server|nodaemon)
+    exec "$real" "${gopts[@]}" "$@" ;;
+esac
+
+# ── thiết bị đích ──
+serial=""
+if [ -z "$tval" ] && [ "$sflag" = 1 ] && [ -n "$sval" ]; then
+  case "$sval" in
+    model:*|usb:*|product:*|device:*|transport_id:*) ;;   # phân giải qua adb
+    *) lit="${sval//[\[\]]/}"   # [::1]:5555: IPv6 literal
+       case "$lit" in ""|*[!A-Za-z0-9._:@-]*) ;; *) serial="$sval" ;; esac ;;
+  esac
+fi
+if [ -z "$serial" ] && [ "$sflag" = 0 ] && [ -z "$tval" ] && [ -n "${ANDROID_SERIAL-}" ]; then
+  # adb chỉ dùng ANDROID_SERIAL khi không có -s / -t / -d / -e: serial literal thì không cần hỏi adb
+  usedev=0; for o in "${gopts[@]}"; do case "$o" in -d|-e) usedev=1 ;; esac; done
+  lit="${ANDROID_SERIAL//[\[\]]/}"
+  case "$lit" in ""|*[!A-Za-z0-9._:@-]*) ;; *) [ "$usedev" = 0 ] && serial="$ANDROID_SERIAL" ;; esac
+fi
+if [ -z "$serial" ]; then
+  # -s rỗng / không -s / -t / -d / -e / ANDROID_SERIAL / model:…: hỏi adb thật với đúng các tuỳ chọn đó (như luật T1).
+  # Không dùng file tạm (mktemp lỗi không được thành fail-open): đọc thẳng từ pipe, tối đa 7 s.
+  if ! IFS= read -r -t 7 serial < <("$real" "${gopts[@]}" get-serialno 2>/dev/null) || [ -z "$serial" ]; then
+    echo "adb-shim: không xác định được thiết bị đích (adb get-serialno lỗi, rỗng hay treo) — ghi rõ adb -s <SERIAL>" >&2
+    exit 2
+  fi
+fi
+serial="${serial%$'\r'}"
+
+# ── chính sách thiết bị ──
+case "$sdir" in
+  */.agents/devkit/shims) root="${sdir%/.agents/devkit/shims}" ;;
+  *) root="${sdir%/*}" ;;
+esac
+home=""; user="$(/usr/bin/id -un 2>/dev/null)"
+case "$user" in ""|*[!A-Za-z0-9._-]*) ;; *) eval "home=~$user" ;; esac   # ~user lấy từ passwd, không từ $HOME
+deny=() allow=()
+add_entries() {   # $1 = deny|allow, $2 = text, $3 = 1 nếu mỗi dòng file là MỘT mục (allowlist)
+  local kind="$1" text="$2" whole="$3" w IFS
+  if [ "$kind" = deny ]; then
+    IFS=$' \t\n,;'; for w in $text; do [ -n "$w" ] && deny[${#deny[@]}]="$w"; done
+    IFS=','; for w in ${text//;/,}; do w="${w#"${w%%[![:space:]]*}"}"; w="${w%"${w##*[![:space:]]}"}"; [ -n "$w" ] && deny[${#deny[@]}]="$w"; done
+  else
+    if [ "$whole" = 1 ] || [[ "$text" == *[,\;]* ]]; then
+      IFS=','; for w in ${text//;/,}; do w="${w#"${w%%[![:space:]]*}"}"; w="${w%"${w##*[![:space:]]}"}"; [ -n "$w" ] && allow[${#allow[@]}]="$w"; done
+    else IFS=$' \t\n'; for w in $text; do [ -n "$w" ] && allow[${#allow[@]}]="$w"; done; fi
+  fi
+}
+read_file() {     # $1 = deny|allow, $2 = đường dẫn
+  local line; [ -r "$2" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do add_entries "$1" "${line%%#*}" 1; done < "$2"
+}
+add_entries deny "${ADB_DENY_SERIALS-}" 0
+add_entries allow "${ADB_ALLOW_SERIALS-}" 0
+for kind in deny allow; do
+  [ -n "$home" ] && read_file "$kind" "$home/.config/universal-agent-devkit/adb-${kind}list"
+  read_file "$kind" "$root/.adb-${kind}list"
+done
+for e in "${deny[@]}"; do
+  if [ "$e" = "$serial" ]; then echo "adb-shim: thiết bị $serial nằm trong denylist (máy cá nhân / cấm đụng)" >&2; exit 2; fi
+done
+if [ ${#allow[@]} -gt 0 ]; then
+  ok=0; for e in "${allow[@]}"; do [ "$e" = "$serial" ] && ok=1; done
+  [ "$ok" = 1 ] || { echo "adb-shim: thiết bị $serial không có trong allowlist" >&2; exit 2; }
+fi
+
+# ── exec adb thật, ghim serial đã kiểm (bỏ -s/-t/-d/-e cũ; giữ -H/-P/-L và các tuỳ chọn khác) ──
+keep=(); i=0
+while [ $i -lt ${#gopts[@]} ]; do
+  o="${gopts[$i]}"
+  case "$o" in
+    -s|-t) i=$((i+2)); continue ;;
+    -s?*|-t[0-9]*|-d|-e) ;;
+    -H|-P|-L) keep[${#keep[@]}]="$o"; i=$((i+1)); [ $i -lt ${#gopts[@]} ] && keep[${#keep[@]}]="${gopts[$i]}"; i=$((i+1)); continue ;;
+    *) keep[${#keep[@]}]="$o" ;;
+  esac
+  i=$((i+1))
+done
+# ${#sub} vì $sub đã bỏ khỏi gopts: các đối số còn lại là "$@" (bắt đầu bằng subcommand)
+unset ANDROID_SERIAL
+exec "$real" "${keep[@]}" -s "$serial" "$@"

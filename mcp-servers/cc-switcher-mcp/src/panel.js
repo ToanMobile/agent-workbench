@@ -417,7 +417,9 @@ export async function runPanelAction(action, params = {}, opts = {}) {
   }
 
   // cooldown
-  const minutes = Number(params.minutes);
+  const rawMinutes = typeof params.minutes === 'number' ? String(params.minutes) : params.minutes;
+  if (typeof rawMinutes !== 'string' || !/^\d{1,4}$/.test(rawMinutes.trim())) throw badInput('Số phút nghỉ phải là số nguyên 0 - 1440.');
+  const minutes = Number(rawMinutes.trim());
   if (!Number.isInteger(minutes) || minutes < 0 || minutes > 1440) throw badInput('Số phút nghỉ phải là số nguyên 0 - 1440.');
   const policy = updateAntiBanPolicy(stateDir, { claudeSwitchCooldownSec: minutes * 60 });
   return { ok: true, message: `Đã đặt thời gian nghỉ chống ban: ${minutes} phút.`, claudeSwitchCooldownSec: policy.claudeSwitchCooldownSec };
