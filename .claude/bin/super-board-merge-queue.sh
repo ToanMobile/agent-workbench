@@ -195,7 +195,7 @@ read_failed() {   # read_failed <rc> <PR> <đọc gì>
   [ "$1" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; }
   say "PR #$2: reading $3 failed (github-read exit $1); label kept, the next run routes it again"
 }
-issue_json() { python3 "$GITHUB_READ" --kind issue -- issue view "$1" ${REPO:+--repo "$REPO"} --json number,title,body,labels,state; }
+issue_json() { python3 "$GITHUB_READ" --kind issue -- issue view "$1" ${REPO:+--repo "$REPO"} --json number,title,body,labels,state,comments; }
 unproven_ac() {   # unproven_ac <PR> <issue>: in các dòng AC chưa tick của khối sb:ac trong body PR (rỗng = đủ hoặc PR không có khối); 79 đi thẳng lên
   local body rc=0 br
   body=$(python3 "$GITHUB_READ" --kind body -- pr view "$1" ${REPO:+--repo "$REPO"} --json body,headRefOid) || return $?
@@ -269,6 +269,14 @@ rebuild_or_rebase() {
   ij=$(issue_json "$k") || { read_failed $? "$p" "card #${k}"; CARD_UNREAD=1; return 1; }
   labs=$(printf '%s' "$ij" | jq -r '.labels[].name')
   cur=$(printf '%s\n' "$labs" | sed -nE 's/^loop:rebuild-([0-9]+)$/\1/p' | sort -n | tail -1); cur=${cur:-0}
+  # #982: root-cause-hash (run.md → Root-cause hash). Lần đỏ này khác hash với comment [merge-queue] gần nhất của thẻ → tiến triển, đếm lại từ 1;
+  # cùng hash (hoặc chưa có hash để so) → giữ nguyên đếm nhãn, chạm rebuild_cap thì Blocked 🛡.
+  rch=""; prevh=""
+  if [ -f "$HERE/super-board-root-cause-hash.py" ]; then
+    rch=$(printf '%s\n%s' "$why" "$det" | python3 -I "$HERE/super-board-root-cause-hash.py" hash --lane review) || rch=""
+    prevh=$(printf '%s' "$ij" | python3 -I "$HERE/super-board-root-cause-hash.py" last --from "[merge-queue]") || prevh=""
+  fi
+  if [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
   if [ "$cur" -ge "$REBUILD_CAP" ]; then
     [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
       "train-result for PR #${p}: ${why}${det:+
@@ -284,7 +292,8 @@ ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
 Did: ${did}
 ❌ Not done: ${why}${det:+; the gate / verify lines:
 ${det}}
-Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "what the merge gate ${tag} refused"), QA and Review run again" || true
+Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "what the merge gate ${tag} refused"), QA and Review run again${rch:+
+root-cause-hash: ${rch}}" || true
   else
     add_label "$k" "loop:rebase" || return 1
     LABEL_DONE=1
@@ -295,7 +304,8 @@ Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "wha
 Did: merged the PR head into origin/<base> in the merge-queue batch
 ❌ Not done: ${why}${det:+; the git / hook lines:
 ${det}}
-Next: Builder rebases onto the base, verification green, then Review again" || true
+Next: Builder rebases onto the base, verification green, then Review again${rch:+
+root-cause-hash: ${rch}}" || true
   fi
   card_move "$k" Ready
 }
