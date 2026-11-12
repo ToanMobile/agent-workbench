@@ -190,7 +190,7 @@ graph TD
         Gates["🔒 Lifecycle Hooks<br/>(wired + opt-in helpers)"]
         SkillsCatalog["🧰 36 Curated Skills"]
         DesignMemory["🎨 DESIGN.md & Failure Memory (.agents/instincts.md)"]
-        MCPHub["🔌 6-Server MCP Hub (100+ Schemas)"]
+        MCPHub["🔌 6-Server MCP Hub"]
     end
 
     subgraph CLI_Interface ["⚙️ DevKit Management CLI"]
@@ -643,19 +643,13 @@ The DevKit natively synchronizes with the 5 core AI coding ecosystems using `AGE
 
 ## 🔌 MCP (Model Context Protocol) Hub
 
-The Model Context Protocol ecosystem is pre-configured in `mcp/` with over 100+ JSON tool schemas:
+The Model Context Protocol ecosystem is pre-configured in `mcp/`:
 
 ```
 universal-agent-devkit/mcp/
 ├── .mcp.json               # Standard config for Claude Code & Cursor
 ├── mcp_config.json         # Standard config for Antigravity & Gemini
-├── README.md               # Environment variables and setup instructions
-└── schemas/                # 100+ Tool Definitions & Schemas
-    ├── codebase-memory-mcp/
-    ├── context7/
-    ├── android-code-search/
-    ├── android-skills/
-    └── play-store/
+└── README.md               # Environment variables and setup instructions
 ```
 
 | Server Name | Transport | Key Capabilities & Tools |
@@ -780,7 +774,7 @@ universal-agent-devkit/
 ├── workflows/                   # Workflow engines (Claude Code Workflow harness) and their tests
 ├── scripts/                     # Installer helpers, worktree_sandbox.py (APFS CoW), token_cost_tracker.py, regex linters
 ├── tests/                       # Installer, gate, profile, health, linter & repo-consistency suites
-├── mcp/                         # MCP Hub (.mcp.json, mcp_config.json, schemas)
+├── mcp/                         # MCP Hub (.mcp.json, mcp_config.json)
 ├── setup.sh                     # Root setup entrypoint
 ├── Makefile                     # Build & Global install automation
 └── adapters/                    # Tool entry points only where that tool requires its own path

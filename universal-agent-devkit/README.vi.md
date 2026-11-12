@@ -189,7 +189,7 @@ graph TD
         Gates["🔒 Lifecycle Hooks<br/>(wired + helper opt-in)"]
         SkillsCatalog["🧰 36 Curated Skills"]
         DesignMemory["🎨 DESIGN.md & Ký Ức Thất Bại (.agents/instincts.md)"]
-        MCPHub["🔌 6-Server MCP Hub (100+ Schemas)"]
+        MCPHub["🔌 6-Server MCP Hub"]
     end
 
     subgraph CLI_Interface ["⚙️ DevKit Management CLI"]
@@ -642,19 +642,13 @@ DevKit tự động đồng bộ cấu hình tương thích cho 5 hệ sinh thá
 
 ## 🔌 MCP (Model Context Protocol) Hub
 
-Hệ sinh thái MCP được tích hợp sẵn sàng trong thư mục `mcp/` với hơn 100+ JSON tool schemas:
+Hệ sinh thái MCP được tích hợp sẵn sàng trong thư mục `mcp/`:
 
 ```
 universal-agent-devkit/mcp/
 ├── .mcp.json               # Cấu hình chuẩn cho Claude Code & Cursor
 ├── mcp_config.json         # Cấu hình chuẩn cho Antigravity & Gemini
-├── README.md               # Hướng dẫn chi tiết thiết lập biến môi trường
-└── schemas/                # 100+ Tool Definitions & Schemas
-    ├── codebase-memory-mcp/
-    ├── context7/
-    ├── android-code-search/
-    ├── android-skills/
-    └── play-store/
+└── README.md               # Hướng dẫn chi tiết thiết lập biến môi trường
 ```
 
 | Server Name | Transport | Khả năng & Công cụ nổi bật |
@@ -779,7 +773,7 @@ universal-agent-devkit/
 ├── workflows/                   # Workflow engine (Workflow harness của Claude Code) và test
 ├── scripts/                     # Helper của installer, kiểm tra tự nhất quán, linter regex (Compose, Unity GC)
 ├── tests/                       # Suite installer, gate, profile, health, linter & nhất quán repo
-├── mcp/                         # MCP Hub (.mcp.json, mcp_config.json, schemas)
+├── mcp/                         # MCP Hub (.mcp.json, mcp_config.json)
 ├── setup.sh                     # Root setup entrypoint
 ├── Makefile                     # Build & Global install automation
 └── adapters/                    # Chỉ chỗ nào công cụ đó bắt buộc một đường dẫn riêng
