@@ -1,1 +1,0 @@
-{"name":"delete_project","description":"Delete a project from the index","parameters":{"properties":{"project":{"type":"string"}},"required":["project"],"type":"object"}}
