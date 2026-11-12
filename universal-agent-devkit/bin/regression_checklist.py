@@ -69,6 +69,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -2134,6 +2135,11 @@ def mark_stale(data: dict, project_dir: Path) -> list:
                     cur = hashlib.sha1((project / f).read_bytes()).hexdigest()[:16]
                 except OSError:
                     cur = None
+                    # #862: a proved file that is git-IGNORED and absent here (a red-patch a fresh worktree was not given) says nothing
+                    # about the proof: keep the status; only a file that is tracked/visible and gone counts as changed
+                    if not (project / f).exists() and subprocess.run(["git", "-C", str(project), "check-ignore", "-q", "--", f],
+                                                                     capture_output=True, timeout=30).returncode == 0:
+                        continue
                 if cur != h:
                     proof.update({"status": "OUTDATED", "reason": f"{f} đã đổi sau lần chứng minh"})
                     break
