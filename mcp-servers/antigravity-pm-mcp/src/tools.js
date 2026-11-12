@@ -147,6 +147,19 @@ async function trackedChanges(cfg, root = cfg.projectRoot, { ignoreGenerated = f
 }
 
 /**
+ * #909: file bi che khoi `git status` (sparse-checkout => tag S, skip-worktree => S, assume-unchanged => chu thuong trong `git ls-files -v`):
+ * grok khong doc duoc file ngoai cone hoac ban sua chua commit bi giau, ma audit van PASS. { error } hoac { hidden: ['<tag> <path>', ...] }.
+ */
+async function hiddenEntries(root) {
+  const ls = await run('git', ['ls-files', '-v', '-z'], { cwd: root, timeoutMs: 60000, maxBytes: 64_000_000 });
+  if (ls.spawnFailed || ls.timedOut || ls.code !== 0 || ls.truncated) {
+    return { error: `git ls-files -v exit ${ls.code}${ls.timedOut ? ', qua han' : ''}${ls.truncated ? ', output bi cat' : ''}` };
+  }
+  const hidden = String(ls.stdout).split('\0').filter((e) => e.length > 2 && (e[0] === 'S' || /[a-z]/.test(e[0])));
+  return { hidden };
+}
+
+/**
  * Pham vi grok audit (04/11): merge-base(nhanh dich, head) — dung pham vi gate DevKit duyet test sua (post-fix-gate _approval_chain), vi
  * gate nhan MOI test da co bi sua ma blob o head khop. Nhanh dich theo thu tu post-fix-gate task_trunk: origin/HEAD -> origin/{main,master,
  * trunk} -> {main,master,trunk}. { base, trunk, edited: file da co o base bi sua/xoa } hoac { base: null } khi khong tinh duoc.
@@ -922,7 +935,10 @@ export const TOOLS = [
           const cand = changeSet !== null ? [...changeSet].filter(laFileDevkitSinh) : [...DEVKIT_SINH_TU_DONG];
           // Cay chinh: file untracked da co san truoc audit khong phai do hook vua sinh (F5 cho untracked qua) => khong tinh; worktree tam
           // bat dau tu checkout sach nen khong co file nao "co san".
-          const coSan = new Set(wtTam ? [] : cand.filter((p) => fs.existsSync(path.join(auditDir, p))));
+          // #909: path trong change set / ls-tree tinh tu GOC REPO; projectRoot co the la thu muc con => existsSync cung phai tu goc repo
+          const tl = await run('git', ['rev-parse', '--show-toplevel'], { cwd: auditDir, timeoutMs: 60000 });
+          const repoTop = tl.code === 0 && String(tl.stdout).trim() ? String(tl.stdout).trim() : auditDir;
+          const coSan = new Set(wtTam ? [] : cand.filter((p) => fs.existsSync(path.join(repoTop, p))));
           const prompt = buildGrokAuditPrompt(cfg, task, { head, scope: args.message || '', range, independent: scoped, workdir: auditDir });
           promptFile = saveOutgoing(cfg, task, `prompt-audit-grok-r${task.round}`, prompt);
           deadline = await grokDeadline(cfg, task, head, range);
@@ -935,9 +951,9 @@ export const TOOLS = [
           // Commit XOA / DOI TEN file DevKit roi hook sinh lai no: file thanh untracked nen status --untracked-files=no khong thay, ma grok da
           // doc bytes ma commit noi la khong ton tai => doi chieu file thuoc change set + dang co tren dia voi cay cua head (review #988 vong 3)
           if (!stAfter.error) {
-            const regen = cand.filter((p) => !coSan.has(p) && fs.existsSync(path.join(auditDir, p)));
+            const regen = cand.filter((p) => !coSan.has(p) && fs.existsSync(path.join(repoTop, p)));
             if (regen.length) {
-              const lt = await run('git', ['--literal-pathspecs', 'ls-tree', '-z', '--name-only', head, '--', ...regen], { cwd: auditDir, timeoutMs: 60000, maxBytes: 16_000_000 });
+              const lt = await run('git', ['--literal-pathspecs', 'ls-tree', '-z', '--full-tree', '--name-only', head, '--', ...regen], { cwd: auditDir, timeoutMs: 60000, maxBytes: 16_000_000 });
               if (lt.spawnFailed || lt.timedOut || lt.code !== 0 || lt.truncated) {
                 stAfter = { error: `git ls-tree exit ${lt.code}` };
               } else {
@@ -945,6 +961,11 @@ export const TOOLS = [
                 for (const p of regen) if (!inHead.has(p)) stAfter.dirty.push(`?? ${p} (co tren dia nhung commit da xoa/doi ten, bi sinh lai)`);
               }
             }
+          }
+          if (!stAfter.error) {
+            const hid = await hiddenEntries(auditDir);
+            if (hid.error) stAfter = { error: hid.error };
+            else stAfter.hidden = hid.hidden;
           }
           headAfter = headCommitOf(auditDir);
         } finally {
@@ -961,7 +982,9 @@ export const TOOLS = [
         if (!v.lines.length) why.push('khong co dong VERDICT');
         if (headAfter !== head) why.push(`HEAD doi trong luc audit (${head} -> ${headAfter || '?'})`);
         if (stAfter.error) why.push(`khong doc duoc git status sau audit (${stAfter.error})`);
-        else if (stAfter.dirty.length) why.push(`cay lam viec doi trong luc audit (git status --untracked-files=no khong rong: ${stAfter.dirty.slice(0, 5).join(', ')})`);
+        else if (stAfter.hidden?.length) {
+          why.push(`co file bi che khoi git status (sparse-checkout / skip-worktree / assume-unchanged), grok khong thay dung bytes cua commit: ${stAfter.hidden.slice(0, 5).map((e) => `${e[0]} ${e.slice(2)}`).join(', ')}`);
+        } else if (stAfter.dirty.length) why.push(`cay lam viec doi trong luc audit (git status --untracked-files=no khong rong: ${stAfter.dirty.slice(0, 5).join(', ')})`);
         const verdict = why.length ? 'fail' : v.verdict;
         const repFile = path.join(pd.dir, 'audit-agent.json');
         writeFileAtomic(repFile, `${JSON.stringify({
