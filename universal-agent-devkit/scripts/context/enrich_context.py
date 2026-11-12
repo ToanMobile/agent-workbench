@@ -1032,9 +1032,14 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
             + (f"\n- ⚠️ {note}" if note else ""))
 
 
+_LINKED_MEMO = {}
+
+
 def _linked(rc, project_root):
     """regression_checklist.skip_bookkeeping, True in a LINKED worktree; an older regression_checklist without it: False (writes, as before)."""
-    return getattr(rc, "skip_bookkeeping", lambda _p: False)(project_root)
+    if project_root not in _LINKED_MEMO:   # #1127: each ask is several git subprocesses; one process, one answer
+        _LINKED_MEMO[project_root] = getattr(rc, "skip_bookkeeping", lambda _p: False)(project_root)
+    return _LINKED_MEMO[project_root]
 
 
 def _checklist_on(project_root):
