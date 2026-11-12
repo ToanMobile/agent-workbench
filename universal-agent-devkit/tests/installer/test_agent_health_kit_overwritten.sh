@@ -86,12 +86,17 @@ K2="$TMP/kit2"; mkdir -p "$K2"
 cat > "$K2/bin/post-fix-gate.py" <<'STUB'
 #!/usr/bin/env python3
 import json, os, subprocess, sys
-env = {k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"}
-out = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent-health.py"), "-t", os.environ["HEALTH_TARGET"]],
-                     capture_output=True, text=True, env=env).stdout
-open(os.environ["HEALTH_OUT"], "w").write(out)
-print(json.dumps({"mode": "staged", "static_ok": True, "tests_ok": True}))
-sys.exit(2)
+
+def load_active_matrix():  # agent-health imports this file (module name "pfg") to read the matrix: answer, never recurse
+    return {"rules": []}, ""
+
+if __name__ == "__main__":  # without this guard the import above re-ran the body: agent-health -> stub -> agent-health ... a fork bomb
+    env = {k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"}
+    out = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent-health.py"), "-t", os.environ["HEALTH_TARGET"]],
+                         capture_output=True, text=True, env=env, timeout=120).stdout
+    open(os.environ["HEALTH_OUT"], "w").write(out)
+    print(json.dumps({"mode": "staged", "static_ok": True, "tests_ok": True}))
+    sys.exit(2)
 STUB
 (cd "$K2" && git init -q && git config user.email t@t && git config user.name t && git add -A && git commit -qm kit --no-verify)
 printf '#!/bin/sh\nexec bash "%s/scripts/git/git-pre-commit.sh"\n' "$K2" > "$K2/.git/hooks/pre-commit"; chmod +x "$K2/.git/hooks/pre-commit"
