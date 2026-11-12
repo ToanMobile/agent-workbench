@@ -286,6 +286,18 @@ def kit_files_vs_head(score: Score):
     if res.returncode != 0:
         return
     changed = sorted(f for f in res.stdout.split("\0") if f)
+    # #828: `git commit -- <path>` runs the pre-commit on a temp index; the pre-commit hands it over as DEVKIT_PRECOMMIT_INDEX.
+    # What that index stages is the commit's own work. Trusted only when it sits in this kit's own git dir.
+    idx = os.environ.get("DEVKIT_PRECOMMIT_INDEX", "")
+    gd = subprocess.run(["git", "-C", str(BASE_DIR), "rev-parse", "--absolute-git-dir"], capture_output=True, text=True)
+    # R1: must be an existing regular file (no symlink): a missing index reads as empty and would hide every change.
+    if (idx and changed and gd.returncode == 0 and os.path.isfile(idx) and not os.path.islink(idx)
+            and os.path.realpath(os.path.dirname(idx)) == os.path.realpath(gd.stdout.strip())):
+        res2 = subprocess.run(["git", "-C", str(BASE_DIR), "diff", "--relative", "--name-only", "-z", "--", "."],
+                              capture_output=True, text=True, errors="surrogateescape", env={**os.environ, "GIT_INDEX_FILE": idx})
+        if res2.returncode == 0:
+            # intersect with the real diff: a file only differing in the temp index is staged elsewhere, never a new red line
+            changed = sorted(set(changed) & {f for f in res2.stdout.split("\0") if f})
     first = changed[:5]
     restore = f"git -C {BASE_DIR} checkout -- {' '.join(first)}"
     score.check(not changed, tr("Mọi file kit đã theo dõi đều khớp HEAD của kit", "Every tracked kit file matches the kit's HEAD"),
