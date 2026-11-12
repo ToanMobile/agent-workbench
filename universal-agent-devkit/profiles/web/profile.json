@@ -24,10 +24,7 @@
     "compose-recomp-audit",
     "deploy",
     "taste-mobile-app",
-    "unity-gc-audit",
-    "generate2dmedia",
-    "generate2dsprite",
-    "video2dsprite"
+    "unity-gc-audit"
   ],
   "exclude_agents": [
     "android-principal-architect",

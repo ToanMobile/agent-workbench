@@ -67,7 +67,7 @@ Runner `scripts/testing/skill_eval.py` (run / grade / aggregate / compare / vali
 |---|---|---|---|
 | SKILL-EVAL tdd | thấp | `tdd-workflow`: chạy test trước Edit production đầu tiên 9/9 có skill, 3/9 không skill; kết quả (test của agent bắt được lỗi trên code gốc, oracle ẩn đạt) 9/9 cả hai nhánh. Skill đổi quy trình, chưa đổi kết quả trên ba lỗi dễ; +44 nghìn token, +4 s mỗi lượt | thêm eval lỗi khó hơn (nhiều cơ chế, lỗi chỉ lộ ở biên) để đo kết quả · agent |
 | SKILL-EVAL impeccable | vừa | `impeccable` (polish trang có sẵn): detector của chính skill sạch 4/9 có skill, 1/9 không skill; **so mù (judge Sonnet) chỉ thắng 2/9**, ví dụ eval-1 cả 3 lần nhánh có skill giữ card lồng card mà nhánh kia đã bỏ; +144 nghìn token, +9 s. Lần chạy đầu với fixture lộ đáp án trong `DESIGN.md` cho kết quả ngược (thắng 7/9), nên fixture quyết định kết quả: chưa có bằng chứng skill làm trang tốt hơn | đọc transcript eval-1 xem skill dừng ở bước nào; thêm judge khác họ model (judge cùng họ Sonnet với người làm); thêm eval · agent |
-| SKILL-EVAL rộng | thấp | 33 skill còn lại chưa có evals; `/devkit-audit` chưa gọi runner | chọn skill theo tần suất dùng; nối vào `/devkit-audit` làm bước tuỳ chọn có trần chi phí · agent; chi tiêu mỗi lần chạy: người dùng |
+| SKILL-EVAL rộng | thấp | 30 skill còn lại chưa có evals; `/devkit-audit` chưa gọi runner | chọn skill theo tần suất dùng; nối vào `/devkit-audit` làm bước tuỳ chọn có trần chi phí · agent; chi tiêu mỗi lần chạy: người dùng |
 
 ## 2. Quyết định đang chờ người dùng
 

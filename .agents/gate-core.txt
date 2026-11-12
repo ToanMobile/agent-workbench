@@ -154,9 +154,6 @@ universal-agent-devkit/scripts/testing/red_proof.py                             
 universal-agent-devkit/skills/deploy/SKILL.md                                    # test-read-by: 22 test
 universal-agent-devkit/skills/devkit-audit/SKILL.md                              # test-read-by: 11 test
 universal-agent-devkit/skills/fixbugs/SKILL.md                                   # test-read-by: 5 test
-universal-agent-devkit/skills/generate2dmedia/scripts/route_media.py             # fan-in 6
-universal-agent-devkit/skills/generate2dsprite/scripts/forge_core.py             # fan-in 15
-universal-agent-devkit/skills/generate2dsprite/scripts/forge_matte.py            # fan-in 5
 universal-agent-devkit/skills/giao/SKILL.md                                      # test-read-by: 55 test
 universal-agent-devkit/skills/impeccable/evals/files/eval-1/DESIGN.md            # test-read-by: 10 test
 universal-agent-devkit/skills/impeccable/evals/files/eval-1/index.html           # test-read-by: 9 test
@@ -167,8 +164,6 @@ universal-agent-devkit/skills/impeccable/evals/files/eval-3/index.html          
 universal-agent-devkit/skills/qa-visual/scripts/capture-screens.mjs              # fan-in 5
 universal-agent-devkit/skills/qa-visual/scripts/config-loader.mjs                # fan-in 9
 universal-agent-devkit/skills/qc/SKILL.md                                        # test-read-by: 13 test
-universal-agent-devkit/skills/video2dsprite/scripts/forge_core.py                # fan-in 15
-universal-agent-devkit/skills/video2dsprite/scripts/forge_matte.py               # fan-in 6
 universal-agent-devkit/templates/DESIGN.md                                       # test-read-by: 10 test
 universal-agent-devkit/templates/claude_settings.json                            # test-read-by: 6 test
 universal-agent-devkit/templates/regression_matrix.json                          # test-read-by: 18 test
