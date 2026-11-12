@@ -3752,6 +3752,8 @@ if [ "${SB_WATCHDOG_START:-0}" != "1" ]; then
     log "⚠ $SCRIPT_DIR/super-board-watchdog.sh is missing: nothing restarts this runner if it dies (copy it from agent-workbench)"
   fi
 fi
+# #1038: halt without a saved read + only dead-worker locks → archived here (read-only proof); anything else stays halted below.
+python3 "$SB_GITHUB_READ" --auto-reconcile --inflight "$INFLIGHT_DIR" >&2 || true
 gh_checkpoint
 
 # ───────────────────────────── preconditions ─────────────────────────────

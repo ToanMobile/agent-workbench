@@ -41,6 +41,19 @@ def main() -> int:
     board = load()
     slugs = [r["slug"] for r in board.REPOS]
     check(len(slugs) == 6 and "humans-vs-ufos" in slugs, "REPOS includes all 6 boards including humans-vs-ufos", str(slugs))
+    # #1038: banner của status/stop đếm số board thật (len(REPOS)), không ghi cứng "5" (6 board, 07/11).
+    import contextlib
+    import io
+    for fn in (board.status_all, board.stop_all):
+        saved_repos = board.REPOS
+        board.REPOS = []
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                fn()
+        finally:
+            board.REPOS = saved_repos
+        check(" 0 SUPER-BOARD RUNNERS" in buf.getvalue(), f"{fn.__name__} banner counts len(REPOS), not a literal", buf.getvalue()[:200])
     with tempfile.TemporaryDirectory() as raw:
         slot_dir = board.ensure_heavy_slots(raw)
         names = sorted(p.name for p in Path(slot_dir).glob("heavy-gate-*.lock"))
