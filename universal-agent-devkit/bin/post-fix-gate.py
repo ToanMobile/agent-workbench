@@ -628,7 +628,7 @@ def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = Fa
     if object_info(since, repo_path) is None:
         return False
     landed = [r for r in ([landed] if isinstance(landed, str) else list(landed or ())) if r]
-    if _content_landed(since, repo_path, landed, runner=runner):
+    if _content_landed(since, repo_path, landed, runner=runner) and not _landed_version_undone(since, repo_path, landed, runner):
         return False                                  # chỉ nội dung đã landed
     res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
                           "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD"],
@@ -647,7 +647,28 @@ def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = Fa
             base = sha
             PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
             break
-    return not test_change_is_append_only(base, repo_path, runner=runner)
+    if not test_change_is_append_only(base, repo_path, runner=runner):
+        return True
+    # #838: a net change of zero against `since` hides a local commit that undid what the merged-in upstream added. Judge the
+    # file against the newest LANDED version in the range too: the last upstream commit (as of the merge base with it) touching it.
+    return base == since and _landed_version_undone(since, repo_path, landed, runner)
+
+
+def _landed_version_undone(since: str, repo_path: str, landed, runner: bool = False) -> bool:
+    """#838: net change zero against `since` hides a local commit that removed what a merged-in landed ref added. True when the
+    newest commit of a landed ref (as of its merge base with HEAD) touching the file outside `since` is not append-only to HEAD's file."""
+    root = str(get_repo_root())
+    if not isinstance(_entry("HEAD", repo_path), tuple):
+        return False                                  # absent at HEAD: deletions keep their own rules (_content_landed)
+    for r in landed:
+        mb =subprocess.run(["git", "-C", root, "merge-base", r, "HEAD"], capture_output=True, text=True).stdout.strip()
+        if not mb:
+            continue
+        lv = subprocess.run(["git", "-C", root, "rev-list", "-1", mb, "--not", since, "--", repo_path],
+                            capture_output=True, text=True).stdout.strip()
+        if lv and not test_change_is_append_only(lv, repo_path, runner=runner):
+            return True
+    return False
 
 
 def _push_gate():
@@ -7172,6 +7193,18 @@ def main():
         if not args.diff:
             BASE_REF = args.since
             _BASE_REF_FOR.update((f, "HEAD") for f in since_paths if _content_landed(args.since, get_project_prefix() + f, landed))
+            # #838: a test a LOCAL commit touched but whose net change <since>→HEAD is empty (main's assertion merged in, a local
+            # commit removed it again) is in no diff: join it, since_test_weakened compares it with the landed version.
+            if landed:
+                lg = subprocess.run(["git", "-C", str(get_project_dir()), "log", "--format=", "--name-only", "-z", "--cc",
+                                     "--relative", f"{args.since}..HEAD", "--not", *landed], capture_output=True)
+                if lg.returncode == 0:
+                    local = set(lg.stdout.decode("utf-8", errors="surrogateescape").split("\0"))
+                    hidden = sorted(f for f in local if f and f not in since_paths and is_test_path(f) and not is_test_doc(f)
+                                    and not is_devkit_artifact(f) and os.path.exists(os.path.join(str(get_project_dir()), f))
+                                    and _landed_version_undone(args.since, get_project_prefix() + f, landed))
+                    since_paths.extend(hidden)
+                    all_changed = sorted(set(all_changed) | set(hidden))
             for dst, src in list(RENAME_SOURCES.items()):
                 if dst not in _BASE_REF_FOR:
                     RENAME_SOURCES[dst] = since_renames.get(src, src)
