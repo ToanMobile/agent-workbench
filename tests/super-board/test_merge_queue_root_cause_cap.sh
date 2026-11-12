@@ -2,6 +2,7 @@
 # #982: rebuild_cap + root-cause-hash do runner tính, không chỉ nằm trong prompt. Thẻ đã loop:rebuild-2 (cap 2) mà train lại in `red`:
 #  - comment gần nhất có root-cause-hash GIỐNG lần đỏ này → Blocked 🛡 (không thêm nhãn loop:rebuild-3);
 #  - hash KHÁC → đếm lại từ 1 (loop:rebuild-1, thẻ về Ready, không Blocked); comment queue mang dòng root-cause-hash.
+# Comment [qa]/[builder] xen giữa (kể cả mang hash khác) không được làm queue đếm lại từ 1: chỉ comment [merge-queue] tính.
 # Chạy offline, khung của test_merge_queue_gate_exit_14.sh. bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -87,7 +88,7 @@ DET='tests/foo.sh:12 AssertionError boom'
 SAME=$(printf '%s\n%s' "red (verify red with this PR in the batch)" "$DET" | python3 -I "$HELPER" hash --lane review)
 printf '[{"number":1,"headRefName":"issue-11-a","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]},{"number":2,"headRefName":"issue-12-b","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]}]\n' "$(sha 1)" "$(sha 2)" > "$F/prs.json"
 : > "$F/labeled/1"; : > "$F/labeled/2"; sha 1 > "$F/head-1"; sha 2 > "$F/head-2"
-printf '{"number":11,"title":"c","body":"","state":"OPEN","labels":[{"name":"loop:rebuild-2"}],"comments":[{"body":"[merge-queue] [report] red\\nroot-cause-hash: %s"}]}' "$SAME" > "$F/issue-11.json"
+printf '{"number":11,"title":"c","body":"","state":"OPEN","labels":[{"name":"loop:rebuild-2"}],"comments":[{"body":"[merge-queue] [report] red\\nroot-cause-hash: %s"},{"body":"[qa] [report] ✅ PR #1\\nroot-cause-hash: 111111111111"},{"body":"[builder] [report] ✅ PR #1"}]}' "$SAME" > "$F/issue-11.json"
 printf '{"number":12,"title":"c","body":"","state":"OPEN","labels":[{"name":"loop:rebuild-2"}],"comments":[{"body":"[merge-queue] [report] red\\nroot-cause-hash: 000000000000"}]}' > "$F/issue-12.json"
 printf 'train-result: 1 red\ntrain-detail: 1 %s\ntrain-result: 2 red\ntrain-detail: 2 %s\n' "$DET" "$DET" > "$F/train.out"
 echo 11 > "$F/train.rc"; : > "$F/writes"

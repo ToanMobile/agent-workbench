@@ -5,8 +5,11 @@ Spec: .claude/skills/super-board/references/run.md → "Root-cause hash".
 
   hash --lane <build|qa|review>   stdin = failure text → 12 hex chars
          sha256(lane | error class | first 3 unique normalized file:line frames)
-  last                            stdin = `gh issue view --json comments` JSON → the newest
-                                  `root-cause-hash: <12 hex>` value in the comments ("" if none)
+  last [--from <prefix>]          stdin = `gh issue view --json comments` JSON → the newest
+                                  `root-cause-hash: <12 hex>` value in the comments ("" if none);
+                                  --from keeps only comments whose body starts with <prefix>
+                                  (the merge queue passes `[merge-queue]`: a QA/Builder comment
+                                  between two queue failures must not reset the counter)
 
 Exit 0 always for well-formed input; bad JSON on `last` prints "" (no hash known, caller keeps the
 plain loop:rebuild-N count).
@@ -53,13 +56,16 @@ def make_hash(lane: str, text: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
-def last_hash(payload: str) -> str:
+def last_hash(payload: str, prefix: str = "") -> str:
     try:
         comments = json.loads(payload).get("comments") or []
     except (ValueError, AttributeError):
         return ""
     for c in reversed(comments):
-        found = HASH_LINE.findall((c or {}).get("body") or "")
+        body = (c or {}).get("body") or ""
+        if prefix and not body.startswith(prefix):
+            continue
+        found = HASH_LINE.findall(body)
         if found:
             return found[-1]
     return ""
@@ -71,9 +77,10 @@ def main(argv: list[str]) -> int:
         print(make_hash(lane, sys.stdin.read()))
         return 0
     if len(argv) >= 2 and argv[1] == "last":
-        print(last_hash(sys.stdin.read()))
+        prefix = argv[argv.index("--from") + 1] if "--from" in argv[:-1] else ""
+        print(last_hash(sys.stdin.read(), prefix))
         return 0
-    print(f"usage: {argv[0]} hash --lane <lane> | last", file=sys.stderr)
+    print(f"usage: {argv[0]} hash --lane <lane> | last [--from <prefix>]", file=sys.stderr)
     return 64
 
 

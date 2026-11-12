@@ -269,12 +269,12 @@ rebuild_or_rebase() {
   ij=$(issue_json "$k") || { read_failed $? "$p" "card #${k}"; CARD_UNREAD=1; return 1; }
   labs=$(printf '%s' "$ij" | jq -r '.labels[].name')
   cur=$(printf '%s\n' "$labs" | sed -nE 's/^loop:rebuild-([0-9]+)$/\1/p' | sort -n | tail -1); cur=${cur:-0}
-  # #982: root-cause-hash (run.md → Root-cause hash). Lần đỏ này khác hash với comment gần nhất của thẻ → tiến triển, đếm lại từ 1;
+  # #982: root-cause-hash (run.md → Root-cause hash). Lần đỏ này khác hash với comment [merge-queue] gần nhất của thẻ → tiến triển, đếm lại từ 1;
   # cùng hash (hoặc chưa có hash để so) → giữ nguyên đếm nhãn, chạm rebuild_cap thì Blocked 🛡.
   rch=""; prevh=""
   if [ -f "$HERE/super-board-root-cause-hash.py" ]; then
     rch=$(printf '%s\n%s' "$why" "$det" | python3 -I "$HERE/super-board-root-cause-hash.py" hash --lane review) || rch=""
-    prevh=$(printf '%s' "$ij" | python3 -I "$HERE/super-board-root-cause-hash.py" last) || prevh=""
+    prevh=$(printf '%s' "$ij" | python3 -I "$HERE/super-board-root-cause-hash.py" last --from "[merge-queue]") || prevh=""
   fi
   if [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
   if [ "$cur" -ge "$REBUILD_CAP" ]; then
