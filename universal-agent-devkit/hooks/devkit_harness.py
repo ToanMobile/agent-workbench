@@ -260,6 +260,8 @@ OUTCOME = re.compile(r"(?<![\wÀ-ỹ])XONG(?![\wÀ-ỹ])|\bPASS\b"
 OUTCOME_WIDE = re.compile(r"✅|" + OUTCOME.pattern, re.M)
 TABLE_ROW = re.compile(r"^[ \t]*\|.*$", re.M)
 MIDWORK_WORDS = re.compile(r"(?i)chưa\s+xong|chua\s+xong|\bnot\s+done\b")
+# #838/#842: the heading of item 1 of the 4-item acceptance report ("1. Đã fix gì") is a label, not a claim; callers strip it with MIDWORK_WORDS.
+REPORT_LABEL = re.compile(r"(?im)^([\s>*_\-]*\d\.\s*)đã\s+fix\s+gì")
 
 
 def status_line(reply):
@@ -630,7 +632,7 @@ def work_in_progress(payload, env=None, status_optional=False, repo=None):
     st = reply_status(reply)
     if st not in (("NOT_DONE", "NONE") if status_optional else ("NOT_DONE",)):
         return False
-    body = MIDWORK_WORDS.sub("", reply)
+    body = REPORT_LABEL.sub(r"\1", MIDWORK_WORDS.sub("", reply))
     # The narrow reading (no check mark, no table rows) is only for a reply whose status line says it is UNFINISHED. A reply with no
     # status line, or one waiting for approval (CHỜ DUYỆT), may be a handover (round-2 review of Dot 20: "✅ Hoàn tất toàn bộ yêu cầu",
     # "CHỜ DUYỆT" + a PASS table skipped all three gates): it keeps the wide reading.
@@ -768,7 +770,7 @@ def mid_work(payload, info=None, pushed=None, repo=None, env=None):
         reply = payload.get("lastAssistantMessage")   # Grok's camelCase (regression_gate log 20/10)
     if not isinstance(reply, str) or not reply.strip():
         return ""
-    if reply_status(reply) not in ("NOT_DONE", "NONE") or OUTCOME_WIDE.search(MIDWORK_WORDS.sub("", reply)):
+    if reply_status(reply) not in ("NOT_DONE", "NONE") or OUTCOME_WIDE.search(REPORT_LABEL.sub(r"\1", MIDWORK_WORDS.sub("", reply))):
         return ""
     if info.get("agent") == "claude" and info.get("transcript") == "claude":
         tp = payload.get("transcript_path") or payload.get("transcriptPath")
