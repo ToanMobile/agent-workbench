@@ -510,23 +510,126 @@ def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = ""
     return not redefines_test(repo_path, base_text, new.decode("utf-8", errors="replace"))
 
 
-def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: bool = False) -> bool:
-    """True when this test existed at `since`, a LOCAL-ONLY commit of `since..HEAD` (one not
-    reachable from `upstream`; no upstream → every range commit) touches it, and its change to
-    the working tree is not append-only — counted from the latest range commit (any path, an empty
-    one included) whose message holds a `Test-approved-by:` line that push_gate accepts and whose
-    auditedHead is at or after `since` (that tree was audited), else from `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate.
-    runner: a suite runner script (A2), judged by test_change_is_append_only(runner=True)."""
+_MERGE_BASES = {}
+_TRUNK_CHANGES = {}
+
+
+def _entry(ref: str, repo_path: str):
+    """(mode, sha) của <ref>:<path>; None khi git xác nhận không có path đó; mỗi lần git lỗi là một object() mới, không bằng gì
+    (kể cả một lỗi khác) nên không bao giờ nới. Mode nằm trong khoá so sánh: `chmod -x` hay đổi thành symlink cùng blob là một thay đổi (#839).
+    --literal-pathspecs: path mở đầu ':' hay có '*' là tên file (review 6029b2f0 #834)."""
+    res = subprocess.run(["git", "--literal-pathspecs", "-C", str(get_repo_root()), "ls-tree", ref, "--", repo_path],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        return object()
+    line = res.stdout.strip().split("\t", 1)[0].split()
+    return (line[0], line[2]) if len(line) == 3 else None
+
+
+def _merge_bases(a: str, b: str) -> tuple:
+    """Mọi merge-base của a và b (--all: lịch sử criss-cross có nhiều); rỗng khi git lỗi hoặc không có."""
+    if (a, b) not in _MERGE_BASES:
+        res = subprocess.run(["git", "-C", str(get_repo_root()), "merge-base", "--all", a, b], capture_output=True, text=True)
+        _MERGE_BASES[(a, b)] = tuple(res.stdout.split()) if res.returncode == 0 else ()
+    return _MERGE_BASES[(a, b)]
+
+
+def _trunk_changes(mb: str, ref: str):
+    """(deleted, renamed) của `git diff --name-status -M -z --no-relative <mb> <ref>`: path gốc repo mà <ref> xoá thật (dòng D) và
+    map path cũ -> path mới của một lần chuyển (R). Cả hai bên cùng toạ độ gốc repo như `prefix + f`, nên monorepo không lệch với
+    since..HEAD --relative (#839). git lỗi => None (không nới).
+    ponytail: rename vượt diff.renameLimit hoặc độ giống < 50 % thì git không dò ra, hiện thành D và vẫn được nới; nâng khi gặp thật."""
+    if (mb, ref) not in _TRUNK_CHANGES:
+        res = subprocess.run(["git", "-C", str(get_repo_root()), "diff", "--name-status", "-M", "-z", "--no-relative", mb, ref],
+                             capture_output=True)
+        if res.returncode != 0:
+            _TRUNK_CHANGES[(mb, ref)] = None
+        else:
+            gone, moved, parts, i = set(), {}, res.stdout.decode("utf-8", errors="surrogateescape").split("\0"), 0
+            while i < len(parts):
+                status, i = parts[i], i + 1
+                if status[:1] in ("R", "C") and i + 1 < len(parts):
+                    if status[0] == "R":
+                        moved[parts[i]] = parts[i + 1]
+                    i += 2
+                elif status and i < len(parts):
+                    if status == "D":
+                        gone.add(parts[i])
+                    i += 1
+            _TRUNK_CHANGES[(mb, ref)] = (frozenset(gone), moved)
+    return _TRUNK_CHANGES[(mb, ref)]
+
+
+def _landed_refs(project_dir) -> list:
+    """Các ref mà commit trên đó đã qua gate của chính nó (#638): trunk của origin (task_trunk, chỉ ref refs/remotes/origin/* — main
+    local nhận được commit không gate nào thấy) và @{u} chỉ khi khớp DƯƠNG TÍNH: nhánh giống trunk (push_gate.TRUNK_LIKE) hoặc chính là
+    HEAD của remote đó. Từ #472 nhánh PR push không cần biên nhận, nên @{u} của nó (== HEAD sau `push -u`) không chứng minh gì; còn
+    `not push_gate.pr_branch()` sẽ tin mọi nhánh hàm đó nghi ngờ (pushurl, tên lạ, git lỗi). Đọc lỗi ⇒ ít ref hơn = mốc cũ, chặt hơn."""
+    proj, refs = str(project_dir), []
+    try:
+        def out(*a):
+            r = subprocess.run(["git", "-C", proj, *a], capture_output=True, text=True, timeout=30)
+            return r.stdout.strip() if r.returncode == 0 else ""
+        up = out("rev-parse", "--symbolic-full-name", "@{u}")
+        remote = max((r for r in out("remote").split() if up.startswith(f"refs/remotes/{r}/")), key=len, default="")
+        branch = up[len(f"refs/remotes/{remote}/"):] if remote else ""
+        if branch and (_push_gate().TRUNK_LIKE.fullmatch(branch)
+                       or out("symbolic-ref", "-q", f"refs/remotes/{remote}/HEAD").lower() == up.lower()):
+            refs.append(up)
+        trunk, _name = task_trunk(proj)
+        if trunk and trunk.startswith("refs/remotes/origin/") and trunk not in refs:
+            refs.append(trunk)
+    except (OSError, subprocess.SubprocessError, ImportError, AttributeError) as e:
+        log_warn(tr(f"--since: không đọc được ref đã landed ({e}) — dùng mốc cũ", f"--since: landed refs unreadable ({e}) — using the old base"))
+    return refs
+
+
+def _content_landed(since: str, repo_path: str, landed, runner: bool = False) -> bool:
+    """Bộ phân loại chung cho test (since_test_weakened) và kiểm tĩnh A1 (INSTINCT-015, #839): <path> ở HEAD chỉ là nội dung đã landed
+    khi với một ref r trong `landed`: (mode, sha) ở HEAD bằng ở ĐẦU r (đầu r đã qua gate của chính nó) VÀ bằng ở MỌI merge-base(<since>, r)
+    nó đúng như ở <since> (nhánh chưa sửa riêng; --all cho lịch sử criss-cross). Không tin commit giữa chừng trong lịch sử r (cha thứ nhất
+    của merge foxtrot, commit WIP): bản HEAD khớp chúng mà khác đầu r thì không nới. Path vắng ở HEAD chỉ nới khi r cũng vắng và r XOÁ THẬT
+    nó (dòng D); nếu r CHUYỂN nó (R) thì bản ở đích tại HEAD phải còn và chỉ nối thêm so với r:đích. Git lỗi => không nới.
+    ponytail: chỉ so với đầu r hiện tại; r tiến thêm sau lần gộp cuối thì nhánh bị đòi duyệt tới khi gộp lại r (G1, #839)."""
+    mine, head = _entry(since, repo_path), _entry("HEAD", repo_path)
+    if mine is not None and mine == head:
+        return True
+    for r in landed:
+        bases = _merge_bases(since, r)
+        tip = _entry(r, repo_path)
+        if not bases or any(_entry(b, repo_path) != mine for b in bases):
+            continue
+        if head is not None:
+            if isinstance(head, tuple) and head == tip:
+                return True
+            continue
+        if tip is not None:
+            continue
+        changes = [_trunk_changes(b, r) for b in bases]
+        if any(c is None for c in changes):
+            continue
+        if all(repo_path in c[0] for c in changes):
+            return True
+        dsts = {c[1].get(repo_path) for c in changes}
+        dst = next(iter(dsts)) if len(dsts) == 1 else None
+        if dst and _entry("HEAD", dst) is not None and test_change_is_append_only(r, dst, runner=runner):
+            return True
+    return False
+
+
+def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = False) -> bool:
+    """True khi test này đã có ở `since`, nhánh có phần đổi của riêng nó trên test trong `since..HEAD` (không chỉ là nội dung
+    đã landed — _content_landed, `landed` là chuỗi ref từ _landed_refs), và thay đổi tới cây làm việc không phải chỉ nối thêm —
+    tính từ commit mới nhất trong dải có dòng `Test-approved-by:` push_gate chấp nhận mà auditedHead không trước `since`
+    (cây đó đã audit), không có thì từ `since`. Không dùng `rev-list --not <ref> -- path`: pathspec rút gọn lịch sử (TREESAME)
+    nên commit gộp `--theirs` che commit bên kia.
+    runner: script chạy suite (A2), xét bằng test_change_is_append_only(runner=True)."""
     root = str(get_repo_root())
     if object_info(since, repo_path) is None:
         return False
-    local = subprocess.run(["git", "-C", root, "rev-list", "-1", f"{since}..HEAD"]
-                           + (["--not", upstream] if upstream else []) + ["--", repo_path],
-                           capture_output=True, text=True)
-    if local.returncode == 0 and not local.stdout.strip():
-        return False                                  # only upstream commits touch it
-    # Không pathspec (#630): luồng audit #605 kết thúc bằng một commit RỖNG mang trailer, `-- <path>` không bao giờ liệt kê nó
-    # (_trailer_cross_review cũng quét cả range). Đổi lại phải kiểm auditedHead sau `since` như _trailer_cross_review.
+    landed = [r for r in ([landed] if isinstance(landed, str) else list(landed or ())) if r]
+    if _content_landed(since, repo_path, landed, runner=runner):
+        return False                                  # chỉ nội dung đã landed
     res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
                           "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD"],
                          capture_output=True, text=True)
@@ -7033,7 +7136,7 @@ def main():
     except RuntimeError as e:
         log_err(str(e))
         return 2
-    since_paths = []
+    since_paths, landed = [], []
     if args.since and not STAGED:
         # Commits since the last verified HEAD (regression_gate, T0003): their files join the
         # change for test selection; the matrix reads HEAD, the edited-test check HEAD and <since>.
@@ -7057,20 +7160,18 @@ def main():
                 i += 1
         extra = [f for f in since_paths if os.path.exists(os.path.join(str(get_project_dir()), f))]
         all_changed = sorted(set(all_changed) | set(extra))
+        # #638: commit đã nằm trên ref đã landed (trunk của origin gộp vào nhánh, upstream giống trunk) đã qua gate của chính nó —
+        # chỉ since_test_weakened dùng danh sách này; kiểm tĩnh A1 bên dưới giữ nguyên luật cũ (chỉ @{u}).
+        landed = _landed_refs(get_project_dir())
         # The static checks judge the committed work too (A1, 2026-10-09): against HEAD, an AWS key or a placeholder
         # committed in <since>..HEAD was "already there" — exit 0 and a receipt. Their base is <since>; a file renamed
         # in the range (or renamed again in the tree) is read at <since> under its old path. A file only commits already
         # on the upstream touched (a teammate's, pulled in) keeps HEAD: they passed their own gate (as since_test_weakened).
+        # A1 dùng cùng bộ phân loại với since_test_weakened (_content_landed, #839): file chỉ được so với HEAD (đã có) khi nội dung ở HEAD
+        # bằng đầu một ref đã landed. Nhánh PR sau `push -u` có @{u} == HEAD nên không còn được tin (_landed_refs chỉ tin @{u} khớp trunk).
         if not args.diff:
             BASE_REF = args.since
-            up = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", "@{u}"],
-                                capture_output=True, text=True).stdout.strip()
-            if up:
-                lg = subprocess.run(["git", "-C", str(get_project_dir()), "log", "--format=", "--name-only", "-z", "--cc",
-                                     "--relative", f"{args.since}..HEAD", "--not", up], capture_output=True)
-                local = set(lg.stdout.decode("utf-8", errors="surrogateescape").split("\0")) if lg.returncode == 0 else None
-                if local is not None:
-                    _BASE_REF_FOR.update((f, "HEAD") for f in since_paths if f not in local)
+            _BASE_REF_FOR.update((f, "HEAD") for f in since_paths if _content_landed(args.since, get_project_prefix() + f, landed))
             for dst, src in list(RENAME_SOURCES.items()):
                 if dst not in _BASE_REF_FOR:
                     RENAME_SOURCES[dst] = since_renames.get(src, src)
@@ -7126,13 +7227,8 @@ def main():
     # check above never sees it (2026-09-28). Such a path is judged against <since> too — on top
     # of the HEAD check, never instead of it. A range commit touching it with `Test-approved-by:`
     # (an Antigravity audit, rules/essentials.md Git) covers the file as of the LATEST such commit.
-    upstream = ""
-    if since_paths:
-        up = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", "@{u}"],
-                            capture_output=True, text=True)
-        upstream = up.stdout.strip() if up.returncode == 0 else ""
     since_touched = [f for f in since_paths if f not in tests_touched and is_test_path(f) and not is_test_doc(f)
-                     and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, upstream)]
+                     and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, landed)]
     # A script a base-ref suite command runs is a file of the change (A2, 2026-10-09: with scripts/check.sh set to
     # `exit 0`, `sh scripts/check.sh` passed whatever the code did). Its change counts like an edited existing test —
     # UNVERIFIED unless approved, same paths — and like a test, a pure append (a line running one more test) is no edit,
@@ -7142,7 +7238,7 @@ def main():
     runners_touched = [f for f in sorted(runner_paths) if f in modified_files and object_info(base_ref, prefix + f) is not None
                        and not test_change_is_append_only(base_ref, prefix + f, runner=True)]
     since_runners = [f for f in sorted(runner_paths) if f in since_paths and f not in runners_touched
-                     and since_test_weakened(args.since, prefix + f, upstream, runner=True)]
+                     and since_test_weakened(args.since, prefix + f, landed, runner=True)]
     tests_touched += runners_touched
     since_touched += since_runners
     runners_touched += since_runners
@@ -7162,7 +7258,9 @@ def main():
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     # Không có thay đổi thì không có gì để nghiệm thu — tuyệt đối không bịa file mẫu để ra PASS.
-    if not modified_files and args.tree is None:
+    # Một test bị xoá trong <since>..HEAD không nằm trong modified_files (file không còn trên đĩa): còn tests_touched thì đi tiếp
+    # tới phán quyết "test đã có bị sửa" (exit 2), không phải exit 3 mà regression_gate coi là đã kiểm (#638 plan review).
+    if not modified_files and not tests_touched and args.tree is None:
         if devkit_artifacts:
             log_warn(tr(f"Chỉ có {len(devkit_artifacts)} link/state do devkit cài — không phải thay đổi của người dùng.",
                         f"Only {len(devkit_artifacts)} DevKit-installed links/state files — not a change of yours."))
