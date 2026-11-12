@@ -212,7 +212,7 @@ def start_one(repo, locks_dir):
 
 def start_all():
     print("=================================================================")
-    print("  🚀 KHỞI ĐỘNG ĐỒNG THỜI 5 SUPER-BOARD RUNNERS (TỰ HÀNH 24/7)")
+    print(f"  🚀 KHỞI ĐỘNG ĐỒNG THỜI {len(REPOS)} SUPER-BOARD RUNNERS (TỰ HÀNH 24/7)")
     print("=================================================================\n")
     locks_dir = ensure_heavy_slots()
     ensure_claude_workspace_trust()
@@ -239,7 +239,7 @@ def write_stop_marker(marker):
 
 def stop_all():
     print("=================================================================")
-    print("  🛑 DỪNG TOÀN BỘ 5 SUPER-BOARD RUNNERS")
+    print(f"  🛑 DỪNG TOÀN BỘ {len(REPOS)} SUPER-BOARD RUNNERS")
     print("=================================================================\n")
     for repo in REPOS:
         slug = repo["slug"]
@@ -272,7 +272,7 @@ def stop_all():
 
 def status_all():
     print("=================================================================")
-    print("  📊 TRẠNG THÁI 5 SUPER-BOARD RUNNERS & GITHUB BOARDS")
+    print(f"  📊 TRẠNG THÁI {len(REPOS)} SUPER-BOARD RUNNERS & GITHUB BOARDS")
     print("=================================================================\n")
     for repo in REPOS:
         rdir = repo["dir"]
@@ -324,7 +324,7 @@ def watchdog_line(rdir, slug):
             f" · verdict={wd.get('VERDICT') or '-'} · restarts={wd.get('RESTARTS', '0')}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Quản lý đồng thời cả 5 Super-Board Runners")
+    parser = argparse.ArgumentParser(description="Quản lý đồng thời cả các Super-Board Runners")
     parser.add_argument("action", choices=["start", "stop", "status"], default="status", nargs="?", help="Hành động: start | stop | status")
     args = parser.parse_args()
 
