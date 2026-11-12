@@ -617,15 +617,17 @@ def _content_landed(since: str, repo_path: str, landed, runner: bool = False) ->
     return False
 
 
-def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = False) -> bool:
+def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = False, old_path: str = "") -> bool:
     """True khi test này đã có ở `since`, nhánh có phần đổi của riêng nó trên test trong `since..HEAD` (không chỉ là nội dung
     đã landed — _content_landed, `landed` là chuỗi ref từ _landed_refs), và thay đổi tới cây làm việc không phải chỉ nối thêm —
     tính từ commit mới nhất trong dải có dòng `Test-approved-by:` push_gate chấp nhận mà auditedHead không trước `since`
     (cây đó đã audit), không có thì từ `since`. Không dùng `rev-list --not <ref> -- path`: pathspec rút gọn lịch sử (TREESAME)
     nên commit gộp `--theirs` che commit bên kia.
-    runner: script chạy suite (A2), xét bằng test_change_is_append_only(runner=True)."""
+    runner: script chạy suite (A2), xét bằng test_change_is_append_only(runner=True).
+    old_path: tên nó có ở `since` khi bị đổi tên trong dải (#836): tra và so nội dung theo tên đó."""
     root = str(get_repo_root())
-    if object_info(since, repo_path) is None:
+    old_path = old_path if old_path and old_path != repo_path else ""
+    if object_info(since, old_path or repo_path) is None:
         return False
     landed = [r for r in ([landed] if isinstance(landed, str) else list(landed or ())) if r]
     if _content_landed(since, repo_path, landed, runner=runner) and not _landed_version_undone(since, repo_path, landed, runner):
@@ -647,7 +649,10 @@ def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = Fa
             base = sha
             PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
             break
-    if not test_change_is_append_only(base, repo_path, runner=runner):
+    # A trailer commit after the rename knows only the new name; at `since` (or before the rename) the old one.
+    if old_path and base != since and object_info(base, old_path) is None:
+        old_path = ""
+    if not test_change_is_append_only(base, repo_path, old_path, runner=runner):
         return True
     # #838: a net change of zero against `since` hides a local commit that undid what the merged-in upstream added. Judge the
     # file against the newest LANDED version in the range too: the last upstream commit (as of the merge base with it) touching it.
@@ -7261,7 +7266,8 @@ def main():
     # of the HEAD check, never instead of it. A range commit touching it with `Test-approved-by:`
     # (an Antigravity audit, rules/essentials.md Git) covers the file as of the LATEST such commit.
     since_touched = [f for f in since_paths if f not in tests_touched and is_test_path(f) and not is_test_doc(f)
-                     and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, landed)]
+                     and not is_devkit_artifact(f) and since_test_weakened(args.since, prefix + f, landed,
+                                                                            old_path=prefix + since_renames[f] if f in since_renames else "")]
     # A script a base-ref suite command runs is a file of the change (A2, 2026-10-09: with scripts/check.sh set to
     # `exit 0`, `sh scripts/check.sh` passed whatever the code did). Its change counts like an edited existing test —
     # UNVERIFIED unless approved, same paths — and like a test, a pure append (a line running one more test) is no edit,
