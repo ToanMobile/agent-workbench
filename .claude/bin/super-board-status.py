@@ -174,7 +174,7 @@ def parse_manifest(text: str, today_iso: str) -> dict[str, Any]:
             recents.append({
                 "epoch": ep, "verb": "dispatch", "glyph": LANE_GLYPH[lane],
                 "issue": f"#{issue}", "target": LANE_LABEL[lane],
-                # `attempt N/3` is filled in at render time from current
+                # `attempt N/<rebuild_cap>` is filled in at render time from current
                 # labels — the manifest doesn't encode it at dispatch time.
                 "detail": "",
             })
@@ -970,7 +970,7 @@ def main() -> int:
     else:
         for r in recents:
             t = t_minus(r["epoch"])
-            # Dispatch detail (`attempt N/3`) is filled in at render time
+            # Dispatch detail (`attempt N/<rebuild_cap>`) is filled in at render time
             # because the manifest doesn't encode the rebuild count at
             # dispatch time — the number shown reflects the issue's *current*
             # label. Live workers in the §Workers block above use the same
