@@ -520,7 +520,15 @@ def state():
             return json.load(fh)
     except (OSError, ValueError):
         return {}
+def wait_out_hour_edge(margin=60):
+    """#1127: the no-turn-start key is `<session>@h<hour>`. Four hook runs that straddle an hour edge (every 00:00 UTC
+    included) write two keys and reset the block budget, so the assertion below went red once an hour of the day. Start the
+    runs only when the hour has at least `margin` s left (waits at most `margin` s, once)."""
+    left = 3600 - (time.time() % 3600)
+    if left < margin:
+        time.sleep(left + 1)
 for session, with_tr in (("f-none", False), ("f-peer", True)):
+    wait_out_hour_edge()
     drop_receipt()
     pth = None
     if with_tr:

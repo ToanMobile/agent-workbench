@@ -84,14 +84,32 @@ def word_set(text):
     return out
 
 
+def _is_word(c):
+    return c == "_" or c.isalnum()
+
+
 def mentions(text, keywords):
     """text (normalized) names one of keywords as a word or the start of one ("crash"
     finds "crashed"). A keyword of three characters or fewer must be a whole word
     (plural s allowed): "pr" is not in "PlayerPrefs", "ui" not in "build"."""
+    # No re.search per keyword (#1127): a fresh hook process has a cold regex cache, so ~240 compiles cost 25-45 ms CPU per
+    # prompt. Same rule by hand: not preceded by a word char; for k <= 3 chars followed by [s] then a non-word char / end.
+    n = len(text)
     for k in keywords:
         k = normalize(k)
-        if re.search(r"(?<!\w)" + re.escape(k) + (r"s?(?!\w)" if len(k) <= 3 else ""), text):
-            return True
+        if not k:  # "" matched at the first non-word-preceded position in the regex form: keep that answer
+            if re.search(r"(?<!\w)s?(?!\w)", text):
+                return True
+            continue
+        short, kl, i = len(k) <= 3, len(k), text.find(k)
+        while i != -1:
+            e = i + kl
+            if i == 0 or not _is_word(text[i - 1]):
+                if not short or e == n or not _is_word(text[e]):
+                    return True
+                if text[e] == "s" and (e + 1 == n or not _is_word(text[e + 1])):
+                    return True
+            i = text.find(k, i + 1)
     return False
 
 
