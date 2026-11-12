@@ -254,20 +254,42 @@ def danger_in_git(sub, args):
         return "gc --prune xoá object không còn tham chiếu"
     if sub == "update-ref" and ("d" in short or "--delete" in long_):
         return "update-ref -d xoá ref"
-    if sub == "update-ref" and ("--stdin" in long_ or any(p.startswith("refs/heads/") for p in pos)):
+    # refs are case-sensitive in git but APFS (macOS) folds the case of the loose-ref file: `refs/Remotes/..` writes the same file
+    if sub == "update-ref" and ("--stdin" in long_ or any(p.lower().startswith("refs/heads/") for p in pos)):
         return "update-ref ghi thẳng vào nhánh (như reset/branch -f)"
     # (#837) refs/remotes/* is what the gate trusts as "landed" (task_trunk, origin/HEAD): an agent must not forge it. fetch/pull write it
     # legitimately and stay allowed; `remote set-head <r> --auto` re-reads the remote's truth and stays allowed too.
-    if sub == "update-ref" and any(p.startswith("refs/remotes/") for p in pos):
+    if sub == "update-ref" and any(p.lower().startswith("refs/remotes/") for p in pos):
         return "update-ref ghi refs/remotes/* giả ref đã landed (dùng git fetch)"
     if sub == "remote" and pos[:1] == ["set-head"]:
-        auto = any(len(l) >= 4 and "--auto".startswith(l) for l in long_) or "a" in short   # git accepts --au, --aut
-        if not auto or long_ & {"--no-auto", "--delete"} or "d" in short:
+        # flags read in order (git: the last of --auto / --no-auto wins), shell redirections dropped (`> -a` is no flag), and --auto takes
+        # only the remote: a branch operand, or any extra word, is a write
+        auto, bad, spos = False, False, []
+        for a in drop_redirects(args):
+            n = a.split("=", 1)[0]
+            if a == "--":
+                continue
+            if a.startswith("--"):
+                if len(n) >= 3 and "--auto".startswith(n):
+                    auto = True
+                elif len(n) >= 6 and "--no-auto".startswith(n):
+                    auto = False
+                else:
+                    bad = True   # --delete / --d.. / --no-delete / unknown: not the read-only refresh
+            elif a.startswith("-"):
+                if set(a[1:]) - {"a"}:
+                    bad = True
+                auto = auto or "a" in a[1:]
+            else:
+                spos.append(a)
+        if bad or not auto or len(spos) > 2:   # spos = [set-head, <remote>]
             return "remote set-head đổi/xoá origin/HEAD giả nhánh trunk đã landed (chỉ cho --auto)"
     if sub == "symbolic-ref":
         pos = drop_redirects(pos)   # `2>/dev/null` is a shell redirect, not a ref
-        writes = len(pos) >= 2 or "d" in short or "m" in short or "--delete" in long_
-        if writes and any(p.startswith("refs/remotes/") for p in pos):
+        # a symbolic-ref target must be a ref (git refuses to point outside refs/): a 2nd word that is not one (a script literal such as
+        # 'utf-8' after the read) is no write
+        writes = (len(pos) >= 2 and pos[1].startswith("refs/")) or "d" in short or "m" in short or "--delete" in long_
+        if writes and any(p.lower().startswith("refs/remotes/") for p in pos):
             return "symbolic-ref ghi refs/remotes/* giả ref đã landed"
     if sub == "config":
         reason = config_write_danger(args)
@@ -732,8 +754,9 @@ def git_in_literals(code, allow=None):
         j = k + 1
         while j < len(words) and words[j].startswith("-"):
             j += 2 if (words[j] in GIT_OPTS_WITH_ARG and "=" not in words[j]) else 1
+        end = next((x for x in range(j + 1, len(words)) if words[x].rsplit("/", 1)[-1].lower() == "git"), len(words))   # this call's words, not the next call's
         if j < len(words):
-            reason = danger_in_git(words[j], words[j + 1:])
+            reason = danger_in_git(words[j], words[j + 1:end])
             if not reason and words[j] in ("checkout", "switch", "worktree"):
                 first = next((x for x in range(j + 1, len(words)) if not words[x].startswith("-")), len(words) - 1)
                 nxt = next((x for x in range(first + 1, len(words)) if not words[x].startswith("-")), len(words))

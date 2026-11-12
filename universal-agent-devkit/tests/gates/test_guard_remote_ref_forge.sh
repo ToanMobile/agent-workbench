@@ -31,7 +31,18 @@ check 2 git 'git remote set-head origin -a --no-auto'
 check 2 git 'git remote set-head origin --auto -d'
 check 2 git 'git remote set-head origin --auto --delete'
 check 2 git 'git remote set-head origin --auto --no-a'
+check 2 git 'git remote set-head origin feat > -a'
+check 2 git 'git remote set-head origin feat > --auto'
+check 2 git "python3 -c \"import subprocess; subprocess.run(['git','remote','set-head','origin','feat']); print('-a')\""
+check 2 git 'git update-ref refs/Remotes/origin/main HEAD'
+check 2 git 'git update-ref REFS/REMOTES/origin/main HEAD'
+check 2 git 'git update-ref Refs/Heads/x HEAD'
+check 2 git 'git symbolic-ref refs/Remotes/origin/HEAD refs/heads/feat'
 echo "── allowed (rc 0)"
+check 0 git 'git remote set-head origin --a'
+check 0 git 'git remote set-head origin --no-auto --auto'
+check 0 git "python3 -c \"import subprocess; print(subprocess.run(['git','symbolic-ref','refs/remotes/origin/HEAD'], capture_output=True).stdout.decode('utf-8'))\""
+check 0 git "node -e \"console.log(require('child_process').execSync('git symbolic-ref refs/remotes/origin/HEAD','utf8'))\""
 check 0 git 'git fetch origin'
 check 0 git 'git pull --ff-only'
 check 0 git 'git remote set-head origin --auto'
