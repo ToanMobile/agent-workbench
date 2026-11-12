@@ -46,7 +46,11 @@ check 2 git 'git remote 2>/dev/null set-head origin feat'
 check 2 git 'git remote set-head origin -- -a'
 check 2 git "python3 -c \"import subprocess; subprocess.run(['git','update-ref','-m','git','refs/remotes/origin/main','HEAD'])\""
 check 2 git "python3 -c \"import subprocess; subprocess.run(['git','symbolic-ref','refs/remotes/origin/main','HEAD'])\""
+check 2 git 'git 2>/dev/null update-ref refs/remotes/origin/main HEAD'
+check 2 git 'git >/dev/null remote set-head origin feat'
+check 2 git 'git -C . 2>/dev/null update-ref refs/remotes/origin/main HEAD'
 echo "── allowed (rc 0)"
+check 0 git 'git 2>/dev/null remote set-head origin --auto'
 check 0 git 'git remote -v set-head origin --auto'
 check 0 git "python3 -c \"import subprocess; print(subprocess.run(['git','symbolic-ref','refs/remotes/origin/HEAD'], capture_output=True).stdout.decode('utf-8').removeprefix('refs/remotes/origin/'))\""
 check 0 git 'git remote set-head origin --a'

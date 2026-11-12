@@ -1760,6 +1760,7 @@ def analyse_simple(tokens, depth):
             IN_XARGS[0] -= 1
     if prog != "git":
         return None
+    rest = drop_redirects(rest)   # (#837) `git 2>/dev/null update-ref ..`: a redirect before the subcommand is no git option
     j = 0
     aliases = {}
     gdir = CUR_DIR[0]
