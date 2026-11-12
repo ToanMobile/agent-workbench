@@ -38,7 +38,17 @@ check 2 git 'git update-ref refs/Remotes/origin/main HEAD'
 check 2 git 'git update-ref REFS/REMOTES/origin/main HEAD'
 check 2 git 'git update-ref Refs/Heads/x HEAD'
 check 2 git 'git symbolic-ref refs/Remotes/origin/HEAD refs/heads/feat'
+check 2 git 'git symbolic-ref refs/remotes/origin/main HEAD'
+check 2 git 'git symbolic-ref refs/remotes/origin/HEAD Refs/remotes/origin/feat'
+check 2 git 'git symbolic-ref > -q refs/remotes/origin/HEAD refs/remotes/origin/feat'
+check 2 git 'git remote > /dev/null set-head origin feat'
+check 2 git 'git remote 2>/dev/null set-head origin feat'
+check 2 git 'git remote set-head origin -- -a'
+check 2 git "python3 -c \"import subprocess; subprocess.run(['git','update-ref','-m','git','refs/remotes/origin/main','HEAD'])\""
+check 2 git "python3 -c \"import subprocess; subprocess.run(['git','symbolic-ref','refs/remotes/origin/main','HEAD'])\""
 echo "── allowed (rc 0)"
+check 0 git 'git remote -v set-head origin --auto'
+check 0 git "python3 -c \"import subprocess; print(subprocess.run(['git','symbolic-ref','refs/remotes/origin/HEAD'], capture_output=True).stdout.decode('utf-8').removeprefix('refs/remotes/origin/'))\""
 check 0 git 'git remote set-head origin --a'
 check 0 git 'git remote set-head origin --no-auto --auto'
 check 0 git "python3 -c \"import subprocess; print(subprocess.run(['git','symbolic-ref','refs/remotes/origin/HEAD'], capture_output=True).stdout.decode('utf-8'))\""
