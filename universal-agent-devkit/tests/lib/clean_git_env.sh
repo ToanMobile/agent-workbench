@@ -28,6 +28,8 @@ export GIT_CONFIG_GLOBAL=/dev/null EMAIL="${EMAIL:-devkit-test@localhost}"
 # Host policy a test must not inherit (W1 R5c): on a host under 10 GiB free every `worktree add` would run gc over the test's own
 # fixture siblings, and under 3 GiB refuse. tests/worktree_git/test_worktree_limits.sh sets these itself.
 export WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0
+# #774: install.sh cài lịch launchd gate-full đêm cho repo có super-board: test không được đụng launchd thật. Test của lịch tự đặt =0 + stub launchctl.
+export DEVKIT_NO_GATE_SCHEDULE=1
 # 10/11: a test never prunes the host's real build caches (~/.gradle/caches/build-cache-1 ...) under WORKTREE_CACHE_PRUNE_GIB.
 export WORKTREE_CACHE_PRUNE_GIB=0
 # The user's own ~/.antigravity-pm.json must not steer a test: `giaoDefault: true` there makes the prompt hook add the standing "GIAO MẶC ĐỊNH BẬT"

@@ -2792,24 +2792,24 @@ def cc_switcher_bin() -> str:
 def cc_switcher_args(body: dict) -> list:
     """Kiểm tra thao tác theo danh sách trắng trước khi gọi node; sai thì ValueError (HTTP 400)."""
     action = body.get("action")
-    if action not in CC_ACTIONS:
+    if not isinstance(action, str) or action not in CC_ACTIONS:
         raise ValueError("Thao tác không hợp lệ")
     args = ["--panel-action", action]
     if action == "switch":
         target = body.get("target")
-        if target not in CC_PROFILES:
+        if not isinstance(target, str) or target not in CC_PROFILES:
             raise ValueError("Chọn một tài khoản hợp lệ")
         args += ["--target", target]
         if body.get("force") is True:
             args.append("--force")
     elif action == "login":
         target = body.get("target")
-        if target not in CC_CLAUDE_ACCOUNTS:
+        if not isinstance(target, str) or target not in CC_CLAUDE_ACCOUNTS:
             raise ValueError("Chọn một tài khoản Claude hợp lệ")
         args += ["--target", target]
     elif action == "balance":
         mode = body.get("mode", "even")
-        if mode not in CC_BALANCE_MODES:
+        if not isinstance(mode, str) or mode not in CC_BALANCE_MODES:
             raise ValueError("Chế độ chia repo không hợp lệ")
         args += ["--mode", mode]
     elif action == "cooldown":
@@ -2825,7 +2825,7 @@ def cc_switcher_args(body: dict) -> list:
         args += ["--repo", repo]
         if action != "repo_remove":
             account = body.get("account")
-            if account not in CC_CLAUDE_ACCOUNTS:
+            if not isinstance(account, str) or account not in CC_CLAUDE_ACCOUNTS:
                 raise ValueError("Repo chỉ gán được tài khoản Claude: finos_toan, finos_linh, finos_toan_max, finos_lua")
             args += ["--account", account]
         if action == "repo_add" and body.get("name") not in (None, ""):
@@ -2943,6 +2943,8 @@ def make_handler(app: App):
                 if not from_mac(self):
                     return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
                 if path == "/api/cc-switcher/state":
+                    if self.headers.get("X-Agent-Office") != "1":  # same CSRF guard as POST: a foreign page cannot trigger ?refresh=1
+                        return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
                     q = parse_qs(urlparse(self.path).query)
                     args = ["--panel-json"] + (["--refresh"] if (q.get("refresh") or [""])[0] == "1" else [])
                     code, res = cc_switcher_call(args)
@@ -2960,7 +2962,9 @@ def make_handler(app: App):
                 data = f.read()
             if rel == "index.html":
                 data = fill_models_version(data, models_version())
-            return self.send(200, data, CTYPES.get(os.path.splitext(full)[1], "application/octet-stream"))
+            extra = {"X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'"} \
+                if os.path.basename(full).lower() == "cc-switcher.html" else None  # the panel can switch accounts: never framed
+            return self.send(200, data, CTYPES.get(os.path.splitext(full)[1], "application/octet-stream"), extra)
 
         def do_POST(self):
             path = urlparse(self.path).path
