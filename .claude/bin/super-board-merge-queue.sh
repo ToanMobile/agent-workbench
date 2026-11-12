@@ -406,6 +406,25 @@ Did: merged through the merge queue (one verify for the batch)
         case "$res" in
           red|gate-exit-11)
             det=$(detail_lines "$p")
+            # #979: gate-exit-11 mà MỌI lý do là `qa-report: stale` (QA chưa chạy lại trên code cuối, hay report không ghi sha) thì việc cần
+            # là QA chạy lại, không phải Build: thẻ Review → QA, không nhãn loop:rebuild-N, không tính vòng rebuild.
+            if [ "$res" = gate-exit-11 ] && grep -q '^qa-report: stale' <<<"$det" && ! grep -E '^(qa-report|ac-check):' <<<"$det" | grep -qv '^qa-report: stale'; then
+              [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ stale QA · ${res}
+Did: the merge gate preflight found the newest QA report is not for this head (stale or no sha); no verify ran
+${det}
+Next: back to QA${k:+ (card #$k)}, no Build round" || true
+              if [ -n "$k" ]; then
+                [ "$RETRY" -eq 1 ] || [ "$CARD_RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ stale QA · PR #${p} back to QA
+Did: the merge gate preflight refused the QA report (stale or no sha) before any tree was built
+❌ Not done: ${det}
+Next: QA runs again on the PR head and writes its sha on the first line (@ <sha>)" || true
+                card_move "$k" QA || ok=1
+              fi
+              continue_route=0
+            else
+              continue_route=1
+            fi
+            if [ "$continue_route" -eq 1 ]; then
             # #639: gate-exit-11 của train là preflight / --dry-run của gate (qa-report, AC) chặn PR trước khi dựng cây; verify đỏ của gate
             # train đã đổi thành `red`. Cùng đường về Build, nhưng comment nói đúng nguồn chặn, không nói verify đỏ khi không suite nào chạy.
             if [ "$res" = red ]; then
@@ -419,7 +438,8 @@ Did: merged through the merge queue (one verify for the batch)
 Did: ${did}${det:+
 ${det}}
 Next: back to Build${k:+ (card #$k)}" || true
-            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebuild "$why" "$tag" "$did" || ok=1 ;;
+            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebuild "$why" "$tag" "$did" || ok=1
+            fi ;;
           conflict|gate-exit-2|gate-exit-5|gate-exit-14)
             # #775: train in gate-exit-5 kèm train-detail `merge-refused: …` từ note_refused (super-board-merge-train.sh; build_chain gọi
             # nó khi git merge thất bại mà `git diff --diff-filter=U` rỗng): chép các dòng đó, chữ "merge refused". gate-exit-5 không có
