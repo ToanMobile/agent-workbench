@@ -20,7 +20,7 @@
 <!-- on-demand: §2 Blender 3D là nguồn duy nhất: dạng giao, asset AI/ngoài, MCP -->
 - **Hai dạng giao, không có dạng thứ ba:** (M) FBX/glTF cho vật thể trong scene: apply transform, Y-up, 1 unit = 1m, ngân sách tris theo loại, LOD từ 5.000 tris. (T) PNG alpha render từ Blender khi Unity chỉ nhận Texture2D; nút và panel 9-slice là tấm bevel dựng trong Blender rồi render.
 - **Asset 3D do AI sinh (Hunyuan3D, Rodin, Tripo qua blender-mcp) và asset ngoài:** chỉ nhận mesh 3D (glTF/FBX) có giấy phép; retopo và qua ngân sách polycount trong Blender trước khi vào `Assets/`; ghi nguồn và giấy phép vào `docs/third-party-licenses.md`.
-- **Blender MCP:** ghim phiên bản, `DISABLE_TELEMETRY=true`, `BLENDER_MCP_SAFE_MODE=1`, lưu `.blend` trước khi chạy; audit chỉ dùng tool đọc (`get_scene_info`, `look`). Ba skill 2D `generate2dmedia`, `generate2dsprite`, `video2dsprite` đã bị loại khỏi profile game.
+- **Blender MCP:** ghim phiên bản, `DISABLE_TELEMETRY=true`, `BLENDER_MCP_SAFE_MODE=1`, lưu `.blend` trước khi chạy; audit chỉ dùng tool đọc (`get_scene_info`, `look`).
 <!-- /on-demand -->
 - **Tiêu chuẩn Mesh 3D:** Quad topology sạch, cấm non-manifold/đảo normal; freeze scale/rotation trước khi export (Unity Y-up, 1 unit = 1m); asset $\ge 5\,000$ tris bắt buộc có LOD0/LOD1/LOD2.
 - **Shader & VFX Mobile URP:**

@@ -129,6 +129,65 @@ def archive_reconciled(path, text, why):
     print(f'[github-read] halt reconciled ({why}); record kept at {archive}', file=sys.stderr)
 
 
+def _lock_pid(lock):
+    """PID of an inflight lock (bash-assignment `PID=n` or the legacy single-number file), None when unreadable."""
+    try:
+        text = lock.read_text()
+    except OSError:
+        return None
+    match = re.search(r'^PID=(\d+)\s*$', text, re.M) or re.fullmatch(r'\s*(\d+)\s*', text)
+    return int(match.group(1)) if match else None
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True   # exists, owned by someone else: never call it dead
+    return True
+
+
+def auto_reconcile(inflight_dir):
+    """#1038: an op-null halt (an uncertain write nobody can read back) is cleared at runner start only when it is PROVEN
+    harmless: every numeric lock in inflight/ names a dead PID and each of those issues can be read back from GitHub.
+    The idempotent lock/assignee cleanup is the runner's own reap_finished_locks, which runs right after. Returns 0 when
+    nothing is halted or the halt was archived, RECONCILE_PENDING (10) when the halt stays, with the reason on stderr."""
+    path = halt_path()
+    if not path.exists():
+        return 0
+    text = path.read_text()
+    record = json.loads(text)
+    if isinstance(record.get('operation'), dict):
+        print('[github-read] auto-reconcile: the halt saved a read to replay, halt kept', file=sys.stderr)
+        return RECONCILE_PENDING
+    locks = sorted(p for p in Path(inflight_dir).glob('*') if p.is_file() and p.name.isdigit())
+    if not locks:
+        print('[github-read] auto-reconcile: no inflight lock proves a dead worker, halt kept', file=sys.stderr)
+        return RECONCILE_PENDING
+    for lock in locks:
+        pid = _lock_pid(lock)
+        if pid is None or _pid_alive(pid):
+            print(f'[github-read] auto-reconcile: lock #{lock.name} has no readable PID or its worker is alive, halt kept', file=sys.stderr)
+            return RECONCILE_PENDING
+    for lock in locks:
+        try:
+            result = run_gh(['issue', 'view', lock.name, '--json', 'state,assignees'])
+            json.loads(result.stdout) if not result.returncode else None
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            result = None
+            detail = type(error).__name__
+        else:
+            detail = result.stderr.strip()[:120]
+        if result is None or result.returncode:
+            print(f'[github-read] auto-reconcile: issue #{lock.name} could not be read back ({detail}), halt kept', file=sys.stderr)
+            return RECONCILE_PENDING
+    archive_reconciled(path, text, 'auto: halt had no saved read and every inflight lock (' +
+                       ', '.join('#' + p.name for p in locks) + ') names a dead worker; those issues were re-read from GitHub')
+    return 0
+
+
 def check_verify_spec(spec):
     """A halt for an uncertain write may carry how to READ its outcome back (#190). Kinds: pr-merged {pr}, comment {issue, marker}."""
     ok = (isinstance(spec, dict) and (
@@ -605,6 +664,8 @@ def main():
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--verify', metavar='JSON', help='with --halt: how to read the uncertain write back (see check_verify_spec)')
     parser.add_argument('--reconcile', action='store_true', help='read the uncertain write of a halt back from GitHub: exit 0 applied (halt archived with the evidence), 10 not applied, 11 cannot tell; the halt is kept for 10/11')
+    parser.add_argument('--auto-reconcile', action='store_true', help='#1038, at runner start: an op-null halt whose every inflight lock holds a dead PID is archived after read-only re-reads of those issues; anything unproven keeps the halt (exit 10)')
+    parser.add_argument('--inflight', metavar='DIR', help='with --auto-reconcile: the inflight lock directory')
     parser.add_argument('--reconciled', metavar='WHY', help='with --resume: restart after a halt with no saved read (an uncertain write) once its GitHub outcome was checked; WHY is kept in the archived record')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -616,6 +677,9 @@ def main():
             raise ValueError('--verify belongs to --halt')
         if args.halt:
             halt(args.halt, 1, verify=check_verify_spec(json.loads(args.verify)) if args.verify is not None else None)
+        if args.auto_reconcile:
+            require(args.inflight, '--auto-reconcile needs --inflight DIR')
+            return auto_reconcile(args.inflight)
         if args.reconcile:
             path = halt_path()
             if not path.exists():

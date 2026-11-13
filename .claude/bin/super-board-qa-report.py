@@ -13,6 +13,9 @@
     (không tính merge sạch và commit chỉ chạm docs/super-board/runs; #1000: merge sửa tay / giải conflict tay có tính), hay nêu
     commit đã bị amend / force-push khỏi lịch sử head mà code khác head: QA chưa chạy lại trên code cuối (chi tiết: stale_qa).
     Lỗi git khi kiểm (base không đọc được…) = thoát 2, không bỏ ghim.
+    Dòng của lỗi này mở đầu `qa-report: stale:` (#979): merge queue chỉ đưa thẻ Review → QA khi MỌI dòng lý do là stale.
+    Report không nêu sha nào thì không có gì để ghim và vẫn qua (fixture cũ); luật định dạng (dòng đầu `[qa] [report]` có `@ <sha head>`)
+    nằm ở writing-standard.md § 4 và prompt QA.
 Người đáng tin = tác giả PR hoặc authorAssociation OWNER/MEMBER/COLLABORATOR. Dòng trích dẫn `> ` và khối ``` bị bỏ qua.
 Không có comment QA hay không có mục AC thì không có gì để từ chối (cổng khác lo việc QA vắng mặt).
 Thoát 2 khi metadata không đọc được hay lỗi bất ngờ: cổng merge coi là "không quyết định được", không phải lỗi build.
@@ -266,7 +269,7 @@ def run(meta_path, head=None, repo=".", base=None):
     problems += [f"qa-report: AC đã tích [x] nhưng không có dòng bằng chứng '↳': {t[:200]}" for t in ac_without_proof(body)]
     stale = stale_qa(meta.get("comments"), pr_author, head, repo, base) if head and base else None
     if stale:
-        problems.append(f"qa-report: {stale}")
+        problems.append(f"qa-report: stale: {stale}")   # #979: mã riêng cho QA cũ, merge queue đưa thẻ về QA (không về Build)
     for p in problems:
         print(p)
     return 1 if problems else 0

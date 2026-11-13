@@ -207,8 +207,8 @@ shadowed = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', sync, re
 check(not shadowed, "R5 every alias in sync_commands.sh is a link, not a hand-written file", ", ".join(shadowed))
 
 # `agent-kit commands --sync` on the repo must change nothing: a link it makes that is not committed shows up as an
-# untracked file after every sync (2026-10-25: generate2dmedia, generate2dsprite, video2dsprite and parallel-lanes are
-# command-less on purpose). Run on a copy, never on the real tree: other sessions share it. An
+# untracked file after every sync (2026-10-25: parallel-lanes is command-less on purpose; ba skill Sprite Forge từng chung
+# danh sách đã gỡ khỏi kit 13/11). Run on a copy, never on the real tree: other sessions share it. An
 # older sync's link for a command-less skill (planted below) must be removed again.
 import tempfile
 def _cmd_map(d):
@@ -228,10 +228,10 @@ with tempfile.TemporaryDirectory() as td:
     os.makedirs(os.path.join(td, "scripts/governance"))
     shutil.copy2(_sync_path, os.path.join(td, "scripts/governance/sync_commands.sh"))
     _before = {s: _cmd_map(os.path.join(td, s)) for s in ("commands", ".claude/commands")}
-    if os.path.isfile(os.path.join(td, "skills/generate2dmedia/SKILL.md")):
-        os.symlink("../skills/generate2dmedia/SKILL.md", os.path.join(td, "commands/generate2dmedia.md"))
+    if os.path.isfile(os.path.join(td, "skills/parallel-lanes/SKILL.md")):
+        os.symlink("../skills/parallel-lanes/SKILL.md", os.path.join(td, "commands/parallel-lanes.md"))
         if os.path.isdir(os.path.join(td, ".claude/commands")):
-            os.symlink("../../commands/generate2dmedia.md", os.path.join(td, ".claude/commands/generate2dmedia.md"))
+            os.symlink("../../commands/parallel-lanes.md", os.path.join(td, ".claude/commands/parallel-lanes.md"))
     _r = subprocess.run(["bash", os.path.join(td, "scripts/governance/sync_commands.sh")],
                         capture_output=True, text=True, timeout=120)
     _after = {s: _cmd_map(os.path.join(td, s)) for s in ("commands", ".claude/commands")}
@@ -331,7 +331,9 @@ wired = set()
 for ev in json.load(open(os.path.join(ROOT, "hooks/hooks.json")))["hooks"].values():
     for matcher in ev:
         for h in matcher["hooks"]:
-            wired.add(re.findall(r"([\w.-]+\.sh)", h["command"])[-1])
+            sh = re.findall(r"([\w.-]+\.sh)", h["command"])
+            if sh:   # #774: guard-protected-push.py là hook .py, không phải script .sh: không tính vào "wired hooks"
+                wired.add(sh[-1])
 n_wired = len(wired)
 print(f"  (real counts: {n_skills} skills, {n_profiles} profiles, {n_councils} councils, "
       f"{n_hook_files} hook scripts, {n_wired} wired hooks)")

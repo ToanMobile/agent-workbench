@@ -38,6 +38,12 @@ case "$HOUR" in ''|*[!0-9]*) usage ;; esac
 case "$MINUTE" in ''|*[!0-9]*) usage ;; esac
 [ "$((10#$HOUR))" -le 23 ] && [ "$((10#$MINUTE))" -le 59 ] || usage
 case "$WEEKDAYS" in ''|,*|*,|*,,*|*[!0-7,]*) usage ;; esac   # chỉ số 0–7 cách nhau bằng dấu phẩy
+# #1054: mỗi mục đúng MỘT chữ số 0–7 ('14', '17' thiếu dấu phẩy lọt qua kiểm từng ký tự rồi int(d)%7 đổi thành ngày khác)
+_wd_rest="$WEEKDAYS,"
+while [ -n "$_wd_rest" ]; do
+  _wd="${_wd_rest%%,*}"; _wd_rest="${_wd_rest#*,}"
+  case "$_wd" in [0-7]) ;; *) usage ;; esac
+done
 
 # In main checkout khi $1 nằm trong một linked worktree (git-dir ≠ git-common-dir, so đường dẫn vật lý); rỗng khi không (main checkout,
 # không phải git, thư mục không còn)

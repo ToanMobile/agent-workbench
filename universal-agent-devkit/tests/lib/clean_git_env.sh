@@ -28,6 +28,8 @@ export GIT_CONFIG_GLOBAL=/dev/null EMAIL="${EMAIL:-devkit-test@localhost}"
 # Host policy a test must not inherit (W1 R5c): on a host under 10 GiB free every `worktree add` would run gc over the test's own
 # fixture siblings, and under 3 GiB refuse. tests/worktree_git/test_worktree_limits.sh sets these itself.
 export WORKTREE_DISK_WARN_GIB=0 WORKTREE_DISK_MIN_GIB=0
+# #774: install.sh cài lịch launchd gate-full đêm cho repo có super-board: test không được đụng launchd thật. Test của lịch tự đặt =0 + stub launchctl.
+export DEVKIT_NO_GATE_SCHEDULE=1
 # 10/11: a test never prunes the host's real build caches (~/.gradle/caches/build-cache-1 ...) under WORKTREE_CACHE_PRUNE_GIB.
 export WORKTREE_CACHE_PRUNE_GIB=0
 # The user's own ~/.antigravity-pm.json must not steer a test: `giaoDefault: true` there makes the prompt hook add the standing "GIAO MẶC ĐỊNH BẬT"
@@ -47,6 +49,8 @@ unset CI
 unset DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_LOAD_WAIT_S
 # #528: cùng năm biến suite_env bỏ — test không kế thừa cờ worker của board.
 unset SB_BOARD_WORKER SB_MERGE_CALLER SB_MERGE_QUEUE SB_REPO_PATH SB_GITHUB_READ_STRICT
+# #811: công tắc Stop hook của phiên đa lane (WORKTREE_AUTO_MERGE=0) không lọt vào test worktree_merge_gate; ca cần nó tự export sau khi nạp file này.
+unset WORKTREE_AUTO_MERGE
 # 04/11 (INSTINCT-046): the shared test pool of ONE gate run (post-fix-gate.py shard group, tests/lib/job_pool.py): a test never joins it.
 unset DEVKIT_TEST_POOL_DIR DEVKIT_JOB_POOL
 # The machine's two heavy-verify slots (~/.claude/super-board/locks) belong to real merge gates and --full runs: a test's fake verify

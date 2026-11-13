@@ -357,10 +357,15 @@ Header regex: `^\[(builder|qa|reviewer|collect|orchestrator)\] \[(blocker|issue|
 - The needs-you note is the one comment with no header: a hidden `<!-- super-board:needs-you -->`
   marker, then `🙋 Cần bạn: <exactly what> · xong thì <next>`. Only `super-board-needs-you.py` writes it.
 
+**QA report header carries the head sha (#979).** The first line of every `[qa] [report]` ends with `@ <sha>`, the PR head
+(7–40 hex) the QA ran on. The merge gate pins the newest report to the head with it; no sha leaves nothing to pin, so code pushed
+after that QA run goes unnoticed. A report whose sha is behind code commits is refused as `qa-report: stale: …`, and the merge
+queue sends that card Review → QA (no Build round): QA runs again on the head and writes the new sha.
+
 Example:
 
 ```
-[qa] [report] ❌ failing · round 1
+[qa] [report] ❌ failing · round 1 @ 3f9c2ab
 Did: ran AC1–AC2, desktop + mobile
 ✅ Done: AC2 no request over 10 MB
 ❌ Not done: AC1 mobile: message under the keyboard

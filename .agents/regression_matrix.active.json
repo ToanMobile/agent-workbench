@@ -4349,6 +4349,69 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-init-parity-sync",
+      "watch_files": [
+        "universal-agent-devkit/bin/parity_check.py",
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/hooks/hooks.json",
+        "universal-agent-devkit/tests/installer/test_parity_check.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-INIT-PARITY-SYNC-01",
+          "name": "#774: init đồng bộ super-board (drift exit 0, giữ file chỉ có ở repo), cài lịch gate-full đêm, đăng ký guard-protected-push fail closed",
+          "command": "bash universal-agent-devkit/tests/installer/test_parity_check.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-session-card-title-envelope",
+      "watch_files": [
+        "universal-agent-devkit/hooks/session_card.sh",
+        "universal-agent-devkit/tests/gates/test_session_card_title_envelope.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SESSION-CARD-TITLE-01",
+          "name": "#1140: tiêu đề thẻ phiên lấy từ dòng người dùng viết: bóc khối <system-reminder> (nhiều khối, nhiều dòng) và thẻ bọc <pasted_content>, giữ nội dung dán; prompt chỉ có khối reminder rơi về transcript rồi tiêu đề mặc định theo file sửa đầu tiên",
+          "command": "bash universal-agent-devkit/tests/gates/test_session_card_title_envelope.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-session-lock-grok-shell",
+      "watch_files": [
+        "universal-agent-devkit/bin/session_lock.py",
+        "universal-agent-devkit/hooks/session_lock.sh",
+        "universal-agent-devkit/tests/context_memory/test_session_lock_grok_shell.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SESSION-LOCK-GROK-SHELL-01",
+          "name": "#1146: công cụ shell của Grok (run_terminal_command, run_terminal_cmd, Shell, hoặc tên lạ mang `command`) bị luật trunk mode xét y như Bash: `git checkout --detach` hay redirect vào checkout chính bị chặn (rc 2), lệnh hợp lệ của lane (git fetch, git -C <worktree>, worktree.py add) vẫn qua, công cụ MCP không bị xét",
+          "command": "bash universal-agent-devkit/tests/context_memory/test_session_lock_grok_shell.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-health-kit-host-checkout",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-health.py",
+        "universal-agent-devkit/tests/installer/test_health_kit_host_checkout.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-HEALTH-KIT-HOST-01",
+          "name": "#1146: agent-health in một dòng khi checkout chính của repo chứa kit detached hoặc lệch nhánh trunk, và một dòng khi .git/index.lock của nó cũ hơn 10 phút mà không tiến trình git nào giữ; không tính điểm, không xoá khoá, không đổi nhánh; đúng checkout khi chạy từ worktree liên kết hoặc repo app",
+          "command": "bash universal-agent-devkit/tests/installer/test_health_kit_host_checkout.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
