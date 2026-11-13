@@ -658,6 +658,11 @@ fi
 
 # 6. Activate the domain profile, if one was chosen
 if [ -n "$PROFILE" ] && [ "$PROFILE" != "none" ]; then
+  # Chế độ copy: chép profile đang dùng vào dự án (.agents/devkit/active-profile) để link .agents/active-profile trỏ TRONG dự án,
+  # không leo ra kit của máy này: commit được, máy khác và CI đọc được. agent-config.py thấy bản copy đúng id thì link vào đó.
+  if [ "$MODE" = "copy" ] && [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && [ -f "$DEVKIT_ROOT/profiles/$PROFILE/profile.json" ]; then
+    devkit_place "$DEVKIT_ROOT/profiles/$PROFILE" "$TARGET_DIR/.agents/devkit/active-profile" copy || exit 1
+  fi
   if ! DEVKIT_MCP_APPLIED="$PROFILE" python3 "$DEVKIT_ROOT/bin/agent-config.py" --profile "$PROFILE" --target "$TARGET_DIR" --lang "$DEVKIT_LANG"; then
     echo "✖ Activating profile '$PROFILE' failed — the project was set up without a profile." >&2
     exit 1

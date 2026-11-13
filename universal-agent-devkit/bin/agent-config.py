@@ -343,8 +343,18 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
     agents_dir = target_dir / ".agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
     active_link = agents_dir / "active-profile"
+    # Chế độ copy (.agents/devkit là thư mục thật): install.sh đã chép profile vào .agents/devkit/active-profile, link trỏ vào đó
+    # (tương đối, trong dự án) thay vì leo ra kit của máy này.
+    # ponytail: `agent-kit profile <id>` đổi profile ở dự án copy vẫn link về kit cho tới lần `agent-kit init -m copy` kế tiếp.
+    local_link = os.path.join("devkit", "active-profile")
+    try:
+        with open(agents_dir / local_link / "profile.json", encoding="utf-8") as f:
+            local_id = json.load(f).get("id")
+    except (OSError, ValueError, AttributeError):
+        local_id = None
+    use_local = local_id == profile_id and not (agents_dir / "devkit").is_symlink()
     if active_link.is_symlink():
-        if link_points_into(active_link, devkit_dir):
+        if link_points_into(active_link, devkit_dir) or os.readlink(active_link) == local_link:
             active_link.unlink()
         else:
             x_old_backup(active_link)
@@ -352,7 +362,7 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
         # Thư mục/file thật của người dùng → X_old, không rmtree (P-2)
         x_old_backup(active_link)
     try:
-        rel = os.path.relpath(link_base_dir(target_dir) / "profiles" / profile_id, agents_dir.resolve())
+        rel = local_link if use_local else os.path.relpath(link_base_dir(target_dir) / "profiles" / profile_id, agents_dir.resolve())
         active_link.symlink_to(rel)
         log_ok(tr(f"Đã liên kết `.agents/active-profile` -> `{rel}`", f"Linked `.agents/active-profile` -> `{rel}`"))
     except Exception as e:
