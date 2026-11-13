@@ -9,8 +9,11 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "universal-agent-devkit" / "scripts" / "governance" / "super_board_all.py"
-MONITOR_SCRIPT = ROOT / "universal-agent-devkit" / "scripts" / "governance" / "super_board_monitor.py"
+# kit layout first, then the app-repo layout (.agents/devkit): a byte copy works in both
+DEVKIT = next((d for d in (ROOT / "universal-agent-devkit", ROOT / ".agents" / "devkit") if d.is_dir()),
+              ROOT / ".agents" / "devkit")
+SCRIPT = DEVKIT / "scripts" / "governance" / "super_board_all.py"
+MONITOR_SCRIPT = DEVKIT / "scripts" / "governance" / "super_board_monitor.py"
 
 
 def load():
