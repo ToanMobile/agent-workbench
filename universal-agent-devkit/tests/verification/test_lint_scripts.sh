@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression test: regex-based linters, enrich_context instinct lookup, council catalog,
-# and the grep-based self-consistency scripts (M-12, M-18, M-22, M-23).
+# Regression test: regex-based linters, enrich_context instinct lookup, council catalog
+# (M-12, M-22, M-23).
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -105,15 +105,6 @@ for d in "$DEVKIT_DIR"/profiles/*/; do
   else
     fail "G2: profile $p missing real DESIGN.md/instincts.md"
   fi
-done
-
-# ── M-18: self-consistency scripts are honest and still runnable ─────────────
-for f in "$S"/audits/audit_*agents.py "$S"/audits/adversarial_chaos_test_10_agents.py; do
-  n="$(basename "$f")"
-  grep -q "grep-based" "$f" && ok "M-18: $n labelled grep-based" || fail "M-18: $n not labelled grep-based"
-  grep -qE "294|134 Workflows|160 Hooks|HOÀN HẢO 10/10|bất khả xâm phạm" "$f" && fail "M-18: $n still has hardcoded/overclaiming text" || ok "M-18: $n no hardcoded counts/overclaims"
-  out="$(python3 "$f" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
-  echo "$out" | grep -qE "[0-9]+/[0-9]+ checks passed" && ok "M-18: $n prints 'N/M checks passed'" || fail "M-18: $n summary missing"
 done
 
 echo

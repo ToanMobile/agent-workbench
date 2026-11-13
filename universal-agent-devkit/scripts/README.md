@@ -1,6 +1,6 @@
 # Universal Agent DevKit Scripts
 
-Toàn bộ 44 công cụ thực thi của **Universal Agent DevKit** được cấu trúc mạch lạc thành **6 nhóm nghiệp vụ chuyên biệt**:
+Toàn bộ 38 công cụ thực thi của **Universal Agent DevKit** được cấu trúc mạch lạc thành **5 nhóm nghiệp vụ chuyên biệt**:
 
 ```
 scripts/
@@ -8,8 +8,7 @@ scripts/
 ├── linters/       # 4 công cụ: Phân tích AST, kiểm tra rò rỉ bộ nhớ, GC, recomposition
 ├── testing/       # 5 công cụ: Paired Executable Oracle (RED->GREEN), test runner & proof
 ├── git/           # 6 công cụ: Git hooks, an toàn branch, worktree & parallel sandbox
-├── governance/    # 18 công cụ: Quản trị vòng đời DevKit, sync context, i18n & ma trận test
-└── audits/        # 6 công cụ: Bộ kiểm toán độc lập 50 agents, chaos test & zero-regression
+└── governance/    # 18 công cụ: Quản trị vòng đời DevKit, sync context, i18n & ma trận test
 ```
 
 ---
@@ -62,11 +61,3 @@ scripts/
 - [`relink_check.py`](governance/relink_check.py): Tự động phục hồi các symlink bị mất sau git checkout/merge.
 - [`sync_commands.sh`](governance/sync_commands.sh): Đồng bộ hóa slash commands và aliases.
 - [`token_cost_tracker.py`](governance/token_cost_tracker.py): Giám sát và theo dõi chi phí token theo phiên làm việc.
-
-## 6. `audits/` — Bộ Kiểm toán Độc lập
-- [`adversarial_chaos_test_10_agents.py`](audits/adversarial_chaos_test_10_agents.py): Chaos test tấn công đối kháng 10 kịch bản giả mạo kết quả test / receipt.
-- [`audit_agent_perfection_50_agents.py`](audits/audit_agent_perfection_50_agents.py): Kiểm toán 50 tiêu chí hoàn thiện Agent theo 10 hội đồng thẩm định.
-- [`audit_production_lifecycle_50_agents.py`](audits/audit_production_lifecycle_50_agents.py): Kiểm toán vòng đời sản phẩm, tài nguyên, coroutines và leak memory.
-- [`audit_test_suite_50_agents.py`](audits/audit_test_suite_50_agents.py): Kiểm toán độ tin cậy và phân vùng kiểm thử (Paired Executable Oracle).
-- [`audit_workflows_rules_skills_50_agents.py`](audits/audit_workflows_rules_skills_50_agents.py): Kiểm toán toàn vẹn quy tắc, profile isolation, và YAML frontmatter.
-- [`audit_zero_regression_10_agents.py`](audits/audit_zero_regression_10_agents.py): Kiểm toán cơ chế chặn lỗi hồi quy (zero-regression gate).

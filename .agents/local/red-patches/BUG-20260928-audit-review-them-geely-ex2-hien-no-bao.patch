@@ -91,49 +91,6 @@ index 4a730aa..c85ef1b 100755
                              cmd = str(use["input"].get("command", ""))
                              st = runner_state(blk.get("is_error") is True, txt, command=cmd)
                              if st:
-diff --git a/universal-agent-devkit/scripts/audits/audit_agent_perfection_50_agents.py b/universal-agent-devkit/scripts/audits/audit_agent_perfection_50_agents.py
-index 866f59a..3deadce 100755
---- a/universal-agent-devkit/scripts/audits/audit_agent_perfection_50_agents.py
-+++ b/universal-agent-devkit/scripts/audits/audit_agent_perfection_50_agents.py
-@@ -502,8 +502,8 @@ def run_full_audit() -> int:
- 
-     def t49():
-         cr = auditor.read_file("rules/core-rules.md")
--        ok = "TỰ commit" in cr and "Chỉ hỏi người dùng trước: force-push" in cr
--        return ok, "Quyền hạn AI: tự commit/push khi gate xanh; force-push, xoá nhánh, phát hành chỉ khi người dùng duyệt"
-+        ok = "CHỈ thực hiện git commit, git push hoặc tạo PR" in cr and "YÊU CẦU TƯỜNG MINH" in cr
-+        return ok, "Quyền hạn AI tuyệt đối: CHỈ commit/push/PR khi người dùng yêu cầu tường minh"
-     auditor.run_agent(10, C10, 49, "SoloDevGitAuthorityComplianceAuditor", "Kiểm tra tuân thủ tuyệt đối giới hạn quyền hạn commit/push theo lệnh rõ ràng", t49)
- 
-     def t50():
-diff --git a/universal-agent-devkit/scripts/audits/audit_production_lifecycle_50_agents.py b/universal-agent-devkit/scripts/audits/audit_production_lifecycle_50_agents.py
-index 4c43a20..a4df37a 100755
---- a/universal-agent-devkit/scripts/audits/audit_production_lifecycle_50_agents.py
-+++ b/universal-agent-devkit/scripts/audits/audit_production_lifecycle_50_agents.py
-@@ -141,8 +141,8 @@ def main():
-     auditor.run_agent(2, c2, idx, "CredentialEnvironmentAuditor", "Ép buộc quản lý credential qua biến môi trường an toàn", test_07); idx += 1
- 
-     def test_08():
--        ok = "TỰ commit" in core_rules and "Chỉ hỏi người dùng trước: force-push" in core_rules
--        return ok, "Quyền hạn AI: tự commit/push khi gate xanh; force-push, xoá nhánh, phát hành chỉ khi người dùng duyệt"
-+        ok = "CHỈ thực hiện git commit, git push" in core_rules and "YÊU CẦU TƯỜNG MINH" in core_rules
-+        return ok, "Quyền hạn AI tối cao: Tuyệt đối không tự ý commit/push khi chưa có lệnh tường minh"
-     auditor.run_agent(2, c2, idx, "PermissionLeastPrivilegeAuditor", "Kiểm soát quyền hạn tối thiểu của Agent, ngăn chặn tự ý thay đổi hạ tầng", test_08); idx += 1
- 
-     def test_09():
-diff --git a/universal-agent-devkit/scripts/audits/audit_workflows_rules_skills_50_agents.py b/universal-agent-devkit/scripts/audits/audit_workflows_rules_skills_50_agents.py
-index 776a9bc..779f49c 100755
---- a/universal-agent-devkit/scripts/audits/audit_workflows_rules_skills_50_agents.py
-+++ b/universal-agent-devkit/scripts/audits/audit_workflows_rules_skills_50_agents.py
-@@ -58,7 +58,7 @@ AGENTS_SPEC = [
-     (10, "DebounceAndAntiSpamGateAuditor", "Kiểm tra rào chắn chống spam request và ép buộc debounce giao dịch", "rules/core-rules.md", r"Debounce|Chống Spam"),
- 
-     # Council 3: Core Solo-Dev Quality Rules
--    (11, "GitAuthorityComplianceAuditor", "Kiểm tra quyền hạn AI: tự commit/push khi gate xanh, force-push/xoá nhánh/phát hành chỉ khi người dùng duyệt", "rules/core-rules.md", r"Chỉ hỏi người dùng trước: force-push"),
-+    (11, "GitAuthorityComplianceAuditor", "Kiểm tra quyền hạn AI: CHỈ commit/push/PR khi người dùng yêu cầu tường minh", "rules/core-rules.md", r"YÊU CẦU TƯỜNG MINH"),
-     (12, "SecretZeroExposureAuditor", "Kiểm tra tuyệt đối cấm commit .env, keystore, credential trần", "rules/core-rules.md", r"Tuyệt đối KHÔNG commit bí mật"),
-     (13, "LeanDevLoopAuditor", "Kiểm tra quy trình 4 bước: Test cục bộ -> Self Review -> Ảnh nghiệm thu -> Commit", "rules/core-rules.md", r"Quy trình làm việc tinh gọn"),
-     (14, "DualModePreservationAuditor", "Kiểm tra bảo toàn 2 chế độ DEMO / LIVE trên mọi nghiệp vụ mới", "rules/core-rules.md", r"DEMO / LIVE"),
 diff --git a/universal-agent-devkit/scripts/governance/merge_json.py b/universal-agent-devkit/scripts/governance/merge_json.py
 index 2ae9fe1..1ad997f 100755
 --- a/universal-agent-devkit/scripts/governance/merge_json.py

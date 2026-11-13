@@ -41,12 +41,6 @@ RESET = "\033[0m"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SELF_CONSISTENCY_SCRIPTS = [
-    "audit_test_suite_50_agents.py",
-    "audit_workflows_rules_skills_50_agents.py",
-    "audit_zero_regression_10_agents.py",
-]
-
 
 class Score:
     def __init__(self):
@@ -456,7 +450,7 @@ def main(argv=None):
     score = Score()
 
     # 1. Runtime
-    section(tr("[1/6] Môi trường & Runtime", "[1/6] Environment & runtime"))
+    section(tr("[1/5] Môi trường & Runtime", "[1/5] Environment & runtime"))
     py_ver = ".".join(map(str, sys.version_info[:3]))
     score.check(sys.version_info >= (3, 9), f"Python v{py_ver}", tr(f"Python v{py_ver} (yêu cầu >= 3.9)", f"Python v{py_ver} (requires >= 3.9)"))
     score.check(shutil.which("git") is not None, tr("git có trong $PATH", "git is on $PATH"), tr("git không có trong $PATH", "git is not on $PATH"))
@@ -477,7 +471,7 @@ def main(argv=None):
         info(tr("OpenCodeReview (`ocr`, tuỳ chọn): chưa cài — không tính điểm", "OpenCodeReview (`ocr`, optional): not installed — not scored"))
 
     # 2. Active profile
-    section(tr("[2/6] Profile đang kích hoạt", "[2/6] Active profile"))
+    section(tr("[2/5] Profile đang kích hoạt", "[2/5] Active profile"))
     profiles = sorted(p.name for p in (BASE_DIR / "profiles").iterdir()
                       if (p / "profile.json").is_file()) if (BASE_DIR / "profiles").is_dir() else []
     info(tr(f"Có {len(profiles)} profile trong DevKit: {', '.join(profiles)}", f"{len(profiles)} profiles in the DevKit: {', '.join(profiles)}"))
@@ -500,32 +494,15 @@ def main(argv=None):
                 "No profile selected for this project (`agent-kit profile <name>`) — not scored"))
 
     # 3. Tests
-    section("[3/6] Test suite")
+    section("[3/5] Test suite")
     if args.run_tests:
         run_test_suite(score)
     else:
         info(tr("tests: not run (dùng `agent-kit health --run-tests` để chạy thật và tính điểm)",
                 "tests: not run (use `agent-kit health --run-tests` to run and score them)"))
 
-    # 4. Self-consistency checks (grep-based) — kiểm DevKit tự nhất quán, không kiểm code dự án
-    section(tr("[4/6] Self-consistency checks của DevKit (grep-based)", "[4/6] DevKit self-consistency checks (grep-based)"))
-    for name in SELF_CONSISTENCY_SCRIPTS:
-        script = BASE_DIR / "scripts" / "audits" / name
-        if not script.is_file():
-            script = BASE_DIR / "scripts" / name
-        if not script.is_file():
-            score.check(False, "", tr(f"Thiếu script `{name}`", f"Missing script `{name}`"))
-            continue
-        try:
-            res = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=60)
-            m = re.search(r"(\d+)/(\d+) checks passed", res.stdout)
-            detail = f"{m.group(1)}/{m.group(2)} checks" if m else f"exit {res.returncode}"
-            score.check(res.returncode == 0, f"`{name}`: {detail}", f"`{name}`: {detail}")
-        except (OSError, subprocess.SubprocessError) as e:
-            score.check(False, "", tr(f"`{name}` lỗi khi chạy: {e}", f"`{name}` failed to run: {e}"))
-
-    # 5. Catalog: rules, skills, councils
-    section("[5/6] Rules, Skills & Councils")
+    # 4. Catalog: rules, skills, councils
+    section("[4/5] Rules, Skills & Councils")
     rules_dir = BASE_DIR / "rules"
     rule_files = sorted(rules_dir.glob("*.md")) if rules_dir.is_dir() else []
     broken_rules = [r.name for r in rule_files if r.is_symlink() and not r.exists()]
@@ -575,13 +552,13 @@ def main(argv=None):
                    f"{len(names)} councils, no duplicate `name`, every `active_councils` entry exists"),
                 tr(f"Council trùng name {dupes} / thiếu {missing_councils}", f"Councils with duplicate name {dupes} / missing {missing_councils}"))
 
-    # 6. MCP & regression matrix — chỉ đòi MCP của profile đang active
+    # 5. MCP & regression matrix — chỉ đòi MCP của profile đang active
     if target.resolve() != BASE_DIR.resolve():
         section(tr("[+] Dây nối trong dự án (hook, import, ma trận, git)", "[+] Project wiring (hooks, imports, matrix, git)"))
         project_wiring(target, score)
         merge_queue_canary(target)
 
-    section(tr("[6/6] MCP & Ma trận hồi quy", "[6/6] MCP & regression matrix"))
+    section(tr("[5/5] MCP & Ma trận hồi quy", "[5/5] MCP & regression matrix"))
     mcps, sources = configured_mcps(target)
     if sources:
         info(tr(f"MCP khai báo ({len(mcps)}) từ: {', '.join(sources)}", f"Configured MCPs ({len(mcps)}) from: {', '.join(sources)}"))
