@@ -3,10 +3,12 @@
 # one or more <system-reminder>…</system-reminder> blocks (multi-line), and a pasted block arrives wrapped in
 # <pasted_content id=…>…</pasted_content id=…>; hooks/session_card.sh sc_title took the first non-blank line, i.e. a tag name.
 # Law of sc_title (stashed prompt first, transcript second, generic title last):
-#   - <system-reminder> blocks are dropped whole (their text is not the user's task, and the issue may be public);
+#   - <system-reminder> blocks are dropped whole (their text is not the user's task, and the issue may be public). A block opens
+#     with the tag at the start of a line and closes with the tag at the end of a line (Claude Code writes "<system-reminder>\n…\n</system-reminder>"),
+#     so a body that quotes the tag mid-line does not end it, and an unterminated block is dropped to the end (never leaked);
 #   - a <pasted_content …> / </pasted_content …> wrapper tag is dropped, the pasted text stays;
 #   - a prompt that is only reminder blocks falls through to the transcript, then to "chat session <id8>" (scope = first edit);
-#   - a prompt that merely mentions another tag (<div>) keeps it; secret masking is untouched (test_session_card_hook.sh K).
+#   - a user line that merely mentions a tag (<div>, <system-reminder>) keeps it; secret masking is untouched (test_session_card_hook.sh K).
 # Same fixture as tests/gates/test_session_card_hook.sh (fake gh, fake card script, SESSION_CARD_WAIT=1 test seam).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -18,7 +20,7 @@ FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 command -v python3 >/dev/null 2>&1 || { echo "skip: python3 missing"; exit 0; }
-unset CLAUDE_PROJECT_DIR SESSION_CARD SUPER_BOARD_RUN
+unset CLAUDE_PROJECT_DIR SESSION_CARD SUPER_BOARD_RUN CLAUDE_CODE_ENTRYPOINT   # sdk-cli (a `claude -p` worker) makes the hook skip: not under test here
 
 FAKE="$TMP/fakebin"; mkdir -p "$FAKE"
 cat > "$FAKE/gh" <<'SH'
@@ -52,6 +54,9 @@ prompt() {   # prompt <session> <text>
 }
 transcript() {   # transcript <file> <content text>: one user line whose content is a string
   python3 -I -c 'import json,sys; open(sys.argv[1],"w").write(json.dumps({"type":"user","message":{"role":"user","content":sys.argv[2]}})+"\n")' "$1" "$2"
+}
+transcript_list() {   # transcript_list <file> <text>...: one user line whose content is a list of text blocks (Desktop shape)
+  python3 -I -c 'import json,sys; open(sys.argv[1],"w").write(json.dumps({"type":"user","message":{"role":"user","content":[{"type":"text","text":t} for t in sys.argv[2:]]}})+"\n")' "$@"
 }
 reset() { rm -rf "$R/.claude/audit-gate"; : > "$TMP/gh.log"; : > "$TMP/card.log"; }
 title() { grep '^gh issue create' "$TMP/gh.log" | sed -e 's/^.*--title //' -e 's/ --label session.*$//'; }   # → the title alone
@@ -100,6 +105,35 @@ card sC2 "$RS" "$TMP/tr.jsonl" "✨ [feat] src: add dark mode to settings" "C2 r
 transcript "$TMP/tr2.jsonl" "$RS
 create a release checklist"
 card sD - "$TMP/tr2.jsonl" "✨ [feat] src: create a release checklist" "D transcript message with a reminder block: the user's line is the title"
+
+# ── D2: the same message as a list of text blocks (Desktop shape): blocks are joined by a newline, so the closing tag stays at a line end
+transcript_list "$TMP/tr3.jsonl" "$RS" "create a release checklist"
+card sD2 - "$TMP/tr3.jsonl" "✨ [feat] src: create a release checklist" "D2 transcript message made of several text blocks"
+
+# ── F: a reminder block that is not one clean block never leaks its text (it ends up as the generic title, or as nothing)
+card sF1 '<system-reminder>
+Contents of CLAUDE.md: SECRETBODY1 stuff
+
+add a thing' "$TMP/empty.jsonl" "🔧 [chore] src: chat session sF1" "F1 unterminated block: dropped to the end, generic title"
+card sF2 '<system-reminder>
+note: the hook drops <system-reminder>…</system-reminder> blocks; SECRETBODY2
+</system-reminder>
+add export' "$TMP/empty.jsonl" "✨ [feat] src: add export" "F2 body that quotes the tags mid-line does not end the block early"
+card sF3 '<system-reminder>
+a <system-reminder>b</system-reminder> SECRETBODY3
+</system-reminder>
+add widget' "$TMP/empty.jsonl" "✨ [feat] src: add widget" "F3 nested/quoted pair inside a block"
+grep -q 'SECRETBODY' "$TMP/gh.log" && fail "F4 reminder text leaked into the issue" || ok "F4 no reminder text reaches the issue"
+
+# ── G: the user's own line names the tag and a real block follows: the user's line survives whole
+card sG "fix the <system-reminder> parser
+$RS2
+more words" "$TMP/empty.jsonl" "🐛 [fix] src: fix the <system-reminder> parser" "G a mention of the tag in the user's line is not a block"
+
+# ── H: a 300 KB prompt of unterminated openers must not take quadratic time (60000 openers once ran for minutes)
+python3 -I -c 'print("<system-reminder>\n" * 15000 + "x" * 100000)' > "$TMP/big.txt"
+t0=$SECONDS; card sH "$(cat "$TMP/big.txt")" "$TMP/empty.jsonl" "🔧 [chore] src: chat session sH" "H1 pathological prompt gives the generic title"
+[ $((SECONDS - t0)) -le 5 ] && ok "H2 ...in linear time ($((SECONDS - t0)) s)" || fail "H2 took $((SECONDS - t0)) s"
 
 # ── E: control: another tag in the user's own text is kept, a mention of the word is not stripped
 card sE "fix <div> overflow in the header" "$TMP/empty.jsonl" "🐛 [fix] src: fix <div> overflow in the header" "E an ordinary tag in the user's own line is kept"
