@@ -61,9 +61,9 @@ done <<'CASES'
 2	${x:-rm} -rf ~
 2	$X$Y -rf ~
 2	bash -c '$rm -rf ~'
-# chuỗi locale: bash đọc $"rm" là rm, kể cả sau "" hay '"'
+# chuỗi locale: bash đọc $"rm" là rm, kể cả sau "" hay '' (chuỗi rỗng)
 2	""$"rm" -rf ~
-2	'"'$"rm" -rf ~
+2	''$"rm" -rf ~
 2	bash -c '""$"rm" -rf ~'
 # shell chạy lệnh mở lại $rm: cờ "$ chữ" không được lọt qua phép nối / lex mới
 2	eval "$"rm -rf ~
