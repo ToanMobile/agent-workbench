@@ -51,6 +51,11 @@ if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: onl
   case "${_PCWD}" in *\\*) _PCWD="$(python3 -I -c 'import json,sys; sys.stdout.buffer.write(json.loads("\"%s\"" % sys.argv[1]).encode())' "${_PCWD}" 2>/dev/null)" || _PCWD="." ;; esac
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
+# QA K-4: without python3 this gate cannot run — say so instead of passing silently (#754: before W1 v6, which needs it).
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "⚠ review_gate: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
+  exit 0
+fi
 # W1 v6 (hooks/session_worktree.py): a session that ENTERED a worktree (EnterWorktree: CLAUDE_PROJECT_DIR still names main) or a subagent
 # the harness started in one is judged in that worktree, not in a clean main. Python only when the payload or a session record can need it.
 _SW_SID='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
@@ -63,7 +68,7 @@ if os.path.isabs(_d): sys.path.append(_d)
 import session_worktree as s; print(s.project(json.loads(sys.stdin.read() or "{}")) or "")' "$0" <<<"${INPUT}" 2>/dev/null)"; then
     [ -n "${_SW_ROOT}" ] && REPO_ROOT="${_SW_ROOT}"
   else   # never silent: this gate then judges what CLAUDE_PROJECT_DIR names, possibly a clean main (OCR 14/10)
-    echo "⚠ DevKit $(basename "$0"): the session's worktree could not be resolved (hooks/session_worktree.py next to the real hook) - judging ${REPO_ROOT}" >&2
+    echo "⚠ DevKit ${0##*/}: the session's worktree could not be resolved (hooks/session_worktree.py next to the real hook) - judging ${REPO_ROOT}" >&2
   fi
 fi
 LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
@@ -75,11 +80,6 @@ for _fifo in "${LOG_DIR}"/* "${LOG_DIR}"/.[!.]*; do [ ! -p "${_fifo}" ] || rm -f
 LOG="${LOG_DIR}/review_gate.log"
 MAX_ATTEMPTS="${REVIEW_GATE_MAX_ATTEMPTS:-3}"
 
-# QA K-4: without python3 this gate cannot run — say so instead of passing silently.
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "⚠ review_gate: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
-  exit 0
-fi
 # #528: worker của board không chấm main. Worktree liên kết vẫn chạy.
 if [ "${SB_BOARD_WORKER:-}" = "1" ] && python3 -I -c 'import os,sys
 _d = os.path.dirname(os.path.realpath(sys.argv[1]))
