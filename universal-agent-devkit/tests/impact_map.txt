@@ -67,3 +67,5 @@ tests/lib/watchdog_env.py   hooks/tests/hook_contract_test.sh tests/gates/test_h
 skills/*/SKILL.md   tests/verification/test_skill_description_budget.sh
 commands/*.md   tests/verification/test_skill_description_budget.sh
 scripts/context/hardware_boundaries.py   tests/context_memory/test_prompt_hook_dead_hints.sh
+# 13/11 (#837): the oracle of the remote-ref forge guard; a second line for the same file is read as one more entry (run_impacted.sh unions every matching line)
+hooks/block_dangerous_git_main.py   tests/gates/test_guard_remote_ref_forge.sh
