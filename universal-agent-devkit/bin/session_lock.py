@@ -2314,6 +2314,13 @@ def _for_loop_targets(target, cmd):
     loop = [n for n in dict.fromkeys(names) if n not in assigned]
     if not loop or any(n not in clauses or not clauses[n][0] for n in loop):
         return None
+    # R1 (reviewer #1102): `read t`, `printf -v t`, `mapfile t`, `declare t=`, `getopts x t` … set the variable with no `t=` in the text. NAME may
+    # appear only as the `for NAME in` header and as $NAME / ${NAME}; any other bare word NAME (a command argument) -> unknown, block as before
+    for n in loop:
+        rest = re.sub(r"\bfor\s+%s\s+in\b" % n, " ", cmd)
+        rest = re.sub(r"\$\{?%s\b\}?" % n, " ", rest)
+        if re.search(r"(?<![\w./-])%s(?![\w./-])" % n, rest):
+            return None
     combos = 1
     for n in loop:
         combos *= len(clauses[n][0])

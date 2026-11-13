@@ -61,6 +61,16 @@ want 2 Bash "$M" 'for t in a; do for t in b; do echo x > /tmp/q-$t; done; done' 
 want 2 Bash "$M" 'for a in 1 2 3 4 5 6 7 8 9; do for b in 1 2 3 4 5 6 7 8 9; do echo x > /tmp/q-$a-$b; done; done' "for-loop: quá 64 tổ hợp"
 want 0 Bash "$M" 'for a in 1 2; do for b in x y; do echo x > /tmp/q-$a-$b; done; done' "for-loop: hai biến lồng nhau, ngoài main"
 want 2 Bash "$M" 't=/tmp/ok; for t in $(ls); do echo x > $t; done' "for-loop: danh sách động, NAME đã gán trước đó"
+# #1102 R1 (reviewer bounce): biến vòng lặp bị gán lại bằng lệnh nội bộ (không phải `NAME=`): giá trị đến từ file / stdin, hook không biết nó trỏ đâu
+want 2 Bash "$M" 'for t in a; do read t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: read gán lại NAME"
+want 2 Bash "$M" 'for t in a; do printf -v t %s "$(cat /tmp/p)"; echo x > /tmp/q-$t; done' "for-loop R1: printf -v gán lại NAME"
+want 2 Bash "$M" 'for t in a; do mapfile -t t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: mapfile gán lại NAME"
+want 2 Bash "$M" 'for t in a; do readarray t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: readarray gán lại NAME"
+want 2 Bash "$M" 'for t in a; do declare t=$(cat /tmp/p); echo x > /tmp/q-$t; done' "for-loop R1: declare gán lại NAME"
+want 2 Bash "$M" 'for t in a; do export t; read t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: export + read"
+want 2 Bash "$M" 'for t in a; do getopts x t; echo x > /tmp/q-$t; done' "for-loop R1: getopts gán NAME"
+want 2 Bash "$M" 'for t in a; do read -r a t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: read -r nhiều tên"
+want 0 Bash "$M" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "for-loop R1: ca đối chứng vẫn qua"
 # hiệu năng: thư mục đích có hàng nghìn entry - hook không liệt kê / glob thư mục, nên không chậm đáng kể
 BIG="$TMP/big"; mkdir -p "$BIG"; python3 -I -c 'import sys; [open(sys.argv[1] + "/q-%d.log" % i, "w").close() for i in range(5000)]' "$BIG"
 T0=$(python3 -I -c 'import time; print(time.time())')
