@@ -252,23 +252,61 @@ def registered_hook_scripts(settings) -> list:
     """Project-relative script paths the hook commands of a parsed `.claude/settings*.json` run, in order. Shared by
     project_wiring() and bin/post-fix-gate.py (a settings-only change, INSTINCT-015). ValueError when "hooks" is not the
     {event: [{"hooks": [{"command": …}]}]} shape Claude Code reads: the hooks then do not run either."""
+    return [rel for group in registered_hook_groups(settings) for rel in group]
+
+
+# Lệnh hook có thể nêu cùng một script ở nhiều chỗ và chạy cái đầu tiên tồn tại (hooks.json từ #1108: nguồn kit trước, link đã cài sau):
+#   p="$CLAUDE_PROJECT_DIR"/universal-agent-devkit/hooks/x.py; f="$CLAUDE_PROJECT_DIR"/.claude/hooks/x.py;
+#   [ -f "$p" ] && exec python3 "$p"; [ -f "$f" ] && exec python3 "$f"; …; exit 2
+# Đường dẫn gán vào biến shell (tên biến đứng ngay trước chỗ khớp) và biến đó được thử tồn tại trong cùng lệnh là "thay thế có canh".
+_HOOK_ASSIGN_RX = re.compile(r"""(?:^|[\s;&|(])([A-Za-z_]\w*)=["']?$""")
+_HOOK_GUARD_RX = r"""(?:\[\[?|\btest)\s+-[efrsx]\s+["']?\$\{?%s\}?["']?(?:\s|\]|$)"""
+
+
+def registered_hook_groups(settings) -> list:
+    """registered_hook_scripts() theo từng yêu cầu: mỗi phần tử là danh sách đường dẫn mà hook cần ÍT NHẤT MỘT cái tồn tại.
+    Đường dẫn thường là nhóm một phần tử (bắt buộc). Từ hai đường dẫn thay thế có canh trở lên trong CÙNG một lệnh gộp thành một nhóm,
+    vì lệnh tự thử `[ -f ]` rồi chạy cái có. Một đường dẫn có canh đứng một mình vẫn bắt buộc: không còn chỗ nào khác để chạy.
+    ValueError như registered_hook_scripts() khi khối "hooks" sai dạng."""
     hooks = settings.get("hooks") if isinstance(settings, dict) else None
     if hooks is None:
         return []
     if not isinstance(hooks, dict):
         raise ValueError('"hooks" is not an object')
-    paths = []
+    groups = []
     for event, matchers in hooks.items():
         if not isinstance(matchers, list) or not all(isinstance(m, dict) and isinstance(m.get("hooks", []), list) for m in matchers):
             raise ValueError(f'"hooks.{event}" is not a list of {{"hooks": [...]}} entries')
         for m in matchers:
             for h in m.get("hooks", []):
                 cmd = h.get("command") if isinstance(h, dict) else None
-                for found in HOOK_PATH_RX.findall(cmd if isinstance(cmd, str) else ""):
-                    rel = found[0] or found[1]
-                    if ".." not in rel.split("/") and (rel.startswith(".claude/hooks/") or rel.endswith(HOOK_SCRIPT_EXTS)):
-                        paths.append(rel)
-    return paths
+                cmd = cmd if isinstance(cmd, str) else ""
+                found = []
+                for match in HOOK_PATH_RX.finditer(cmd):
+                    rel = match.group(1) or match.group(2)
+                    if ".." in rel.split("/") or not (rel.startswith(".claude/hooks/") or rel.endswith(HOOK_SCRIPT_EXTS)):
+                        continue
+                    var = _HOOK_ASSIGN_RX.search(cmd[:match.start()])
+                    found.append((rel, bool(var) and re.search(_HOOK_GUARD_RX % re.escape(var.group(1)), cmd) is not None))
+                alt_group = [] if sum(1 for _, is_alt in found if is_alt) > 1 else None
+                for rel, is_alt in found:
+                    if is_alt and alt_group is not None:
+                        if not alt_group:
+                            groups.append(alt_group)
+                        alt_group.append(rel)
+                    else:
+                        groups.append([rel])
+    return groups
+
+
+def missing_hook_scripts(settings, exists) -> list:
+    """Đường dẫn script hook đã đăng ký mà hook không chạy được, theo vị từ exists(rel): một nhóm thay thế chỉ thiếu khi KHÔNG đường dẫn
+    nào của nó tồn tại, khi đó cả nhóm được nêu tên. Dùng chung cho project_wiring() và bin/post-fix-gate.py (INSTINCT-015)."""
+    missing = []
+    for group in registered_hook_groups(settings):
+        if not any(exists(rel) for rel in group):
+            missing.extend(rel for rel in group if rel not in missing)
+    return missing
 
 
 def kit_files_vs_head(score: Score):
@@ -403,7 +441,7 @@ def project_wiring(target: Path, score: Score):
     project's hooks are missing, its imports dangle or the gate distrusts its matrix."""
     settings, _ = load_json(target / ".claude" / "settings.json")
     try:
-        missing = [rel for rel in registered_hook_scripts(settings) if not (target / rel).exists()]
+        missing = missing_hook_scripts(settings, lambda rel: (target / rel).exists())
     except ValueError as e:
         missing = [str(e)]
     if missing:
