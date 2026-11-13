@@ -62,7 +62,7 @@ pending_rows.json (read_pending, load_view thấy ở main và mọi worktree) t
 
 from __future__ import annotations
 
-import argparse
+# argparse / tempfile được nạp trong hàm dùng chúng (CLI, nhánh ghi file): hook prompt nạp module này ở mọi prompt tả bug (#1127)
 import contextlib
 import hashlib
 import json
@@ -71,7 +71,6 @@ import re
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 import unicodedata
 from pathlib import Path
@@ -168,6 +167,7 @@ def save(project_dir: Path, data: dict, *, stale: bool = True) -> Path:
                 _note_removals(project_dir, path, data)
             except (OSError, ValueError):
                 pass
+            import tempfile  # noqa: PLC0415 - nạp lười (#1127): hook prompt chỉ đọc, không cần
             fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".regression_status.")
             with os.fdopen(fd, "wb") as f:
                 f.write(raw)
@@ -195,6 +195,7 @@ def _lock_path(project_dir: Path, kind: str) -> str:
         _ignore_mark(gate_dir)
         return str(gate_dir / f"{kind}.lock")
     except OSError:
+        import tempfile  # noqa: PLC0415 - nạp lười (#1127): hook prompt chỉ đọc, không cần
         return os.path.join(tempfile.gettempdir(), f"{kind}.{key}.lock")
 
 
@@ -372,6 +373,7 @@ def _append(project_dir: Path, rec: dict) -> None:
 
 
 def _write_bytes(path: Path, raw: bytes) -> None:
+    import tempfile  # noqa: PLC0415 - nạp lười (#1127): hook prompt chỉ đọc, không cần
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp.")
     with os.fdopen(fd, "wb") as f:
         f.write(raw)
@@ -1537,6 +1539,11 @@ def in_linked_worktree(project_dir) -> bool:
     checkout has a `.git` DIRECTORY, so neither GIT_DIR in the environment nor a planted `.git/commondir` can make it one.
     Any git trouble reads as False, so a caller keeps its old behaviour (a bare repo, a submodule and the main checkout are
     False)."""
+    # #1127: `.git` là THƯ MỤC mà git nhận làm repo (HEAD, objects/, refs/) thì git trả chính thư mục đó, và open() `.git` bên dưới
+    # lỗi ⇒ False. Biết trước khỏi spawn git (~11 ms CPU mỗi prompt tả bug ở checkout chính). Thiếu một trong ba: hỏi git như cũ.
+    dot = os.path.join(str(project_dir), ".git")
+    if os.path.isfile(os.path.join(dot, "HEAD")) and os.path.isdir(os.path.join(dot, "objects")) and os.path.isdir(os.path.join(dot, "refs")):
+        return False
     import subprocess
     try:
         res = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"],
@@ -1617,6 +1624,7 @@ def _write_overlay(project_dir, ov: dict) -> None:
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
+    import tempfile  # noqa: PLC0415 - nạp lười (#1127): hook prompt chỉ đọc, không cần
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".worktree_checklist.")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(ov, f)
@@ -1956,6 +1964,7 @@ def pending_save_rows(project_dir, data: dict, ids, drop=(), *, count=(), stats=
                 store["inbox"][key] = seen
         head = (_main_head_data(path.parent.parent) or {"items": {}})["items"]
         store["rows"] = {k: v for k, v in rows.items() if k not in head or _pending_wins(v, head[k])}
+        import tempfile  # noqa: PLC0415 - nạp lười (#1127): hook prompt chỉ đọc, không cần
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".pending_rows.")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(store, f, ensure_ascii=False)
@@ -3397,6 +3406,7 @@ def _restore_command(args, project: Path) -> int:
 
 
 def main(argv=None) -> int:
+    import argparse  # noqa: PLC0415 - chỉ CLI cần (#1127)
     parser = argparse.ArgumentParser(description="Living regression checklist")
     parser.add_argument("--project", default=os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     sub = parser.add_subparsers(dest="cmd", required=True)
