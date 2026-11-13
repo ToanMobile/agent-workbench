@@ -879,11 +879,15 @@ else
 fi
 grep -q 'execute_blender_code' "$DEVKIT_DIR/agents/councils/06-game-unity-blender.md" \
   && ok "D council 6.4 audits through read-only MCP tools" || fail "D council 6.4 does not restrict execute_blender_code"
-python3 -I - "$GAME/profile.json" <<'PY' && ok "D profile.json: MCP safety note and 2D skills excluded" || fail "D profile.json lacks the MCP safety note or still enables 2D skills"
-import json, sys
+python3 -I - "$GAME/profile.json" "$DEVKIT_DIR/skills" <<'PY' && ok "D profile.json: MCP safety note, and the three 2D skills are gone from the kit" || fail "D profile.json lacks the MCP safety note, or a 2D skill is still shipped or still named in exclude_skills"
+import json, os, sys
 p = json.load(open(sys.argv[1]))
-need = {"generate2dmedia", "generate2dsprite", "video2dsprite"}
-sys.exit(0 if "DISABLE_TELEMETRY" in p.get("external_mcps_note", "") and need <= set(p.get("exclude_skills", [])) else 1)
+# Ba skill 2D đã gỡ khỏi kit (13/11): không còn thư mục skill, và tên chúng không được nằm lại trong exclude_skills
+# (profile_skills.py coi tên lạ là lỗi và install.sh dừng cài).
+gone = {"generate2dmedia", "generate2dsprite", "video2dsprite"}
+sys.exit(0 if "DISABLE_TELEMETRY" in p.get("external_mcps_note", "")
+         and not gone & set(p.get("exclude_skills", []))
+         and not any(os.path.exists(os.path.join(sys.argv[2], s)) for s in gone) else 1)
 PY
 
 echo "failures: $FAILS"

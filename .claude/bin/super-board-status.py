@@ -174,7 +174,7 @@ def parse_manifest(text: str, today_iso: str) -> dict[str, Any]:
             recents.append({
                 "epoch": ep, "verb": "dispatch", "glyph": LANE_GLYPH[lane],
                 "issue": f"#{issue}", "target": LANE_LABEL[lane],
-                # `attempt N/3` is filled in at render time from current
+                # `attempt N/<rebuild_cap>` is filled in at render time from current
                 # labels — the manifest doesn't encode it at dispatch time.
                 "detail": "",
             })
@@ -281,14 +281,24 @@ def rebuild_count(item: dict[str, Any] | None) -> int:
     return 0
 
 
+# `rebuild_cap` of the board config (config-schema.json default 2); main() sets it from the config (#982).
+REBUILD_CAP = 2
+
+
+def rebuild_cap_of(cfg: dict[str, Any]) -> int:
+    """Positive int `rebuild_cap` of the config, else the schema default 2 (same rule as the runner's posint)."""
+    v = cfg.get("rebuild_cap")
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 2
+
+
 def attempt_str(item: dict[str, Any] | None) -> str:
-    """`attempt N/3` derived from the issue's current `loop:rebuild-N` label."""
-    return f"{min(rebuild_count(item) + 1, 3)}/3"
+    """`attempt N/<rebuild_cap>` derived from the issue's current `loop:rebuild-N` label."""
+    return f"{min(rebuild_count(item) + 1, REBUILD_CAP)}/{REBUILD_CAP}"
 
 
 def rebuild_suffix(item: dict[str, Any]) -> str:
     k = rebuild_count(item)
-    return f"↻ {min(k + 1, 3)}/3" if k else ""
+    return f"↻ {min(k + 1, REBUILD_CAP)}/{REBUILD_CAP}" if k else ""
 
 
 REASON_TABLE: list[tuple[str, str]] = [
@@ -722,6 +732,8 @@ def main() -> int:
         return 66
 
     cfg = json.loads(config_path.read_text())
+    global REBUILD_CAP
+    REBUILD_CAP = rebuild_cap_of(cfg)
     project_owner: str = cfg["project"]["owner"]
     project_number: int = int(cfg["project"]["number"])
     runs_dir = cfg.get("paths", {}).get("runs_dir", "docs/super-board/runs")
@@ -958,7 +970,7 @@ def main() -> int:
     else:
         for r in recents:
             t = t_minus(r["epoch"])
-            # Dispatch detail (`attempt N/3`) is filled in at render time
+            # Dispatch detail (`attempt N/<rebuild_cap>`) is filled in at render time
             # because the manifest doesn't encode the rebuild count at
             # dispatch time — the number shown reflects the issue's *current*
             # label. Live workers in the §Workers block above use the same

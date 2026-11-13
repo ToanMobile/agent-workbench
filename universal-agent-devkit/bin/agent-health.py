@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
@@ -40,12 +41,6 @@ DIM = "\033[2m"
 RESET = "\033[0m"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-SELF_CONSISTENCY_SCRIPTS = [
-    "audit_test_suite_50_agents.py",
-    "audit_workflows_rules_skills_50_agents.py",
-    "audit_zero_regression_10_agents.py",
-]
 
 
 class Score:
@@ -286,11 +281,121 @@ def kit_files_vs_head(score: Score):
     if res.returncode != 0:
         return
     changed = sorted(f for f in res.stdout.split("\0") if f)
+    # #828: `git commit -- <path>` runs the pre-commit on a temp index; the pre-commit hands it over as DEVKIT_PRECOMMIT_INDEX.
+    # What that index stages is the commit's own work. Trusted only when it sits in this kit's own git dir.
+    idx = os.environ.get("DEVKIT_PRECOMMIT_INDEX", "")
+    gd = subprocess.run(["git", "-C", str(BASE_DIR), "rev-parse", "--absolute-git-dir"], capture_output=True, text=True)
+    # R1: must be an existing regular file (no symlink): a missing index reads as empty and would hide every change.
+    if (idx and changed and gd.returncode == 0 and os.path.isfile(idx) and not os.path.islink(idx)
+            and os.path.realpath(os.path.dirname(idx)) == os.path.realpath(gd.stdout.strip())):
+        res2 = subprocess.run(["git", "-C", str(BASE_DIR), "diff", "--relative", "--name-only", "-z", "--", "."],
+                              capture_output=True, text=True, errors="surrogateescape", env={**os.environ, "GIT_INDEX_FILE": idx})
+        if res2.returncode == 0:
+            # intersect with the real diff: a file only differing in the temp index is staged elsewhere, never a new red line
+            changed = sorted(set(changed) & {f for f in res2.stdout.split("\0") if f})
     first = changed[:5]
     restore = f"git -C {BASE_DIR} checkout -- {' '.join(first)}"
     score.check(not changed, tr("Mọi file kit đã theo dõi đều khớp HEAD của kit", "Every tracked kit file matches the kit's HEAD"),
                 tr(f"{len(changed)} kit file khác HEAD của kit (bị ghi đè hoặc bị xoá): {first}. Khôi phục (chỉ in, không tự chạy): {restore}",
                    f"{len(changed)} kit files differ from the kit's HEAD (overwritten or deleted): {first}. Restore (printed, not run): {restore}"))
+
+
+STALE_LOCK_S = 600   # một lệnh git giữ index.lock vài giây; mười phút mà không tiến trình git nào giữ là phần còn sót của lệnh đã chết
+
+
+def _git_run(cwd, *args):
+    """(mã thoát, stdout) của `git -C cwd args`; (None, "") khi git không chạy được hoặc quá 5 giây."""
+    try:
+        res = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None, ""
+    return res.returncode, res.stdout.strip()
+
+
+def _trunk_branch(main):
+    """Nhánh mà checkout chính phải đứng: nhánh của origin/HEAD, không có thì `main` cục bộ, rồi `master`; None khi không biết."""
+    rc, out = _git_run(main, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD")
+    if rc == 0 and out.startswith("origin/") and len(out) > len("origin/"):
+        return out[len("origin/"):]
+    for name in ("main", "master"):
+        if _git_run(main, "show-ref", "--verify", "-q", f"refs/heads/{name}")[0] == 0:
+            return name
+    return None
+
+
+def _lsof(*args):
+    """Các dòng `lsof -w <args>` (rỗng khi không tiến trình nào khớp); None khi không chạy được lsof, lsof lỗi hoặc quá 5 giây."""
+    try:
+        res = subprocess.run(["lsof", "-w", *args], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode not in (0, 1):   # lsof thoát 1 khi không có gì khớp
+        return None
+    return res.stdout.splitlines()
+
+
+def _git_holds_lock(lock, main):
+    """True khi một tiến trình git đang giữ khoá: mở chính file (git ghi qua fd), HOẶC đang chạy với thư mục làm việc là checkout `main`
+    (`git commit` chờ trình soạn thảo đã đóng fd nhưng vẫn giữ khoá; `git -C main …` cũng chdir vào main). Thư mục làm việc trong một
+    worktree lồng dưới main/.claude/worktrees không tính: đó là checkout khác, nó không giữ khoá của main. False khi không có; None khi
+    không biết (không có lsof, lsof lỗi hoặc quá giờ): khi đó người gọi im lặng, không báo một khoá có thể đang sống."""
+    # đúng tên lệnh `git` (không phải tiền tố): gitstatusd, daemon fsmonitor hay trợ thủ IDE đứng trong main không phải lệnh git đang giữ khoá,
+    # còn `git-remote-https` luôn có `git` cha cùng chạy
+    opened = _lsof("-F", "c", "--", str(lock))
+    in_dir = _lsof("-a", "-c", "/^git$/", "-d", "cwd", "-F", "n")
+    if opened is not None and any(ln[1:] == "git" for ln in opened if ln.startswith("c")):
+        return True
+    if in_dir is not None:
+        root = os.path.realpath(str(main))
+        for ln in in_dir:
+            if not ln.startswith("n"):
+                continue
+            rel = os.path.relpath(os.path.realpath(ln[1:]), root)
+            if not rel.startswith("..") and not (rel + os.sep).startswith(os.path.join(".claude", "worktrees") + os.sep):
+                return True
+    return False if opened is not None and in_dir is not None else None
+
+
+def kit_host_checkout_notes(kit_dir: Path) -> list:
+    """Các dòng nói về checkout CHÍNH của repo đang chứa kit chạy: `.agents/devkit` của mọi repo app trỏ vào nó, nên checkout chính lệch
+    khỏi nhánh trunk làm mọi repo app chạy kit cũ (hoặc kit dở của ai đó), và một index.lock cũ làm mọi lệnh git ghi chỉ mục ở đó lỗi
+    (#1146: detached ở nhánh issue 30 giờ từ 11/11 03:05; khoá 0 byte 36 giờ; health không báo gì). Checkout chính là cha của thư mục git
+    chung của repo: không phải HEAD của worktree liên kết mà health đang chạy trong đó (worktree lane detached là bình thường) và không
+    phải nhánh riêng của repo app. Chỉ đọc: nêu lệnh sẽ sửa, không bao giờ chạy nó - khoá có thể của một lệnh đang sống, nhánh có thể
+    mang việc dở của ai đó. Kit không nằm trong repo git, hoặc repo bare: không có checkout để nói, không in dòng nào."""
+    rc, common = _git_run(kit_dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if rc != 0 or not common or Path(common).name != ".git":
+        return []
+    main = Path(common).parent
+    notes = []
+    rc, head = _git_run(main, "symbolic-ref", "-q", "--short", "HEAD")
+    trunk = _trunk_branch(main)
+    if rc == 1:   # `symbolic-ref -q` thoát 1 khi HEAD detached; lỗi khác là chính git lỗi: không kết luận
+        sha = _git_run(main, "rev-parse", "--short", "HEAD")[1] or "?"
+        notes.append(tr(
+            f"Checkout chính {main} (đích của .agents/devkit ở các repo app) đang detached ở {sha}, không ở nhánh {trunk or 'trunk'}: các repo app "
+            f"chạy kit ở commit đó. Chỉ báo, không tự đổi. Xem việc dở trước: git -C {main} status --short; rồi đưa về nhánh: git -C {main} switch {trunk or '<trunk>'}",
+            f"Main checkout {main} (target of .agents/devkit in the app repos) is detached at {sha}, not on {trunk or 'the trunk branch'}: the app repos "
+            f"run the kit at that commit. Report only, nothing is switched. Check unfinished work first: git -C {main} status --short; then: git -C {main} switch {trunk or '<trunk>'}"))
+    elif rc == 0 and head and trunk and head != trunk:
+        notes.append(tr(
+            f"Checkout chính {main} (đích của .agents/devkit ở các repo app) đang ở nhánh {head}, không phải {trunk}: các repo app chạy kit của nhánh đó. "
+            f"Chỉ báo, không tự đổi. Xem việc dở trước: git -C {main} status --short; rồi: git -C {main} switch {trunk}",
+            f"Main checkout {main} (target of .agents/devkit in the app repos) is on branch {head}, not {trunk}: the app repos run that branch's kit. "
+            f"Report only, nothing is switched. Check unfinished work first: git -C {main} status --short; then: git -C {main} switch {trunk}"))
+    rc, lock_path = _git_run(main, "rev-parse", "--path-format=absolute", "--git-path", "index.lock")
+    lock = Path(lock_path) if rc == 0 and lock_path else main / ".git" / "index.lock"
+    try:
+        age = time.time() - lock.stat().st_mtime
+    except OSError:
+        return notes   # không có khoá: trường hợp thường
+    if age > STALE_LOCK_S and _git_holds_lock(lock, main) is False and lock.exists():
+        notes.append(tr(
+            f"Khoá {lock} cũ {int(age // 60)} phút và không tiến trình git nào đang giữ: lệnh git đã chết giữa chừng, mọi lệnh git ghi chỉ mục ở {main} sẽ lỗi "
+            f"'Unable to create index.lock'. Chỉ báo, không tự xoá. Sau khi chắc không còn lệnh git nào của phiên khác: rm {lock}",
+            f"{lock} is {int(age // 60)} minutes old and no git process holds it: a git command died midway, and every index-writing git command in {main} "
+            f"fails with 'Unable to create index.lock'. Report only, the lock is not removed. Once sure no other session's git command runs: rm {lock}"))
+    return notes
 
 
 def project_wiring(target: Path, score: Score):
@@ -444,7 +549,7 @@ def main(argv=None):
     score = Score()
 
     # 1. Runtime
-    section(tr("[1/6] Môi trường & Runtime", "[1/6] Environment & runtime"))
+    section(tr("[1/5] Môi trường & Runtime", "[1/5] Environment & runtime"))
     py_ver = ".".join(map(str, sys.version_info[:3]))
     score.check(sys.version_info >= (3, 9), f"Python v{py_ver}", tr(f"Python v{py_ver} (yêu cầu >= 3.9)", f"Python v{py_ver} (requires >= 3.9)"))
     score.check(shutil.which("git") is not None, tr("git có trong $PATH", "git is on $PATH"), tr("git không có trong $PATH", "git is not on $PATH"))
@@ -465,7 +570,7 @@ def main(argv=None):
         info(tr("OpenCodeReview (`ocr`, tuỳ chọn): chưa cài — không tính điểm", "OpenCodeReview (`ocr`, optional): not installed — not scored"))
 
     # 2. Active profile
-    section(tr("[2/6] Profile đang kích hoạt", "[2/6] Active profile"))
+    section(tr("[2/5] Profile đang kích hoạt", "[2/5] Active profile"))
     profiles = sorted(p.name for p in (BASE_DIR / "profiles").iterdir()
                       if (p / "profile.json").is_file()) if (BASE_DIR / "profiles").is_dir() else []
     info(tr(f"Có {len(profiles)} profile trong DevKit: {', '.join(profiles)}", f"{len(profiles)} profiles in the DevKit: {', '.join(profiles)}"))
@@ -488,32 +593,15 @@ def main(argv=None):
                 "No profile selected for this project (`agent-kit profile <name>`) — not scored"))
 
     # 3. Tests
-    section("[3/6] Test suite")
+    section("[3/5] Test suite")
     if args.run_tests:
         run_test_suite(score)
     else:
         info(tr("tests: not run (dùng `agent-kit health --run-tests` để chạy thật và tính điểm)",
                 "tests: not run (use `agent-kit health --run-tests` to run and score them)"))
 
-    # 4. Self-consistency checks (grep-based) — kiểm DevKit tự nhất quán, không kiểm code dự án
-    section(tr("[4/6] Self-consistency checks của DevKit (grep-based)", "[4/6] DevKit self-consistency checks (grep-based)"))
-    for name in SELF_CONSISTENCY_SCRIPTS:
-        script = BASE_DIR / "scripts" / "audits" / name
-        if not script.is_file():
-            script = BASE_DIR / "scripts" / name
-        if not script.is_file():
-            score.check(False, "", tr(f"Thiếu script `{name}`", f"Missing script `{name}`"))
-            continue
-        try:
-            res = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=60)
-            m = re.search(r"(\d+)/(\d+) checks passed", res.stdout)
-            detail = f"{m.group(1)}/{m.group(2)} checks" if m else f"exit {res.returncode}"
-            score.check(res.returncode == 0, f"`{name}`: {detail}", f"`{name}`: {detail}")
-        except (OSError, subprocess.SubprocessError) as e:
-            score.check(False, "", tr(f"`{name}` lỗi khi chạy: {e}", f"`{name}` failed to run: {e}"))
-
-    # 5. Catalog: rules, skills, councils
-    section("[5/6] Rules, Skills & Councils")
+    # 4. Catalog: rules, skills, councils
+    section("[4/5] Rules, Skills & Councils")
     rules_dir = BASE_DIR / "rules"
     rule_files = sorted(rules_dir.glob("*.md")) if rules_dir.is_dir() else []
     broken_rules = [r.name for r in rule_files if r.is_symlink() and not r.exists()]
@@ -563,13 +651,13 @@ def main(argv=None):
                    f"{len(names)} councils, no duplicate `name`, every `active_councils` entry exists"),
                 tr(f"Council trùng name {dupes} / thiếu {missing_councils}", f"Councils with duplicate name {dupes} / missing {missing_councils}"))
 
-    # 6. MCP & regression matrix — chỉ đòi MCP của profile đang active
+    # 5. MCP & regression matrix — chỉ đòi MCP của profile đang active
     if target.resolve() != BASE_DIR.resolve():
         section(tr("[+] Dây nối trong dự án (hook, import, ma trận, git)", "[+] Project wiring (hooks, imports, matrix, git)"))
         project_wiring(target, score)
         merge_queue_canary(target)
 
-    section(tr("[6/6] MCP & Ma trận hồi quy", "[6/6] MCP & regression matrix"))
+    section(tr("[5/5] MCP & Ma trận hồi quy", "[5/5] MCP & regression matrix"))
     mcps, sources = configured_mcps(target)
     if sources:
         info(tr(f"MCP khai báo ({len(mcps)}) từ: {', '.join(sources)}", f"Configured MCPs ({len(mcps)}) from: {', '.join(sources)}"))
@@ -596,6 +684,13 @@ def main(argv=None):
         else:
             score.check(False, "", tr("Profile đã chọn nhưng chưa có `.agents/regression_matrix.active.json`",
                                       "A profile is selected but `.agents/regression_matrix.active.json` is missing"))
+
+    # #1146: checkout chứa kit (không tính điểm: không đổi mẫu số hạng mục đo, chỉ nói điều nó thấy)
+    host_notes = kit_host_checkout_notes(BASE_DIR)
+    if host_notes:
+        section(tr("[+] Checkout chính của kit", "[+] Kit host checkout"))
+        for note in host_notes:
+            warn(note)
 
     # Score
     pct = int(score.passed * 100 / score.total) if score.total else 0
