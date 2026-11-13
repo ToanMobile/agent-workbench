@@ -1692,12 +1692,52 @@ def moves_cwd(text, cwds, remote, depth=0):
 RM_VAR_DEFAULT = re.compile(r"\$\{(\w+):?[-=]([\w./+-]*)\}")
 RM_OPTION = re.compile(r"-[rRfiIvdPx]+|--|--(?:recursive|force|interactive|verbose|dir|one-file-system|preserve-root|no-preserve-root)")
 RM_VAR_PLAIN = re.compile(r"\$(\w+)|\$\{(\w+)\}")
+LIT_DOLLAR = "\ue00f"   # stands for a literal $ in the second lex of literal_dollar_words
+
+class LiteralDollar(str):
+    """(#1159) A word of rm_walk whose every $ is literal: a $ right before the quote that ends its double-quoted string. "$"rm is the
+    word $rm in sh, bash and zsh, also inside bash -c "…", eval and a heredoc (printf probes 13/11), so it names no variable
+    (rm_var_command). The mark is the type of the word: a join or a new lex (eval, ssh, sudo -s, bash -c) gives a plain str."""
+
+def literal_dollar_words(text, toks):
+    """toks (lex_words of text) with each word whose every $ is a "$" made a LiteralDollar. Fail closed, toks as they are: a text with
+    what this scan does not model ($( ${ $$ $' <<, a backtick), or a second lex with those $ marked that gives other words.
+    ponytail: '$'rm and \\$rm stay judged as rm (in bash -c "\\$rm" / "'$rm'" the shell that runs it expands $rm); upgrade only
+    from the raw text at depth 0 when a real case shows."""
+    if '$"' not in text or any(s in text for s in ("$(", "${", "$$", "$'", "<<", "`")):
+        return toks
+    marks, i, n, dq = set(), 0, len(text), False
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "\x27" and not dq:
+            i = text.find("\x27", i + 1)
+            if i < 0:
+                return toks
+        elif c == "\x22":
+            dq = not dq
+        elif c == "$" and dq and text.startswith("\x22", i + 1):
+            marks.add(i)
+        i += 1
+    if not marks:
+        return toks
+    try:
+        mtoks = shell_norm.lex_words("".join(LIT_DOLLAR if k in marks else ch for k, ch in enumerate(text)))
+    except ValueError:
+        return toks
+    if len(mtoks) != len(toks) or any(m.replace(LIT_DOLLAR, "$") != t for m, t in zip(mtoks, toks)):
+        return toks
+    return [LiteralDollar(t) if LIT_DOLLAR in m and "$" not in m else t for m, t in zip(mtoks, toks)]
 
 def rm_var_command(toks, i, cwds, env, depth, feed, remote, implied):
     """(#845) toks[i] is a variable that holds the command name. Read as every word it may be: ${x:-word} / ${x-word} the literal
     word (the variable may be unset, or hold what the env knows); $X / ${X} what the command assigned it (X=word; $X ...), and
     as rm when unknown: `$CMD -rf <home>` is refused like the rm it may be, `$CMD -la` is not (rm without -r removes no tree).
-    Each reading is judged as the command it spells (X="rm -rf" splits into two words)."""
+    Each reading is judged as the command it spells (X="rm -rf" splits into two words). A LiteralDollar ("$"rm) is no variable."""
+    if isinstance(toks[i], LiteralDollar):   # (#1159) "$"rm runs the program named $rm, as before #845
+        return None
     w = toks[i].strip("\x22\x27")
     names, guess, m = [], set(), RM_VAR_DEFAULT.fullmatch(w)
     if m:
@@ -2129,7 +2169,7 @@ def rm_walk(text, cwds, depth, remote, env):
     try:
         if shell_norm.dq_nested_quote(text):   # "$(echo "a b"; rm -rf ~)": the lexer pairs the quotes across the substitution (15/10 r6): read it as text that does not parse
             raise ValueError("a double quote inside a command substitution inside double quotes")
-        toks = shell_norm.lex_words(text)
+        toks = literal_dollar_words(text, shell_norm.lex_words(text))   # (#1159) "$"rm: a literal $, not a variable
     except ValueError:   # a quote left open: split at blanks, a newline is a separator of its own (it is no blank here)
         toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text.replace("\n", " ; ")) if x and x.strip()]
     stack, seg, pending, feed = [], [], None, None
