@@ -69,3 +69,5 @@ commands/*.md   tests/verification/test_skill_description_budget.sh
 scripts/context/hardware_boundaries.py   tests/context_memory/test_prompt_hook_dead_hints.sh
 # 13/11 (#837): the oracle of the remote-ref forge guard; a second line for the same file is read as one more entry (run_impacted.sh unions every matching line)
 hooks/block_dangerous_git_main.py   tests/gates/test_guard_remote_ref_forge.sh
+# #809: parity_check.py imports merge_json.py and install.sh runs it through adapters/setup_claude.sh; the legacy-spelling test names neither.
+scripts/governance/merge_json.py   tests/installer/test_init_legacy_hook_spelling.sh

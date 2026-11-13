@@ -18,7 +18,7 @@
 --delegate-only skips the LLM attempt (hooks/review_gate.sh runs it on a block: no cost, ~1 s).
 Output goes to a new temp folder (or --out DIR, reused and overwritten: review_gate passes one folder per repo so its block
 message is the same text on every run), never into the repo. Exit 0: report or spec ready (or nothing to review); 1: ocr failed;
-3: ocr is not installed. Standard library only.
+3: ocr is not installed; 64: unknown argument. -h/--help prints this. Standard library only.
 """
 import hashlib
 import json
@@ -229,7 +229,29 @@ def write_content_map(report, plan):
     os.replace(tmp, report)
 
 
+VALUED = ("--from", "--to", "--commit", "-c", "-b", "--background", "--out")   # the options range_args / main read, with a value
+
+
+def check_args(argv):
+    """#807: None to go on, else the exit code. -h/--help prints this docstring (0); an option or word the parser does not read
+    exits 64 — both before any `ocr` call (--help used to run a real review of the uncommitted diff)."""
+    it = iter(argv)
+    for a in it:
+        if a in VALUED:
+            next(it, None)   # its value, even one that looks like a flag (-b "--help")
+        elif a in ("-h", "--help"):
+            print(__doc__.strip())
+            return 0
+        elif a != "--delegate-only":
+            print("ocr-review: unknown argument %r (see --help)" % a, file=sys.stderr)
+            return 64
+    return None
+
+
 def main(argv):
+    rc = check_args(argv)
+    if rc is not None:
+        return rc
     if shutil.which("ocr") is None:
         print("ocr-review: `ocr` (OpenCodeReview) is not installed — npm i -g @alibaba-group/open-code-review", file=sys.stderr)
         print("ocr missing: install with npm i -g @alibaba-group/open-code-review")

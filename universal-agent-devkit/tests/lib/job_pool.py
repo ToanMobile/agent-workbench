@@ -60,6 +60,7 @@ def _take(pool: str, size: int, alone: bool) -> list:
     except OSError:
         os.close(gate)
         raise
+    free = None   # the free tok.<i> held so far: closed on the OSError path too (#976: it leaked until exec/exit)
     try:
         while True:
             free, held = None, 0
@@ -82,10 +83,13 @@ def _take(pool: str, size: int, alone: bool) -> list:
                     return [gate, free]
                 if free is not None:
                     os.close(free)
+                    free = None
             finally:
                 fcntl.flock(pick, fcntl.LOCK_UN)
             time.sleep(POLL_S)
     except OSError:
+        if free is not None:
+            os.close(free)
         os.close(gate)
         raise
     finally:
