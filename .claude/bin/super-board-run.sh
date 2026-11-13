@@ -981,8 +981,8 @@ section = open(log, errors='replace').read().rsplit('=== dispatch ', 1)[-1]
 acct = re.search(r'^account_pool: engine=\S+ account=([A-Za-z0-9_.-]+)', section, re.M)
 tail = '\n'.join([l for l in section.splitlines() if l.strip() and not l.startswith('worker_exit:')][-3:])
 # Claude Code: "You've hit your session limit · resets 10:50pm (Asia/Saigon)" (đo 16/10). Ba mẫu sau là mã quota của
-# Gemini/xAI, chưa đo trên agy/grok thật.
-hit = re.search(r"hit your (?:[\w-]+ )?limit|usage[ _]limit[ _]reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded", tail, re.I)
+# Gemini/xAI, chưa đo trên agy/grok thật.  #1120: 402 Payment Required (đo 11/11, grok hết số dư) cũng là account chết.
+hit = re.search(r"hit your (?:[\w-]+ )?limit|usage[ _]limit[ _]reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded|402 Payment Required|usage balance exhausted", tail, re.I)
 if not acct or not hit:
     sys.exit(0)
 now = int(time.time())
