@@ -114,7 +114,9 @@ gate_masked_conditions_clean() {
   local line
   line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$1" 2>/dev/null | tail -1) || return 1
   [ -n "$line" ] || return 1
-  printf '%s' "$line" | jq -e '(.matrix_problem // "x") == "" and ((.tests_touched // ["x"]) | length) == 0 and ((.unreadable // ["x"]) | length) == 0
+  # GeelyEx2 overlay (#251, test_merge_gate_red_on_base_null_matrix.sh): post-fix-gate xuất "matrix_problem": null khi ma trận sạch;
+  # `null // "x"` của kit c45755c9 biến nó thành "x" nên red_only_on_base không bao giờ chạy. Bỏ overlay khi kit sửa.
+  printf '%s' "$line" | jq -e 'has("matrix_problem") and (.matrix_problem == null or .matrix_problem == "") and ((.tests_touched // ["x"]) | length) == 0 and ((.unreadable // ["x"]) | length) == 0
     and ((.uncovered // ["x"]) | length) == 0 and ((.orphan_tests // ["x"]) | length) == 0 and (.busy == false) and (.budget_exhausted == false)
     and ((.regression_tests // []) | length) > 0' >/dev/null 2>&1
 }

@@ -495,7 +495,7 @@ def validate(text, kind, meta=None):
                 require(isinstance(entry.get('headRefName'), str) and entry['headRefName'] and isinstance(entry.get('files'), list)
                         and all(isinstance(f, dict) and isinstance(f.get('path'), str) and f['path'] for f in entry['files']), 'open PR branch/files missing')
             if kind == 'issues-closed':
-                require(entry.get('stateReason') in ('COMPLETED', 'NOT_PLANNED', 'REOPENED', None) and 'stateReason' in entry, 'closed issue reason missing')
+                require(entry.get('stateReason') in ('COMPLETED', 'NOT_PLANNED', 'DUPLICATE', 'REOPENED', None) and 'stateReason' in entry, 'closed issue reason missing')
     elif kind == 'object':
         require(isinstance(value, dict) and bool(value), 'required object missing')
     elif kind == 'array':
@@ -506,6 +506,38 @@ def validate(text, kind, meta=None):
 def run_gh(args):
     result = subprocess.run(['gh', *args], capture_output=True, timeout=30)
     # Decode by hand: text=True turns a lone \r inside a diff line into \n.
+    result.stdout = result.stdout.decode('utf-8', 'replace')
+    result.stderr = result.stderr.decode('utf-8', 'replace')
+    return result
+
+
+DIFF_TOO_LARGE = re.compile(r'diff exceeded the maximum number of (?:files|lines)|PullRequest\.diff too_large', re.I)
+
+
+def local_pr_diff(args):
+    """GitHub refuses `pr diff` past 300 files or 20 000 lines (HTTP 406; OfficeReader #341, 10/11, 4822 lines in 77
+    translations): every retry fails the same way and the halt replays forever. Build the same three-dot diff from local
+    git, pinned to the PR head and base GitHub reports now. validate() still checks it against the PR metadata, so a PR
+    that moved on is refused as before. Any failure returns a non-zero result: the normal retry/halt path applies."""
+    rest = [a for a in args[2:] if a not in ('--allow-escape-sequences', '--color', '--color=never')]
+    view = run_gh(['pr', 'view', *rest, '--json', 'headRefOid,baseRefOid'])
+    fail = lambda why: subprocess.CompletedProcess(args, 1, '', f'local diff for a too-large PR failed: {why}\n')
+    if view.returncode:
+        return fail(view.stderr.strip() or 'pr view failed')
+    try:
+        refs = json.loads(view.stdout)
+        head, base = refs['headRefOid'], refs['baseRefOid']
+    except (ValueError, KeyError, TypeError):
+        return fail('pr view returned no head/base')
+    if not all(isinstance(s, str) and re.fullmatch(r'[0-9a-f]{40}', s) for s in (head, base)):
+        return fail('pr view returned no full head/base sha')
+    cwd = os.environ.get('SB_REPO_PATH')
+    git = lambda *a, t=60: subprocess.run(['git', *a], capture_output=True, timeout=t, cwd=cwd)
+    if any(git('cat-file', '-e', f'{sha}^{{commit}}').returncode for sha in (head, base)):
+        fetched = git('fetch', '--no-tags', '--quiet', 'origin', head, base, t=120)
+        if fetched.returncode:
+            return fail(fetched.stderr.decode('utf-8', 'replace').strip() or 'git fetch failed')
+    result = git('diff', '--no-color', '--no-ext-diff', '--find-renames', f'{base}...{head}', t=120)
     result.stdout = result.stdout.decode('utf-8', 'replace')
     result.stderr = result.stderr.decode('utf-8', 'replace')
     return result
@@ -608,6 +640,8 @@ def read(args, kind='json', meta=None, recovering=False):
             if (result.returncode and args[:2] == ['pr', 'diff'] and '--allow-escape-sequences' not in args
                     and 'terminal escape sequences' in result.stderr):
                 result = run_gh([*args, '--allow-escape-sequences'])
+            if result.returncode and args[:2] == ['pr', 'diff'] and DIFF_TOO_LARGE.search(result.stderr):
+                result = local_pr_diff(args)
             rest_error = None
             if not result.returncode and kind == 'metadata' and args[:2] == ['pr', 'view']:
                 result.stdout, rest_error = complete_pr_files(args, result.stdout)
