@@ -1,119 +1,94 @@
-// #909 (hau #988, ba muc P3 con lai cua grok audit): (1) sparse-checkout / skip-worktree / assume-unchanged che file khoi git status nen audit
-// van PASS du grok khong doc duoc file; (2) projectRoot la thu muc con cua repo: change set tinh path tu goc repo con existsSync tinh theo
-// projectRoot; (3) `git worktree add` loi: thu muc tam agpm-grok-* phai bi don. Grok that khong chay: grok gia qua ANTIGRAVITY_PM_GROK.
+// 13/11/2026 (PR #1163, chu repo bo Grok): cac ca #909 / H5 cua audit grok cu (file bi che khoi git status, cay doi trong luc audit) chuyen
+// sang audit Antigravity co pham vi (auditScopeOf): gate DevKit duyet test sua tu bien ban nay, nen ban sua bi che hoac cay ban luc giao /
+// luc chot khong duoc ra mot lan giao co pham vi dat 'pass'. agy that khong bao gio duoc goi: ANTIGRAVITY_PM_AGY tro vao script gia.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadConfig } from '../src/config.js';
-import { createTask } from '../src/tasks.js';
+import { loadTask, taskFile } from '../src/tasks.js';
 import { TOOLS_BY_NAME } from '../src/tools.js';
-import { tmpDir, tmpProject, cleanup, writeFile, sampleTaskArgs } from './helpers.js';
+import { homeStateDir } from '../src/util.js';
+import { tmpProject, tmpDir, cleanup, writeFile } from './helpers.js';
 
-const call = (name, args) => TOOLS_BY_NAME.get(name).handler(args);
+const ARGON = 'gemini-4-argon-high';
+const FAKE = `#!/usr/bin/env node
+const out = (o) => console.log(JSON.stringify(o));
+out({ event: 'init', conversation_id: 'c0c0c0c0-1111-2222-3333-444444444444', init: { cwd: process.cwd() } });
+out({ event: 'result', result: { conversation_id: 'c0c0c0c0-1111-2222-3333-444444444444', status: 'SUCCESS' } });
+`;
+const KEYS = ['ANTIGRAVITY_PM_AGY', 'ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS', 'ANTIGRAVITY_PM_AGENTAPI', 'DEVKIT_AGENT_ID'];
 delete process.env.DEVKIT_AGENT_ID;
 for (const k of ['GROK_SESSION_ID', 'GROK_WORKSPACE_ROOT', 'GROK_HOOK_EVENT']) delete process.env[k];
 
-const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
-function commitFile(cwd, rel, content, msg = rel) {
-  writeFile(path.join(cwd, rel), content);
-  git(cwd, 'add', '-A', '--', rel);
-  git(cwd, 'commit', '-qm', msg);
-  return git(cwd, 'rev-parse', 'HEAD').trim();
+function fakeAgy(t) {
+  const d = tmpDir('agpm-scope-');
+  const bin = path.join(d, 'agy');
+  fs.writeFileSync(bin, FAKE, { mode: 0o755 });
+  const agentapi = path.join(d, 'agentapi');
+  fs.writeFileSync(agentapi, `#!/bin/sh\necho '{"response": {}, "error": "rpc error: code = Unavailable"}'\nexit 1\n`, { mode: 0o755 });
+  const prev = { ...process.env };
+  Object.assign(process.env, { ANTIGRAVITY_PM_AGY: bin, ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS: '1', ANTIGRAVITY_PM_AGENTAPI: agentapi });
+  t.after(() => {
+    for (const k of KEYS) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+    fs.rmSync(path.join(homeStateDir(), 'agy-conversations.json'), { force: true });
+    cleanup(d);
+  });
 }
-function fakeGrok(sh = '') {
-  const d = tmpDir('agpm-fake-grok-');
-  const bin = path.join(d, 'grok');
-  fs.writeFileSync(bin, ['#!/bin/bash', ...(sh ? [sh] : []), 'echo "VERDICT: PASS"', 'exit 0', ''].join('\n'));
-  fs.chmodSync(bin, 0o755);
-  return bin;
-}
-async function withGrok(bin, fn) {
-  const saved = process.env.ANTIGRAVITY_PM_GROK;
-  process.env.ANTIGRAVITY_PM_GROK = bin;
-  try { return await fn(); } finally {
-    if (saved === undefined) delete process.env.ANTIGRAVITY_PM_GROK; else process.env.ANTIGRAVITY_PM_GROK = saved;
-  }
-}
-function repo() {
-  const dir = tmpProject({ projectName: 'grok-hidden', testCommand: 'echo ok' });
-  git(dir, 'init', '-q');
+
+const git = (dir, ...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: dir, encoding: 'utf8' }).trim();
+/** Repo: main co a.txt + t.sh; nhanh feat sua t.sh, them b.txt. Tra { dir, head, base }. */
+function prRepo(t) {
+  const dir = tmpProject({ projectName: 'audit-scope', testCommand: 'echo ok', defaultModel: ARGON });
+  t.after(() => cleanup(dir));
+  git(dir, 'init', '-q', '-b', 'main');
   writeFile(path.join(dir, '.gitignore'), '.antigravity-pm/\n');
-  commitFile(dir, 'a.txt', 'a\n', 'init');
-  return dir;
+  writeFile(path.join(dir, 'a.txt'), 'a\n');
+  writeFile(path.join(dir, 't.sh'), 'echo 1\n');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'init');
+  const base = git(dir, 'rev-parse', 'HEAD');
+  git(dir, 'checkout', '-q', '-b', 'feat');
+  writeFile(path.join(dir, 't.sh'), 'echo 2\n');
+  writeFile(path.join(dir, 'b.txt'), 'b\n');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'pr');
+  return { dir, base, head: git(dir, 'rev-parse', 'HEAD') };
 }
-const repOf = (dir, task) => JSON.parse(fs.readFileSync(path.join(dir, '.antigravity-pm', 'tasks', task.id, 'audit-agent.json'), 'utf8'));
+const call = async (name, args) => { const out = await TOOLS_BY_NAME.get(name).handler(args); return typeof out === 'string' ? out : out.text; };
+const newTask = async (dir) => /T\d{4}-[a-z0-9-]+/.exec(await call('pm_task_create', { project: dir, title: 'a', brief: 'b', definitionOfDone: ['c'] }))[0];
+const audits = (dir, id) => JSON.parse(fs.readFileSync(taskFile(loadConfig(dir), id), 'utf8')).dispatches.filter((d) => d.kind === 'audit');
+const report = (dir, id, head, verdict = 'pass') => writeFile(path.join(dir, '.antigravity-pm', 'tasks', id, 'audit-agent.json'),
+  JSON.stringify({ phase: 'AUDIT', verdict, reviewer: 'antigravity', auditedHead: head, findings: [] }));
 
-test('I1 #909 sparse-checkout: file ngoai cone khong co tren dia (worktree tam commit=<sha> ke thua pattern) => bao cao fail, khong PASS', async () => {
-  const dir = repo();
-  try {
-    commitFile(dir, 'out/x.txt', 'ngoai cone\n');
-    const head = git(dir, 'rev-parse', 'HEAD').trim();
-    git(dir, 'sparse-checkout', 'set', '--no-cone', '/a.txt', '/.gitignore', '/.antigravity-pm.json');
-    assert.equal(fs.existsSync(path.join(dir, 'out', 'x.txt')), false, 'dieu kien: file ngoai cone khong co tren dia');
-    const task = createTask(loadConfig(dir), sampleTaskArgs());
-    await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', commit: head }));
-    const rep = repOf(dir, task);
-    assert.equal(rep.verdict, 'fail', rep.notes);
-    assert.match(rep.notes, /sparse|skip-worktree/i);
-  } finally { cleanup(dir); }
-});
-
-test('I2 #909 cay chinh: skip-worktree / assume-unchanged che ban sua chua commit khoi git status => bao cao fail', async () => {
+test('I2 skip-worktree / assume-unchanged che ban sua chua commit cua test khoi git status: lan giao audit KHONG ghi pham vi', async (t) => {
+  fakeAgy(t);
   for (const flag of ['--skip-worktree', '--assume-unchanged']) {
-    const dir = repo();
-    try {
-      const task = createTask(loadConfig(dir), sampleTaskArgs());
-      git(dir, 'update-index', flag, 'a.txt');
-      writeFile(path.join(dir, 'a.txt'), 'ban sua chua commit\n');
-      assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=no').trim(), '', `dieu kien: ${flag} che a.txt khoi git status`);
-      await withGrok(fakeGrok(), () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok' }));
-      const rep = repOf(dir, task);
-      assert.equal(rep.verdict, 'fail', `${flag}: ${rep.notes}`);
-      assert.match(rep.notes, /skip-worktree|assume-unchanged/i, flag);
-    } finally { cleanup(dir); }
+    const { dir } = prRepo(t);
+    const id = await newTask(dir);
+    writeFile(path.join(dir, 't.sh'), 'echo yeu hon\n');
+    git(dir, 'update-index', flag, 't.sh');
+    assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=no'), '', `${flag}: git status phai rong (ban sua bi che)`);
+    await call('pm_dispatch', { project: dir, taskId: id, kind: 'audit' });
+    const [d] = audits(dir, id);
+    assert.equal(d.auditedHead, undefined, `${flag}: khong duoc ghi auditedHead khi co file bi che`);
+    assert.equal(d.edited, undefined, `${flag}: khong duoc ghi pham vi khi co file bi che`);
   }
 });
 
-test('I3 #909 projectRoot la thu muc con cua repo: commit xoa AGENTS.md o goc repo, hook sinh lai => bao cao fail', async () => {
-  const parent = tmpDir('agpm-test-parent-');
-  try {
-    git(parent, 'init', '-q');
-    const proj = path.join(parent, 'proj');
-    writeFile(path.join(proj, '.antigravity-pm.json'), JSON.stringify({ projectName: 'sub', testCommand: 'echo ok' }));
-    writeFile(path.join(parent, '.gitignore'), 'proj/.antigravity-pm/\n');
-    commitFile(parent, 'AGENTS.md', 'goc\n', 'init');
-    commitFile(parent, 'proj/b.txt', 'b\n', 'b');
-    const task = createTask(loadConfig(proj), sampleTaskArgs());
-    git(parent, 'rm', '-q', 'AGENTS.md');
-    git(parent, 'commit', '-qm', 'xoa AGENTS.md');
-    await withGrok(fakeGrok('echo sinh-lai > ../AGENTS.md'), () => call('pm_dispatch', { project: proj, taskId: task.id, kind: 'audit', agent: 'grok' }));
-    const rep = repOf(proj, task);
-    assert.equal(rep.verdict, 'fail', rep.notes);
-    assert.match(rep.notes, /AGENTS\.md/);
-  } finally { cleanup(parent); }
-});
-
-test('I4 #909 git worktree add loi: thu muc tam agpm-grok-* cua TMPDIR rieng rong (khong bo thu muc mo coi)', async () => {
-  const dir = repo();
-  const head = git(dir, 'rev-parse', 'HEAD').trim();
-  const priv = tmpDir('agpm-priv-tmp-');
-  const shim = tmpDir('agpm-git-shim-');
-  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  fs.writeFileSync(path.join(shim, 'git'), `#!/bin/bash\nfor a in "$@"; do [ "$a" = worktree ] && for b in "$@"; do [ "$b" = add ] && { echo "shim: worktree add loi" >&2; exit 1; }; done; done\nexec ${JSON.stringify(realGit)} "$@"\n`);
-  fs.chmodSync(path.join(shim, 'git'), 0o755);
-  const task = createTask(loadConfig(dir), sampleTaskArgs());
-  const saved = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR };
-  const bin = fakeGrok();
-  try {
-    process.env.PATH = `${shim}:${process.env.PATH}`;
-    process.env.TMPDIR = priv;
-    await assert.rejects(withGrok(bin, () => call('pm_dispatch', { project: dir, taskId: task.id, kind: 'audit', agent: 'grok', commit: head })), /worktree tam/);
-  } finally {
-    process.env.PATH = saved.PATH;
-    if (saved.TMPDIR === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved.TMPDIR;
-    cleanup(dir);
-  }
-  assert.deepEqual(fs.readdirSync(priv), [], 'thu muc tam cua lan audit loi phai bi don');
+test('H5 HEAD doi sau lan giao (commit them truoc khi chot): pm_verdict khong cho lan giao co pham vi dat pass voi head moi', async (t) => {
+  fakeAgy(t);
+  const { dir, head } = prRepo(t);
+  const id = await newTask(dir);
+  await call('pm_dispatch', { project: dir, taskId: id, kind: 'audit' });
+  writeFile(path.join(dir, 't.sh'), 'echo yeu hon\n');
+  git(dir, 'commit', '-qam', 'sua test sau lan giao');
+  const head2 = git(dir, 'rev-parse', 'HEAD');
+  report(dir, id, head2);
+  await call('pm_verdict', { project: dir, taskId: id, kind: 'audit', verdict: 'pass', auditedHead: head2 });
+  assert.equal(loadTask(loadConfig(dir), id).verdicts.audit.auditedHead, head2, 'pm_verdict phai chay het (ghi verdicts.audit), khong nem som');
+  const [d] = audits(dir, id);
+  assert.equal(d.auditedHead, head, 'lan giao giu head luc giao');
+  assert.notEqual(d.verdict, 'pass', 'lan giao co pham vi khong duoc dat pass khi bao cao/chot o head khac head luc giao');
 });

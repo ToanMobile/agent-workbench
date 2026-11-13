@@ -73,7 +73,19 @@ def audited(task_id, top=None):
     except Exception as error:   # noqa: BLE001 - biên bản hỏng không bao giờ thành duyệt; ghi lý do ra stderr
         print(f"audit-check: cannot read the audit record of {task_id}: {error.__class__.__name__}", file=sys.stderr)
         return None
-    return head if isinstance(head, str) and SHA.fullmatch(head) else None
+    if not isinstance(head, str) or not SHA.fullmatch(head):
+        return None
+    # 13/11 (chủ repo bỏ Grok): chỉ audit pass của reviewer antigravity duyệt; biên bản grok, reviewer lạ hay push_gate cũ thiếu hàm -> không.
+    reviewer = getattr(gate, "audit_reviewer", None)
+    try:
+        rv = reviewer(top, task_id, legacy=True) if callable(reviewer) else None
+    except Exception as error:   # noqa: BLE001 - biên bản hỏng không bao giờ thành duyệt; ghi lý do ra stderr
+        print(f"audit-check: cannot read the reviewer of {task_id}: {error.__class__.__name__}", file=sys.stderr)
+        return None
+    if rv != "antigravity":
+        print(f"audit-check: the audit record of {task_id} names reviewer {rv or 'unknown'}, not antigravity", file=sys.stderr)
+        return None
+    return head
 
 
 def ensure_commit(top, sha, pr):

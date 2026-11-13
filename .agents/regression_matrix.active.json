@@ -4460,6 +4460,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "pm-audit-scope-antigravity",
+      "watch_files": [
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/src/prompt.js",
+        "mcp-servers/antigravity-pm-mcp/tests/audit-scope.test.js"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-PM-AUDIT-SCOPE-01",
+          "name": "13/11 (chủ repo bỏ Grok): pm_dispatch agent=grok bị từ chối; audit Antigravity ghi phạm vi PR (auditedHead, auditBase, edited) vào lượt giao, pm_verdict ghi verdict vào lượt đó",
+          "command": "cd mcp-servers/antigravity-pm-mcp && node --test tests/audit-scope.test.js",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

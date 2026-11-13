@@ -4,7 +4,8 @@
 # Chạy ở gốc worktree review đã ở head PR. In 2 dòng:
 #   <S|M|L> product_lines=<N> reasons=<…>   (nguyên văn review_tier.py)
 #   reviewers: claude antigravity …         (mặc định luật chủ repo 02/11 là sàn; config review_tiers[<bậc>] chỉ THÊM bên;
-#                                            danh sách sai kiểu / tên ngoài claude|antigravity|ocr|grok ⇒ bỏ cả danh sách)
+#                                            danh sách sai kiểu / tên ngoài claude|antigravity|ocr ⇒ bỏ cả danh sách;
+#                                            13/11 chủ repo bỏ Grok: grok là tên lạ)
 # review_tier.py thiếu hoặc lỗi ⇒ bậc L (nghiêng bậc cao, không rơi về S) kèm cảnh báo stderr; exit 0 để lane luôn có danh sách.
 # Repo kit: bản review_tier.py ở base cũng tính và chỉ được nâng bậc, để PR sửa chính review_tier.py không tự hạ bậc.
 # Audit Antigravity để DUYỆT merge queue (#605) không do danh sách này quyết: nó giữ ở mọi bậc (run.md → Merge protocol).
@@ -52,12 +53,12 @@ tier="${line%% *}"
 case "$tier" in
   S) list="claude" ;;
   M) list="claude antigravity" ;;
-  *) list="claude antigravity ocr grok" ;;
+  *) list="claude antigravity ocr" ;;
 esac
 if [ -n "$CONFIG" ]; then
   # Chỉ nhận mảng toàn tên bên đã biết; tên lạ / sai kiểu ⇒ bỏ cả danh sách. Mặc định là sàn: config chỉ thêm bên.
   conf="$(jq -r --arg t "$tier" '(.review_tiers // {})[$t] // [] | if type == "array"
-           and all(.[]; . == "claude" or . == "antigravity" or . == "ocr" or . == "grok") then join(" ") else "" end' "$CONFIG" 2>/dev/null)" \
+           and all(.[]; . == "claude" or . == "antigravity" or . == "ocr") then join(" ") else "" end' "$CONFIG" 2>/dev/null)" \
     || { echo "review-plan: không đọc được review_tiers trong $CONFIG ⇒ danh sách mặc định" >&2; conf=""; }
   for n in $conf; do
     case " $list " in *" $n "*) ;; *) list="$list $n" ;; esac

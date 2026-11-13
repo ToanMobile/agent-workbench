@@ -71,3 +71,5 @@ scripts/context/hardware_boundaries.py   tests/context_memory/test_prompt_hook_d
 hooks/block_dangerous_git_main.py   tests/gates/test_guard_remote_ref_forge.sh
 # #809: parity_check.py imports merge_json.py and install.sh runs it through adapters/setup_claude.sh; the legacy-spelling test names neither.
 scripts/governance/merge_json.py   tests/installer/test_init_legacy_hook_spelling.sh
+# 13/11 (#1159): oracle of the literal "$" in a command name (hardware_safety_gate_main.literal_dollar_words); a second line for the same file adds one more entry
+hooks/hardware_safety_gate_main.py   tests/gates/test_hardware_literal_dollar_1159.sh

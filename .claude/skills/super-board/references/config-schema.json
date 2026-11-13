@@ -266,15 +266,15 @@
   // is computed by `.claude/bin/super-board-review-plan.sh` (DevKit review_tier.py)
   // once, on the first head the Reviewer reviews; the script prints the list for
   // that tier. Names: claude (this Reviewer + truth-check), antigravity
-  // (pm_dispatch kind=audit), ocr (ocr-review), grok (read-only grok CLI).
+  // (pm_dispatch kind=audit), ocr (ocr-review). Grok was removed 13/11 (owner stopped using it).
   // Optional. The owner's default shown here is a floor: a listed side is added to
-  // it, never removed. A list holding anything but those four names is ignored
+  // it, never removed. A list holding anything but those three names is ignored
   // whole. The Antigravity audit that signs
   // `approved-by` for the merge queue (#605) is not governed by this list.
   "review_tiers": {
     "S": ["claude"],
     "M": ["claude", "antigravity"],
-    "L": ["claude", "antigravity", "ocr", "grok"]
+    "L": ["claude", "antigravity", "ocr"]
   },
 
   // Shell commands proving the branch still BUILDS against the base branch as it
