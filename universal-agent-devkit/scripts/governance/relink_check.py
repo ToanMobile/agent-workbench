@@ -23,7 +23,7 @@ It also removes a DevKit link the DevKit itself made obsolete: a `.claude/comman
 `.agents/skills/` or `.claude/hooks/` symlink that is dangling AND points into this DevKit (absolute
 or through the .agents/devkit alias) — a command, skill or hook the kit dropped (1.2.0: review, qa,
 test, bugs, crashlytics left 5 dangling links in every installed repo, health 90-93; 13/11: the
-dropped hook review_timing_guard.sh left a dangling .claude/hooks link, health 92 -> 88). A dangling
+dropped hook review_timing_guard.sh left a dangling .claude/hooks link: health FAIL "Broken links"). A dangling
 link pointing elsewhere, a regular file and a live link are never touched. SessionStart runs
 it with --links-only (no context refresh: SessionStart does its own), so a session heals the
 repo with no git operation and no `agent-kit init`.

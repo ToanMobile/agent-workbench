@@ -81,7 +81,7 @@ python3 "$K/scripts/governance/relink_check.py" "$K" --quiet --links-only
 [ -z "$(git -C "$K" status --porcelain)" ] && ok "project inside the kit (self-install): nothing pruned" \
   || fail "self-install: kit changed: $(git -C "$K" status --porcelain | tr '\n' ' ')"
 
-# A HOOK the kit dropped leaves the same dangling link in `.claude/hooks/` (review_timing_guard.sh, 13/11: agent-kit health 92 -> 88,
+# A HOOK the kit dropped leaves the same dangling link in `.claude/hooks/` (review_timing_guard.sh, 13/11: agent-kit health FAIL
 # "Broken links", and only `agent-kit init` removed it; SessionStart did not). Same rule as for commands: a link that dangles AND
 # points into this DevKit goes, anything else stays.
 plant_hooks() {
