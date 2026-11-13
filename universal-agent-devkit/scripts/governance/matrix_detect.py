@@ -34,6 +34,7 @@ cannot turn a test command into `true` without the gate noticing.
 """
 
 import glob
+import importlib.util
 import json
 import os
 import re
@@ -147,6 +148,17 @@ def is_unity(project):
             and os.path.isfile(os.path.join(project, "ProjectSettings", "ProjectVersion.txt")))
 
 
+_UNITTEST_IMPORT_RX = re.compile(r"^\s*(?:import\s+unittest\b|from\s+unittest\b)", re.M)
+
+
+def _pytest_available():
+    """python3 đang chạy script này có import được pytest không (lệnh ma trận là `python3 -m pytest`)."""
+    try:
+        return importlib.util.find_spec("pytest") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def detect(project):
     """[(name, command)] for every test runner the project root declares."""
     has = lambda *names: any(os.path.exists(os.path.join(project, n)) for n in names)  # noqa: E731
@@ -174,10 +186,18 @@ def detect(project):
                       else "bun run test" if has("bun.lockb", "bun.lock") else "npm test")
             found.append(("package.json test script", runner))
     py_cfg = _read(os.path.join(project, "pyproject.toml")) + _read(os.path.join(project, "setup.cfg"))
-    if (has("pytest.ini", "conftest.py", "tox.ini") or "pytest" in py_cfg
-            or glob.glob(os.path.join(project, "tests", "test_*.py"))
-            or glob.glob(os.path.join(project, "test", "test_*.py"))):
-        found.append(("pytest", "python3 -m pytest -q"))
+    declares_pytest = has("pytest.ini", "conftest.py", "tox.ini") or "pytest" in py_cfg
+    py_tests = {d: glob.glob(os.path.join(project, d, "test_*.py")) for d in ("tests", "test")}
+    if declares_pytest or any(py_tests.values()):
+        # Dự án không khai báo pytest, python3 của máy không có pytest, mà test viết bằng unittest: `python3 -m pytest` chỉ in
+        # "No module named pytest" (đo 13/11: gate REJECT 0/1 trên repo thử). Khi đó chạy bằng unittest của thư viện chuẩn.
+        # Mọi trường hợp khác giữ pytest: nó chạy được cả test unittest, và test kiểu pytest thì unittest không thấy.
+        unittest_dir = None if declares_pytest or _pytest_available() else next(
+            (d for d, files in py_tests.items() if any(_UNITTEST_IMPORT_RX.search(_read(f)) for f in files)), None)
+        if unittest_dir:
+            found.append(("unittest", f"python3 -m unittest discover -s {unittest_dir}"))
+        else:
+            found.append(("pytest", "python3 -m pytest -q"))
     if has("go.mod"):
         found.append(("Go tests", "go test ./..."))
     if has("Cargo.toml"):
