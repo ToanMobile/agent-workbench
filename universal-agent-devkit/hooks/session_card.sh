@@ -29,6 +29,16 @@ sc_title() {   # sc_title <prompt file> <transcript> <rel file> <session> → on
 import json, os, re, sys
 pf, tr, rel, sid = sys.argv[1:5]
 
+# #1140: a Claude Desktop prompt opens with <system-reminder> blocks and may wrap pasted text in <pasted_content id=...> tags, so
+# the first non-blank line was a tag name. Drop the reminder blocks whole (not the user's task, and the issue may be public) and
+# only the wrapper tags of pasted text (its content stays), then pick the line. Claude Code writes a block as
+# "<system-reminder>\n...\n</system-reminder>", so a block opens with the tag at a line start and closes with it at a line end: a
+# body or a user line that quotes the tag mid-line does not end or start one, and an unterminated block is dropped to the end of
+# the text (never leaked; the fallback also keeps the match linear: an unclosed opener cannot be retried by every later opener).
+SR = r"(?ims)^[ \t]*<system-reminder\b[^>]*>(?:.*?</system-reminder\s*>[ \t]*\r?$|.*\Z)"
+def clean(t):
+    return re.sub(r"(?i)</?pasted_content\b[^>]*>", "", re.sub(SR, "", t))
+
 def first_user(path):
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -44,7 +54,9 @@ def first_user(path):
                     continue
                 c = m.get("content", d.get("content"))
                 if isinstance(c, list):
-                    c = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+                    c = "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+                if isinstance(c, str):
+                    c = clean(c)
                 if isinstance(c, str) and c.strip() and not c.lstrip().startswith("<"):
                     return c
     except OSError:
@@ -57,6 +69,7 @@ try:
         text = fh.read()
 except OSError:
     pass
+text = clean(text)
 if not text.strip() and tr:
     text = first_user(tr)
 line = next((l.strip() for l in text.splitlines() if l.strip()), "")

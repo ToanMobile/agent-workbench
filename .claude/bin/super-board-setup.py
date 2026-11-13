@@ -81,7 +81,8 @@ BIN = ["super-board-verify-flags.sh", "super-board-verify-cmd.sh", "super-board-
        "super-board-device-online.py", "super-board-heavy-slot.py", "super-board-notify.py", "super-board-blocked-by.py",
        "super-board-capacity.py", "super-board-qa-report.py", "super-board-drift.py", "super-board-ac-check.py", "super-board-decision.py", "super-board-waiting-on.py",
        "super-board-queue-schedule.sh",
-       "super-board-install-edited-test-approval.sh", "super-board-qa-exit2.sh", "super-board-review-plan.sh"]
+       "super-board-install-edited-test-approval.sh", "super-board-qa-exit2.sh", "super-board-review-plan.sh",
+       "super-board-root-cause-hash.py", "super-review-removed-names.py"]
 WORKFLOWS = ["super-board-wave.js", "ui-refine-loop.js"]
 HELPERS_CMD = "npx -y skills@latest add mattpocock/skills --skill '*' -a claude-code -y"
 

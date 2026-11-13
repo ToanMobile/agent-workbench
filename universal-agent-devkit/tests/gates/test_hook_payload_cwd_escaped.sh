@@ -93,7 +93,6 @@ security_gate.sh|Stop|||.gitignore|{"last_assistant_message":"xong"}|
 proof_gate.sh|Stop|||.gitignore|{"last_assistant_message":"XONG"}|
 regression_gate.sh|Stop|||.gitignore|{"last_assistant_message":"XONG"}|
 test_evidence_gate.sh|Stop|||.gitignore|{"last_assistant_message":"da fix, test pass"}|
-review_timing_guard.sh|PostToolUse|Edit|{"file_path":"@R@/src/A.kt","old_string":"a","new_string":"b"}|.gitignore||
 prompt_context.sh|UserPromptSubmit|||*|{"prompt":"fix the crash in the login flow please, it throws NPE"}|
 EOF
 done

@@ -19,10 +19,11 @@ A link it cannot re-create is logged (.claude/audit-gate/relink.log) with "run a
 init". When nothing is missing, .agents/context/ (generated, git-ignored) is brought up
 to date. Exit 0 always.
 
-It also removes a DevKit link the DevKit itself made obsolete: a `.claude/commands/` or
-`.agents/skills/` symlink that is dangling AND points into this DevKit (absolute or through
-the .agents/devkit alias) — a command or skill the kit dropped (1.2.0: review, qa, test,
-bugs, crashlytics left 5 dangling links in every installed repo, health 90-93). A dangling
+It also removes a DevKit link the DevKit itself made obsolete: a `.claude/commands/`,
+`.agents/skills/` or `.claude/hooks/` symlink that is dangling AND points into this DevKit (absolute
+or through the .agents/devkit alias) — a command, skill or hook the kit dropped (1.2.0: review, qa,
+test, bugs, crashlytics left 5 dangling links in every installed repo, health 90-93; 13/11: the
+dropped hook review_timing_guard.sh left a dangling .claude/hooks link: health FAIL "Broken links"). A dangling
 link pointing elsewhere, a regular file and a live link are never touched. SessionStart runs
 it with --links-only (no context refresh: SessionStart does its own), so a session heals the
 repo with no git operation and no `agent-kit init`.
@@ -239,11 +240,11 @@ def source_for(project, rel):
 
 
 def dangling(project):
-    """Relative paths of DevKit links whose target the DevKit no longer has: a symlink under .claude/commands/ or
-    .agents/skills/ that resolves to nothing and whose target lies inside this DevKit (the alias .agents/devkit resolved)."""
+    """Relative paths of DevKit links whose target the DevKit no longer has: a symlink under .claude/commands/, .agents/skills/ or
+    .claude/hooks/ that resolves to nothing and whose target lies inside this DevKit (the alias .agents/devkit resolved)."""
     kit = os.path.realpath(DEVKIT) + os.sep
     out = []
-    for rel_dir in (os.path.join(".claude", "commands"), os.path.join(".agents", "skills")):
+    for rel_dir in (os.path.join(".claude", "commands"), os.path.join(".agents", "skills"), os.path.join(".claude", "hooks")):
         d = os.path.join(project, rel_dir)
         if in_kit(d):
             continue         # a link directory that resolves into the kit lists the kit's own files

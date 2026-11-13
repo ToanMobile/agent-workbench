@@ -23,10 +23,7 @@
     "android-real-device-qa",
     "compose-recomp-audit",
     "deploy",
-    "unity-gc-audit",
-    "generate2dmedia",
-    "generate2dsprite",
-    "video2dsprite"
+    "unity-gc-audit"
   ],
   "exclude_agents": [
     "android-principal-architect",
