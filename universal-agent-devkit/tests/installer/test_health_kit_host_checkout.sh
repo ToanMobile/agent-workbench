@@ -67,10 +67,15 @@ git -C "$H" switch -q main
 
 # 4. index.lock: cũ hơn 10 phút và không tiến trình git giữ -> một dòng nêu file; mới, hoặc git đang giữ -> không dòng nào; không bao giờ bị xoá
 LOCK="$H/.git/index.lock"
+HAVE_LSOF=0; command -v lsof >/dev/null 2>&1 && HAVE_LSOF=1   # không có lsof thì health im lặng về khoá (không biết ai giữ): các ca cần lsof thật được bỏ qua
 : > "$LOCK"; touch -t "$(date -v-11M +%Y%m%d%H%M 2>/dev/null || date -d '11 minutes ago' +%Y%m%d%H%M)" "$LOCK"
 out="$(health "$HEALTH_APP" "$A")"
-[ "$(n_lock "$out")" = 1 ] && grep "index.lock" <<< "$out" | grep -qF "$LOCK" \
-  && ok "11 minute old lock, no git process: one line naming the file" || fail "stale lock: $(grep index.lock <<< "$out" | head -2)"
+if [ "$HAVE_LSOF" = 1 ]; then
+  [ "$(n_lock "$out")" = 1 ] && grep "index.lock" <<< "$out" | grep -qF "$LOCK" \
+    && ok "11 minute old lock, no git process: one line naming the file" || fail "stale lock: $(grep index.lock <<< "$out" | head -2)"
+else
+  [ "$(n_lock "$out")" = 0 ] && ok "no lsof: an old lock is not reported (nobody can tell who holds it)" || fail "reported without lsof"
+fi
 [ -e "$LOCK" ] && ok "health did not remove the lock" || fail "health removed the lock"
 touch "$LOCK"
 out="$(health "$HEALTH_APP" "$A")"
@@ -88,7 +93,7 @@ out="$(PATH="$TMP/fakebin:$PATH" health "$HEALTH_APP" "$A")"
 [ "$(n_lock "$out")" = 0 ] && ok "lsof failing: nothing is said (the lock may be live)" || fail "reported with a broken lsof"
 rm -f "$TMP/fakebin/lsof"
 # một tiến trình không phải git đang đọc nó (language server của Antigravity trong sự cố): khoá vẫn là khoá cũ
-if command -v lsof >/dev/null 2>&1; then   # hai ca dưới cần lsof thật (không có lsof thì health im lặng, xem ca lsof lỗi ở trên)
+if [ "$HAVE_LSOF" = 1 ]; then   # hai ca dưới cần lsof thật (không có lsof thì health im lặng, xem ca lsof lỗi ở trên)
   ( exec 3<"$LOCK"; exec sleep 60 ) & reader=$!
   sleep 1
   out="$(health "$HEALTH_APP" "$A")"
@@ -112,6 +117,7 @@ if command -v lsof >/dev/null 2>&1; then   # hai ca dưới cần lsof thật (k
 else
   echo "skip: no lsof on this machine"
 fi
+rm -f "$LOCK"   # luôn dọn, kể cả khi bỏ qua các ca trên: mục 5 chạy git worktree add / switch ở H
 
 # 5. worktree liên kết của H: health chạy từ đó kiểm H (checkout chính), không kiểm HEAD detached của chính worktree
 git -C "$H" worktree add -q --detach "$H/.claude/worktrees/lane" HEAD

@@ -19,11 +19,13 @@ TMP="$(cd -P "$TMP" && pwd -P)"
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 command -v python3 >/dev/null 2>&1 || { echo "skip: python3 missing"; exit 0; }
 
-M="$TMP/main"; W="$M/.claude/worktrees/issue-774-review"
+M="$TMP/main"; W="$M/.claude/worktrees/issue-774-review"; W2="$M/.claude/worktrees/lane-grok"; W3="$M/.claude/worktrees/lane-bash"
 mkdir -p "$M" && git -C "$M" init -q -b main && git -C "$M" config user.email t@t && git -C "$M" config user.name t
 printf '.agents/local/memory/\n.claude/audit-gate/\n/.claude/worktrees/\n' > "$M/.gitignore"
 echo a > "$M/a.txt" && git -C "$M" add -A && git -C "$M" commit -qm i && git -C "$M" branch topic
 git -C "$M" worktree add -q --detach "$W" HEAD
+git -C "$M" worktree add -q --detach "$W2" HEAD
+git -C "$M" worktree add -q --detach "$W3" HEAD
 git -C "$M" config devkit.trunkMode true
 
 # hook <tool_name> <cwd> <session> <command> -> mã thoát của hook. Phong bì Grok: khoá camelCase cộng bí danh snake.
@@ -78,6 +80,13 @@ hook read_file "$M" "g-$$" '' '{"command": ["git", "checkout", "topic"]}'; rc=$?
 
 # 4. một lệnh ghi của shell Grok trong worktree không phải ghi vào trunk: được qua (và theo thiết kế không lấy khoá một-phiên-một-checkout)
 want 0 run_terminal_command "$W" 'echo y > f2.txt' "a Grok write inside the worktree"
+# khoá một-phiên-một-checkout: shell Grok ghi trong worktree KHÔNG tạo file khoá; một phiên Bash ghi ở worktree khác thì có (đối chứng:
+# tên file khoá và cơ chế tạo khoá đúng). Bỏ nhánh `shell_alias` sau khối trunk và nhánh `foreign` làm ca này ĐỎ.
+LK=devkit-session.lock
+want 0 run_terminal_command "$W2" 'echo y > g1.txt' "a Grok write inside a second worktree"
+[ ! -e "$(git -C "$W2" rev-parse --absolute-git-dir)/$LK" ] && ok "a Grok shell write takes no one-session-per-checkout lock" || fail "a Grok shell write took the lock"
+want 0 Bash "$W3" 'echo y > b1.txt' "a Bash write inside a third worktree"
+[ -e "$(git -C "$W3" rev-parse --absolute-git-dir)/$LK" ] && ok "control: the same write under the name Bash takes the lock" || fail "control: no lock file after a Bash write ($LK): the case above proves nothing"
 
 # 5. trunk mode tắt: shell Grok cũng không bị xét gì
 git -C "$M" config devkit.trunkMode false
