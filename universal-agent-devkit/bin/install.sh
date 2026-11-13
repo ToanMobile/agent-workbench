@@ -676,7 +676,9 @@ fi
 # committable, yet untracked and unignored they flood `git status` and get committed by
 # `git add -A`. List them in the repo's own .git/info/exclude (not shared, not committed;
 # rewritten on every init). A clone runs `agent-kit init` to get its own.
-if [ "$MODE" = "symlink" ] && [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && git -C "$TARGET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+# Chế độ copy cũng chạy bước này: nó vẫn còn một link vào kit, `.agents/active-profile`. Trước 13/11 link đó không bị loại, nên
+# `git add -A` commit nó và bản clone nhận link treo (tests/installer/test_active_profile_link_not_committed.sh).
+if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && git -C "$TARGET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
   EXCLUDE="$(git -C "$TARGET_DIR" rev-parse --path-format=absolute --git-path info/exclude 2>/dev/null)"
   if [ -n "$EXCLUDE" ]; then
     EX_BLOCK="$(mktemp "${TMPDIR:-/tmp}/devkit-exclude.XXXXXX")"

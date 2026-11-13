@@ -147,6 +147,10 @@ def is_unity(project):
             and os.path.isfile(os.path.join(project, "ProjectSettings", "ProjectVersion.txt")))
 
 
+_UNITTEST_CLASS_RX = re.compile(r"^class\s+\w+\(\s*(?:unittest\.)?(?:IsolatedAsyncio)?TestCase\s*\)", re.M)
+_MODULE_TEST_FUNC_RX = re.compile(r"^(?:async\s+)?def\s+test_", re.M)   # hàm test cấp module: pytest chạy, unittest bỏ qua
+
+
 def detect(project):
     """[(name, command)] for every test runner the project root declares."""
     has = lambda *names: any(os.path.exists(os.path.join(project, n)) for n in names)  # noqa: E731
@@ -174,10 +178,29 @@ def detect(project):
                       else "bun run test" if has("bun.lockb", "bun.lock") else "npm test")
             found.append(("package.json test script", runner))
     py_cfg = _read(os.path.join(project, "pyproject.toml")) + _read(os.path.join(project, "setup.cfg"))
-    if (has("pytest.ini", "conftest.py", "tox.ini") or "pytest" in py_cfg
-            or glob.glob(os.path.join(project, "tests", "test_*.py"))
-            or glob.glob(os.path.join(project, "test", "test_*.py"))):
-        found.append(("pytest", "python3 -m pytest -q"))
+    declares_pytest = has("pytest.ini", "conftest.py", "tox.ini") or "pytest" in py_cfg
+    py_tests = {d: glob.glob(os.path.join(project, d, "test_*.py")) for d in ("tests", "test")}
+    if declares_pytest or any(py_tests.values()):
+        # Dự án không khai báo pytest mà test viết bằng unittest: trên máy python3 không có pytest, `python3 -m pytest` chỉ in
+        # "No module named pytest" (đo 13/11: gate REJECT 0/1 trên repo thử). Khi đó LỆNH tự chọn lúc chạy: có pytest thì pytest,
+        # không thì unittest của thư viện chuẩn. Việc chọn nằm trong lệnh chứ không ở đây: ma trận sinh ra phải giống nhau từng
+        # byte trên mọi máy, vì gate chỉ tin ma trận chưa commit khi nó khớp bản sinh lại.
+        # Chỉ nêu unittest khi nó chắc chắn chạy hết test: mọi test_*.py nằm ngay trong tests/ hoặc test/ (không lồng sâu), file nào
+        # cũng có lớp kế thừa trực tiếp TestCase và không có hàm test cấp module. Còn nghi ngờ thì giữ pytest để lỗi thiếu runner
+        # hiện ra, không để gate xanh trong khi test kiểu pytest hay test lồng sâu không chạy.
+        unittest_dirs = [] if declares_pytest else [d for d, files in py_tests.items() if files]
+        covered = bool(unittest_dirs) and all(
+            sorted(glob.glob(os.path.join(project, d, "**", "test_*.py"), recursive=True)) == sorted(py_tests[d])
+            and all(_UNITTEST_CLASS_RX.search(text) and not _MODULE_TEST_FUNC_RX.search(text)
+                    for text in map(_read, py_tests[d])) for d in unittest_dirs)
+        if covered:
+            # tests/ là package (có __init__.py): `-t .` để import tương đối trong test chạy được.
+            runs = " && ".join("python3 -m unittest discover -s " + d
+                               + (" -t ." if os.path.isfile(os.path.join(project, d, "__init__.py")) else "") for d in unittest_dirs)
+            found.append(("pytest, or unittest when python3 has no pytest",
+                          f"if python3 -c 'import pytest' 2>/dev/null; then python3 -m pytest -q; else {runs}; fi"))
+        else:
+            found.append(("pytest", "python3 -m pytest -q"))
     if has("go.mod"):
         found.append(("Go tests", "go test ./..."))
     if has("Cargo.toml"):

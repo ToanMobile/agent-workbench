@@ -11,8 +11,22 @@ import time
 import subprocess
 import unicodedata
 
+
+class _lazy:
+    """#1127: a module-level regex compiles on first use, not at import (62 compiles were ~half of one hook run)."""
+    def __init__(self, *args):
+        self._args = args
+        self._rx = None
+
+    def __getattr__(self, name):   # only reached for pattern methods (search, sub, finditer, ...)
+        rx = self.__dict__["_rx"]
+        if rx is None:
+            rx = self.__dict__["_rx"] = re.compile(*self.__dict__["_args"])
+        return getattr(rx, name)
+
+
 # Mọi dạng ID: INSTINCT-001, INSTINCT-IOS-01, INSTINCT-VOICE-02, INSTINCT-AUTO (bản cũ của post-fix-gate --record-lesson; nay ghi INSTINCT-NNN)
-INSTINCT_BLOCK_RE = re.compile(r"(^### \[(INSTINCT-[A-Za-z0-9_-]+)\].*?)(?=^### \[INSTINCT-|\Z)", re.DOTALL | re.MULTILINE)
+INSTINCT_BLOCK_RE = _lazy(r"(^### \[(INSTINCT-[A-Za-z0-9_-]+)\].*?)(?=^### \[INSTINCT-|\Z)", re.DOTALL | re.MULTILINE)
 
 
 def find_project_root(start="."):
@@ -63,13 +77,21 @@ def instinct_sources(devkit_root, project_root):
 _TONE_SWAP = {"oá": "óa", "oà": "òa", "oả": "ỏa", "oã": "õa", "oạ": "ọa",
               "oé": "óe", "oè": "òe", "oẻ": "ỏe", "oẽ": "õe", "oẹ": "ọe",
               "uý": "úy", "uỳ": "ùy", "uỷ": "ủy", "uỹ": "ũy", "uỵ": "ụy"}
-_TONE_RE = re.compile("(?:" + "|".join(_TONE_SWAP) + r")(?!\w)")
+_TONE_RE = _lazy("(?:" + "|".join(_TONE_SWAP) + r")(?!\w)")
 
 
 def normalize(text):
     """Lower case, NFC, one Vietnamese tone placement."""
     text = unicodedata.normalize("NFC", text).lower()
+    if text.isascii():  # the swaps are all non-ASCII: nothing to rewrite
+        return text
     return _TONE_RE.sub(lambda m: _TONE_SWAP[m.group(0)], text)
+
+
+# Precompiled once per process (#1127): word_set runs ~220 times per prompt and each re.* call paid a cache lookup.
+_WORD_RE = _lazy(r"[\w$]+")
+_CAMEL_RE = _lazy(r"[a-z][A-Z]|[A-Z][A-Z][a-z]")
+_PART_RE = _lazy(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")
 
 
 def word_set(text):
@@ -77,47 +99,40 @@ def word_set(text):
     applyUntrustedXmlSecurity → xml…; reader_error_docx → docx. An entry that names
     `SAXReader.applyUntrustedXmlSecurity` is about XML even if it never says "XML"."""
     out = set()
-    for raw in re.findall(r"[\w$]+", unicodedata.normalize("NFC", text)):
+    for raw in _WORD_RE.findall(unicodedata.normalize("NFC", text)):
         out.add(normalize(raw))
-        if raw.isascii() and ("_" in raw or re.search(r"[a-z][A-Z]|[A-Z][A-Z][a-z]", raw)):
-            out.update(w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+", raw) if len(w) >= 3)
+        if raw.isascii() and ("_" in raw or _CAMEL_RE.search(raw)):
+            out.update(w.lower() for w in _PART_RE.findall(raw) if len(w) >= 3)
     return out
 
 
-# Một regex cho cả danh sách từ khoá, nhớ theo danh sách: mỗi prompt gọi mentions hàng chục lần và
-# re.compile từng từ (cache stdlib chỉ 512 mẫu) làm hook ~60 ms ở máy dev, ~200 ms CPU trên runner (#781).
-_MENTIONS_RE = {}
-
-
-def _mentions_re(keywords):
-    key = tuple(keywords)
-    try:
-        return _MENTIONS_RE[key]
-    except KeyError:
-        pass
-    short, long = [], []
-    for k in key:
-        k = normalize(k)
-        if k:
-            (short if len(k) <= 3 else long).append(re.escape(k))
-    alts = []
-    if long:   # "crash" khớp "crashed": không chặn ký tự sau từ dài
-        alts.append(r"(?<!\w)(?:" + "|".join(long) + ")")
-    if short:  # ≤3 ký tự phải là cả từ (thêm s số nhiều): "ui" không nằm trong "build"
-        alts.append(r"(?<!\w)(?:" + "|".join(short) + r")s?(?!\w)")
-    pat = re.compile("|".join(alts)) if alts else None
-    if len(_MENTIONS_RE) >= 256:
-        _MENTIONS_RE.clear()
-    _MENTIONS_RE[key] = pat
-    return pat
+def _is_word(c):
+    return c == "_" or c.isalnum()
 
 
 def mentions(text, keywords):
     """text (normalized) names one of keywords as a word or the start of one ("crash"
     finds "crashed"). A keyword of three characters or fewer must be a whole word
     (plural s allowed): "pr" is not in "PlayerPrefs", "ui" not in "build"."""
-    pat = _mentions_re(keywords)
-    return bool(pat and pat.search(text))
+    # No re.search per keyword (#1127): a fresh hook process has a cold regex cache, so ~240 compiles cost 25-45 ms CPU per
+    # prompt. Same rule by hand: not preceded by a word char; for k <= 3 chars followed by [s] then a non-word char / end.
+    n = len(text)
+    for k in keywords:
+        k = normalize(k)
+        if not k:  # "" matched at the first non-word-preceded position in the regex form: keep that answer
+            if re.search(r"(?<!\w)s?(?!\w)", text):
+                return True
+            continue
+        short, kl, i = len(k) <= 3, len(k), text.find(k)
+        while i != -1:
+            e = i + kl
+            if i == 0 or not _is_word(text[i - 1]):
+                if not short or e == n or not _is_word(text[e]):
+                    return True
+                if text[e] == "s" and (e + 1 == n or not _is_word(text[e + 1])):
+                    return True
+            i = text.find(k, i + 1)
+    return False
 
 
 # A defect report names what went wrong, not the word "bug": "bị xóa", "bị mất",
@@ -126,7 +141,7 @@ def mentions(text, keywords):
 # is what the change should prevent ("không bị", "tránh bị") or says a tool is plainly obsolete ("bị out
 # update", "bị lỗi thời", "bị lạc hậu": a question about dropping Dependabot, 2026-10-04). Not exempt, because
 # they are reports: "bị cũ" / "bị outdated" (stale data or cache), "bị hết hạn" (an expired token), "lỗi thời gian".
-DEFECT_RE = re.compile(
+DEFECT_RE = _lazy(
     r"(?<!thiết )(?<!chuẩn )(?<!trang )(?<!dự )(?<!phòng )(?<!không )(?<!ko )(?<!tránh )(?<!khỏi )"
     r"(?<!\w)bị(?!\w)(?! động)(?!\s+(?:out[ -]?update|outdatedterm)(?!\w))"
     r"|(?<!\w)(?:không|chẳng) (?:chạy|hoạt động|hiện|hiển thị|lên|mở|lưu|nhận|vào|load|tải|phản hồi|"
@@ -135,7 +150,7 @@ DEFECT_RE = re.compile(
     r"|not working|doesn'?t work|does not work")
 # Deprecation is a deliberate act — "xoá API cũ", "deprecate", "migrate sang" — not any
 # sentence with "xóa" in it ("PlayerPrefs bị xóa" is a defect report).
-DEPRECATION_RE = re.compile(
+DEPRECATION_RE = _lazy(
     r"(?<!\w)(?:deprecat|sunset|migrat|chuyển sang|di trú|ngừng hỗ trợ|khai tử)"
     r"|(?<!bị )(?<!\w)(?:xóa|bỏ|gỡ)(?:\s+\S+){0,3}?\s+(?:cũ|legacy|deprecated|obsolete)(?!\w)")
 
@@ -150,7 +165,7 @@ STOPWORDS = {
     "hiện", "tại", "sau", "trước", "vẫn", "luôn", "hết", "đúng", "sai", "code", "file", "app",
 }
 STOPWORDS = {normalize(w) for w in STOPWORDS}
-NON_TECHNICAL_PHRASES = re.compile(
+NON_TECHNICAL_PHRASES = _lazy(
     r"(?:lựa chọn|phương án) tối ưu|tối ưu nhất|docker[ -]compose|thẩm mỹ viện"
     # UI words that mean something else in backend work (the UI door reads p_route):
     r"|(?<!\w)compose(?:\.ya?ml|\s+up(?!\s+to\b))(?!\w)|(?:sql|materialized|django) views?|views\.py|grafana panels?|panels? grafana"
@@ -168,9 +183,9 @@ UI_KEYWORDS = ["giao diện", "màn hình", "nút", "bấm", "button", "tap", "c
 # ponytail: a CamelCase UI class (ScreenState, DialogFragment) is missed off the app profiles, and a prompt that
 # only says "layout"/"click" still reads memory layout / ClickHouse as UI (as before): add the phrase to
 # NON_TECHNICAL_PHRASES when one shows up.
-UI_WHOLE_WORDS = re.compile(r"(?<!\w)(?:view|card|compose|screen|panel|dialog|theme|font)s?(?!\w)")
+UI_WHOLE_WORDS = _lazy(r"(?<!\w)(?:view|card|compose|screen|panel|dialog|theme|font)s?(?!\w)")
 # Words that style the screen: they open the door but are no evidence for the interaction traps (click, 48dp).
-UI_STYLE_WORDS = re.compile(r"(?<!\w)(?:typography|animation|palette)\w*|(?<!\w)(?:hud|font|theme)s?(?!\w)")
+UI_STYLE_WORDS = _lazy(r"(?<!\w)(?:typography|animation|palette)\w*|(?<!\w)(?:hud|font|theme)s?(?!\w)")
 APP_PROFILES = ("android", "game", "ios", "web")  # any task there may touch the screen
 # One NFR entry, many lines: compact() prints each line on its own so dedupe_session (ONCE_PER_SESSION) can too.
 ZERO_SLOP_MANDATE = "\n".join((
@@ -229,15 +244,15 @@ def giao_default(project_root):
 # prompt that quotes it, or starts "First operation after login…", is a request as before.
 # Linear on purpose (OCR 25/10): the regex it replaces, two lazy [^\n]*? around the script name, backtracked quadratically ("First
 # operation: " + "super-board-skills-ready.py " * 4000 = 112 KB took 6.17 s; the hook runs the check up to 3 times under a 10 s timeout).
-_LANE_HEAD_RE = re.compile(r"First operation\b")
+_LANE_HEAD_RE = _lazy(r"First operation\b")
 _LANE_SCRIPT = "super-board-skills-ready.py"
-_LANE_CARDS_RE = re.compile(r"--cards -(?!\S)")
+_LANE_CARDS_RE = _lazy(r"--cards -(?!\S)")
 # The Codex lane (.claude/bin/super-board-codex-lane.sh) opens with "Run super-<lane skill> for issue #N as a Codex lane worker." and
 # puts the same opener on line 2 (--host codex). Its card is one JSON object on its own "Card: " line, after a skills report that holds
 # arrays (the "[" search of the other lanes would read that report). Anchored the same way: line 1 at the very start, then line 2.
-_CODEX_LANE_RE = re.compile(r"Run super-(?:build|qa|review) for issue #\d+ as a Codex lane worker\.\n")
-_CODEX_CARD_RE = re.compile(r"^Card: (?=\{)", re.M)
-ISSUE_SECTION_RE = re.compile(r"^# Issue #\d+ — ([^\n]*)\n(.*?)(?=^---$|\Z)", re.M | re.S)   # super-build-dispatch.sh: title + body
+_CODEX_LANE_RE = _lazy(r"Run super-(?:build|qa|review) for issue #\d+ as a Codex lane worker\.\n")
+_CODEX_CARD_RE = _lazy(r"^Card: (?=\{)", re.M)
+ISSUE_SECTION_RE = _lazy(r"^# Issue #\d+ — ([^\n]*)\n(.*?)(?=^---$|\Z)", re.M | re.S)   # super-build-dispatch.sh: title + body
 
 
 def _opener_line_end(text, pos):
@@ -618,7 +633,7 @@ def shown_refs(dossier, limit=4):
     return refs[:limit]
 
 
-INSTINCT_ID_RE = re.compile(r"\[(INSTINCT-[A-Za-z0-9_-]+)\]")
+INSTINCT_ID_RE = _lazy(r"\[(INSTINCT-[A-Za-z0-9_-]+)\]")
 
 
 def log_surfaced(project_root, session, prompt, refs):
@@ -841,10 +856,10 @@ TITLE_MAX = 120
 # Every branch is anchored at a token start: no quadratic scan of a long pasted token.
 _EXT = (r"(?:md|txt|log|json|ya?ml|toml|xml|kts?|java|py|sh|tsx?|jsx?|gradle|pdf|docx?|xlsx?|pptx?|csv"
         r"|html?|css|swift|go|rs|patch|diff|zip|apk|aab|png|jpe?g|gif|webp|heic|mp4|mov|webm|mkv)")
-PATHLIKE_RE = re.compile(
+PATHLIKE_RE = _lazy(
     r"(?<!\S)(?:[~./]\S*|\S*://\S*|[^\s/]*/[^\s/]*/\S*|[^\s/]*/[^\s/]*[-_\d][^\s/]*"
     r"|[^\s/]*/[^\s/]*\." + _EXT + r"|[^\s/]+\." + _EXT + r")(?![\w/])")
-BUG_EVIDENCE_RE = re.compile(r"(?<![\w-])bugs?/[^\n]{0,200}?\.(?:png|jpe?g|gif|webp|heic|mp4|mov|webm|mkv)(?!\w)")
+BUG_EVIDENCE_RE = _lazy(r"(?<![\w-])bugs?/[^\n]{0,200}?\.(?:png|jpe?g|gif|webp|heic|mp4|mov|webm|mkv)(?!\w)")
 # The user says outright it is no report: "ko hỏi vấn đề của project đó bị gì", "20 dòng không
 # phải bug" (2026-09-26; measured on 6158 real prompts: the only 2 user prompts it matches).
 # Only that clause goes (to the next , . ; ! ? or line end): "app bị crash khi mở PDF, không phải
@@ -855,20 +870,20 @@ BUG_EVIDENCE_RE = re.compile(r"(?<![\w-])bugs?/[^\n]{0,200}?\.(?:png|jpe?g|gif|w
 # audit: an exclusion list always misses a compound). An unknown continuation is read as a report: the safe side,
 # one extra REPORTED row the user can drop beats a lost bug. Replaced by a private token, not removed: a bare "bị" left
 # behind would read as a defect, and DEFECT_RE skips "bị outdatedterm" only.
-OUTDATED_RE = re.compile(
+OUTDATED_RE = _lazy(
     r"(?<!\w)(?:lỗi thời|lạc hậu)(?=\s*(?:[,.;:!?)]|$|(?:rồi|r|quá|lắm|nên|nhé|nhỉ|hết|và|với|vì|do|nhưng|mà|đúng|ko|không|k|thay|để|thì|chắc|thế|nữa|đi|luôn)(?!\w)))")
-NOT_A_REPORT_RE = re.compile(r"(?<!\w)(?:không|ko|chẳng|chả)\s+(?:hỏi|phải|nói)\s+(?:về\s+)?(?:vấn đề|lỗi|bug|bị gì)[^,.;!?\n]*")
+NOT_A_REPORT_RE = _lazy(r"(?<!\w)(?:không|ko|chẳng|chả)\s+(?:hỏi|phải|nói)\s+(?:về\s+)?(?:vấn đề|lỗi|bug|bị gì)[^,.;!?\n]*")
 # Asking WHETHER there is a bug reports none (workbench 2026-09-29: "… chạy rất chậm có lỗi gì hay
 # ko?" became a REPORTED row). Only the question words go, the rest still counts: "có lỗi gì không mà
 # app văng" keeps "văng". Without gì/nào the question must end the clause, so "app có lỗi không mở
 # được file" (a report: it does not open) is untouched.
-IS_THERE_A_BUG_RE = re.compile(
+IS_THERE_A_BUG_RE = _lazy(
     r"(?<!\w)có\s+(?:lỗi|bug|vấn đề)\s+(?:gì|nào)\s+(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa)(?!\w)"
     r"|(?<!\w)có\s+(?:lỗi|bug|vấn đề)\s+(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa)(?=\s*(?:[?.!,;]|$|(?:vậy|nhỉ|thế|ạ|nhé)(?!\w)))"
     r"|(?<!\w)any\s+(?:bugs?|issues?|problems?|errors?)(?=\s*\?)"
     r"|(?<!\w)is\s+there\s+(?:a|an|any)\s+(?:bug|issue|problem|error)s?(?!\w)")
 # Only the word bug(s) goes, the counting in front of it stays: "fix 2 crash bugs" keeps "crash".
-KNOWN_BUGS_RE = re.compile(
+KNOWN_BUGS_RE = _lazy(
     r"((?<!\w)(?:các|những|mấy|mọi|tất cả|all|\d+|tổng số|số lượng|số|link|gắn|viết test cho|test cho"
     r"|list|danh sách|checklist)\s+(?:\w+\s+)?)bugs?(?!\w)")
 # #827 (01/11): câu hỏi "… check có đang dùng cũ hay sai gì ko?", lệnh "Hook đã tự ghi câu hỏi … thành một mục bug trong
@@ -879,21 +894,21 @@ KNOWN_BUGS_RE = re.compile(
 #   (c) từ lỗi còn lại chỉ là nhãn lỗi/bug và prompt nói về việc theo dõi: checklist, backlog, "mục bug".
 # Ảnh trong bugs/ hay stack trace Java/Kotlin, Python (STACK_RE) thì (b), (c) không áp dụng. Không đoán câu hỏi (dấu ?, "sao …") và không chia nhãn với
 # triệu chứng: hai vòng làm thế đều làm mất bug thật mà luật cũ vẫn ghi ("sao app lỗi, mở PDF không được?").
-LANE_ORDER_RE = re.compile(r"\W*bạn là\s+(?:phiên|lane)\s+[\w-]*\d")   # "phiên mới", "phiên bản 2.3" không có số liền sau
-DEFECT_WORD_RE = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) + (r"s?(?!\w)" if len(w) <= 3 else r"\w*")
+LANE_ORDER_RE = _lazy(r"\W*bạn là\s+(?:phiên|lane)\s+[\w-]*\d")   # "phiên mới", "phiên bản 2.3" không có số liền sau
+DEFECT_WORD_RE = _lazy(r"(?<!\w)(?:" + "|".join(re.escape(w) + (r"s?(?!\w)" if len(w) <= 3 else r"\w*")
                                                      for w in map(normalize, DEFECT_WORDS)) + ")")   # từng chỗ mentions() thấy
 # Hỏi có hay không ngay sau từ lỗi, cùng dòng, rồi hết mệnh đề: "sai gì ko?", "fail không nhé", "lỗi gì hay không", "lỗi nào à?".
 # Không phải hỏi có/không, vẫn là báo lỗi: "crash chưa fix", "văng ko mở được", "sai gì không đi đúng làn" (phủ định động
 # từ sau; vì thế "đi" không là tiểu từ hỏi), "lỗi gì vậy?", "lỗi gì hả?" (= "lỗi gì?"), "không biết bị lỗi gì, app tự thoát"
 # (lỗi đã xảy ra), "vẫn crash⏎chưa" (xuống dòng là hết mệnh đề: hai câu trả lời) (review #827).
 _ASKED_END = r"(?=(?:[^\S\n]*(?:vậy|thế|nhỉ|hả|à|ạ|nhé|nha)(?!\w))?[^\S\n]*(?:$|[?.!,;\n]))"
-ASKED_RE = re.compile(r"[^\S\n]+(?:(?:gì|nào)[^\S\n]+)?(?:(?:hay|hoặc)[^\S\n]+)?(?:không|ko|k|chưa)(?!\w)" + _ASKED_END
+ASKED_RE = _lazy(r"[^\S\n]+(?:(?:gì|nào)[^\S\n]+)?(?:(?:hay|hoặc)[^\S\n]+)?(?:không|ko|k|chưa)(?!\w)" + _ASKED_END
                       + r"|[^\S\n]+(?:gì|nào)[^\S\n]+à(?!\w)(?=[^\S\n]*(?:$|[?.!,;\n]))")
-SPACES_RE = re.compile(r"\s*")
+SPACES_RE = _lazy(r"\s*")
 LABEL_WORDS = {"lỗi", "bug", "bugs"}
-TRACKING_RE = re.compile(r"(?<!\w)(?:checklist|backlog|mục bug)(?!\w)")
+TRACKING_RE = _lazy(r"(?<!\w)(?:checklist|backlog|mục bug)(?!\w)")
 # [ \t]*, không \s*: với re.M, \s nuốt cả xuống dòng nên mỗi dòng trống quét lại phần sau (80 000 dòng trống: 9 s).
-STACK_RE = re.compile(r"traceback \(most recent call last\)|^[ \t]*at [\w$.<>]+\([^)\n]*:\d+\)", re.M)
+STACK_RE = _lazy(r"traceback \(most recent call last\)|^[ \t]*at [\w$.<>]+\([^)\n]*:\d+\)", re.M)
 
 # Agent and harness prompts are not the user's bug reports. Grok (2026-09-25, OfficeReader)
 # runs the prompt hook for its own sub-agents too, and "You are a hostile code reviewer. Do
@@ -908,17 +923,17 @@ STACK_RE = re.compile(r"traceback \(most recent call last\)|^[ \t]*at [\w$.<>]+\
 # "As an AI/assistant …", "Bạn là (một) <vai>", "(Hãy) đóng vai …". A user's report that just
 # starts with those words ("You are right, but it still crashes", "Bạn là dev Android thì xem
 # giúp: app crash …", "Your task is to fix the crash") is still recorded (review 2026-09-25).
-ROLE_OPENING = re.compile(
+ROLE_OPENING = _lazy(
     r"^\W*((you are|you're|act as)\s+(a|an|the)\s+\w|your role is\b|as an? (ai|assistant|language model)\b|"
     r"(bạn là|mày là)\s+(một\s+)?(reviewer|agent|trợ lý|chuyên gia|kỹ sư|kiểm thử viên|planner|writer|auditor|"
     r"người (viết|đánh giá|kiểm|review))\b|(hãy\s+)?đóng vai\b)", re.I)
-SCHEMA_MARKERS = [re.compile(p, re.I) for p in (
+SCHEMA_MARKERS = [_lazy(p, re.I) for p in (
     r'"input_schema"\s*:', r'"\$schema"\s*:', r'"properties"\s*:\s*\{', r'"type"\s*:\s*"object"',
     r'"parameters"\s*:\s*\{', r'"required"\s*:\s*\[', r"<tool_call\b", r"<function_calls>", r"</invoke>",
     r"<functions>", r'"tool_choice"\s*:')]
-DIRECTIVE = re.compile(r"\b(you must|you will|you should|must not|do not|don't|never|always|your (task|job|role|goal|output)|"
+DIRECTIVE = _lazy(r"\b(you must|you will|you should|must not|do not|don't|never|always|your (task|job|role|goal|output)|"
                        r"respond (only )?with|output format|return only|only output|không được|bắt buộc|cấm)\b", re.I)
-HEADING = re.compile(r"^\s{0,3}#{1,4}\s+\S", re.M)
+HEADING = _lazy(r"^\s{0,3}#{1,4}\s+\S", re.M)
 
 
 def harness_prompt(prompt, payload=None, env=None):
@@ -1031,9 +1046,14 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
             + (f"\n- ⚠️ {note}" if note else ""))
 
 
+_LINKED_MEMO = {}
+
+
 def _linked(rc, project_root):
     """regression_checklist.skip_bookkeeping, True in a LINKED worktree; an older regression_checklist without it: False (writes, as before)."""
-    return getattr(rc, "skip_bookkeeping", lambda _p: False)(project_root)
+    if project_root not in _LINKED_MEMO:   # #1127: each ask is several git subprocesses; one process, one answer
+        _LINKED_MEMO[project_root] = getattr(rc, "skip_bookkeeping", lambda _p: False)(project_root)
+    return _LINKED_MEMO[project_root]
 
 
 def _checklist_on(project_root):
@@ -1136,13 +1156,13 @@ def command_words(prompt, project_root):
 
 
 # "thêm tính năng …", "tạo màn hình …", "implement the … endpoint": new behaviour to specify.
-FEATURE_RE = re.compile(
+FEATURE_RE = _lazy(
     r"(?<!\w)(?:thêm|tạo|làm|xây|viết|phát triển|bổ sung)\s+(?:mới\s+)?(?:tính năng|chức năng|màn hình|trang|nút|"
     r"api|endpoint|feature|luồng|báo cáo)|tính năng mới"
     r"|\b(?:add|implement|build|create)\s+(?:a |an |the |new )?(?:feature|screen|page|endpoint|button|flow|report)")
 
 
-LARGE_TASK_RE = re.compile(
+LARGE_TASK_RE = _lazy(
     r"(?<!\w)(?:kiến\s*trúc|architecture|tái\s*cấu\s*trúc|refactor|migration|di\s*chuyển|"
     r"nhiều\s*module|multi[-_ ]?module|bảo\s*mật|security|lỗ\s*hổng|vulnerability|"
     r"xác\s*thực|auth(?:entication)?|phân\s*quyền|thanh\s*toán|payment|"
@@ -1179,33 +1199,33 @@ def antigravity_collab_hint(prompt, dossier, project_root):
 _COUNT = r"(?:[2-9]|[1-9]\d+|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|two|three|four|five|six|several|multiple|many|nhiều)"
 _ACT = (r"(?:sửa|thêm|viết|tạo|cập nhật|xóa|đổi|bỏ|chuyển|làm|chạy|kiểm tra|review|đọc|audit|dọn|tách|gộp|đồng bộ|nâng cấp|"
         r"fix|add|update|write|create|remove|delete|refactor|implement|migrate|port|run|deploy|merge|sync|bump|rename|check|test)")
-SPLIT_REPOS_RE = re.compile(
+SPLIT_REPOS_RE = _lazy(
     r"(?<!\w)(?:(?:[2-9]|[1-9]\d+|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|two|three|four|five|six|several|multiple)\s+"
     r"(?:repos?|repositor(?:y|ies)|dự án|projects?)|(?:tất cả|mọi)\s+(?:các\s+)?(?:repos?|dự án)"
     r"|(?:all|every|each)\s+(?:the\s+)?(?:repos?|repositories|projects?))(?!\w)")
-SPLIT_EXPLICIT_RE = re.compile(
+SPLIT_EXPLICIT_RE = _lazy(
     r"(?<!\w)(?:nhiều (?:agent|phiên|lane)|(?:many|several|multiple) agents|"
     r"(?:these|them|those|both|everything|all of (?:them|these))\s+in parallel|in parallel\s*:|"
     r"song song\s*(?::|giúp|hộ|cho nhanh|cho tôi|đi|nhé|nha|luôn)|fan[- ]?out (?:the |these )?(?:work|tasks|agents|lanes)|"
     r"chia (?:ra |thành )?(?:nhiều )?(?:agent|lane|phiên))(?!\w)")
-SPLIT_COUNT_RE = re.compile(
+SPLIT_COUNT_RE = _lazy(
     r"(?<!\w)(?:sửa|fix|làm|xử lý|giải quyết|review|đóng|close|handle|resolve|triage|merge|gộp|kiểm tra|check|test|viết test cho)\s+"
     r"(?:(?:hết|cả|tất cả|nốt|luôn|the|all)\s+)?" + _COUNT +
     r"\s+(?:issues?|thẻ|cards?|tickets?|bugs?|lỗi|việc|tasks?|lanes?|prs?|pull requests?)(?!\w)"
     r"|(?<!\w)" + _COUNT + r"\s+(?:issues?|thẻ|cards?|tickets?|bugs?|lỗi|việc|tasks?|prs?)\s+cần\s+(?:sửa|fix|làm|xử lý)(?!\w)")
-SPLIT_REFS_RE = re.compile(r"(?<!\w)(?:issues?|thẻ|cards?|tickets?|prs?|bugs?)\s+#?\d+(?:\s*(?:,|và|and|&)\s*#?\d+)+"
+SPLIT_REFS_RE = _lazy(r"(?<!\w)(?:issues?|thẻ|cards?|tickets?|prs?|bugs?)\s+#?\d+(?:\s*(?:,|và|and|&)\s*#?\d+)+"
                            r"|(?<!\w)#\d+(?:\s*(?:,|và|and|&)\s*#\d+)+")
-SPLIT_ITEM_RE = re.compile(r"(?:^|\n)[ \t]*(?:\(?\d{1,2}[.)]|[-*•])[ \t]+" + _ACT + r"(?!\w)(?![ \t]+\d)"
+SPLIT_ITEM_RE = _lazy(r"(?:^|\n)[ \t]*(?:\(?\d{1,2}[.)]|[-*•])[ \t]+" + _ACT + r"(?!\w)(?![ \t]+\d)"
                            r"|(?<!\S)\([1-9]\)[ \t]+" + _ACT + r"(?!\w)")
-TOPIC_RE = re.compile(r"(?<!\w)(?:(?:khi|lúc|nếu|để|when|if|while)\s+(?:[^\s,.;:!?]+\s+){0,3}|(?:dòng|line|lines|row|rows|bước|step)\s+)\Z")
-REPRO_RE = re.compile(r"(?<!\w)(?:steps to reproduce|repro(?:duce)? steps|các bước tái hiện|bước tái hiện|cách tái hiện)(?!\w)")
-FENCE_RE = re.compile(r"```.*?(?:```|\Z)", re.S)
-HOST_RE = re.compile(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/")   # github.com/…, gitlab.example.org/…
+TOPIC_RE = _lazy(r"(?<!\w)(?:(?:khi|lúc|nếu|để|when|if|while)\s+(?:[^\s,.;:!?]+\s+){0,3}|(?:dòng|line|lines|row|rows|bước|step)\s+)\Z")
+REPRO_RE = _lazy(r"(?<!\w)(?:steps to reproduce|repro(?:duce)? steps|các bước tái hiện|bước tái hiện|cách tái hiện)(?!\w)")
+FENCE_RE = _lazy(r"```.*?(?:```|\Z)", re.S)
+HOST_RE = _lazy(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/")   # github.com/…, gitlab.example.org/…
 # Questions are judged on the first and the last words only: a search for "?\W*$" over a pasted text full of "(?, ?)"
 # placeholders was quadratic (review 18/10: 20 s for 40 KB, past the hook's timeout).
-QUESTION_START_RE = re.compile(r"\W*(?:tại sao|vì sao|sao(?! chép| lưu)|có nên|có phải|liệu|giải thích|why|what|how|is|are|"
+QUESTION_START_RE = _lazy(r"\W*(?:tại sao|vì sao|sao(?! chép| lưu)|có nên|có phải|liệu|giải thích|why|what|how|is|are|"
                                r"does|should|explain)(?!\w)")
-QUESTION_END_RE = re.compile(r"\?\W*\Z|(?<!\w)(?:không|chưa|thế nào|ra sao|là gì|được không|nhỉ|hả)\W*\Z")
+QUESTION_END_RE = _lazy(r"\?\W*\Z|(?<!\w)(?:không|chưa|thế nào|ra sao|là gì|được không|nhỉ|hả)\W*\Z")
 
 
 def _ask(regex, text):

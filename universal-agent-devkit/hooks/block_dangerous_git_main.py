@@ -102,6 +102,8 @@ ABBREV = {
     "gc": ("--prune", ""),
     "worktree": ("--force", ""),
     "update-ref": ("--stdin", ""),
+    "symbolic-ref": ("--delete", "--short --quiet --recurse --no-recurse"),
+    "remote": ("--delete --no-auto", "--auto --verbose"),
 }
 
 def expand_abbrev(sub, args):
@@ -183,8 +185,10 @@ def clean_dry_run(args):
                     return True
     return False
 
-def danger_in_git(sub, args):
-    args = expand_abbrev(sub, args)
+def danger_in_git(sub, args, lit=False):
+    # (#837) normalise ONCE: shell redirections are no git argument wherever they sit (`git remote 2>/dev/null set-head ..`, `> -q`), before
+    # any flag/positional split below. lit = the words come from script literals (git_in_literals), where later literals may trail the call.
+    args = expand_abbrev(sub, drop_redirects(args))
     long_ = set(a.split("=", 1)[0] for a in args if a.startswith("--"))
     short = short_flags(args)
     pos = [a for a in args if not a.startswith("-")]
@@ -252,8 +256,48 @@ def danger_in_git(sub, args):
         return "gc --prune xoá object không còn tham chiếu"
     if sub == "update-ref" and ("d" in short or "--delete" in long_):
         return "update-ref -d xoá ref"
-    if sub == "update-ref" and ("--stdin" in long_ or any(p.startswith("refs/heads/") for p in pos)):
+    # refs are case-sensitive in git but APFS (macOS) folds the case of the loose-ref file: `refs/Remotes/..` writes the same file
+    if sub == "update-ref" and ("--stdin" in long_ or any(p.lower().startswith("refs/heads/") for p in pos)):
         return "update-ref ghi thẳng vào nhánh (như reset/branch -f)"
+    # (#837) refs/remotes/* is what the gate trusts as "landed" (task_trunk, origin/HEAD): an agent must not forge it. fetch/pull write it
+    # legitimately and stay allowed; `remote set-head <r> --auto` re-reads the remote's truth and stays allowed too.
+    if sub == "update-ref" and any(p.lower().startswith("refs/remotes/") for p in pos):
+        return "update-ref ghi refs/remotes/* giả ref đã landed (dùng git fetch)"
+    if sub == "remote" and "set-head" in pos[:1]:
+        # words after set-head only (`remote -v set-head` is fine); flags read in order (git: the last of --auto / --no-auto wins); after `--`
+        # every word is an operand (`set-head origin -- -a` names the branch -a); --auto takes only the remote: a branch operand is a write
+        auto, bad, dd, spos = False, False, False, []
+        for a in args[args.index("set-head") + 1:]:
+            n = a.split("=", 1)[0]
+            if dd:
+                spos.append(a)
+            elif a == "--":
+                dd = True
+            elif a.startswith("--"):
+                if len(n) >= 3 and "--auto".startswith(n):
+                    auto = True
+                elif len(n) >= 6 and "--no-auto".startswith(n):
+                    auto = False
+                else:
+                    bad = True   # --delete / --d.. / --no-delete / unknown: not the read-only refresh
+            elif a.startswith("-") and len(a) > 1:
+                if set(a[1:]) - {"a"}:
+                    bad = True
+                auto = auto or "a" in a[1:]
+            else:
+                spos.append(a)
+        if bad or not auto or len(spos) > 1:   # spos = [<remote>]
+            return "remote set-head đổi/xoá origin/HEAD giả nhánh trunk đã landed (chỉ cho --auto)"
+    if sub == "symbolic-ref":
+        # `symbolic-ref <name> <target>` writes whatever <target> is (HEAD, Refs/.. on APFS), so 2 operands = a write. Only a script literal
+        # list can trail a read with an unrelated word ('utf-8'): there the target must look like a ref (refs/.. any case, or HEAD).
+        if lit:
+            writes = len(pos) >= 2 and (pos[1].lower().startswith("refs/") or pos[1] == "HEAD")
+        else:
+            writes = len(pos) >= 2
+        writes = writes or "d" in short or "m" in short or "--delete" in long_
+        if writes and any(p.lower().startswith("refs/remotes/") for p in pos):
+            return "symbolic-ref ghi refs/remotes/* giả ref đã landed"
     if sub == "config":
         reason = config_write_danger(args)
         if reason:
@@ -717,8 +761,12 @@ def git_in_literals(code, allow=None):
         j = k + 1
         while j < len(words) and words[j].startswith("-"):
             j += 2 if (words[j] in GIT_OPTS_WITH_ARG and "=" not in words[j]) else 1
+        # this call's words, not the next call's: a later `git` word ends the call only when a lowercase subcommand follows it
+        # (`update-ref -m git refs/remotes/..` keeps its operands). ponytail: `-m git foo` still cuts, upgrade with real call splitting.
+        end = next((x for x in range(j + 1, len(words)) if words[x].rsplit("/", 1)[-1].lower() == "git"
+                    and re.fullmatch(r"[a-z][a-z-]*", (words[x + 1] if x + 1 < len(words) else ""))), len(words))
         if j < len(words):
-            reason = danger_in_git(words[j], words[j + 1:])
+            reason = danger_in_git(words[j], words[j + 1:end], lit=True)
             if not reason and words[j] in ("checkout", "switch", "worktree"):
                 first = next((x for x in range(j + 1, len(words)) if not words[x].startswith("-")), len(words) - 1)
                 nxt = next((x for x in range(first + 1, len(words)) if not words[x].startswith("-")), len(words))
@@ -1712,6 +1760,7 @@ def analyse_simple(tokens, depth):
             IN_XARGS[0] -= 1
     if prog != "git":
         return None
+    rest = drop_redirects(rest)   # (#837) `git 2>/dev/null update-ref ..`: a redirect before the subcommand is no git option
     j = 0
     aliases = {}
     gdir = CUR_DIR[0]
