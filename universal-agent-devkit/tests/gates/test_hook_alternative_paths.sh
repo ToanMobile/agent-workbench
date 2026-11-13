@@ -71,6 +71,11 @@ unit "U10: a single-quoted guard tests a literal name, not the variable" '[".cla
   "$A"'[ -f '"'"'$p'"'"' ] && exec bash "$p"; [ -f '"'"'$f'"'"' ] && exec bash "$f"; exit 2'
 unit "U11: the fail-closed message after the last clause may name the variables" '[]' "$only_a" \
   "$A"'[ -f "$p" ] && exec bash "$p"; [ -f "$f" ] && exec bash "$f"; echo "missing ($p and $f)" >&2; exit 2'
+# Review 13/11 (OpenCodeReview uỷ quyền, P3): biến gán hai lần chỉ còn giá trị sau, kể cả khi giá trị sau không phải đường dẫn hook.
+unit "U12: a variable reassigned to another hook path is not an alternative" '[".claude/hooks/b.sh", ".claude/hooks/c.sh"]' "$only_a" \
+  "$A"'p="$CLAUDE_PROJECT_DIR"/.claude/hooks/c.sh; [ -f "$p" ] && exec bash "$p"; [ -f "$f" ] && exec bash "$f"; exit 2'
+unit "U13: a variable reassigned to a non-hook value is not an alternative either" '[".claude/hooks/b.sh"]' "$only_a" \
+  "$A"'p=/nonexistent; [ -f "$p" ] && exec bash "$p"; [ -f "$f" ] && exec bash "$f"; exit 2'
 
 # ── agent-kit health thật: repo chỉ có link đã cài, không có universal-agent-devkit/ ──
 H="$TMP/h"; mkdir -p "$H/.claude/hooks"

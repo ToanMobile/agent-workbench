@@ -294,9 +294,11 @@ def registered_hook_groups(settings) -> list:
                         continue
                     var = _HOOK_ASSIGN_RX.search(cmd[:match.start()]) if shape and match.start() < shape.start("clauses") else None
                     found.append((rel, var.group(1) if var else None))
-                # Một biến gán hai lần chỉ còn giá trị sau: không coi là thay thế. Nhóm cần từ hai đường dẫn, mỗi cái một biến có mệnh đề exec.
+                # Một biến gán hai lần chỉ còn giá trị sau (kể cả khi giá trị sau không phải đường dẫn hook): không coi là thay thế.
+                # Nhóm cần từ hai đường dẫn, mỗi cái một biến gán đúng một lần và có mệnh đề exec.
                 names = [v for _, v in found if v in alt_vars]
-                alt_ok = {v for v in names if names.count(v) == 1}
+                assigned = re.findall(r"(?:^|;)\s*([A-Za-z_]\w*)=", cmd[:shape.start("clauses")]) if shape else []
+                alt_ok = {v for v in names if assigned.count(v) == 1}
                 alt_group = [] if len(alt_ok) > 1 else None
                 for rel, v in found:
                     is_alt = v in alt_ok
