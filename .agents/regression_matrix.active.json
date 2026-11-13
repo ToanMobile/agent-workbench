@@ -3787,6 +3787,22 @@
       ]
     },
     {
+      "component": "pm-grok-timeout-by-diff",
+      "watch_files": [
+        "mcp-servers/antigravity-pm-mcp/src/agentapi.js",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/tests/grok-timeout.test.js"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-PM-GROK-TIMEOUT-01",
+          "name": "04/11: hạn grok audit theo kích thước diff (sàn 20 phút, +1 phút/100 dòng, trần 60), env ghi đè vẫn thắng",
+          "command": "cd mcp-servers/antigravity-pm-mcp && node --test tests/grok-timeout.test.js",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "review-gate-handover",
       "watch_files": [
         "universal-agent-devkit/hooks/review_gate.sh",

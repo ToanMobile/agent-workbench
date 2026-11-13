@@ -1,4 +1,4 @@
-// Review PR #1163 (13/11/2026): xoa grok-audit.test.js lam mat cac ca kiem phan PM van dung de bat tu duyet, khong lien quan Grok:
+// 13/11/2026 (PR #1163, chu repo bo Grok): cac ca grok da go; file nay giu cac ca kiem phan PM van dung de bat tu duyet, khong lien quan Grok:
 // danh tinh nguoi goi (callerAgent / callerAgents), chuan hoa ten agent (normalizeAgent khop push_gate.normalize_reviewer), lan giao audit
 // cu khong co agent = Antigravity, reviewer tu khai la bi bo qua (theo agent cua lan giao), va verdicts.auditHistory chi-them.
 // Chep lai tu grok-audit.test.js (F1, F2, G5, G7, H3, H4), F1 doi sang lan giao audit Antigravity (khong chay grok).
