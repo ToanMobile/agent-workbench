@@ -99,19 +99,19 @@ reap_finished_locks
   && ok "reaping a dead worker that hit its limit marks its account paused" \
   || fail "reap did not mark finos paused (lock=$([ -e "$INFLIGHT_DIR/36" ] && echo kept || echo gone))"
 
-# ── 5. Thứ tự dự phòng khi hết Claude: Ultra -> Pro -> Grok, bỏ account đã bị đánh dấu.
+# ── 5. Thứ tự dự phòng khi hết Claude: Ultra -> Pro, bỏ account đã bị đánh dấu; không bao giờ Grok (chủ repo bỏ Grok 13/11).
 STUB_POOL_JSON='{"state":"ok","engine":"claude","account":"max","config_dir":"/x/.claude-max"}'; export STUB_POOL_JSON
 resolve_worker_account >/dev/null 2>&1
-grep -qx "ag=1 grok=1" "$TMP/pool.env" && ok "no fallback paused: pool may fail over to Antigravity Ultra" \
+grep -qx "ag=1 grok=" "$TMP/pool.env" && ok "no fallback paused: pool may fail over to Antigravity Ultra" \
   || fail "fallback env with nothing paused: $(cat "$TMP/pool.env" 2>/dev/null)"
 note_worker_limit "wl/worker-build-38.log"     # antigravity hết
 resolve_worker_account >/dev/null 2>&1
-grep -qx "ag=pro grok=1" "$TMP/pool.env" && ok "Ultra paused: fall over to Antigravity Pro" \
+grep -qx "ag=pro grok=" "$TMP/pool.env" && ok "Ultra paused: fall over to Antigravity Pro" \
   || fail "fallback env with Ultra paused: $(cat "$TMP/pool.env" 2>/dev/null)"
 jq '.rate_limits.five_hour.resets_at' "$TMP/state/usage-antigravity.json" >/dev/null
 cp "$TMP/state/usage-antigravity.json" "$TMP/state/usage-antigravity_pro.json"
 resolve_worker_account >/dev/null 2>&1
-grep -qx "ag= grok=1" "$TMP/pool.env" && ok "both Antigravity accounts paused: fall over to Grok" \
+grep -qx "ag= grok=" "$TMP/pool.env" && ok "both Antigravity accounts paused: no Grok fallback" \
   || fail "fallback env with both Antigravity paused: $(cat "$TMP/pool.env" 2>/dev/null)"
 
 # ── 6. Hết cả 6 account: không nhận thẻ, không khởi worker (trước đây rơi về `claude` mặc định).

@@ -146,9 +146,9 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
   được yêu cầu. Khi đó: một AskUserQuestion (khuyến nghị trước) rồi tự làm tiếp nếu được duyệt.
   Quyền công cụ (allow/deny, permission mode) do người dùng cấp: agent không tự nới, không lách
   lệnh bị từ chối; ghi CHƯA XONG cho bước đó kèm quyền cần và lý do, làm hết phần còn lại.
-- An edited existing test needs cross-approval by another agent: commit, then
-  `pm_dispatch kind=audit agent=grok` on the PR head; the gate reads the PM's pass record
-  (an Antigravity audit: `agent-kit approve-tests <task-id>`). The editor never approves its
+- An edited existing test needs cross-approval by another agent: commit, then an Antigravity
+  `pm_dispatch kind=audit` on the PR head and `pm_verdict kind=audit verdict=pass auditedHead=<head>`;
+  the gate reads the PM's scoped pass record (else `agent-kit approve-tests <task-id>`). No Grok (13/11). The editor never approves its
   own test (`--auto-approve-tests`, `AUTO-APPROVE:` approve nothing); never ask the user: the
   author cannot post `approved-head`: start a reviewer session to post it.
 - Clean up what you create (33 GB filled a disk): delete a repo copy, stage
