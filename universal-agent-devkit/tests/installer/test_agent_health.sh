@@ -28,11 +28,14 @@ out="$(python3 "$HEALTH" -t "$TMP/proj" 2>&1 | strip)"
 echo "$out" | grep -q "tests: not run" && ok "H-1: default run prints 'tests: not run'" || fail "H-1: default run missing 'tests: not run'"
 echo "$out" | grep -qi "100% PASS" && fail "H-1: default run still claims 100% PASS" || ok "H-1: default run makes no '100% PASS' claim"
 # H-1: không còn bước chấm điểm bằng script grep tự kiểm (scripts/audits/audit_*: 3 điểm luôn đạt, không đo gì ở lượt chạy này).
-echo "$out" | grep -qiE "grep-based|self-consistency|audit_[a-z_]+agents\.py" \
-  && fail "H-1: health still scores grep-based self-consistency scripts: $(echo "$out" | grep -iE 'grep-based|self-consistency|audit_[a-z_]+agents\.py' | head -2 | tr '\n' ' ')" \
+# Output in cả đường dẫn (DevKit, dự án; health in dạng đã resolve): bỏ chúng trước khi grep, kẻo tên thư mục checkout chứa
+# "self-consistency" hay "grep-based" làm đỏ oan. Chuỗi cố định, đường dẫn vật lý trước (nó chứa đường dẫn logic).
+_h="$out"; for _p in "$(cd "$DEVKIT_DIR" && pwd -P)" "$DEVKIT_DIR" "$(cd "$TMP" && pwd -P)" "$TMP"; do _h="${_h//"$_p"/}"; done
+echo "$_h" | grep -qiE "grep-based|self-consistency|audit_[a-z_]+agents\.py" \
+  && fail "H-1: health still scores grep-based self-consistency scripts: $(echo "$_h" | grep -iE 'grep-based|self-consistency|audit_[a-z_]+agents\.py' | head -2 | tr '\n' ' ')" \
   || ok "H-1: no grep-based self-consistency step is scored"
-echo "$out" | grep -q "\[5/5\]" && ! echo "$out" | grep -qE "\[[0-9]/6\]" \
-  && ok "H-1: the steps are numbered [1/5]..[5/5]" || fail "H-1: step labels are not [n/5]: $(echo "$out" | grep -Eo '\[[0-9]/[0-9]\]' | tr '\n' ' ')"
+echo "$_h" | grep -q "\[5/5\]" && ! echo "$_h" | grep -qE "\[[0-9]/6\]" \
+  && ok "H-1: the steps are numbered [1/5]..[5/5]" || fail "H-1: step labels are not [n/5]: $(echo "$_h" | grep -Eo '\[[0-9]/[0-9]\]' | tr '\n' ' ')"
 
 # H-1: a failing suite lowers the score; a passing one does not.
 s_pass="$(AGENT_HEALTH_TEST_CMD='echo "contract points: 3 ok, 0 deviating"; exit 0' python3 "$HEALTH" --run-tests -t "$TMP/proj" 2>&1 | strip | score_of)"
