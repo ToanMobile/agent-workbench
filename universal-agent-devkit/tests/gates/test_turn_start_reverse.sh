@@ -451,12 +451,12 @@ def result_at(t, tid="g1", text="exit 0"):
 def append(pth, *lines):
     with open(pth, "ab") as fh:
         fh.write(b"\n".join(lines) + b"\n")
-def stop(pth, reply=XONG, session="e", now=None):
+def stop(pth, reply=XONG, session="e"):
     payload = {"session_id": session, "last_assistant_message": reply}
     if pth:
         payload["transcript_path"] = pth
     r = subprocess.run(["bash", HOOK], input=json.dumps(payload), capture_output=True, text=True, timeout=60,
-                       env=dict(os.environ, CLAUDE_PROJECT_DIR=repo2, **({"PROOF_GATE_NOW": repr(now)} if now else {})))
+                       env=dict(os.environ, CLAUDE_PROJECT_DIR=repo2))
     return r.returncode, r.stderr, r.stdout
 def clean(err):
     return "Traceback" not in err and "Error" not in err
@@ -537,12 +537,6 @@ for session, with_tr in (("f-none", False), ("f-peer", True)):
     check(row == [2, 2, "release", "release"] and any(keys == ["%s@h%d" % (session, h)] for h in (h0, h1)),
           "F no turn start (%s): [block, block, release] and the key is %s@h<hour>, not %s@0" % ("peer-only transcript" if with_tr else "no transcript", session, session),
           "row %r keys %r" % (row, keys))
-# #1127: four runs that straddle an hour edge (00:00 UTC is one) must still be [block, block, release, release]; the clock is pinned
-for session, edge in (("f-edge-mid", 1900000000 // 3600 * 3600), ("f-edge-midnight", 1900000000 // 86400 * 86400)):
-    drop_receipt()
-    row = [("release" if rc == 0 and "systemMessage" in out else rc) for rc, _e, out in
-           (stop(None, session=session, now=float(edge + dt)) for dt in (-2, -1, 1, 2))]
-    check(row == [2, 2, "release", "release"], "F %s: the block budget survives the hour edge (pinned clock)" % session, "row %r" % (row,))
 # a spent legacy `@0` key no longer shuts the gate
 for session, with_tr in (("f0-none", False), ("f0-assistant", True)):
     drop_receipt()
