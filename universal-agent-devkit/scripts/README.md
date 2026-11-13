@@ -1,11 +1,11 @@
 # Universal Agent DevKit Scripts
 
-Toàn bộ 38 công cụ thực thi của **Universal Agent DevKit** được cấu trúc mạch lạc thành **5 nhóm nghiệp vụ chuyên biệt**:
+Toàn bộ 39 công cụ thực thi của **Universal Agent DevKit** được cấu trúc mạch lạc thành **5 nhóm nghiệp vụ chuyên biệt**:
 
 ```
 scripts/
 ├── context/       # 5 công cụ: Làm giàu ngữ cảnh, phân tích prompt, bẫy lỗi & rules
-├── linters/       # 4 công cụ: Phân tích AST, kiểm tra rò rỉ bộ nhớ, GC, recomposition
+├── linters/       # 5 công cụ: Phân tích AST, kiểm tra rò rỉ bộ nhớ, GC, recomposition
 ├── testing/       # 5 công cụ: Paired Executable Oracle (RED->GREEN), test runner & proof
 ├── git/           # 6 công cụ: Git hooks, an toàn branch, worktree & parallel sandbox
 └── governance/    # 18 công cụ: Quản trị vòng đời DevKit, sync context, i18n & ma trận test

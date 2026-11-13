@@ -29,7 +29,7 @@ echo "$out" | grep -q "tests: not run" && ok "H-1: default run prints 'tests: no
 echo "$out" | grep -qi "100% PASS" && fail "H-1: default run still claims 100% PASS" || ok "H-1: default run makes no '100% PASS' claim"
 # H-1: không còn bước chấm điểm bằng script grep tự kiểm (scripts/audits/audit_*: 3 điểm luôn đạt, không đo gì ở lượt chạy này).
 echo "$out" | grep -qiE "grep-based|self-consistency|audit_[a-z_]+agents\.py" \
-  && fail "H-1: health still scores grep-based self-consistency scripts: $(echo "$out" | grep -iE 'grep-based|audit_[a-z_]+agents\.py' | head -2 | tr '\n' ' ')" \
+  && fail "H-1: health still scores grep-based self-consistency scripts: $(echo "$out" | grep -iE 'grep-based|self-consistency|audit_[a-z_]+agents\.py' | head -2 | tr '\n' ' ')" \
   || ok "H-1: no grep-based self-consistency step is scored"
 echo "$out" | grep -q "\[5/5\]" && ! echo "$out" | grep -qE "\[[0-9]/6\]" \
   && ok "H-1: the steps are numbered [1/5]..[5/5]" || fail "H-1: step labels are not [n/5]: $(echo "$out" | grep -Eo '\[[0-9]/[0-9]\]' | tr '\n' ' ')"
