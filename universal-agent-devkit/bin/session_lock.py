@@ -2190,6 +2190,17 @@ def _lands_in_main(path, main, sw):
     if t is not None and not _same_dir(t[0], main):
         return False
     import subprocess  # noqa: PLC0415 - only for a write into a trunk-mode main checkout
+    # #688: gate state in main's git dir / common dir (<git dir>/postfix-gate/) is no merge content; check-ignore exits 1 there. Only that
+    # subtree: the rest of the git dir holds git's own state and the guards' switches (config with devkit.trunkMode, the shared-checkout
+    # flag, refs, hooks, info/exclude) - a write there could move or unguard main, so it stays merge-only (review PR #1161, fail closed).
+    try:
+        g = subprocess.run(["git", "-C", main, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+                           capture_output=True, text=True, timeout=5)
+        gitdirs = [d for d in g.stdout.splitlines() if d] if g.returncode == 0 else []
+    except (OSError, ValueError, subprocess.SubprocessError):
+        gitdirs = []   # cannot tell: judged by check-ignore below (fail closed)
+    if any(_inside(path, os.path.join(d, "postfix-gate")) for d in gitdirs):
+        return False
     try:
         r = subprocess.run(["git", "-C", main, "check-ignore", "-q", "--", os.path.realpath(path)], capture_output=True, timeout=5)
     except (OSError, ValueError, subprocess.SubprocessError):

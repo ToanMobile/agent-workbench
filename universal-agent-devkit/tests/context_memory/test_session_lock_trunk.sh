@@ -333,50 +333,65 @@ PY
 grep -q "unit-bad=0 " "$TMP/unit" && ok "trunk_write: $(grep -o 'of [0-9]*' "$TMP/unit") cases (main itself vs nested/sibling worktrees, ignored state, integrator, sync)" \
   || { fail "trunk_write cases"; grep "✖\|Error\|assert" "$TMP/unit" | head -12; }
 
-# 1b review 25/10 (d6b6d57c): theo dõi biến / $PWD không được bậc hai theo độ dài lệnh - ~200 KB (20 000 phép gán) xong dưới 2 s, vẫn chặn
-PERF_CAP=2 python3 - "$DEVKIT_DIR" "$M" "$W" > "$TMP/perf" 2>&1 <<'PY'
-import os, signal, sys, time
-CAP = float(os.environ["PERF_CAP"])
+# 1b review 25/10 (d6b6d57c): theo dõi biến / $PWD không được bậc hai theo độ dài lệnh - ~200 KB (20 000 phép gán) vẫn chặn, và CPU
+# của nó ≤ 2 x (10 x CPU của cùng lệnh ở 1/10 kích thước, đo ngay trước trong cùng tiến trình) (#1042: ngân sách tuyệt đối 2 s đỏ oan ở load 24-25)
+python3 - "$DEVKIT_DIR" "$M" "$W" > "$TMP/perf" 2>&1 <<'PY'
+import signal, sys, time
 dk, m, w = sys.argv[1:4]
 sys.path.insert(0, dk + "/bin")
 import session_lock as sl
 main, sw = sl.trunk_main(m)
 bad = 0
+RATIO = 2.0   # #1042 đo 13/11 (12 nhân): tuyến tính cho tỉ lệ 0.84-1.29 ở load 11-48; bậc hai cho ~10
 
 
 def too_slow(*_):
     raise TimeoutError("over 30 s")
 
 
-# A quadratic walk runs for minutes: the wall-clock alarm only stops a hang (30 s), the bound itself is CPU time of this
-# process (time.process_time), which a loaded machine does not inflate — the 2 s wall bound failed inside run_impacted.sh's
-# parallel pool at load ~70 (gate 25/10) while the walk took 0.4 s alone.
+def timed(call, c):   # (CPU giây, kết quả); alarm 30 s chỉ để cắt một lần đi treo, kết quả None khi hết giờ
+    t0 = time.process_time()
+    signal.alarm(30)
+    try:
+        got = call(c)
+    except TimeoutError:
+        got = None
+    finally:
+        signal.alarm(0)
+    return time.process_time() - t0, got
+
+
+# Thước đo là CPU của chính tiến trình (time.process_time), nhưng máy tải nặng vẫn làm nó phình (cache, nhân hiệu năng thấp):
+# 1.39 s chạy riêng thành 2.08 s ở load 24-25 (#1042). Nên không so với số tuyệt đối mà so với cùng hàm trên lệnh 1/10 kích thước
+# (min 3 lần) đo ngay trước: tải làm chậm cả hai như nhau, còn bậc hai đẩy tỉ lệ lên ~10. Lần đo lớn vượt ngưỡng được đo lại tối đa
+# 2 lần và lấy min, vì nhiễu tải chỉ đẩy lên; bậc hai thật vẫn đỏ mọi lần.
 signal.signal(signal.SIGALRM, too_slow)
-for label, body in (("20000 x `W=/tmp/x; `", "W=/tmp/x; " * 20000), ("20000 distinct `W<i>=/x; `", "".join(f"W{i}=/x; " for i in range(20000))),
-                    # every segment that is no assignment used to scan every known name (and compile two regexes for it): 2000 pairs took 57 s
-                    ("15000 x `W<i>=/x; : ; `", "".join(f"W{i}=/x; : ; " for i in range(15000))),
-                    ("12000 x `W<i>=/x; cd /tmp; `", "".join(f"W{i}=/x; cd /tmp; " for i in range(12000))),
-                    # OCR 26/10 vòng 2: mỗi dòng mở heredoc giờ đọc từ lệnh qua wrapper (timeout 60 …) và tìm dòng kết thúc nguyên văn
-                    ("4000 x `timeout 60 bash <<EOF / : / EOF`", "timeout 60 bash <<EOF\n:\nEOF\n" * 4000),
-                    # vòng 3: một `<<WORD` không có dòng kết thúc không còn nuốt phần còn lại - mỗi cái không được quét lại tới cuối lệnh
-                    ("8000 x `# <<E<i>` (no delimiter line)", "".join(f"# <<E{i}\n" for i in range(8000)))):
-    cmd = body + f"W={m}; git -C $W commit -qm x"
-    for fn, call in (("write_hits_locked", lambda: sl.write_hits_locked(cmd, m, w, "s")[0]),
-                     ("_bash_trunk_write", lambda: sl._bash_trunk_write(cmd, w, main, sw, "s", 0))):
-        t0 = time.process_time()
-        signal.alarm(30)
-        try:
-            got = call()
-        except TimeoutError:
-            got = None
-        finally:
-            signal.alarm(0)
-        dt = time.process_time() - t0
-        print(f"{'✔' if got and dt < CAP else '✖'} {fn} on {label} ({len(cmd) // 1024} KB): {dt:.2f} s, blocked={got}")
-        bad += not (got and dt < CAP)
+for label, make, n in (("x `W=/tmp/x; `", lambda k: "W=/tmp/x; " * k, 20000), ("distinct `W<i>=/x; `", lambda k: "".join(f"W{i}=/x; " for i in range(k)), 20000),
+                       # every segment that is no assignment used to scan every known name (and compile two regexes for it): 2000 pairs took 57 s
+                       ("x `W<i>=/x; : ; `", lambda k: "".join(f"W{i}=/x; : ; " for i in range(k)), 15000),
+                       ("x `W<i>=/x; cd /tmp; `", lambda k: "".join(f"W{i}=/x; cd /tmp; " for i in range(k)), 12000),
+                       # OCR 26/10 vòng 2: mỗi dòng mở heredoc giờ đọc từ lệnh qua wrapper (timeout 60 …) và tìm dòng kết thúc nguyên văn
+                       ("x `timeout 60 bash <<EOF / : / EOF`", lambda k: "timeout 60 bash <<EOF\n:\nEOF\n" * k, 4000),
+                       # vòng 3: một `<<WORD` không có dòng kết thúc không còn nuốt phần còn lại - mỗi cái không được quét lại tới cuối lệnh
+                       ("x `# <<E<i>` (no delimiter line)", lambda k: "".join(f"# <<E{i}\n" for i in range(k)), 8000)):
+    tail = f"W={m}; git -C $W commit -qm x"
+    cmd, small = make(n) + tail, make(n // 10) + tail
+    for fn, call in (("write_hits_locked", lambda c: sl.write_hits_locked(c, m, w, "s")[0]),
+                     ("_bash_trunk_write", lambda c: sl._bash_trunk_write(c, w, main, sw, "s", 0))):
+        ref = 10 * max(min(timed(call, small)[0] for _ in range(3)), 1e-3)
+        dt, got = timed(call, cmd)
+        for _ in range(2):
+            if not got or dt <= RATIO * ref:
+                break
+            d2, got = timed(call, cmd)
+            dt = min(dt, d2)
+        good = bool(got) and dt <= RATIO * ref
+        print(f"{'✔' if good else '✖'} {fn} on {n} {label} ({len(cmd) // 1024} KB): {dt:.2f} s vs 10 x 1/10 = {ref:.2f} s, "
+              f"ratio {dt / ref:.2f} (max {RATIO}), blocked={got}")
+        bad += not good
 print(f"perf-bad={bad}")
 PY
-grep -q "perf-bad=0" "$TMP/perf" && ok "~200 KB command: write_hits_locked and _bash_trunk_write under 2 s, still blocked ($(grep -o '[0-9.]* s' "$TMP/perf" | tr '\n' ' '))" \
+grep -q "perf-bad=0" "$TMP/perf" && ok "~200 KB command: write_hits_locked and _bash_trunk_write linear (CPU ≤ 2 x 10 x the 1/10 command), still blocked (ratios $(grep -o 'ratio [0-9.]*' "$TMP/perf" | cut -d' ' -f2 | tr '\n' ' '))" \
   || { fail "bounded time on a ~200 KB command"; grep "✖\|Error" "$TMP/perf" | head -6; }
 
 # 2 the hook: a write into main is refused with what to do, and no lock is taken; a read and the integrator pass, also no lock

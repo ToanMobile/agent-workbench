@@ -8497,10 +8497,11 @@ def main():
         out = (p.stdout or "").strip()
         return int(out) if p.returncode == 0 and out.isdigit() and int(out) > 0 else None
 
-    def pool_size_writer(pool, jobs, jmax, stop):
+    def pool_size_writer(pool, jmax, stop):
         """<pool>/size = the slots the shard group may use NOW (tests/lib/job_pool.py reads it): capacity.test_jobs() again every
         POOL_REFRESH_S, so the pool grows when another gate ends and shrinks when one starts (04/11: fixed at its start, a group ran 26 min
-        at 6 slots). The first value is the runner's own --jobs; never above jmax (the runner's workers). capacity unreadable: keep the last."""
+        at 6 slots). The first value (the runner's own --jobs) is written by the gate before any member starts; never above jmax (the
+        runner's workers). capacity unreadable: keep the last."""
         def write(n):
             tmp = os.path.join(pool, f".size.{os.getpid()}")
             try:
@@ -8509,7 +8510,6 @@ def main():
                 os.replace(tmp, os.path.join(pool, "size"))
             except OSError as exc:
                 log_warn(f"shard group: pool size: {exc!r}")
-        write(jobs)
         while not stop.wait(POOL_REFRESH_S):
             try:
                 import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
@@ -8641,7 +8641,10 @@ def main():
         if not k:
             return run_suite_slotted(t, cmd, mode, env, sequential)
         drop_lease()   # R1: chờ marker của gate khác không giữ slot nặng — chủ marker có thể đang xếp hàng đúng slot này (hai bên chờ nhau)
-        with sc.inflight(k, inflight_rec.get(t.get("id"))) as state:
+        # a shard-group member's wall is about the group's (it waits on its siblings' slots and alone tests), not its own sequential run:
+        # its marker carries the group's summed timeout, so another gate on the same key never takes it as stale while it runs (#976)
+        est = shard_group.get("tmo") if id(t) in shard_group.get("ids", ()) else inflight_rec.get(t.get("id"))
+        with sc.inflight(k, est) as state:
             if state == "recheck":
                 rec = sc.hit(k, t)
                 if rec:   # một gate khác vừa chạy đúng khoá này và PASS
@@ -9112,19 +9115,20 @@ def main():
                     # DEVKIT_TEST_JOBS set by the user is a fixed count; otherwise the runners get the workers of a machine with no other
                     # gate (capacity.test_jobs(busy=1)) and the pool's size file says how many may run now
                     pinned = (os.environ.get("DEVKIT_TEST_JOBS") or "").strip()
-                    jmax = jobs
+                    jmax, sized = jobs, False
                     if not (pinned.isdigit() and int(pinned) > 0):
                         try:
                             import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
                             jmax = max(jobs, _capacity.test_jobs(busy=1))
+                            sized = True
                         except Exception as exc:   # noqa: BLE001 - capacity broken: a fixed pool of the runner's --jobs
                             log_warn(f"shard group: capacity.test_jobs: {exc!r}; pool fixed at {jobs}")
                     with open(os.path.join(shard_group["dir"], "size"), "w", encoding="utf-8") as fh:   # before any member starts
                         fh.write(f"{jobs}\n")
                     shard_group["jmax"], shard_group["stop"] = jmax, threading.Event()
-                    if not (pinned.isdigit() and int(pinned) > 0):   # a user pin stays a fixed pool: no sizer lowers it
+                    if sized:   # a user pin stays a fixed pool (no sizer lowers it); a broken capacity too (#976: one warning, not one per 5 s)
                         shard_group["sizer"] = threading.Thread(target=pool_size_writer, name="shard-pool-size", daemon=True,
-                                                                args=(shard_group["dir"], jobs, jmax, shard_group["stop"]))
+                                                                args=(shard_group["dir"], jmax, shard_group["stop"]))
                         shard_group["sizer"].start()
                 shard_group["ids"].add(id(t))
                 t["shard_timeout_s"] = shard_group["tmo"]
