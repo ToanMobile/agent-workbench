@@ -4429,6 +4429,37 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-matrix-detect-unittest-fallback",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/matrix_detect.py",
+        "universal-agent-devkit/tests/verification/test_matrix_detect_unittest_fallback.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MATRIX-UNITTEST-01",
+          "name": "#1153: matrix_detect chọn `python3 -m unittest discover -s <thư mục>` khi dự án không khai báo pytest, python3 không import được pytest và file test dùng unittest; dự án khai báo pytest, máy có pytest hoặc test kiểu pytest vẫn giữ `python3 -m pytest -q`; lệnh unittest sinh ra chạy thật được test của dự án",
+          "command": "bash universal-agent-devkit/tests/verification/test_matrix_detect_unittest_fallback.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-active-profile-link-not-committed",
+      "watch_files": [
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/bin/agent-config.py",
+        "universal-agent-devkit/tests/installer/test_active_profile_link_not_committed.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-COPY-PROFILE-01",
+          "name": "#1153: `agent-kit init -m copy` ghi link .agents/active-profile (trỏ về kit của máy cài) vào .git/info/exclude như chế độ symlink: `git add -A` không commit link, bản clone không có symlink treo, health không cảnh báo link DevKit chưa loại khỏi git, cài lại không nhân đôi dòng và không đụng .gitignore đã commit",
+          "command": "bash universal-agent-devkit/tests/installer/test_active_profile_link_not_committed.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

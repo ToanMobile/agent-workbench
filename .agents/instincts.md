@@ -860,3 +860,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Gỡ một dòng hook theo prefix làm mất luôn lưới an toàn đi chung dòng đó
 - **Nguyên nhân:** compact() gộp cảnh báo ngõ cụt phần cứng (hardware-boundaries.json, DỪNG/Cứu hộ) vào dòng 'Yêu cầu ngầm định'; PR #1057 bỏ dòng NFR ở đường --hook nên mất luôn cảnh báo phần cứng
 - **Quy tắc phòng ngừa & Cách fix:** Trước khi gỡ hay lọc một dòng hook, liệt kê mọi nguồn được nối vào dòng đó (grep injected_nfrs.insert/append); lưới an toàn phải có dòng prefix riêng và có ca test ĐỎ→XANH riêng
+
+---
+
+### [INSTINCT-110] Lệnh hook dạng mới trong hooks.json làm health, gate và uninstall cùng đánh giá sai ở repo ngoài agent-workbench
+- **Ngày phát hiện:** 2026-11-13
+- **Hiện tượng lỗi:** Lệnh hook dạng mới trong hooks.json làm health, gate và uninstall cùng đánh giá sai ở repo ngoài agent-workbench
+- **Nguyên nhân:** PR #1108 đưa vào hooks.json lệnh guard-protected-push thử hai đường dẫn (nguồn kit rồi tới .claude/hooks). Ba nơi đọc lệnh hook không hiểu dạng này: registered_hook_scripts (health, gate, push gate) coi cả hai đường dẫn là bắt buộc nên mọi repo mới cài FAIL; _hook_key rút ra khoá bắt đầu bằng p= nên uninstall để sót dòng đăng ký. Không test nào chạy init rồi health, gate, uninstall trên một repo không chứa universal-agent-devkit/, và test_uninstall.sh đỏ 2/29 trên main mà không ai thấy.
+- **Quy tắc phòng ngừa & Cách fix:** Khi thêm hay đổi dạng một lệnh trong hooks/hooks.json: chạy lệnh thật đó qua cả bốn chỗ trên một repo tạm KHÔNG phải agent-workbench (agent-kit init, agent-kit health phải thoát 0, post-fix-gate khi settings.json nằm trong diff, agent-kit uninstall của dự án đã sửa settings không để sót hook). Test đọc lệnh từ hooks.json chứ không chép tay: tests/gates/test_hook_alternative_paths.sh (H1, G1) và tests/installer/test_uninstall.sh.
