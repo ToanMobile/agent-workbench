@@ -4366,6 +4366,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-session-card-title-envelope",
+      "watch_files": [
+        "universal-agent-devkit/hooks/session_card.sh",
+        "universal-agent-devkit/tests/gates/test_session_card_title_envelope.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SESSION-CARD-TITLE-01",
+          "name": "#1140: tiêu đề thẻ phiên lấy từ dòng người dùng viết: bóc khối <system-reminder> (nhiều khối, nhiều dòng) và thẻ bọc <pasted_content>, giữ nội dung dán; prompt chỉ có khối reminder rơi về transcript rồi tiêu đề mặc định theo file sửa đầu tiên",
+          "command": "bash universal-agent-devkit/tests/gates/test_session_card_title_envelope.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

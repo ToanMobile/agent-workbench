@@ -29,6 +29,13 @@ sc_title() {   # sc_title <prompt file> <transcript> <rel file> <session> → on
 import json, os, re, sys
 pf, tr, rel, sid = sys.argv[1:5]
 
+# #1140: a Claude Desktop prompt opens with <system-reminder> blocks and may wrap pasted text in <pasted_content id=...> tags, so
+# the first non-blank line was a tag name. Drop the reminder blocks whole (not the user's task, and the issue may be public) and
+# only the wrapper tags of pasted text (its content stays), then pick the line.
+def clean(t):
+    t = re.sub(r"(?is)<system-reminder\b[^>]*>.*?</system-reminder\s*>", "", t)
+    return re.sub(r"(?i)</?(?:system-reminder|pasted_content)\b[^>]*>", "", t)
+
 def first_user(path):
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -45,6 +52,8 @@ def first_user(path):
                 c = m.get("content", d.get("content"))
                 if isinstance(c, list):
                     c = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+                if isinstance(c, str):
+                    c = clean(c)
                 if isinstance(c, str) and c.strip() and not c.lstrip().startswith("<"):
                     return c
     except OSError:
@@ -57,6 +66,7 @@ try:
         text = fh.read()
 except OSError:
     pass
+text = clean(text)
 if not text.strip() and tr:
     text = first_user(tr)
 line = next((l.strip() for l in text.splitlines() if l.strip()), "")
