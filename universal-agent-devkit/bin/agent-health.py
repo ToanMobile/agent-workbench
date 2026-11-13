@@ -258,9 +258,13 @@ def registered_hook_scripts(settings) -> list:
 # Lệnh hook có thể nêu cùng một script ở nhiều chỗ và chạy cái đầu tiên tồn tại (hooks.json từ #1108: nguồn kit trước, link đã cài sau):
 #   p="$CLAUDE_PROJECT_DIR"/universal-agent-devkit/hooks/x.py; f="$CLAUDE_PROJECT_DIR"/.claude/hooks/x.py;
 #   [ -f "$p" ] && exec python3 "$p"; [ -f "$f" ] && exec python3 "$f"; …; exit 2
-# Đường dẫn gán vào biến shell (tên biến đứng ngay trước chỗ khớp) và biến đó được thử tồn tại trong cùng lệnh là "thay thế có canh".
-_HOOK_ASSIGN_RX = re.compile(r"""(?:^|[\s;&|(])([A-Za-z_]\w*)=["']?$""")
-_HOOK_GUARD_RX = r"""(?:\[\[?|\btest)\s+-[efrsx]\s+["']?\$\{?%s\}?["']?(?:\s|\]|$)"""
+# Dạng DUY NHẤT được coi là "đường dẫn thay thế": cả lệnh mở đầu bằng các phép gán, rồi tới các mệnh đề `[ -f "$v" ] && exec <trình chạy> "$v";`,
+# rồi phần đuôi fail-closed. exec thay shell nên phần đuôi chỉ chạy khi mọi file đều thiếu. Không khớp trọn dạng này (không exec, chuỗi `&&`,
+# phép thử nằm trong echo, nháy đơn, lệnh khác chen trước) thì mọi đường dẫn vẫn bắt buộc: không tự quét cú pháp shell (INSTINCT-045).
+_HOOK_ASSIGN_RX = re.compile(r"""(?:^|[\s;])([A-Za-z_]\w*)="?$""")
+_HOOK_ALT_CLAUSE = r"""\[\s+-f\s+"\$(?P<v>[A-Za-z_]\w*)"\s+\]\s*&&\s*exec\s+[^;&|"'$`]*"\$(?P=v)"\s*;\s*"""
+_HOOK_ALT_CLAUSE_RX = re.compile(_HOOK_ALT_CLAUSE)
+_HOOK_ALT_CMD_RX = re.compile(r"""\s*(?:[A-Za-z_]\w*=[^\s;]+\s*;\s*)+(?P<clauses>(?:%s)+)""" % _HOOK_ALT_CLAUSE)
 
 
 def registered_hook_groups(settings) -> list:
@@ -281,15 +285,21 @@ def registered_hook_groups(settings) -> list:
             for h in m.get("hooks", []):
                 cmd = h.get("command") if isinstance(h, dict) else None
                 cmd = cmd if isinstance(cmd, str) else ""
+                shape = _HOOK_ALT_CMD_RX.match(cmd)
+                alt_vars = {c.group("v") for c in _HOOK_ALT_CLAUSE_RX.finditer(shape.group("clauses"))} if shape else set()
                 found = []
                 for match in HOOK_PATH_RX.finditer(cmd):
                     rel = match.group(1) or match.group(2)
                     if ".." in rel.split("/") or not (rel.startswith(".claude/hooks/") or rel.endswith(HOOK_SCRIPT_EXTS)):
                         continue
-                    var = _HOOK_ASSIGN_RX.search(cmd[:match.start()])
-                    found.append((rel, bool(var) and re.search(_HOOK_GUARD_RX % re.escape(var.group(1)), cmd) is not None))
-                alt_group = [] if sum(1 for _, is_alt in found if is_alt) > 1 else None
-                for rel, is_alt in found:
+                    var = _HOOK_ASSIGN_RX.search(cmd[:match.start()]) if shape and match.start() < shape.start("clauses") else None
+                    found.append((rel, var.group(1) if var else None))
+                # Một biến gán hai lần chỉ còn giá trị sau: không coi là thay thế. Nhóm cần từ hai đường dẫn, mỗi cái một biến có mệnh đề exec.
+                names = [v for _, v in found if v in alt_vars]
+                alt_ok = {v for v in names if names.count(v) == 1}
+                alt_group = [] if len(alt_ok) > 1 else None
+                for rel, v in found:
+                    is_alt = v in alt_ok
                     if is_alt and alt_group is not None:
                         if not alt_group:
                             groups.append(alt_group)

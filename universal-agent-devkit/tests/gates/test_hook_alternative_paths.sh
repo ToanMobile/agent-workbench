@@ -55,6 +55,22 @@ unit "U4: a satisfied group does not hide a mandatory script of another command"
   "$(alt x.py)" 'bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/req.sh"'
 unit "U5: groups never span two commands (each command needs its own existing candidate)" "[\"universal-agent-devkit/hooks/y.py\", \".claude/hooks/y.py\"]" "m.missing_hook_scripts(s, lambda r: r == '$F')" \
   "$(alt x.py)" "$(alt y.py)"
+# Review 13/11 (principal-code-reviewer, P2): chỉ `[ -f "$v" ] && exec … "$v"` mới là thay thế. exec thay shell nên phần sau chỉ chạy khi
+# file thiếu; mọi dạng khác (không exec, chuỗi &&, phép thử nằm trong echo, nháy đơn, dùng biến trước các mệnh đề) vẫn bắt buộc.
+A='p="$CLAUDE_PROJECT_DIR"/.claude/hooks/a.sh; f="$CLAUDE_PROJECT_DIR"/.claude/hooks/b.sh; '
+only_a="m.missing_hook_scripts(s, lambda r: r == '.claude/hooks/a.sh')"
+unit "U6: guarded without exec, then run unguarded → the unguarded script stays mandatory" '[".claude/hooks/b.sh"]' "$only_a" \
+  "$A"'[ -f "$p" ] && bash "$p"; [ -f "$f" ] && bash "$f"; bash "$f"'
+unit "U7: an AND chain needs BOTH scripts" '[".claude/hooks/b.sh"]' "$only_a" \
+  "$A"'[ -f "$p" ] && [ -f "$f" ] && bash "$p" && bash "$f"'
+unit "U8: a guard that is only text inside an echo guards nothing" '[".claude/hooks/b.sh"]' "$only_a" \
+  "$A"'echo "[ -f $p ] && exec bash $p; [ -f $f ] && exec bash $f"; bash "$p"; bash "$f"'
+unit "U9: a variable run BEFORE the guarded clauses is not an alternative" '[".claude/hooks/b.sh"]' "$only_a" \
+  "$A"'bash "$f"; [ -f "$p" ] && exec bash "$p"; [ -f "$f" ] && exec bash "$f"; exit 2'
+unit "U10: a single-quoted guard tests a literal name, not the variable" '[".claude/hooks/b.sh"]' "$only_a" \
+  "$A"'[ -f '"'"'$p'"'"' ] && exec bash "$p"; [ -f '"'"'$f'"'"' ] && exec bash "$f"; exit 2'
+unit "U11: the fail-closed message after the last clause may name the variables" '[]' "$only_a" \
+  "$A"'[ -f "$p" ] && exec bash "$p"; [ -f "$f" ] && exec bash "$f"; echo "missing ($p and $f)" >&2; exit 2'
 
 # ── agent-kit health thật: repo chỉ có link đã cài, không có universal-agent-devkit/ ──
 H="$TMP/h"; mkdir -p "$H/.claude/hooks"
