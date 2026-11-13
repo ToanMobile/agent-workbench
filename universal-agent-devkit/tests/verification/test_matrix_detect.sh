@@ -173,6 +173,7 @@ case "$w2" in *"shared/*.kt"*) ok "Groovy includeBuild '../shared' is followed t
 case "$w3" in *"PhoneConnect/"*) fail "commented includeBuild followed: $w3" ;; *) ok "a commented-out includeBuild is ignored" ;; esac
 
 # The regression gate runs only the suite of the module that changed.
+# PCConnect must run the real `go test` (a stub that exits 0 would make this case green without the suite). CarConnect stays exit 2.
 P="$(proj monogate)"; (cd "$P" && git init -q . && git config user.email t@t && git config user.name t)
 mkdir -p "$P/CarConnect/app/src/main" "$P/CarConnect/app/src/test" "$P/PCConnect"
 printf '#!/bin/sh\necho "CarConnect Gradle ran"; exit 1\n' > "$P/CarConnect/gradlew"; chmod +x "$P/CarConnect/gradlew"

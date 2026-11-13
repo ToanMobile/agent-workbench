@@ -139,7 +139,9 @@ if [ -f "${RULES}" ] && [ -f "${REPO_ROOT}/.agents/context/rules-index.md" ]; th
   RULES_OUT="$(mktemp "${TMPDIR:-/tmp}/devkit-rules.XXXXXX")" || RULES_OUT=""
   [ -n "${RULES_OUT}" ] && { printf '%s' "${PAYLOAD}" | CLAUDE_PROJECT_DIR="${REPO_ROOT}" python3 "${RULES}" > "${RULES_OUT}" 2>/dev/null & }
 fi
-printf '%s' "${PAYLOAD}" | CLAUDE_PROJECT_DIR="${REPO_ROOT}" python3 "${ENRICH}" --hook 2>/dev/null
+# #1127: enrich_hook.py chạy enrich_context từ pyc (file chạy trực tiếp bị compile lại ở mỗi prompt); kit cũ chưa có nó thì như trước.
+_RUN="${ENRICH%/*}/enrich_hook.py"; [ -f "${_RUN}" ] || _RUN="${ENRICH}"
+printf '%s' "${PAYLOAD}" | CLAUDE_PROJECT_DIR="${REPO_ROOT}" python3 "${_RUN}" --hook 2>/dev/null
 if [ -n "${RULES_OUT}" ]; then
   wait
   cat "${RULES_OUT}"

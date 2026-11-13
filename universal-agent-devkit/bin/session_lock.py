@@ -156,10 +156,19 @@ SHELL_BODY = {"bash", "sh", "zsh", "dash", "ksh", "eval", "source", "."}   # ...
 _INERT = str.maketrans({c: " " for c in "'\"`\\#<()"})
 
 
+# Cùng một dòng mở lặp lại hàng nghìn lần (#781: 4000 × `timeout 60 bash <<EOF`). shlex + prefix_end phụ thuộc mỗi `text`.
+_PROGRAM_WORD_CACHE = {}
+
+
 def _program_word(text):
     """The program (basename) of the simple command `text`, past assignments, keywords and wrappers with their options and values
     (`timeout 60`, `gtimeout -s KILL 60`, `env X=1`, `nohup`, `command`, `sudo -u x`: hooks/shell_norm.prefix_end); "" when there is none.
-    OCR 26/10 r2: the FIRST word was read, so `timeout 60 bash <<EOF` fed its body to `timeout` - data, never judged."""
+    OCR 26/10 r2: the FIRST word was read, so `timeout 60 bash <<EOF` fed its body to `timeout` - data, never judged.
+    #781: một lệnh ~100 KB toàn dòng mở giống nhau gọi hàm này hàng chục nghìn lần; không nhớ thì trần CPU 2 s đỏ trên runner."""
+    try:
+        return _PROGRAM_WORD_CACHE[text]
+    except KeyError:
+        pass
     import shlex   # noqa: PLC0415 - only the opening line of a heredoc gets here
     try:
         words = shlex.split(text)
@@ -167,10 +176,14 @@ def _program_word(text):
         words = text.split()
     try:
         k = _hook_module("shell_norm").prefix_end(words)
+        result = os.path.basename(words[k]) if k < len(words) else ""
     except Exception as e:  # noqa: BLE001 - fail closed: a body fed to any word that runs code is code
         print(f"session_lock: wrapper scan failed: {e!r}", file=sys.stderr)
-        return next((os.path.basename(w) for w in words if os.path.basename(w) in RUNS_BODY or w.startswith("python")), "")
-    return os.path.basename(words[k]) if k < len(words) else ""
+        result = next((os.path.basename(w) for w in words if os.path.basename(w) in RUNS_BODY or w.startswith("python")), "")
+    if len(_PROGRAM_WORD_CACHE) >= 4096:   # một tiến trình sống lâu không giữ mọi dòng mở đã thấy
+        _PROGRAM_WORD_CACHE.clear()
+    _PROGRAM_WORD_CACHE[text] = result
+    return result
 
 
 def _heredoc_ends(lines):
@@ -1984,11 +1997,17 @@ def _family_write_held(found, gdir, sid, tops, memo=None):
     return None
 
 
+_HOOKS_DIR = None
+
+
 def _hook_module(name):
-    """A module of this file's own kit hooks/ (shell_writes, session_worktree), imported after the stdlib on the path."""
-    hooks = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "hooks")
-    if hooks not in sys.path:
-        sys.path.append(hooks)
+    """A module of this file's own kit hooks/ (shell_writes, session_worktree), imported after the stdlib on the path.
+    realpath một lần mỗi tiến trình: gọi lại từng dòng heredoc thì lstat cả cây (#781)."""
+    global _HOOKS_DIR
+    if _HOOKS_DIR is None:
+        _HOOKS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "hooks")
+        if _HOOKS_DIR not in sys.path:
+            sys.path.append(_HOOKS_DIR)
     return __import__(name)
 
 
