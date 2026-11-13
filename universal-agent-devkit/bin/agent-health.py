@@ -339,9 +339,11 @@ def _git_holds_lock(lock, main):
     (`git commit` chờ trình soạn thảo đã đóng fd nhưng vẫn giữ khoá; `git -C main …` cũng chdir vào main). Thư mục làm việc trong một
     worktree lồng dưới main/.claude/worktrees không tính: đó là checkout khác, nó không giữ khoá của main. False khi không có; None khi
     không biết (không có lsof, lsof lỗi hoặc quá giờ): khi đó người gọi im lặng, không báo một khoá có thể đang sống."""
+    # đúng tên lệnh `git` (không phải tiền tố): gitstatusd, daemon fsmonitor hay trợ thủ IDE đứng trong main không phải lệnh git đang giữ khoá,
+    # còn `git-remote-https` luôn có `git` cha cùng chạy
     opened = _lsof("-F", "c", "--", str(lock))
-    in_dir = _lsof("-a", "-c", "git", "-d", "cwd", "-F", "n")
-    if opened is not None and any(ln[1:].startswith("git") for ln in opened if ln.startswith("c")):
+    in_dir = _lsof("-a", "-c", "/^git$/", "-d", "cwd", "-F", "n")
+    if opened is not None and any(ln[1:] == "git" for ln in opened if ln.startswith("c")):
         return True
     if in_dir is not None:
         root = os.path.realpath(str(main))
