@@ -148,7 +148,7 @@ def is_unity(project):
             and os.path.isfile(os.path.join(project, "ProjectSettings", "ProjectVersion.txt")))
 
 
-_UNITTEST_IMPORT_RX = re.compile(r"^\s*(?:import\s+unittest\b|from\s+unittest\b)", re.M)
+_UNITTEST_CLASS_RX = re.compile(r"^class\s+\w+\(\s*(?:unittest\.)?(?:IsolatedAsyncio)?TestCase\s*\)", re.M)
 
 
 def _pytest_available():
@@ -190,12 +190,19 @@ def detect(project):
     py_tests = {d: glob.glob(os.path.join(project, d, "test_*.py")) for d in ("tests", "test")}
     if declares_pytest or any(py_tests.values()):
         # Dự án không khai báo pytest, python3 của máy không có pytest, mà test viết bằng unittest: `python3 -m pytest` chỉ in
-        # "No module named pytest" (đo 13/11: gate REJECT 0/1 trên repo thử). Khi đó chạy bằng unittest của thư viện chuẩn.
-        # Mọi trường hợp khác giữ pytest: nó chạy được cả test unittest, và test kiểu pytest thì unittest không thấy.
-        unittest_dir = None if declares_pytest or _pytest_available() else next(
-            (d for d, files in py_tests.items() if any(_UNITTEST_IMPORT_RX.search(_read(f)) for f in files)), None)
-        if unittest_dir:
-            found.append(("unittest", f"python3 -m unittest discover -s {unittest_dir}"))
+        # "No module named pytest" (đo 13/11: gate REJECT 0/1 trên repo thử). Khi đó chạy bằng unittest của thư viện chuẩn,
+        # nhưng CHỈ khi unittest chắc chắn chạy hết test: mọi file test_*.py nằm ngay trong tests/ hoặc test/ (không lồng sâu)
+        # và file nào cũng có lớp kế thừa trực tiếp TestCase. Còn nghi ngờ thì giữ pytest để lỗi thiếu runner hiện ra,
+        # không để gate xanh trong khi test kiểu pytest hay test lồng sâu không chạy.
+        unittest_dirs = [] if declares_pytest or _pytest_available() else [d for d, files in py_tests.items() if files]
+        covered = bool(unittest_dirs) and all(
+            sorted(glob.glob(os.path.join(project, d, "**", "test_*.py"), recursive=True)) == sorted(py_tests[d])
+            and all(_UNITTEST_CLASS_RX.search(_read(f)) for f in py_tests[d]) for d in unittest_dirs)
+        if covered:
+            for d in unittest_dirs:
+                # tests/ là package (có __init__.py): `-t .` để import tương đối trong test chạy được.
+                top = " -t ." if os.path.isfile(os.path.join(project, d, "__init__.py")) else ""
+                found.append((f"unittest ({d}/)", f"python3 -m unittest discover -s {d}{top}"))
         else:
             found.append(("pytest", "python3 -m pytest -q"))
     if has("go.mod"):

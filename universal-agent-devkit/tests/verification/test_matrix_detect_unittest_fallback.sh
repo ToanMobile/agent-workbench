@@ -51,5 +51,24 @@ P="$TMP/u5"; mkdir -p "$P/tests"; printf 'def test_add():\n    assert 1 + 1 == 2
 expect "A6: pytest-style tests (no unittest import) keep pytest: unittest would run nothing" "$P" 0 "python3 -m pytest -q"
 P="$TMP/u6"; mkdir -p "$P/tests"; printf '# import unittest is only mentioned in a comment\ndef test_x():\n    assert True\n' > "$P/tests/test_c.py"
 expect "A7: 'import unittest' inside a comment is not a unittest test" "$P" 0 "python3 -m pytest -q"
+# Review 13/11 (principal-code-reviewer): unittest chỉ được chọn khi nó chắc chắn chạy HẾT test của dự án; còn nghi ngờ thì giữ pytest
+# để lỗi thiếu runner hiện ra, không để gate xanh trong khi một phần test không chạy.
+unittest_proj u8 tests; printf 'def test_b():\n    assert False\n' > "$P/tests/test_b.py"
+expect "A8: a directory mixing TestCase files and pytest-style files keeps pytest (unittest would skip test_b and pass)" "$P" 0 "python3 -m pytest -q"
+P="$TMP/u9"; mkdir -p "$P/tests"; printf 'from unittest import mock\n\n\ndef test_m():\n    assert mock is not None\n' > "$P/tests/test_m.py"
+expect "A9: 'from unittest import mock' in a pytest-style file is not a unittest test" "$P" 0 "python3 -m pytest -q"
+unittest_proj u10 tests; : > "$P/tests/__init__.py"; printf 'VALUE = 5\n' > "$P/tests/helpers.py"
+printf 'import unittest\n\nimport calc\nfrom .helpers import VALUE\n\n\nclass RelTest(unittest.TestCase):\n    def test_rel(self):\n        self.assertEqual(calc.add(2, 3), VALUE)\n' > "$P/tests/test_rel.py"
+expect "A10: a tests/ package gets '-t .' so relative imports work" "$P" 0 "python3 -m unittest discover -s tests -t ."
+out="$(cd "$P" && python3 -m unittest discover -s tests -t . 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] && printf '%s' "$out" | grep -q 'Ran 2 tests'; } && ok "A10b: that command really runs both tests of the package (exit 0, Ran 2 tests)" \
+  || fail "A10b: exit $rc: $(printf '%s' "$out" | tail -2 | tr '\n' ' ' | cut -c1-160)"
+unittest_proj u11 tests; mkdir -p "$P/test"; cp "$P/tests/test_calc.py" "$P/test/test_other.py"
+expect "A11: tests/ and test/ both hold unittest files → one command per directory" "$P" 0 "python3 -m unittest discover -s tests | python3 -m unittest discover -s test"
+unittest_proj u12 tests; mkdir -p "$P/tests/unit"; cp "$P/tests/test_calc.py" "$P/tests/unit/test_deep.py"
+expect "A12: a nested test file unittest discovery would skip keeps pytest" "$P" 0 "python3 -m pytest -q"
+unittest_proj u13 tests; printf 'import unittest\n\n\nclass Base(unittest.TestCase):\n    pass\n' > "$P/tests/base.py"
+printf 'from base import Base\n\n\nclass ViaBase(Base):\n    def test_x(self):\n        self.assertTrue(True)\n' > "$P/tests/test_via_base.py"
+expect "A13: a test file with no direct TestCase subclass keeps pytest (cannot tell that unittest runs it)" "$P" 0 "python3 -m pytest -q"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_matrix_detect_unittest_fallback: all passed" || { echo "❌ test_matrix_detect_unittest_fallback: $FAILS failed"; exit 1; }
