@@ -1359,8 +1359,17 @@ except (OSError, ValueError, RecursionError):
     state = {}
 # per turn: a release never switches the gate off for later turns. No turn start (peer-only session, no transcript):
 # one budget per hour, not one constant key (`session@0`) spent once and then letting every later XONG through.
-key = "%s@%s" % (session, "h%d" % int(time.time() // 3600) if start is None else int(start or 0))
+# The budget carries over an hour edge (#1127): runs that straddle it (every 00:00 UTC included) count against the earlier key too.
+# PROOF_GATE_NOW pins the clock for the test only (epoch seconds, ignored when not a number).
+try:
+    _now = float(os.environ.get("PROOF_GATE_NOW") or time.time())
+except ValueError:
+    _now = time.time()
+_hour = int(_now // 3600)
+key = "%s@%s" % (session, "h%d" % _hour if start is None else int(start or 0))
 n = state.get(key, 0) + 1
+if start is None:
+    n = max(n, state.get("%s@h%d" % (session, _hour - 1), 0) + 1)
 state[key] = n
 try:
     os.makedirs(os.path.dirname(state_path), exist_ok=True)
