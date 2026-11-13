@@ -3891,15 +3891,16 @@ SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json")
 _AGENT_HEALTH = []
 
 
-def _registered_hook_scripts(settings) -> list:
-    """bin/agent-health.py's reader of the hook script paths (one copy, INSTINCT-015), loaded on first use."""
+def _missing_hook_scripts(settings, exists) -> list:
+    """bin/agent-health.py's reader of the hook script paths (one copy, INSTINCT-015), loaded on first use: the registered
+    scripts the hook cannot run. Guarded alternatives of one command (`[ -f "$p" ] && exec …; [ -f "$f" ] && exec …`) need one."""
     if not _AGENT_HEALTH:
         import importlib.util  # noqa: PLC0415 - hyphenated sibling module in bin/
         spec = importlib.util.spec_from_file_location("agent_health", Path(__file__).resolve().parent / "agent-health.py")
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         _AGENT_HEALTH.append(mod)
-    return _AGENT_HEALTH[0].registered_hook_scripts(settings)
+    return _AGENT_HEALTH[0].missing_hook_scripts(settings, exists)
 
 
 def settings_problems(rel_file: str, text, root: Path) -> list:
@@ -3920,20 +3921,19 @@ def settings_problems(rel_file: str, text, root: Path) -> list:
     if is_main and not (isinstance(settings.get("hooks"), dict) and settings["hooks"]):
         return [('"hooks" rỗng hoặc thiếu: không hook nào chạy (chạy lại agent-kit init)',
                  '"hooks" is empty or missing: no hook runs (re-run agent-kit init)')]
+    kit_hooks = get_devkit_dir() / "hooks"
+
+    def wired(rel: str) -> bool:
+        name = rel[len(".claude/hooks/"):] if rel.startswith(".claude/hooks/") else ""
+        # .claude/hooks/ holds the git-ignored links `agent-kit init` makes: a hook the kit ships is wired once it is installed
+        return (root / rel).exists() or bool(name and "/" not in name and (kit_hooks / name).is_file())
+
     try:
-        scripts = _registered_hook_scripts(settings)
+        missing = _missing_hook_scripts(settings, wired)
     except ValueError as e:
         return [(f"khối hooks sai dạng, Claude Code không đọc được: {e}", f"malformed hooks block Claude Code cannot read: {e}")]
     except Exception as e:   # noqa: BLE001 - agent-health.py not loadable: the wiring cannot be judged, never a silent pass
         return [(f"không kiểm được dây nối hook ({e!r})", f"cannot check the hook wiring ({e!r})")]
-    kit_hooks = get_devkit_dir() / "hooks"
-    missing = []
-    for rel in dict.fromkeys(scripts):
-        name = rel[len(".claude/hooks/"):] if rel.startswith(".claude/hooks/") else ""
-        # .claude/hooks/ holds the git-ignored links `agent-kit init` makes: a hook the kit ships is wired once it is installed
-        if (root / rel).exists() or (name and "/" not in name and (kit_hooks / name).is_file()):
-            continue
-        missing.append(rel)
     return [(f"hook chạy file không tồn tại: {rel}", f"hook runs a file that does not exist: {rel}") for rel in missing]
 
 

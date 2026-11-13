@@ -4412,6 +4412,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-hook-alternative-paths",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-health.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/hooks/hooks.json",
+        "universal-agent-devkit/tests/gates/test_hook_alternative_paths.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-HOOK-ALT-PATHS-01",
+          "name": "#1153: lệnh hook thử nguồn kit rồi tới link .claude/hooks (`[ -f \"$p\" ] && exec …; [ -f \"$f\" ] && exec …`, hooks.json từ #1108) không bị agent-kit health và post-fix-gate báo thiếu file ở repo ngoài agent-workbench khi một đường dẫn tồn tại; cả hai thiếu vẫn bị chặn, và mọi dạng không có exec (chuỗi &&, phép thử trong echo, nháy đơn, chạy không canh) vẫn bắt buộc",
+          "command": "bash universal-agent-devkit/tests/gates/test_hook_alternative_paths.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
