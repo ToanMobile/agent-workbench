@@ -86,7 +86,7 @@ calibration, the paired oracle and the gate (core-rules §4).
   no hook takes the screenshot.
 
 ## Every prompt (standing law)
-Applies to Claude Code, Gemini CLI, Antigravity, Codex, Cursor and Grok, to every turn that changes
+Applies to Claude Code, Gemini CLI, Antigravity, Codex and Cursor, to every turn that changes
 a file. A turn that changes nothing (a question, a review, a plan) is answered directly: no gate,
 no image, no status line. In a changing turn a missing step opens the reply with CHƯA XONG and
 stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
@@ -140,7 +140,7 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 - Act, don't offer: a defect an audit or review finds here is fixed in the same turn (oracle, gate,
   proof) unless the fix needs the ask list; never end a turn with a menu of prescribed steps (tests,
   gate, fresh-context review, proof capture): do them.
-- Never hand the work to the user (2026-10-09: "tự xử lý luôn đi, tôi không đọc đâu"): no `!`
+- Never hand the work to the user: no `!`
   command, no "run this", no checklist. The agent runs the gate of every repo the change reaches,
   the fresh-context review and its fixes, the Antigravity audit when required, the kit install and host re-sync, commit and push. Only the "ask
   the user" list below, a login only the user can type and a switch the kit reserves go to the user.
@@ -160,10 +160,10 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
   lệnh bị từ chối; ghi CHƯA XONG cho bước đó kèm quyền cần và lý do, làm hết phần còn lại.
 - An edited existing test needs cross-approval by another agent: commit, then an Antigravity
   `pm_dispatch kind=audit` on the PR head and `pm_verdict kind=audit verdict=pass auditedHead=<head>`;
-  the gate reads the PM's scoped pass record (else `agent-kit approve-tests <task-id>`). No Grok (13/11). The editor never approves its
+  the gate reads that pass record (else `agent-kit approve-tests <task-id>`). The editor never approves its
   own test (`--auto-approve-tests`, `AUTO-APPROVE:` approve nothing); never ask the user: the
   author cannot post `approved-head`: start a reviewer session to post it.
-- Clean up what you create (33 GB filled a disk): delete a repo copy, stage
+- Clean up what you create: delete a repo copy, stage
   kit or fixture once served; what must outlive the session lives in the ignored `.agents/local/`.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
