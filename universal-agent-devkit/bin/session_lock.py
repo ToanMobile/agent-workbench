@@ -56,6 +56,21 @@ LOG = "devkit-session.log"
 GUARD = "devkit-session.guard"
 GUARD_WAIT_S = 2.0   # the guard covers a read, a pid check and one small write: held for about a millisecond
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# Tên Grok (`run_terminal_command`, id cũ `run_terminal_cmd`) và Cursor (`Shell`) đặt cho công cụ mà Claude gọi là Bash. Grok chạy hook của
+# project theo matcher `Bash` nhưng payload mang tên công cụ CỦA NÓ, nên guard so `tool_name == "Bash"` chưa từng xét lệnh Grok nào: lúc
+# 03:05:22 +07 ngày 11/11 lệnh `git checkout --detach origin/<nhánh>` của worker review Grok trong checkout chính đi qua hook này và để
+# main detached 30 giờ (#1146).
+SHELL_TOOLS = ("run_terminal_command", "run_terminal_cmd", "Shell")
+
+
+def is_shell_alias(tool, tool_input):
+    """Công cụ shell không tên Bash: tên thuộc SHELL_TOOLS, hoặc một tên chưa ai thấy mà mang chuỗi `command` (fail closed: lần đổi tên sau
+    không được mở lại lỗ này; công cụ MCP, công cụ sửa file và công cụ không có `command` không bao giờ bị coi là shell)."""
+    if tool == "Bash" or not tool:
+        return False
+    if tool in SHELL_TOOLS:
+        return True
+    return tool not in EDIT_TOOLS and not tool.startswith("mcp__") and isinstance(tool_input.get("command"), str)
 
 
 class _Re:
@@ -2690,6 +2705,12 @@ def main():
         heartbeat_session(cwd, sid)
     tool = str(d.get("tool_name") or "")
     ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}   # (a string or a list: no command, no path - D6)
+    # #1146: shell mang tên khác được xét theo luật trunk mode bên dưới y như Bash (nên `git checkout`, redirect hay commit trong checkout
+    # chính bị chặn); luật một-phiên-một-checkout (khoá) KHÔNG áp cho nó (Grok chưa từng lấy khoá: áp vào sẽ đổi cách các lane Grok của
+    # board chạy), xem hai chỗ `shell_alias` quanh khối trunk.
+    shell_alias = is_shell_alias(tool, ti)
+    if shell_alias:
+        tool = "Bash"
     command = str(ti.get("command") or "") if tool == "Bash" else ""
     if tool in EDIT_TOOLS:   # the approval flag and the lock file are written by the user's command and by this hook, never by an Edit/Write
         target_path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
@@ -2722,7 +2743,7 @@ def main():
         collides, foreign = bash_collides(command, top, cwd, sid, notes)
     else:
         return 0
-    if foreign:   # a write into ANOTHER checkout that another live session holds: judged by THAT lock, whatever this session's own checkout says
+    if foreign and not shell_alias:   # a write into ANOTHER checkout that another live session holds: judged by THAT lock, whatever this session's own checkout says
         ftop, fgdir, flock = foreign
         if os.environ.get("DEVKIT_ALLOW_SHARED_CHECKOUT") == "1" or allow_shared_until(fgdir) > now:
             log(fgdir, f"{sid} ghi song song khi {flock.get('session_id')} đang giữ (được cho phép): {tool}")
@@ -2742,6 +2763,8 @@ def main():
             return 2
         if top and _same_dir(top, trunk):
             return 0   # nothing written into main: nothing to take (main has no holder in trunk mode)
+    if shell_alias:
+        return 0   # chỉ xét theo luật trunk ở trên: không lấy khoá, không bị khoá từ chối (#1146)
     # lỗ 1 (25/10): a git write / gate run whose target the line does not tell used to count against this session's OWN checkout only, so
     # from a free checkout `cd $X && git commit` reached one of the same repository another session holds. Trunk mode refuses such a
     # target already (trunk_write), except in the sync / integrator segments it lets through (`git -C "$X" pull --ff-only` from a worktree
