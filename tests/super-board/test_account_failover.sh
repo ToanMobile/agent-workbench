@@ -180,4 +180,22 @@ note_worker_limit "wl/worker-build-43.log"
 [ -z "$(paused_until finos_team)" ] && ok "8c: clean worker whose report mentions a limit does not pause the account" \
   || fail "8c: clean worker report mentioning a limit paused finos_team"
 
+# 8d. #1121: lỗi hết tiền/billing (HTTP 402 Payment Required, "balance exhausted") cũng là hết limit: không đánh dấu thì runner giao lại
+# thẻ cho account chết, worker chết sau 4-6 s mỗi lần (early-death lặp lại, kitbug09c38fc46c3c).
+rm -f "$TMP/state/usage-"*.json
+cat > "$TMP/repo/wl/worker-review-44.log" <<'LOG'
+=== dispatch lane=review issue=#44 at 2026-11-11T22:32:01Z ===
+account_pool: engine=antigravity account=antigravity config_dir=/Users/x/.gemini/antigravity
+Internal error: {
+  "message": "API error (status 402 Payment Required): usage balance exhausted",
+  "http_status": 402
+}
+worker_exit: exit=1 signal=none elapsed=4s
+LOG
+note_worker_limit "wl/worker-review-44.log"
+r=$(paused_until antigravity); now=$(date +%s)
+[ -n "$r" ] && [ "$r" -gt $((now + 3000)) ] && [ "$r" -le $((now + 3700)) ] \
+  && ok "8d: 402 Payment Required / balance exhausted: account paused for about an hour" \
+  || fail "8d: 402 balance exhausted not recognised (resets_at='$r')"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_account_failover: all passed" || { echo "❌ test_account_failover: $FAILS failed"; exit 1; }
