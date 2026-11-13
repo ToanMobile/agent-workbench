@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
@@ -297,6 +298,104 @@ def kit_files_vs_head(score: Score):
     score.check(not changed, tr("Mọi file kit đã theo dõi đều khớp HEAD của kit", "Every tracked kit file matches the kit's HEAD"),
                 tr(f"{len(changed)} kit file khác HEAD của kit (bị ghi đè hoặc bị xoá): {first}. Khôi phục (chỉ in, không tự chạy): {restore}",
                    f"{len(changed)} kit files differ from the kit's HEAD (overwritten or deleted): {first}. Restore (printed, not run): {restore}"))
+
+
+STALE_LOCK_S = 600   # một lệnh git giữ index.lock vài giây; mười phút mà không tiến trình git nào giữ là phần còn sót của lệnh đã chết
+
+
+def _git_run(cwd, *args):
+    """(mã thoát, stdout) của `git -C cwd args`; (None, "") khi git không chạy được hoặc quá 5 giây."""
+    try:
+        res = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None, ""
+    return res.returncode, res.stdout.strip()
+
+
+def _trunk_branch(main):
+    """Nhánh mà checkout chính phải đứng: nhánh của origin/HEAD, không có thì `main` cục bộ, rồi `master`; None khi không biết."""
+    rc, out = _git_run(main, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD")
+    if rc == 0 and out.startswith("origin/") and len(out) > len("origin/"):
+        return out[len("origin/"):]
+    for name in ("main", "master"):
+        if _git_run(main, "show-ref", "--verify", "-q", f"refs/heads/{name}")[0] == 0:
+            return name
+    return None
+
+
+def _lsof(*args):
+    """Các dòng `lsof -w <args>` (rỗng khi không tiến trình nào khớp); None khi không chạy được lsof, lsof lỗi hoặc quá 5 giây."""
+    try:
+        res = subprocess.run(["lsof", "-w", *args], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode not in (0, 1):   # lsof thoát 1 khi không có gì khớp
+        return None
+    return res.stdout.splitlines()
+
+
+def _git_holds_lock(lock, main):
+    """True khi một tiến trình git đang giữ khoá: mở chính file (git ghi qua fd), HOẶC đang chạy với thư mục làm việc là checkout `main`
+    (`git commit` chờ trình soạn thảo đã đóng fd nhưng vẫn giữ khoá; `git -C main …` cũng chdir vào main). Thư mục làm việc trong một
+    worktree lồng dưới main/.claude/worktrees không tính: đó là checkout khác, nó không giữ khoá của main. False khi không có; None khi
+    không biết (không có lsof, lsof lỗi hoặc quá giờ): khi đó người gọi im lặng, không báo một khoá có thể đang sống."""
+    # đúng tên lệnh `git` (không phải tiền tố): gitstatusd, daemon fsmonitor hay trợ thủ IDE đứng trong main không phải lệnh git đang giữ khoá,
+    # còn `git-remote-https` luôn có `git` cha cùng chạy
+    opened = _lsof("-F", "c", "--", str(lock))
+    in_dir = _lsof("-a", "-c", "/^git$/", "-d", "cwd", "-F", "n")
+    if opened is not None and any(ln[1:] == "git" for ln in opened if ln.startswith("c")):
+        return True
+    if in_dir is not None:
+        root = os.path.realpath(str(main))
+        for ln in in_dir:
+            if not ln.startswith("n"):
+                continue
+            rel = os.path.relpath(os.path.realpath(ln[1:]), root)
+            if not rel.startswith("..") and not (rel + os.sep).startswith(os.path.join(".claude", "worktrees") + os.sep):
+                return True
+    return False if opened is not None and in_dir is not None else None
+
+
+def kit_host_checkout_notes(kit_dir: Path) -> list:
+    """Các dòng nói về checkout CHÍNH của repo đang chứa kit chạy: `.agents/devkit` của mọi repo app trỏ vào nó, nên checkout chính lệch
+    khỏi nhánh trunk làm mọi repo app chạy kit cũ (hoặc kit dở của ai đó), và một index.lock cũ làm mọi lệnh git ghi chỉ mục ở đó lỗi
+    (#1146: detached ở nhánh issue 30 giờ từ 11/11 03:05; khoá 0 byte 36 giờ; health không báo gì). Checkout chính là cha của thư mục git
+    chung của repo: không phải HEAD của worktree liên kết mà health đang chạy trong đó (worktree lane detached là bình thường) và không
+    phải nhánh riêng của repo app. Chỉ đọc: nêu lệnh sẽ sửa, không bao giờ chạy nó - khoá có thể của một lệnh đang sống, nhánh có thể
+    mang việc dở của ai đó. Kit không nằm trong repo git, hoặc repo bare: không có checkout để nói, không in dòng nào."""
+    rc, common = _git_run(kit_dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if rc != 0 or not common or Path(common).name != ".git":
+        return []
+    main = Path(common).parent
+    notes = []
+    rc, head = _git_run(main, "symbolic-ref", "-q", "--short", "HEAD")
+    trunk = _trunk_branch(main)
+    if rc == 1:   # `symbolic-ref -q` thoát 1 khi HEAD detached; lỗi khác là chính git lỗi: không kết luận
+        sha = _git_run(main, "rev-parse", "--short", "HEAD")[1] or "?"
+        notes.append(tr(
+            f"Checkout chính {main} (đích của .agents/devkit ở các repo app) đang detached ở {sha}, không ở nhánh {trunk or 'trunk'}: các repo app "
+            f"chạy kit ở commit đó. Chỉ báo, không tự đổi. Xem việc dở trước: git -C {main} status --short; rồi đưa về nhánh: git -C {main} switch {trunk or '<trunk>'}",
+            f"Main checkout {main} (target of .agents/devkit in the app repos) is detached at {sha}, not on {trunk or 'the trunk branch'}: the app repos "
+            f"run the kit at that commit. Report only, nothing is switched. Check unfinished work first: git -C {main} status --short; then: git -C {main} switch {trunk or '<trunk>'}"))
+    elif rc == 0 and head and trunk and head != trunk:
+        notes.append(tr(
+            f"Checkout chính {main} (đích của .agents/devkit ở các repo app) đang ở nhánh {head}, không phải {trunk}: các repo app chạy kit của nhánh đó. "
+            f"Chỉ báo, không tự đổi. Xem việc dở trước: git -C {main} status --short; rồi: git -C {main} switch {trunk}",
+            f"Main checkout {main} (target of .agents/devkit in the app repos) is on branch {head}, not {trunk}: the app repos run that branch's kit. "
+            f"Report only, nothing is switched. Check unfinished work first: git -C {main} status --short; then: git -C {main} switch {trunk}"))
+    rc, lock_path = _git_run(main, "rev-parse", "--path-format=absolute", "--git-path", "index.lock")
+    lock = Path(lock_path) if rc == 0 and lock_path else main / ".git" / "index.lock"
+    try:
+        age = time.time() - lock.stat().st_mtime
+    except OSError:
+        return notes   # không có khoá: trường hợp thường
+    if age > STALE_LOCK_S and _git_holds_lock(lock, main) is False and lock.exists():
+        notes.append(tr(
+            f"Khoá {lock} cũ {int(age // 60)} phút và không tiến trình git nào đang giữ: lệnh git đã chết giữa chừng, mọi lệnh git ghi chỉ mục ở {main} sẽ lỗi "
+            f"'Unable to create index.lock'. Chỉ báo, không tự xoá. Sau khi chắc không còn lệnh git nào của phiên khác: rm {lock}",
+            f"{lock} is {int(age // 60)} minutes old and no git process holds it: a git command died midway, and every index-writing git command in {main} "
+            f"fails with 'Unable to create index.lock'. Report only, the lock is not removed. Once sure no other session's git command runs: rm {lock}"))
+    return notes
 
 
 def project_wiring(target: Path, score: Score):
@@ -585,6 +684,13 @@ def main(argv=None):
         else:
             score.check(False, "", tr("Profile đã chọn nhưng chưa có `.agents/regression_matrix.active.json`",
                                       "A profile is selected but `.agents/regression_matrix.active.json` is missing"))
+
+    # #1146: checkout chứa kit (không tính điểm: không đổi mẫu số hạng mục đo, chỉ nói điều nó thấy)
+    host_notes = kit_host_checkout_notes(BASE_DIR)
+    if host_notes:
+        section(tr("[+] Checkout chính của kit", "[+] Kit host checkout"))
+        for note in host_notes:
+            warn(note)
 
     # Score
     pct = int(score.passed * 100 / score.total) if score.total else 0
