@@ -55,7 +55,8 @@ LOCK = "devkit-session.lock"
 LOG = "devkit-session.log"
 GUARD = "devkit-session.guard"
 GUARD_WAIT_S = 2.0   # the guard covers a read, a pid check and one small write: held for about a millisecond
-EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# #1102: công cụ sửa file của Grok (search_replace, hashline_edit) khoá theo file_path / path như Edit: trước đây ghi được checkout chính ở trunk mode
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "search_replace", "hashline_edit"}
 # Tên Grok (`run_terminal_command`, id cũ `run_terminal_cmd`) và Cursor (`Shell`) đặt cho công cụ mà Claude gọi là Bash. Grok chạy hook của
 # project theo matcher `Bash` nhưng payload mang tên công cụ CỦA NÓ, nên guard so `tool_name == "Bash"` chưa từng xét lệnh Grok nào: lúc
 # 03:05:22 +07 ngày 11/11 lệnh `git checkout --detach origin/<nhánh>` của worker review Grok trong checkout chính đi qua hook này và để
@@ -1511,7 +1512,7 @@ def trunk_env_in_settings(tool, tool_input, command):
         texts = [ti.get("content"), ti.get("new_string"), ti.get("new_source")] + [e.get("new_string") for e in ti.get("edits") or [] if isinstance(e, dict)]
         if any(isinstance(t, str) and off(t) for t in texts):
             return True
-        if tool in ("Edit", "MultiEdit"):   # a value-only edit (`"1"` -> `"0"`) names no key: judge the file as it becomes (OCR2 8)
+        if tool in ("Edit", "MultiEdit", "search_replace"):   # a value-only edit (`"1"` -> `"0"`) names no key: judge the file as it becomes (OCR2 8)
             cur = _read_text(path)
             after = _edited(cur, ti) if cur is not None and not off(cur) else None
             return after is not None and off(after)
@@ -2276,6 +2277,72 @@ def _expand_static_vars(target, cmd):
     return None if unknown or "$" in out or "`" in out else out
 
 
+# #1102: `for NAME in <từ cố định>; do … > /tmp/q-$NAME.log; done` - worker QA chạy test từng file. Từ cố định = chỉ [A-Za-z0-9_./:@%+=,-]: không $, `, nháy,
+# glob (* ? [), brace, ~, thay thế lệnh. Không heuristic về dạng tên file (PR #1101 bị vượt bốn lần): mỗi giá trị được thay vào đích rồi đi đúng
+# đường cũ (_expand_static_vars + _lands_in_main), nên `..`, tiền tố `.`, đường tuyệt đối vào main tự bị chặn.
+_FOR_CLAUSE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+([A-Za-z0-9_./:@%+=,\- \t]+?)\s*;\s*do\b")
+# lệnh có thể tạo link / thư mục ngay trước redirect: realpath lúc PreToolUse chưa thấy chúng (review kế hoạch #1102) - không khai triển, chặn như cũ
+_MAKES_PATH = _Re(r"(?<![\w./-])(?:ln|mkdir|mv|cp|rsync|install|tar|unzip)(?![\w-])")
+_FOR_MAX_COMBOS = 64
+
+
+def _for_var_reassigned(target, cmd):
+    """`target` uses a variable that is the NAME of a `for` of this line AND is assigned (`NAME=`, `NAME+=`) somewhere in it: the plain static
+    expansion would take the assignment for the value (the loop sets it per round), so the caller refuses the target (review kế hoạch #1102)."""
+    loops = {m.group(1) for m in re.finditer(r"\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\b", cmd)}   # any list: `for t in $(ls)` sets t too
+    if not loops:
+        return False
+    used = {m.group(1) or m.group(2) for m in _VAR_USE.finditer(target)}
+    return bool(used & loops & {m.group(1) for m in _VAR_ASSIGN.finditer(cmd)})
+
+
+def _for_loop_targets(target, cmd):
+    """Danh sách đích cụ thể của `target` (một từ redirect có $VAR) khi mọi biến chưa gán của nó là biến của một `for NAME in <từ cố định>; do`
+    và mọi chỗ dùng nó nằm trong thân do…done; None (không biết -> người gọi chặn) trong mọi trường hợp khác: NAME còn được gán ở đâu đó
+    trong dòng, hai vòng cùng tên, thiếu done, danh sách không phải từ cố định, dòng có ln / mkdir / mv / cp …, hơn _FOR_MAX_COMBOS tổ hợp."""
+    if "`" in target or _MAKES_PATH.search(cmd) or "<<" in cmd:
+        return None
+    names = [m.group(1) or m.group(2) for m in _VAR_USE.finditer(target)]
+    if not names or re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", target):
+        return None
+    assigned = {m.group(1) for m in _VAR_ASSIGN.finditer(cmd)}
+    clauses = {}   # NAME -> (giá trị, vị trí hết `do`)
+    for m in _FOR_CLAUSE.finditer(cmd):
+        if m.group(1) in clauses:
+            return None
+        clauses[m.group(1)] = (m.group(2).split(), m.end())
+    loop = [n for n in dict.fromkeys(names) if n not in assigned]
+    if not loop or any(n not in clauses or not clauses[n][0] for n in loop):
+        return None
+    combos = 1
+    for n in loop:
+        combos *= len(clauses[n][0])
+    if combos > _FOR_MAX_COMBOS:
+        return None
+    for n in loop:   # mọi chỗ dùng $n phải nằm trong thân do…done của vòng của nó
+        start, depth, end = clauses[n][1], 1, None
+        for m in re.finditer(r"\b(?:for|while|until|select|done)\b", cmd[start:]):
+            depth += -1 if m.group(0) == "done" else 1
+            if depth == 0:
+                end = start + m.start()
+                break
+        if end is None:
+            return None
+        for m in re.finditer(r"\$(?:%s\b|\{%s\})" % (n, n), cmd):
+            if not start <= m.start() < end:
+                return None
+    out = []
+    import itertools  # noqa: PLC0415 - only on this rare path; the hook runs before every tool call
+    for pick in itertools.product(*(clauses[n][0] for n in loop)):
+        env = dict(zip(loop, pick))
+        t = _VAR_USE.sub(lambda m: env.get(m.group(1) or m.group(2), m.group(0)), target)
+        t = _expand_static_vars(t, cmd) if "$" in t else t   # a variable the line assigns: the usual rule (None: unknown)
+        if t is None:
+            return None
+        out.append(t)
+    return out
+
+
 def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
     """trunk_write for one Bash script: what its segments write, then - three levels deep - the scripts it hides from them (_nested_scripts:
     substitutions, echo / printf / cat-heredoc piped to a shell or interpreter, a here-string). A script that cannot be tokenised counts as a
@@ -2324,20 +2391,28 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
             continue
         if kind not in ("redirect", "file"):
             continue
+        cands = [t]
         if "$" in t or "`" in t:
-            t = _expand_static_vars(t, cmd)
+            raw_t, t = t, _expand_static_vars(t, cmd)
+            if t is not None and _for_var_reassigned(raw_t, cmd):   # `t=/tmp/ok; for t in a.txt; do … > $t`: the assignment is not the loop's value
+                return True
             if t is None and loose:   # cwd không phải repo: `> "$TMPDIR/x"` không phải ghi vào main (review #427 vòng 2)
                 continue
-            if t is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
+            if t is None:   # #1102: a for-loop variable over fixed words is expanded; every other unknown variable stays refused
+                cands = _for_loop_targets(raw_t, cmd)
+            else:
+                cands = [t]
+            if cands is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
                 return True
-        try:
-            p = os.path.expanduser(t)
-        except ValueError:   # `~a<NUL>b`: không file nào có nó (như _lands_in_main) - bỏ đích này, xét tiếp (review #427 vòng 3: hook từng văng)
-            continue
-        if not os.path.isabs(p) and cd_unsafe:
-            return True
-        if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
-            return True
+        for t in cands:
+            try:
+                p = os.path.expanduser(t)
+            except ValueError:   # `~a<NUL>b`: không file nào có nó (như _lands_in_main) - bỏ đích này, xét tiếp (review #427 vòng 3: hook từng văng)
+                continue
+            if not os.path.isabs(p) and cd_unsafe:
+                return True
+            if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
+                return True
     if depth < 3:
         moved = any(DIR_CHANGE.search(text) for text in texts)
         for body in _nested_scripts(cmd):
