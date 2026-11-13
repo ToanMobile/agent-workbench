@@ -4,7 +4,7 @@
 Thay 5 bước tay (đọc auditedHead, băm từng test, ghi JSON). Không thay kiểm: post-fix-gate kiểm lại mọi mục bằng CÙNG luật
 (push_gate.audited_head / audit_reviewer, post-fix-gate.audit_covers).
 - reviewer và auditedHead chỉ lấy từ biên bản PM ngoài repo (verdicts.audit), không bao giờ từ dòng lệnh; reviewer qua
-  push_gate.audit_reviewer(legacy=False): grok chỉ khi lượt audit gần nhất PM tự chạy là grok, biên bản cũ (reviewer "pm") chỉ là
+  push_gate.audit_reviewer(legacy=False): chỉ antigravity (Grok gỡ 13/11), biên bản cũ (reviewer "pm") chỉ là
   antigravity khi dispatches có lượt audit antigravity, không thì từ chối.
 - author = push_gate.session_agent() (DEVKIT_AGENT_ID, không thì grok / claude theo env của phiên; rỗng → từ chối); reviewer trùng
   author hoặc thuộc tập danh tính phiên push_gate.session_agents() → từ chối (đợt 2 F2, vòng kiểm lại H4).
@@ -120,7 +120,7 @@ def main(argv):
         except OSError:
             pass
         return refuse(f"ghi {ledger} lỗi ({e})")
-    label = "grok (thay Antigravity)" if reviewer == "grok" else reviewer
+    label = reviewer
     for e in entries:
         print(f"approve-tests: duyệt chéo {label}, task {task_id}: {e['path']} sha256={e['sha256'][:12]}")
     print(f"approve-tests: đã ghi {len(entries)} mục vào {ledger}; chạy lại gate để nó kiểm lại")

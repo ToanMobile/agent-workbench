@@ -123,7 +123,7 @@ export function resolveProjectRoot(input) {
     const here = path.join(dir, CONFIG_NAME);
     if (fs.existsSync(here) && realpathSafe(here) !== globalFile) return dir;
     // 04/11: khong leo qua goc mot git checkout (co `.git`, thu muc hoac file cua worktree): worktree PR nam duoi checkout chinh
-    // (.claude/worktrees/x) phai la goc project cua chinh no — audit grok dung cay PR, khong phai HEAD cua checkout chinh.
+    // (.claude/worktrees/x) phai la goc project cua chinh no — audit dung cay PR, khong phai HEAD cua checkout chinh.
     if (fs.existsSync(path.join(dir, '.git'))) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) break;

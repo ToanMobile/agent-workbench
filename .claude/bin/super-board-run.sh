@@ -1026,14 +1026,13 @@ account_paused() {
 
 resolve_worker_account() {
   # Đặt POOL_ENGINE/POOL_ACCT/POOL_CFG cho worker kế tiếp. Pool tự xoay finos -> finos_team -> max theo usage; hết cả 3
-  # thì theo lựa chọn của người dùng (16/10): Antigravity Ultra -> Antigravity Pro -> Grok, bỏ account đang bị ghi là
+  # thì theo lựa chọn của người dùng (16/10): Antigravity Ultra -> Antigravity Pro (13/11 chủ repo bỏ Grok: không còn dự phòng Grok), bỏ account đang bị ghi là
   # hết. Trả 1 (POOL_RESETS = giờ reset sớm nhất nếu pool biết) khi mọi account đều hết: không giao.
   POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
   [ -x "$SB_ACCOUNT_POOL" ] || return 0
-  local ag="" grok="" json
+  local ag="" json
   if ! account_paused antigravity; then ag=1; elif ! account_paused antigravity_pro; then ag=pro; fi
-  account_paused grok || grok=1
-  json=$(SB_FALLBACK_ANTIGRAVITY="$ag" SB_FALLBACK_GROK="$grok" "$SB_ACCOUNT_POOL" resolve "$PWD" 2>/dev/null) || true
+  json=$(SB_FALLBACK_ANTIGRAVITY="$ag" SB_FALLBACK_GROK="" "$SB_ACCOUNT_POOL" resolve "$PWD" 2>/dev/null) || true
   [ -n "$json" ] || { log "⚠ account pool printed nothing; worker uses the default claude account"; return 0; }
   if [ "$(printf '%s' "$json" | jq -r '.state // "ok"' 2>/dev/null)" = "pause" ]; then
     POOL_RESETS=$(printf '%s' "$json" | jq -r '.resets_at // empty | tonumber | strftime("%H:%M UTC")' 2>/dev/null || true)
@@ -1999,8 +1998,6 @@ EOF
   claude_model=$(claude_model_for_tier)
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
     nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
-  elif [ "$pool_engine" = "grok" ] && [ -x "$HOME/.grok/bin/grok" ]; then
-    nohup "$SB_WORKER_WRAP" "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
     agent_office_args "$worker_log"
     AGENT_OFFICE_NONCE="$AO_NONCE" CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &

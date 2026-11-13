@@ -3787,22 +3787,6 @@
       ]
     },
     {
-      "component": "pm-grok-timeout-by-diff",
-      "watch_files": [
-        "mcp-servers/antigravity-pm-mcp/src/agentapi.js",
-        "mcp-servers/antigravity-pm-mcp/src/tools.js",
-        "mcp-servers/antigravity-pm-mcp/tests/grok-timeout.test.js"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-PM-GROK-TIMEOUT-01",
-          "name": "04/11: hạn grok audit theo kích thước diff (sàn 20 phút, +1 phút/100 dòng, trần 60), env ghi đè vẫn thắng",
-          "command": "cd mcp-servers/antigravity-pm-mcp && node --test tests/grok-timeout.test.js",
-          "parallel_safe": true
-        }
-      ]
-    },
-    {
       "component": "review-gate-handover",
       "watch_files": [
         "universal-agent-devkit/hooks/review_gate.sh",
@@ -4457,6 +4441,22 @@
           "id": "REG-DK-COPY-PROFILE-01",
           "name": "#1153: `agent-kit init -m copy` ghi link .agents/active-profile (trỏ về kit của máy cài) vào .git/info/exclude như chế độ symlink: `git add -A` không commit link, bản clone không có symlink treo, health không cảnh báo link DevKit chưa loại khỏi git, cài lại không nhân đôi dòng và không đụng .gitignore đã commit",
           "command": "bash universal-agent-devkit/tests/installer/test_active_profile_link_not_committed.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "pm-audit-scope-antigravity",
+      "watch_files": [
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/src/prompt.js",
+        "mcp-servers/antigravity-pm-mcp/tests/audit-scope.test.js"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-PM-AUDIT-SCOPE-01",
+          "name": "13/11 (chủ repo bỏ Grok): pm_dispatch agent=grok bị từ chối; audit Antigravity ghi phạm vi PR (auditedHead, auditBase, edited) vào lượt giao, pm_verdict ghi verdict vào lượt đó",
+          "command": "cd mcp-servers/antigravity-pm-mcp && node --test tests/audit-scope.test.js",
           "parallel_safe": true
         }
       ]

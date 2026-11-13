@@ -2,7 +2,7 @@
 # Đợt 2 tối ưu gate, mục 5 (v3): sau khi duyệt test sửa, lane Review đọc biên nhận gate theo head (commit đã gate, kể cả khi QA đã
 # merge base trước khi gate) và CHỈ bỏ lần chạy lại khi đã có biên nhận exit 0 đúng head + fingerprint; chưa có thì vẫn chạy MỘT lần
 # `post-fix-gate.py --run-tests --scoped --brief` sau khi ghi ledger. QA vẫn chạy gate (không đổi thành chỉ đọc biên nhận).
-# Reviewer của approved-by / edited-tests nhận grok (verdicts.audit.reviewer của PM). Tương thích bash 3.2.
+# 13/11 (chủ repo bỏ Grok): approved-by / edited-tests không còn nhận reviewer grok, không còn chỉ `agent=grok`. Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RUN="${RUN_MD:-$ROOT/.claude/skills/super-board/references/run.md}"
@@ -57,14 +57,15 @@ has "$QA4C" 'post-fix-gate.py --run-tests --scoped --brief --json' && ! has "$QA
 grep -qF 'python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief' "$QAF" \
   && ok "findings-and-green.md: QA vẫn chạy gate scoped" || fail "findings-and-green.md mất gate scoped của QA"
 
-# reviewer grok được nhận ở approved-by / edited-tests (khối pipeline của 3 bản chép và đoạn trước merge gate)
+# 13/11: không bản chép nào của khối pipeline còn nhận reviewer grok hay chỉ `agent=grok`; approved-by ký reviewer antigravity
 for f in "$RUN" "$PRE" "$DOC"; do
   t="$(cat "$f")"
-  if has "$t" '"reviewer":"grok"' && has "$t" 'pm_dispatch kind=audit agent=grok' && has "$t" 'verdicts.audit.reviewer'; then
-    ok "$(basename "$f"): approved-by nhận reviewer grok (verdicts.audit.reviewer)"
-  else fail "$(basename "$f"): approved-by vẫn đóng đinh reviewer antigravity"; fi
+  if ! has "$t" '"reviewer":"grok"' && ! has "$t" 'agent=grok' && ! has "$t" 'Antigravity or Grok audit' && has "$t" '"reviewer":"antigravity"'; then
+    ok "$(basename "$f"): approved-by chỉ reviewer antigravity, không Grok"
+  else fail "$(basename "$f"): approved-by còn nhận Grok"; fi
 done
 BEF="$(awk '/\*\*Before the gate, post the approval\*\*/,/The runner reads the latest/' "$RUN")"
-has "$BEF" '"reviewer":"grok"' && ok "trước merge gate: approved-by nhận grok" || fail "trước merge gate: approved-by vẫn chỉ antigravity"
+! has "$BEF" '"reviewer":"grok"' && has "$BEF" '"reviewer":"antigravity"' && ok "trước merge gate: approved-by chỉ antigravity" \
+  || fail "trước merge gate: approved-by còn nhận grok"
 
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }

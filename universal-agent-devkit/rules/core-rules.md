@@ -210,16 +210,16 @@ lệnh và số dòng vào PROGRESS và file duyệt.
   Còn lại **S**.
 - **S**: 1 bên, Claude bối cảnh sạch (Claude lỗi/limit thì OCR thay); không `plan_review`.
 - **M**: 2 bên, Claude bối cảnh sạch + Antigravity `audit` (auditedHead = head); không `plan_review`. Một bên lỗi công cụ thì đi tiếp 1 bên.
-- **L**: Antigravity `plan_review` trước code, rồi 4 bên song song trên head cuối: Claude bối cảnh sạch, Antigravity `audit`
-  (auditedHead = head), OCR (`ocr-review -b … --out …`; endpoint hỏng thì delegate), Grok chỉ đọc (`grok -m grok-4.7
-  --permission-mode plan --prompt-file <brief>`, brief như của Antigravity, kèm diff). Bên dính limit/429/quota/lỗi công cụ (không
-  phải FAIL nội dung): thử lại 1 lần, còn lỗi thì bỏ bên đó và đi tiếp 4→3→2→1, không dừng task, không ghi BLOCKED vì thiếu
+- **L**: Antigravity `plan_review` trước code, rồi 3 bên song song trên head cuối: Claude bối cảnh sạch, Antigravity `audit`
+  (auditedHead = head), OCR (`ocr-review -b … --out …`; endpoint hỏng thì delegate). Grok không còn là bên review (chủ repo
+  ngừng dùng 13/11). Bên dính limit/429/quota/lỗi công cụ (không
+  phải FAIL nội dung): thử lại 1 lần, còn lỗi thì bỏ bên đó và đi tiếp 3→2→1, không dừng task, không ghi BLOCKED vì thiếu
   reviewer; tối thiểu 1 bên PASS thật; ghi bên bị bỏ, lý do và log lỗi.
 - **Leo bậc, không hạ**: reviewer bậc S/M ra P0/P1 ⇒ sửa xong review lại ở bậc kế (S→M→L); không bao giờ hạ bậc giữa chừng.
 - **Mọi bậc giữ nguyên**: test cặp ĐỎ→XANH, gate exit 0, P0/P1 trong code PR đưa vào vẫn chặn (bên FAIL nội dung là finding, không
-  phải lý do bỏ bên đó); test cũ bị sửa vẫn bắt buộc một `audit` (auditedHead) do PM tự chạy để duyệt chéo: Antigravity, hoặc
-  grok khi lượt `pm_dispatch kind=audit` gần nhất là agent grok (PM ghi `verdicts.audit.reviewer`; biên bản cũ ghi `pm` chỉ tính
-  là Antigravity khi dispatches có lượt audit Antigravity). Không bên nào khác thay được. `agent-kit approve-tests <task-id>` ghi
+  phải lý do bỏ bên đó); test cũ bị sửa vẫn bắt buộc một `audit` Antigravity (auditedHead) qua PM để duyệt chéo (PM ghi
+  `verdicts.audit.reviewer`; biên bản cũ ghi `pm` chỉ tính là Antigravity khi dispatches có lượt audit Antigravity; biên bản grok
+  không còn duyệt gì từ 13/11). Không bên nào khác thay được. `agent-kit approve-tests <task-id>` ghi
   mục duyệt từ biên bản đó (reviewer, auditedHead chỉ từ PM; author = DEVKIT_AGENT_ID, rỗng hay trùng reviewer thì từ chối); gate
   kiểm lại mọi mục. Mục duyệt và trailer còn hiệu lực sau khi gộp main mới vào nhánh khi auditedHead là audit MỚI NHẤT trên chuỗi
   first-parent của đầu PR (không qua parent thứ hai, không đã nằm trên trunk), nội dung test hiện tại đúng blob ở đó và main
@@ -271,11 +271,12 @@ The essentials keep the obligation; this section keeps how the tools carry it ou
   conflict fix and pushes main only
   through `agent-kit integrate` (one `--scoped` run in a scratch worktree, then the push); never a `--full` in the main checkout.
   An edited existing test is approved by the antigravity-pm audit record alone: the agent commits, then in the PR's worktree
-  (under the main checkout) runs `pm_task_create` and `pm_dispatch kind=audit agent=grok` on the PR head; the PM runs grok on
-  merge-base(trunk, head)..head, records that scope and the pass with its `auditedHead`, and post-fix-gate and the merge gate read
-  that record directly (no approved_tests.json, PR comment, trailer or hand `pm_verdict`). An audit without that scope (Antigravity
-  `/giao`, a grok run with a `message`) still needs `agent-kit approve-tests <task-id>` or the trailer. A push the push gate checks without a
-  receipt still needs `Test-approved-by: antigravity|grok <task-id>` (the word matching the PM record's reviewer) in
+  (under the main checkout) runs `pm_task_create` and `pm_dispatch kind=audit` (Antigravity, no `message`, clean tree) on the PR
+  head; the PM records the merge-base(trunk, head)..head scope on that dispatch, and `pm_verdict kind=audit verdict=pass
+  auditedHead=<head>` records the pass on it, so post-fix-gate and the merge gate read that record directly (no approved_tests.json,
+  PR comment or trailer). Grok approves nothing (owner stopped using it 13/11). An audit without that scope (`/giao`, a run with a
+  `message`, a dirty tree) still needs `agent-kit approve-tests <task-id>` or the trailer. A push the push gate checks without a
+  receipt still needs `Test-approved-by: antigravity <task-id>` (the word matching the PM record's reviewer) in
   `git log origin/<branch>..HEAD`. Session start
   names branch drift and leftover worktrees (AGENTS.md §7.1).
 - **Worktree finish**: `agent-kit worktree finish <path>` fast-forwards the trunk and removes the worktree; the Stop hook

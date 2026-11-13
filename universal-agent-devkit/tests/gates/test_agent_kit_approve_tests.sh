@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Đợt 2 gate, lane A mục 2: `agent-kit approve-tests <task-id>` ghi mục duyệt chéo từ biên bản antigravity-pm, và reviewer `grok`.
-#  C1  grok hợp lệ (verdicts.audit.reviewer grok, lượt audit gần nhất agent grok): lệnh ghi mục reviewer grok, author = DEVKIT_AGENT_ID;
-#      gate nhận, nhãn "duyệt chéo bởi grok (thay Antigravity)".
-#  C2  DEVKIT_AGENT_ID rỗng -> lệnh từ chối, không ghi.   C3  reviewer trùng author -> lệnh từ chối; gate từ chối khi phiên là grok.
-#  C4  reviewer grok nhưng lượt audit gần nhất là antigravity -> lệnh từ chối; mục viết tay -> gate từ chối.
+# Đợt 2 gate, lane A mục 2: `agent-kit approve-tests <task-id>` ghi mục duyệt chéo từ biên bản antigravity-pm. 13/11: chủ repo bỏ
+# Grok — biên bản / trailer / mục reviewer grok không còn duyệt gì; các ca hợp lệ dùng reviewer antigravity.
+#  C1  antigravity hợp lệ (verdicts.audit.reviewer antigravity, lượt audit gần nhất agent antigravity): lệnh ghi mục reviewer antigravity,
+#      author = DEVKIT_AGENT_ID; gate nhận, nhãn "duyệt chéo bởi antigravity".
+#  C2  DEVKIT_AGENT_ID rỗng -> lệnh từ chối, không ghi.   C3  reviewer trùng author -> lệnh từ chối; gate từ chối khi phiên là antigravity.
+#  C4  biên bản grok (reviewer grok, lượt audit gần nhất grok) -> lệnh từ chối; mục viết tay reviewer grok -> gate từ chối.
 #  C5  biên bản cũ (reviewer pm) + dispatch audit không ghi agent -> antigravity.   C6  biên bản cũ không dispatch -> lệnh từ chối.
-#  C7  alias grok-4.7 / Grok -> grok.   C8  trailer `Test-approved-by: grok|antigravity` phải khớp reviewer PM (push_gate.approved).
+#  C7  alias Antigravity-Pro / Antigravity -> antigravity.   C8  trailer `Test-approved-by: antigravity` phải khớp reviewer PM; trailer grok sai dạng.
 #  C9  test sửa sau audit không được ghi.   C10  .claude/audit-gate trỏ ra ngoài checkout -> từ chối.
 #  Sửa sau review đợt 2: C11 (F2) author = danh tính phiên (CLAUDECODE=1 -> claude) khi không có DEVKIT_AGENT_ID;
-#  C12 (F2) phiên grok + reviewer grok -> tự duyệt; C13 (F6) ngoại lệ -> exit 3 (1 giữ nghĩa "không có test để ghi").
+#  C12 (F2) phiên antigravity + reviewer antigravity -> tự duyệt; C13 (F6) ngoại lệ -> exit 3 (1 giữ nghĩa "không có test để ghi").
 #  Vòng kiểm lại: C15 (H3) alias khớp laGrok/normalizeAgent của PM; C16-C17 (H4) tập danh tính phiên session_agents().
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -30,7 +31,8 @@ ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 has() { printf '%s' "$OUT" | grep -qF -- "$1"; }
 DA='{"kind":"audit","agent":"antigravity","at":"2026-11-01T00:00:00Z"}'
-DG='{"kind":"audit","agent":"grok","at":"2026-11-02T00:00:00Z"}'
+DG='{"kind":"audit","agent":"antigravity","at":"2026-11-02T00:00:00Z"}'      # lượt audit Antigravity gần nhất (reviewer hợp lệ)
+DK='{"kind":"audit","agent":"grok","at":"2026-11-02T00:00:00Z"}'             # lượt grok cũ (trước 13/11): không còn duyệt
 DL='{"kind":"audit","at":"2026-11-01T00:00:00Z"}'
 pm_rec() {   # pm_rec <task-id> <project> <auditedHead> <reviewer> <dispatches-json-array>
   mkdir -p "$TMP/pm/projects/p-$1/tasks/$1"
@@ -72,37 +74,37 @@ PY
 }
 
 # C1
-mk "$TMP/c1"; pm_rec T0901-c1 "$TMP/c1" "$X" grok "[$DA,$DG]"
+mk "$TMP/c1"; pm_rec T0901-c1 "$TMP/c1" "$X" antigravity "[$DA,$DG]"
 DEVKIT_AGENT_ID=claude-lane kit "$TMP/c1" T0901-c1; L="$(ledger "$TMP/c1" tests/t.sh)"
-if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:grok:claude-lane:T0901-c1" ]; then ok "C1: lệnh ghi mục reviewer grok, author = DEVKIT_AGENT_ID"
-else bad "C1: lệnh grok: rc=$RC ledger='$L' $(printf '%s' "$OUT" | tail -3)"; fi
+if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:antigravity:claude-lane:T0901-c1" ]; then ok "C1: lệnh ghi mục reviewer antigravity, author = DEVKIT_AGENT_ID"
+else bad "C1: lệnh antigravity: rc=$RC ledger='$L' $(printf '%s' "$OUT" | tail -3)"; fi
 run_gate "$TMP/c1"
-if [ "$RC" = 0 ] && has "duyệt chéo bởi grok (thay Antigravity) (task T0901-c1)"; then ok "C1: gate nhận, nhãn grok (thay Antigravity)"
-else bad "C1: gate với mục grok: rc=$RC $(printf '%s' "$OUT" | grep -E 'duyệt|Duyệt' | tail -3)"; fi
-# C3 (gate): cùng mục, phiên hiện tại là grok -> từ chối
-OUT="$(cd "$TMP/c1" && DEVKIT_AGENT_ID=grok CLAUDE_PROJECT_DIR="$TMP/c1" python3 "$GATE" --matrix "$TMP/c1/matrix.json" --lang vi --run-tests --diff main 2>&1)"; RC=$?
-if [ "$RC" = 2 ] && has "trùng author"; then ok "C3: gate, phiên là grok, reviewer PM grok -> từ chối (tự duyệt)"
-else bad "C3: gate tự duyệt grok: rc=$RC $(printf '%s' "$OUT" | grep -E 'Duyệt' | tail -2)"; fi
+if [ "$RC" = 0 ] && has "duyệt chéo bởi antigravity (task T0901-c1)"; then ok "C1: gate nhận, nhãn antigravity"
+else bad "C1: gate với mục antigravity: rc=$RC $(printf '%s' "$OUT" | grep -E 'duyệt|Duyệt' | tail -3)"; fi
+# C3 (gate): cùng mục, phiên hiện tại là antigravity -> từ chối
+OUT="$(cd "$TMP/c1" && DEVKIT_AGENT_ID=antigravity CLAUDE_PROJECT_DIR="$TMP/c1" python3 "$GATE" --matrix "$TMP/c1/matrix.json" --lang vi --run-tests --diff main 2>&1)"; RC=$?
+if [ "$RC" = 2 ] && has "trùng author"; then ok "C3: gate, phiên là antigravity, reviewer PM antigravity -> từ chối (tự duyệt)"
+else bad "C3: gate tự duyệt antigravity: rc=$RC $(printf '%s' "$OUT" | grep -E 'Duyệt' | tail -2)"; fi
 
 # C2
-mk "$TMP/c2"; pm_rec T0902-c2 "$TMP/c2" "$X" grok "[$DG]"
+mk "$TMP/c2"; pm_rec T0902-c2 "$TMP/c2" "$X" antigravity "[$DG]"
 kit "$TMP/c2" T0902-c2
 if [ "$RC" = 2 ] && has "DEVKIT_AGENT_ID" && [ ! -f "$TMP/c2/.claude/audit-gate/approved_tests.json" ]; then ok "C2: DEVKIT_AGENT_ID rỗng -> từ chối, không ghi"
 else bad "C2: id rỗng: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
 
 # C3 (lệnh): author trùng reviewer qua alias
-DEVKIT_AGENT_ID=grok-build kit "$TMP/c2" T0902-c2
-if [ "$RC" = 2 ] && has "tự duyệt" && [ ! -f "$TMP/c2/.claude/audit-gate/approved_tests.json" ]; then ok "C3: lệnh, author grok-build = reviewer grok -> từ chối"
+DEVKIT_AGENT_ID=antigravity-ultra kit "$TMP/c2" T0902-c2
+if [ "$RC" = 2 ] && has "tự duyệt" && [ ! -f "$TMP/c2/.claude/audit-gate/approved_tests.json" ]; then ok "C3: lệnh, author antigravity-ultra = reviewer antigravity -> từ chối"
 else bad "C3: lệnh tự duyệt: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
 
-# C4: reviewer grok nhưng lượt audit gần nhất là antigravity
-mk "$TMP/c4"; pm_rec T0904-c4 "$TMP/c4" "$X" grok "[$DG,{\"kind\":\"audit\",\"agent\":\"antigravity\",\"at\":\"2026-11-03T00:00:00Z\"}]"
+# C4 (13/11): biên bản grok cũ hợp lệ theo luật trước (reviewer grok, lượt audit gần nhất grok) -> lệnh từ chối
+mk "$TMP/c4"; pm_rec T0904-c4 "$TMP/c4" "$X" grok "[$DA,$DK]"
 DEVKIT_AGENT_ID=claude-lane kit "$TMP/c4" T0904-c4
-if [ "$RC" = 2 ] && has "reviewer"; then ok "C4: grok không phải lượt audit gần nhất -> lệnh từ chối"
-else bad "C4: lệnh grok sai lượt: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
+if [ "$RC" = 2 ] && has "reviewer" && [ ! -f "$TMP/c4/.claude/audit-gate/approved_tests.json" ]; then ok "C4: biên bản grok -> lệnh từ chối"
+else bad "C4: lệnh với biên bản grok: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
 hand_entry "$TMP/c4" T0904-c4 grok; run_gate "$TMP/c4"
-if [ "$RC" = 2 ] && has "không xác định được reviewer"; then ok "C4: mục viết tay reviewer grok không có lượt grok -> gate từ chối"
-else bad "C4: gate grok sai lượt: rc=$RC $(printf '%s' "$OUT" | grep -E 'duyệt|Duyệt' | tail -2)"; fi
+if [ "$RC" = 2 ] && has "không xác định được reviewer"; then ok "C4: mục viết tay reviewer grok -> gate từ chối"
+else bad "C4: gate mục grok: rc=$RC $(printf '%s' "$OUT" | grep -E 'duyệt|Duyệt' | tail -2)"; fi
 
 # C5: biên bản cũ (reviewer pm) + dispatch audit không ghi agent -> antigravity
 mk "$TMP/c5"; pm_rec T0905-c5 "$TMP/c5" "$X" pm "[$DL]"
@@ -119,38 +121,38 @@ if [ "$RC" = 2 ] && [ ! -f "$TMP/c6/.claude/audit-gate/approved_tests.json" ]; t
 else bad "C6: biên bản cũ không dispatch: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
 
 # C7: alias
-mk "$TMP/c7"; pm_rec T0907-c7 "$TMP/c7" "$X" grok-4.7 '[{"kind":"audit","agent":"Grok","at":"2026-11-02T00:00:00Z"}]'
+mk "$TMP/c7"; pm_rec T0907-c7 "$TMP/c7" "$X" Antigravity-Pro '[{"kind":"audit","agent":"Antigravity","at":"2026-11-02T00:00:00Z"}]'
 DEVKIT_AGENT_ID=claude-lane kit "$TMP/c7" T0907-c7; L="$(ledger "$TMP/c7" tests/t.sh)"
-if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:grok:claude-lane:T0907-c7" ]; then ok "C7: alias grok-4.7 / Grok -> grok"
+if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:antigravity:claude-lane:T0907-c7" ]; then ok "C7: alias Antigravity-Pro / Antigravity -> antigravity"
 else bad "C7: alias: rc=$RC ledger='$L'"; fi
 
 # C8: trailer phải khớp reviewer PM
 pgok() { python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(*p.approved(sys.argv[2], "HEAD^!"))' "$DEVKIT_DIR/bin" "$1" 2>&1; }
-mk "$TMP/c8"; pm_rec T0908-g "$TMP/c8" "$X" grok "[$DG]"; pm_rec T0908-l "$TMP/c8" "$X" pm "[$DL]"
+mk "$TMP/c8"; pm_rec T0908-g "$TMP/c8" "$X" grok "[$DK]"; pm_rec T0908-l "$TMP/c8" "$X" pm "[$DL]"
 git commit -q --allow-empty -m a -m "Test-approved-by: grok T0908-g"; OUT="$(pgok "$TMP/c8")"
-case "$OUT" in True*) ok "C8: trailer grok + biên bản grok -> approved";; *) bad "C8: trailer grok: $OUT";; esac
+case "$OUT" in False*"sai dạng"*) ok "C8: trailer grok + biên bản grok -> từ chối (13/11)";; *) bad "C8: trailer grok: $OUT";; esac
 git commit -q --allow-empty --amend -m a -m "Test-approved-by: antigravity T0908-g"; OUT="$(pgok "$TMP/c8")"
 case "$OUT" in False*reviewer*) ok "C8: trailer antigravity, biên bản grok -> từ chối";; *) bad "C8: trailer antigravity/biên bản grok: $OUT";; esac
 git commit -q --allow-empty --amend -m a -m "Test-approved-by: grok T0908-l"; OUT="$(pgok "$TMP/c8")"
-case "$OUT" in False*reviewer*) ok "C8: trailer grok, biên bản cũ (antigravity) -> từ chối";; *) bad "C8: trailer grok/biên bản cũ: $OUT";; esac
+case "$OUT" in False*"sai dạng"*) ok "C8: trailer grok, biên bản cũ (antigravity) -> từ chối";; *) bad "C8: trailer grok/biên bản cũ: $OUT";; esac
 git commit -q --allow-empty --amend -m a -m "Test-approved-by: antigravity T0908-l"; OUT="$(pgok "$TMP/c8")"
 case "$OUT" in True*) ok "C8: trailer antigravity + biên bản cũ -> approved (như trước)";; *) bad "C8: trailer antigravity cũ: $OUT";; esac
 
 # C9: tests/u.sh sửa SAU audit -> không ghi; tests/t.sh vẫn ghi
-mk "$TMP/c9"; pm_rec T0909-c9 "$TMP/c9" "$X" grok "[$DG]"
+mk "$TMP/c9"; pm_rec T0909-c9 "$TMP/c9" "$X" antigravity "[$DG]"
 printf '#!/bin/sh\ngrep -q "fun ok" src/Core.kt\n' > tests/u.sh
 DEVKIT_AGENT_ID=claude-lane kit "$TMP/c9" T0909-c9; L="$(ledger "$TMP/c9" '*')"
-if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:grok:claude-lane:T0909-c9" ] && has "bỏ qua tests/u.sh"; then ok "C9: test sửa sau audit không được ghi"
+if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:antigravity:claude-lane:T0909-c9" ] && has "bỏ qua tests/u.sh"; then ok "C9: test sửa sau audit không được ghi"
 else bad "C9: test sửa sau audit: rc=$RC ledger='$L'"; fi
 
 # C10: .claude/audit-gate là symlink ra ngoài checkout
-mk "$TMP/c10"; pm_rec T0910-c10 "$TMP/c10" "$X" grok "[$DG]"
+mk "$TMP/c10"; pm_rec T0910-c10 "$TMP/c10" "$X" antigravity "[$DG]"
 mkdir -p "$TMP/outside" && ln -s "$TMP/outside" "$TMP/c10/.claude/audit-gate"
 DEVKIT_AGENT_ID=claude-lane kit "$TMP/c10" T0910-c10
 if [ "$RC" = 2 ] && has "ngoài checkout" && [ ! -f "$TMP/outside/approved_tests.json" ]; then ok "C10: thư mục duyệt trỏ ra ngoài checkout -> từ chối"
 else bad "C10: symlink ra ngoài: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
 # C10b (OCR P3 đợt 2): .claude là symlink ra ngoài -> từ chối VÀ không tạo audit-gate/ ở đích ngoài checkout (cũ: mkdir trước khi kiểm)
-mk "$TMP/c10b"; pm_rec T0910-c10b "$TMP/c10b" "$X" grok "[$DG]"
+mk "$TMP/c10b"; pm_rec T0910-c10b "$TMP/c10b" "$X" antigravity "[$DG]"
 mkdir -p "$TMP/outside2" && mv "$TMP/c10b/.claude/config.json" "$TMP/outside2/" && rmdir "$TMP/c10b/.claude" && ln -s "$TMP/outside2" "$TMP/c10b/.claude"
 DEVKIT_AGENT_ID=claude-lane kit "$TMP/c10b" T0910-c10b
 if [ "$RC" = 2 ] && has "ngoài checkout" && [ ! -e "$TMP/outside2/audit-gate" ]; then ok "C10b: .claude trỏ ra ngoài -> từ chối, không tạo thư mục ở ngoài"
@@ -158,17 +160,17 @@ else bad "C10b: .claude symlink: rc=$RC audit-gate ngoài=$([ -e "$TMP/outside2/
 
 # ── Đợt 2, sửa sau review (F2, F6) ────────────────────────────────────────────────────────────────────────────────────────
 # C11 (F2): không DEVKIT_AGENT_ID, phiên Claude Code (CLAUDECODE=1) -> author "claude", lệnh ghi
-mk "$TMP/c11"; pm_rec T0911-c11 "$TMP/c11" "$X" grok "[$DG]"
+mk "$TMP/c11"; pm_rec T0911-c11 "$TMP/c11" "$X" antigravity "[$DG]"
 CLAUDECODE=1 kit "$TMP/c11" T0911-c11; L="$(ledger "$TMP/c11" tests/t.sh)"
-if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:grok:claude:T0911-c11" ]; then ok "C11: phiên Claude Code không DEVKIT_AGENT_ID -> author claude, ghi mục"
+if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:antigravity:claude:T0911-c11" ]; then ok "C11: phiên Claude Code không DEVKIT_AGENT_ID -> author claude, ghi mục"
 else bad "C11: CLAUDECODE=1: rc=$RC ledger='$L' $(printf '%s' "$OUT" | tail -2)"; fi
-# C12 (F2): phiên Grok (GROK_SESSION_ID), reviewer PM grok -> tự duyệt, từ chối
-mk "$TMP/c12"; pm_rec T0912-c12 "$TMP/c12" "$X" grok "[$DG]"
-GROK_SESSION_ID=g-1 CLAUDECODE=1 kit "$TMP/c12" T0912-c12
-if [ "$RC" = 2 ] && has "tự duyệt" && [ ! -f "$TMP/c12/.claude/audit-gate/approved_tests.json" ]; then ok "C12: phiên grok, reviewer grok -> từ chối (tự duyệt)"
-else bad "C12: phiên grok: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
+# C12 (F2): phiên Antigravity (DEVKIT_AGENT_ID=antigravity), reviewer PM antigravity -> tự duyệt, từ chối
+mk "$TMP/c12"; pm_rec T0912-c12 "$TMP/c12" "$X" antigravity "[$DG]"
+DEVKIT_AGENT_ID=antigravity CLAUDECODE=1 kit "$TMP/c12" T0912-c12
+if [ "$RC" = 2 ] && has "tự duyệt" && [ ! -f "$TMP/c12/.claude/audit-gate/approved_tests.json" ]; then ok "C12: phiên antigravity, reviewer antigravity -> từ chối (tự duyệt)"
+else bad "C12: phiên antigravity: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
 # C13 (F6): lỗi ngoài dự kiến (.claude/audit-gate là file thường: mkdir ném) -> exit 3 kèm thông báo, không phải exit 1 ("không có test")
-mk "$TMP/c13"; pm_rec T0913-c13 "$TMP/c13" "$X" grok "[$DG]"
+mk "$TMP/c13"; pm_rec T0913-c13 "$TMP/c13" "$X" antigravity "[$DG]"
 printf 'x\n' > "$TMP/c13/.claude/audit-gate"
 DEVKIT_AGENT_ID=claude-lane kit "$TMP/c13" T0913-c13
 if [ "$RC" = 3 ] && has "approve-tests: lỗi"; then ok "C13: ngoại lệ -> exit 3 kèm thông báo"
@@ -201,15 +203,16 @@ sys.path.insert(0, sys.argv[1]); import push_gate as p
 print(p.session_agent(), ",".join(sorted(p.session_agents())))' "$DEVKIT_DIR/bin" 2>&1)"
 if [ "$OUT" = "codex claude,codex,grok" ]; then ok "C16: session_agents = {codex, grok, claude}, session_agent vẫn codex"
 else bad "C16: danh tính phiên: '$OUT' (muốn 'codex claude,codex,grok')"; fi
-# C17 (H4): DEVKIT_AGENT_ID=claude-lane nhưng phiên có GROK_SESSION_ID, reviewer PM grok -> tự duyệt, từ chối (cũ: ghi author claude-lane)
-mk "$TMP/c17"; pm_rec T0917-c17 "$TMP/c17" "$X" grok "[$DG]"
-DEVKIT_AGENT_ID=claude-lane GROK_SESSION_ID=g-1 kit "$TMP/c17" T0917-c17
-if [ "$RC" = 2 ] && has "tự duyệt" && [ ! -f "$TMP/c17/.claude/audit-gate/approved_tests.json" ]; then ok "C17: DEVKIT_AGENT_ID khác nhưng phiên có GROK_* -> reviewer grok bị từ chối (tự duyệt)"
-else bad "C17: claude-lane + GROK_SESSION_ID: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
-# C17c đối chứng: cùng biên bản, không GROK_* -> ghi
-mk "$TMP/c17c"; pm_rec T0918-c17c "$TMP/c17c" "$X" grok "[$DG]"
+# C17 (H4; 13/11 bỏ Grok): phiên Claude Code mang DEVKIT_AGENT_ID=Antigravity-Ultra -> tập danh tính {antigravity, claude} chứa
+#     reviewer antigravity -> tự duyệt, từ chối. Tập nhiều danh tính (GROK_*) đã kiểm ở C16.
+mk "$TMP/c17"; pm_rec T0917-c17 "$TMP/c17" "$X" antigravity "[$DG]"
+DEVKIT_AGENT_ID=Antigravity-Ultra CLAUDECODE=1 kit "$TMP/c17" T0917-c17
+if [ "$RC" = 2 ] && has "tự duyệt" && [ ! -f "$TMP/c17/.claude/audit-gate/approved_tests.json" ]; then ok "C17: reviewer thuộc tập danh tính phiên -> từ chối (tự duyệt)"
+else bad "C17: Antigravity-Ultra + CLAUDECODE: rc=$RC $(printf '%s' "$OUT" | tail -2)"; fi
+# C17c đối chứng: cùng biên bản, phiên claude-lane -> ghi
+mk "$TMP/c17c"; pm_rec T0918-c17c "$TMP/c17c" "$X" antigravity "[$DG]"
 DEVKIT_AGENT_ID=claude-lane kit "$TMP/c17c" T0918-c17c; L="$(ledger "$TMP/c17c" tests/t.sh)"
-if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:grok:claude-lane:T0918-c17c" ]; then ok "C17c: không GROK_* -> ghi mục author claude-lane"
+if [ "$RC" = 0 ] && [ "$L" = "tests/t.sh:antigravity:claude-lane:T0918-c17c" ]; then ok "C17c: phiên claude-lane -> ghi mục author claude-lane"
 else bad "C17c: đối chứng: rc=$RC ledger='$L' $(printf '%s' "$OUT" | tail -2)"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

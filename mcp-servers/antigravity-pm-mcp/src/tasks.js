@@ -392,7 +392,7 @@ export function recordVerdict(cfg, task, { kind, verdict, findings = [], notes =
     };
     // Dot 2 F1: moi audit pass co auditedHead noi vao lich su CHI-THEM (verdict fail sau, rework khong xoa) — push_gate.audited_heads
     // doc auditHistory + verdicts.audit de mot verdict fail moi hon khong lam audit cu hon thanh "moi nhat".
-    // 04/11: grok PASS da tu ghi (tools.js) roi PM pm_verdict lai dung head do -> khong noi ban trung lien tiep (cung head + reviewer).
+    // Khong noi ban trung lien tiep (cung head + reviewer).
     const last = (hist || []).at(-1);
     if (head && !(last && last.auditedHead === head && last.reviewer === reviewer)) {
       t.verdicts.auditHistory = [...(hist || []), { auditedHead: head, reviewer, at }];
@@ -618,9 +618,9 @@ export function recordDispatch(cfg, task, rec) {
       model: rec.model || t.model,
       round,
       promptFile: rec.promptFile || null,
-      // rec.at: moc PM chot TRUOC khi chay reviewer (grok) — bao cao ghi sau moc nay moi qua kiem mtime cua pm_verdict.
+      // rec.at: moc PM chot TRUOC khi chay reviewer — bao cao ghi sau moc nay moi qua kiem mtime cua pm_verdict.
       at: rec.at || nowIso(),
-      // agent cua lan giao audit: 'antigravity' | 'grok'; ban ghi cu khong co truong nay = antigravity (chi co duong agy).
+      // agent cua lan giao audit: 'antigravity' (grok da go 13/11); ban ghi cu khong co truong nay = antigravity (chi co duong agy).
       ...(rec.agent && { agent: rec.agent }),
       ...(rec.extra || {}),
     });
