@@ -65,12 +65,14 @@ SHELL_TOOLS = ("run_terminal_command", "run_terminal_cmd", "Shell")
 
 def is_shell_alias(tool, tool_input):
     """Công cụ shell không tên Bash: tên thuộc SHELL_TOOLS, hoặc một tên chưa ai thấy mà mang chuỗi `command` (fail closed: lần đổi tên sau
-    không được mở lại lỗ này; công cụ MCP, công cụ sửa file và công cụ không có `command` không bao giờ bị coi là shell)."""
+    không được mở lại lỗ này; công cụ MCP (Claude `mcp__…`, Grok `<server>__<tool>`), công cụ sửa file và công cụ không có `command`
+    dạng chuỗi không bao giờ bị coi là shell)."""
     if tool == "Bash" or not tool:
         return False
     if tool in SHELL_TOOLS:
         return True
-    return tool not in EDIT_TOOLS and not tool.startswith("mcp__") and isinstance(tool_input.get("command"), str)
+    return (tool not in EDIT_TOOLS and not tool.startswith("mcp__") and "__" not in tool
+            and isinstance(tool_input.get("command"), str))
 
 
 class _Re:
@@ -2706,8 +2708,8 @@ def main():
     tool = str(d.get("tool_name") or "")
     ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}   # (a string or a list: no command, no path - D6)
     # #1146: shell mang tên khác được xét theo luật trunk mode bên dưới y như Bash (nên `git checkout`, redirect hay commit trong checkout
-    # chính bị chặn); luật một-phiên-một-checkout (khoá) KHÔNG áp cho nó (Grok chưa từng lấy khoá: áp vào sẽ đổi cách các lane Grok của
-    # board chạy), xem hai chỗ `shell_alias` quanh khối trunk.
+    # chính bị chặn); luật một-phiên-một-checkout (khoá) KHÔNG áp cho nó (trước nay PreToolUse của shell Grok không qua luật khoá: áp vào sẽ
+    # đổi cách các lane Grok của board chạy), xem hai chỗ `shell_alias` quanh khối trunk.
     shell_alias = is_shell_alias(tool, ti)
     if shell_alias:
         tool = "Bash"

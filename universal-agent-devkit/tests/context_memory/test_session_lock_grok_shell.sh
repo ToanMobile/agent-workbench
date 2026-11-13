@@ -5,8 +5,8 @@
 # ĐÃ chạy: 8 hook pre_tool_use `success`. Nhưng bin/session_lock.py chỉ xét tool_name == "Bash"; payload Grok mang tool_name
 # "run_terminal_command", nên luật trunk mode "main chỉ để gộp" chưa bao giờ nhìn lệnh (replay hook thật: Bash rc 2, run_terminal_command rc 0).
 # Công cụ shell dưới mọi tên - tên Grok / Cursor, hoặc một tên chưa ai thấy mà mang chuỗi `command` - nay được xét theo luật trunk mode
-# y như Bash. Nó KHÔNG bị áp khoá một-phiên-một-checkout (Grok chưa từng lấy khoá; áp vào sẽ đổi cách các lane Grok của board chạy), và
-# công cụ MCP hay công cụ không có `command` thì không bị xét.
+# y như Bash. Nó KHÔNG bị áp khoá một-phiên-một-checkout (trước nay PreToolUse của shell Grok không qua luật khoá; áp vào sẽ đổi cách các
+# lane Grok của board chạy), và công cụ MCP hay công cụ không có `command` thì không bị xét.
 # Phong bì bên dưới là phong bì thật của Grok (camelCase + các bí danh snake nó gửi); test_hook_camelcase_payload.sh dùng toolName "Bash"
 # trong đó, không phải điều Grok gửi - chỗ lệch đã để lọt lỗi này.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
@@ -27,14 +27,14 @@ git -C "$M" worktree add -q --detach "$W" HEAD
 git -C "$M" config devkit.trunkMode true
 
 # hook <tool_name> <cwd> <session> <command> -> mã thoát của hook. Phong bì Grok: khoá camelCase cộng bí danh snake.
-hook() {
+hook() {   # tham số 5 (tuỳ chọn): tool_input dạng JSON thô thay cho {"command": <lệnh>}
   python3 -I -c '
 import json, sys
 tool, cwd, sid, cmd = sys.argv[1:5]
-ti = {"command": cmd}
+ti = json.loads(sys.argv[5]) if len(sys.argv) > 5 else {"command": cmd}
 print(json.dumps({"hookEventName": "pre_tool_use", "hook_event_name": "PreToolUse", "sessionId": sid, "session_id": sid,
                   "cwd": cwd, "workspaceRoot": cwd, "toolName": tool, "tool_name": tool, "toolInput": ti, "tool_input": ti}))
-' "$1" "$2" "$3" "$4" > "$TMP/in.json"
+' "$1" "$2" "$3" "$4" ${5:+"$5"} > "$TMP/in.json"
   ( cd "$2" && CLAUDE_PROJECT_DIR="$2" bash "$HOOK" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
 }
 # want <rc> <tool> <cwd> <command> <label>
@@ -68,10 +68,13 @@ for T in Bash run_terminal_command run_terminal_cmd Shell exec_shell_tool; do
   want 0 "$T" "$W" 'git checkout --detach topic' "git checkout --detach inside the worktree"
 done
 
-# 3. công cụ không phải shell thì không bị xét: công cụ MCP, công cụ không có command
-want 0 mcp__x__run "$M" 'git checkout topic' "an MCP tool carrying a command key"
-hook read_file "$M" "g-$$" ''; rc=$?
-[ "$rc" = 0 ] && ok "read_file with an empty command" || fail "read_file rc $rc"
+# 3. công cụ không phải shell thì không bị xét: công cụ MCP (tên Claude mcp__… và tên Grok <server>__<tool>), công cụ không có command
+want 0 mcp__x__run "$M" 'git checkout topic' "an MCP tool (Claude name) carrying a command key"
+want 0 server__run "$M" 'git checkout topic' "an MCP tool (Grok name <server>__<tool>) carrying a command key"
+hook read_file "$M" "g-$$" '' '{"target_file": "'"$M"'/a.txt"}'; rc=$?
+[ "$rc" = 0 ] && ok "read_file: no command key, not judged" || fail "read_file rc $rc"
+hook read_file "$M" "g-$$" '' '{"command": ["git", "checkout", "topic"]}'; rc=$?
+[ "$rc" = 0 ] && ok "a tool whose command is not a string: not judged (Grok's schema makes it a string)" || fail "list command rc $rc"
 
 # 4. một lệnh ghi của shell Grok trong worktree không phải ghi vào trunk: được qua (và theo thiết kế không lấy khoá một-phiên-một-checkout)
 want 0 run_terminal_command "$W" 'echo y > f2.txt' "a Grok write inside the worktree"

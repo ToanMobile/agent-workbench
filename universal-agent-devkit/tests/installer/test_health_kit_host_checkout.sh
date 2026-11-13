@@ -88,12 +88,30 @@ out="$(PATH="$TMP/fakebin:$PATH" health "$HEALTH_APP" "$A")"
 [ "$(n_lock "$out")" = 0 ] && ok "lsof failing: nothing is said (the lock may be live)" || fail "reported with a broken lsof"
 rm -f "$TMP/fakebin/lsof"
 # một tiến trình không phải git đang đọc nó (language server của Antigravity trong sự cố): khoá vẫn là khoá cũ
-( exec 3<"$LOCK"; exec sleep 60 ) & reader=$!
-sleep 1
-out="$(health "$HEALTH_APP" "$A")"
-[ "$(n_lock "$out")" = 1 ] && ok "an old lock only a non-git process has open: reported" || fail "reader-only lock not reported"
-kill "$reader" 2>/dev/null; wait "$reader" 2>/dev/null
-rm -f "$LOCK"
+if command -v lsof >/dev/null 2>&1; then   # hai ca dưới cần lsof thật (không có lsof thì health im lặng, xem ca lsof lỗi ở trên)
+  ( exec 3<"$LOCK"; exec sleep 60 ) & reader=$!
+  sleep 1
+  out="$(health "$HEALTH_APP" "$A")"
+  [ "$(n_lock "$out")" = 1 ] && ok "an old lock only a non-git process has open: reported" || fail "reader-only lock not reported"
+  kill "$reader" 2>/dev/null; wait "$reader" 2>/dev/null
+  rm -f "$LOCK"
+  # `git commit` chờ trình soạn thảo: git đã đóng fd nhưng vẫn giữ index.lock; tiến trình git còn sống với cwd là checkout chính, khoá không được báo là mồ côi
+  echo more >> "$H/note.txt"
+  ( cd "$H" && GIT_EDITOR="sleep 20; true" git commit -q -a >/dev/null 2>&1 ) & gc=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -e "$LOCK" ] && break; sleep 0.5; done
+  if [ -e "$LOCK" ]; then
+    touch -t "$(date -v-11M +%Y%m%d%H%M 2>/dev/null || date -d '11 minutes ago' +%Y%m%d%H%M)" "$LOCK"
+    out="$(health "$HEALTH_APP" "$A")"
+    [ "$(n_lock "$out")" = 0 ] && ok "an old lock a live git commit holds (editor open, fd closed): no line" \
+      || fail "a live git commit's lock was reported as orphaned: $(grep index.lock <<< "$out" | head -1 | cut -c1-120)"
+  else
+    echo "skip: this git does not hold index.lock while the editor is open"
+  fi
+  pkill -P "$gc" 2>/dev/null; kill "$gc" 2>/dev/null; wait "$gc" 2>/dev/null
+  rm -f "$LOCK"; git -C "$H" checkout -q -- . 2>/dev/null
+else
+  echo "skip: no lsof on this machine"
+fi
 
 # 5. worktree liên kết của H: health chạy từ đó kiểm H (checkout chính), không kiểm HEAD detached của chính worktree
 git -C "$H" worktree add -q --detach "$H/.claude/worktrees/lane" HEAD

@@ -323,16 +323,35 @@ def _trunk_branch(main):
     return None
 
 
-def _git_holds_open(path):
-    """True khi có tiến trình mà tên lệnh bắt đầu bằng `git` đang mở file, False khi không có, None khi không biết (không có lsof, lsof
-    lỗi hoặc quá giờ): khi đó người gọi im lặng, không báo một khoá có thể đang sống."""
+def _lsof(*args):
+    """Các dòng `lsof -w <args>` (rỗng khi không tiến trình nào khớp); None khi không chạy được lsof, lsof lỗi hoặc quá 5 giây."""
     try:
-        res = subprocess.run(["lsof", "-w", "-F", "c", "--", str(path)], capture_output=True, text=True, timeout=5)
+        res = subprocess.run(["lsof", "-w", *args], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return None
-    if res.returncode not in (0, 1):
+    if res.returncode not in (0, 1):   # lsof thoát 1 khi không có gì khớp
         return None
-    return any(ln[1:].startswith("git") for ln in res.stdout.splitlines() if ln.startswith("c"))
+    return res.stdout.splitlines()
+
+
+def _git_holds_lock(lock, main):
+    """True khi một tiến trình git đang giữ khoá: mở chính file (git ghi qua fd), HOẶC đang chạy với thư mục làm việc là checkout `main`
+    (`git commit` chờ trình soạn thảo đã đóng fd nhưng vẫn giữ khoá; `git -C main …` cũng chdir vào main). Thư mục làm việc trong một
+    worktree lồng dưới main/.claude/worktrees không tính: đó là checkout khác, nó không giữ khoá của main. False khi không có; None khi
+    không biết (không có lsof, lsof lỗi hoặc quá giờ): khi đó người gọi im lặng, không báo một khoá có thể đang sống."""
+    opened = _lsof("-F", "c", "--", str(lock))
+    in_dir = _lsof("-a", "-c", "git", "-d", "cwd", "-F", "n")
+    if opened is not None and any(ln[1:].startswith("git") for ln in opened if ln.startswith("c")):
+        return True
+    if in_dir is not None:
+        root = os.path.realpath(str(main))
+        for ln in in_dir:
+            if not ln.startswith("n"):
+                continue
+            rel = os.path.relpath(os.path.realpath(ln[1:]), root)
+            if not rel.startswith("..") and not (rel + os.sep).startswith(os.path.join(".claude", "worktrees") + os.sep):
+                return True
+    return False if opened is not None and in_dir is not None else None
 
 
 def kit_host_checkout_notes(kit_dir: Path) -> list:
@@ -368,7 +387,7 @@ def kit_host_checkout_notes(kit_dir: Path) -> list:
         age = time.time() - lock.stat().st_mtime
     except OSError:
         return notes   # không có khoá: trường hợp thường
-    if age > STALE_LOCK_S and _git_holds_open(lock) is False and lock.exists():
+    if age > STALE_LOCK_S and _git_holds_lock(lock, main) is False and lock.exists():
         notes.append(tr(
             f"Khoá {lock} cũ {int(age // 60)} phút và không tiến trình git nào đang giữ: lệnh git đã chết giữa chừng, mọi lệnh git ghi chỉ mục ở {main} sẽ lỗi "
             f"'Unable to create index.lock'. Chỉ báo, không tự xoá. Sau khi chắc không còn lệnh git nào của phiên khác: rm {lock}",
