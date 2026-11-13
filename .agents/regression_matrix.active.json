@@ -4446,19 +4446,17 @@
       ]
     },
     {
-      "component": "devkit-copy-mode-profile-in-project",
+      "component": "devkit-active-profile-link-not-committed",
       "watch_files": [
         "universal-agent-devkit/bin/install.sh",
         "universal-agent-devkit/bin/agent-config.py",
-        "universal-agent-devkit/scripts/governance/devkit_uninstall.py",
-        "universal-agent-devkit/scripts/git/backup_conflict.sh",
-        "universal-agent-devkit/tests/installer/test_copy_mode_profile_in_project.sh"
+        "universal-agent-devkit/tests/installer/test_active_profile_link_not_committed.sh"
       ],
       "mandatory_regression_tests": [
         {
           "id": "REG-DK-COPY-PROFILE-01",
-          "name": "#1153: `agent-kit init -m copy` chép profile đang dùng vào .agents/devkit/active-profile và link .agents/active-profile trỏ vào đó (tương đối, trong dự án): không symlink nào leo ra ngoài dự án, health không còn cảnh báo link DevKit chưa loại khỏi git, cài lại không sinh *_old, uninstall gỡ sạch; chế độ symlink không đổi",
-          "command": "bash universal-agent-devkit/tests/installer/test_copy_mode_profile_in_project.sh",
+          "name": "#1153: `agent-kit init -m copy` ghi link .agents/active-profile (trỏ về kit của máy cài) vào .git/info/exclude như chế độ symlink: `git add -A` không commit link, bản clone không có symlink treo, health không cảnh báo link DevKit chưa loại khỏi git, cài lại không nhân đôi dòng và không đụng .gitignore đã commit",
+          "command": "bash universal-agent-devkit/tests/installer/test_active_profile_link_not_committed.sh",
           "parallel_safe": true
         }
       ]
