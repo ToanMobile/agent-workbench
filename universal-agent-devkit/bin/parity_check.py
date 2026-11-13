@@ -11,6 +11,7 @@ Mỗi chỗ lệch in một dòng `<loại>: <đường dẫn> — <chi tiết>`
   copied-hook        cài symlink mà .claude/hooks/<tên> là file thường trùng tên hook kit: kit cập nhật không tới được
   hook-missing       hook kit (hooks/hooks.json) chưa đăng ký trong .claude/settings.json
   hook-dangling      .claude/settings.json đăng ký .claude/hooks/<tên> mà file không có
+  hook-legacy        hook kit đăng ký bằng lệnh template cũ (vd `"$CLAUDE_PROJECT_DIR"/.claude/hooks/<tên>`, #809): init đổi sang lệnh kit
   super-board-drift  bản sao super-board khác bản nguồn (.claude/bin/super-board-drift.py của repo chứa kit, #368)
 --fix sửa forbidden-flag (bỏ cờ khỏi chuỗi lệnh, giữ nguyên phần còn lại của file) và super-board-drift (#774: chép file thiếu / lệch từ
 nguồn, file chỉ có ở repo giữ nguyên). Chỗ lệch khác cần `agent-kit init` hoặc sửa ở repo.
@@ -257,6 +258,16 @@ def check_settings(repo):
         key, m = mj._hook_key(h), mj._matcher_set(e)
         if not any(hev == ev and mj._hook_key(hh) == key and mj._overlap(mj._matcher_set(he), m) for hev, he, hh in have):
             out.append(f"hook-missing: .claude/settings.json — {ev}{' ' + e.get('matcher') if e.get('matcher') else ''}: {h['command']}")
+    # #809: hook kit còn viết kiểu template cũ — đúng những chuỗi init (merge_json) thay bằng lệnh kit hiện tại
+    for hev, he, hh in have:
+        key = mj._hook_key(hh)
+        if not key.startswith(mj.DEVKIT_HOOK) or hh["command"] not in mj.stale_spellings(key):
+            continue
+        kit = next((h["command"] for ev, e, h in flat_hooks(kit_hooks) if ev == hev and mj._hook_key(h) == key
+                    and mj._overlap(mj._matcher_set(e), mj._matcher_set(he))), None)
+        if kit is not None and kit != hh["command"]:
+            out.append(f"hook-legacy: .claude/settings.json — {hev}{' ' + he.get('matcher') if he.get('matcher') else ''}: "
+                       f"{hh['command']} (init rewrites it to {kit})")
     for ev, e, h in have:
         for name in HOOK_REF_RE.findall(h["command"]):
             if not os.path.exists(os.path.join(repo, ".claude", "hooks", name)):

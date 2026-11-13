@@ -61,6 +61,15 @@ def _hook_key(hook):
 DEVKIT_HOOK = "devkit-hook:"
 
 
+def stale_spellings(key):
+    """Exact commands older DevKit templates wrote for the DevKit hook `key`; init replaces them with
+    the current template command. Only these whole strings: a command with extra words is the user's.
+    #809: `"$CLAUDE_PROJECT_DIR"/.claude/hooks/X` (run directly, no bash, no :-$PWD) stayed in app repos."""
+    name = key[len(DEVKIT_HOOK):]
+    return ('bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/' + name + '"',
+            '"$CLAUDE_PROJECT_DIR"/.claude/hooks/' + name)
+
+
 def _rewire_through_claude_hooks(groups, devkit_keys):
     """A DevKit hook wired as .agents/devkit/hooks/X runs through .claude/hooks/X instead (the
     link the installer makes next to every DevKit hook). .agents/devkit is git-ignored, so a
@@ -137,18 +146,18 @@ def _merge_list(source, target):
                 missing = set() if cover is None else src_m - cover
                 if missing:
                     _merge_list([{**item, "matcher": "|".join(sorted(missing)), "hooks": [h]}], target)
-            # A DevKit hook still wired with the plain spelling older templates wrote
-            # (`bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/X"`) takes the template's current
-            # command, so a re-sync brings a changed wiring (2026-10-09: SessionStart says when
-            # the hook files are missing instead of exiting 127). Any other command is the user's.
+            # A DevKit hook still wired with a spelling older templates wrote (`stale_spellings`)
+            # takes the template's current command, so a re-sync brings a changed wiring
+            # (2026-10-09: SessionStart says when the hook files are missing instead of exiting
+            # 127). Any other command is the user's.
             for h in item["hooks"]:
                 key = _hook_key(h)
                 if not (isinstance(h, dict) and key.startswith(DEVKIT_HOOK) and key in present):
                     continue
-                plain = 'bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/' + key[len(DEVKIT_HOOK):] + '"'
+                stale = stale_spellings(key)
                 for t in target:
                     for th in (t.get("hooks") if isinstance(t, dict) and isinstance(t.get("hooks"), list) else []):
-                        if isinstance(th, dict) and th.get("command") == plain and h.get("command") != plain:
+                        if isinstance(th, dict) and th.get("command") in stale and h.get("command") != th["command"]:
                             th["command"] = h["command"]
             new_hooks = [h for h in item["hooks"] if _hook_key(h) not in present]
             if not new_hooks:
