@@ -29,7 +29,7 @@ clone_node_modules() {
       if [ -e "$MAIN/$dir/$f" ] || [ -e "$SCRATCH/$dir/$f" ]; then cmp -s "$MAIN/$dir/$f" "$SCRATCH/$dir/$f" || { same=0; break; }; fi
     done
     if [ "$same" != 1 ]; then echo "[scratch-config] $dir/node_modules not cloned: package.json/lockfile differ from main" >&2; continue; fi
-    # Khác volume thì cp -c lặng lẽ chép từng byte (như copy_unity_library): không chép.
+    # Khác volume thì cp -c lặng lẽ chép từng byte (như bản clone thư viện Unity của DevKit): không chép.
     if [ "$(stat -f %d "$src")" != "$(stat -f %d "$SCRATCH/$dir")" ]; then
       echo "[scratch-config] $dir/node_modules not cloned: scratch is on another volume" >&2; continue
     fi
