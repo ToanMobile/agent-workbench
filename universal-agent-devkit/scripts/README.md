@@ -1,6 +1,6 @@
 # Universal Agent DevKit Scripts
 
-Toàn bộ 39 công cụ thực thi của **Universal Agent DevKit** được cấu trúc mạch lạc thành **5 nhóm nghiệp vụ chuyên biệt**:
+39 công cụ liệt kê dưới đây của **Universal Agent DevKit** chia thành **5 nhóm nghiệp vụ** (danh sách chưa gồm mọi file trong từng thư mục; số ở mỗi dòng là số công cụ được liệt kê):
 
 ```
 scripts/
