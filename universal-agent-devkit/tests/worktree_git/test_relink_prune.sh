@@ -81,4 +81,32 @@ python3 "$K/scripts/governance/relink_check.py" "$K" --quiet --links-only
 [ -z "$(git -C "$K" status --porcelain)" ] && ok "project inside the kit (self-install): nothing pruned" \
   || fail "self-install: kit changed: $(git -C "$K" status --porcelain | tr '\n' ' ')"
 
+# A HOOK the kit dropped leaves the same dangling link in `.claude/hooks/` (review_timing_guard.sh, 13/11: agent-kit health 92 -> 88,
+# "Broken links", and only `agent-kit init` removed it; SessionStart did not). Same rule as for commands: a link that dangles AND
+# points into this DevKit goes, anything else stays.
+plant_hooks() {
+  ln -sfn "$KIT/hooks/zz-removed-a.sh" "$P/.claude/hooks/zz-removed-a.sh"                  # dangling, absolute into the kit
+  ln -sfn "$P/.agents/devkit/hooks/zz-removed-b.sh" "$P/.claude/hooks/zz-removed-b.sh"     # dangling, through the alias
+  ln -sfn "$TMP/elsewhere/mine.sh" "$P/.claude/hooks/zz-mine.sh"                           # dangling, not the kit's: keep
+  printf '#!/bin/sh\n' > "$P/.claude/hooks/zz-own.sh"                                      # regular file: keep
+}
+check_hooks() {   # $1 label
+  [ ! -L "$P/.claude/hooks/zz-removed-a.sh" ] && [ ! -L "$P/.claude/hooks/zz-removed-b.sh" ] \
+    && ok "$1: the 2 dangling hook links into the kit are pruned" \
+    || fail "$1: dangling hook links left: $(ls -l "$P/.claude/hooks" | grep zz-removed | tr '\n' ' ')"
+  [ -L "$P/.claude/hooks/zz-mine.sh" ] && [ -f "$P/.claude/hooks/zz-own.sh" ] \
+    && ok "$1: a dangling hook link outside the kit and a regular file stay" \
+    || fail "$1: removed a hook that is not the kit's: $(ls "$P/.claude/hooks" | grep zz | tr '\n' ' ')"
+  [ -L "$P/.claude/hooks/session_context.sh" ] && [ -e "$P/.claude/hooks/session_context.sh" ] \
+    && ok "$1: live hook links stay" || fail "$1: a live hook link was removed"
+}
+[ -d "$P/.claude/hooks" ] || fail "install left no .claude/hooks"
+plant_hooks
+python3 "$DEVKIT_DIR/scripts/governance/relink_check.py" "$P" --quiet --links-only
+check_hooks "relink_check"
+rm -f "$P/.claude/hooks/zz-mine.sh" "$P/.claude/hooks/zz-own.sh"
+plant_hooks
+printf '{"session_id":"relink-prune-hooks-test","source":"startup"}' | CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/session_context.sh" >/dev/null 2>&1
+check_hooks "SessionStart"
+
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }
