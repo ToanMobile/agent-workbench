@@ -69,7 +69,15 @@ _TONE_RE = re.compile("(?:" + "|".join(_TONE_SWAP) + r")(?!\w)")
 def normalize(text):
     """Lower case, NFC, one Vietnamese tone placement."""
     text = unicodedata.normalize("NFC", text).lower()
+    if text.isascii():  # the swaps are all non-ASCII: nothing to rewrite
+        return text
     return _TONE_RE.sub(lambda m: _TONE_SWAP[m.group(0)], text)
+
+
+# Precompiled once per process (#1127): word_set runs ~220 times per prompt and each re.* call paid a cache lookup.
+_WORD_RE = re.compile(r"[\w$]+")
+_CAMEL_RE = re.compile(r"[a-z][A-Z]|[A-Z][A-Z][a-z]")
+_PART_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")
 
 
 def word_set(text):
@@ -77,21 +85,39 @@ def word_set(text):
     applyUntrustedXmlSecurity → xml…; reader_error_docx → docx. An entry that names
     `SAXReader.applyUntrustedXmlSecurity` is about XML even if it never says "XML"."""
     out = set()
-    for raw in re.findall(r"[\w$]+", unicodedata.normalize("NFC", text)):
+    for raw in _WORD_RE.findall(unicodedata.normalize("NFC", text)):
         out.add(normalize(raw))
-        if raw.isascii() and ("_" in raw or re.search(r"[a-z][A-Z]|[A-Z][A-Z][a-z]", raw)):
-            out.update(w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+", raw) if len(w) >= 3)
+        if raw.isascii() and ("_" in raw or _CAMEL_RE.search(raw)):
+            out.update(w.lower() for w in _PART_RE.findall(raw) if len(w) >= 3)
     return out
+
+
+def _is_word(c):
+    return c == "_" or c.isalnum()
 
 
 def mentions(text, keywords):
     """text (normalized) names one of keywords as a word or the start of one ("crash"
     finds "crashed"). A keyword of three characters or fewer must be a whole word
     (plural s allowed): "pr" is not in "PlayerPrefs", "ui" not in "build"."""
+    # No re.search per keyword (#1127): a fresh hook process has a cold regex cache, so ~240 compiles cost 25-45 ms CPU per
+    # prompt. Same rule by hand: not preceded by a word char; for k <= 3 chars followed by [s] then a non-word char / end.
+    n = len(text)
     for k in keywords:
         k = normalize(k)
-        if re.search(r"(?<!\w)" + re.escape(k) + (r"s?(?!\w)" if len(k) <= 3 else ""), text):
-            return True
+        if not k:  # "" matched at the first non-word-preceded position in the regex form: keep that answer
+            if re.search(r"(?<!\w)s?(?!\w)", text):
+                return True
+            continue
+        short, kl, i = len(k) <= 3, len(k), text.find(k)
+        while i != -1:
+            e = i + kl
+            if i == 0 or not _is_word(text[i - 1]):
+                if not short or e == n or not _is_word(text[e]):
+                    return True
+                if text[e] == "s" and (e + 1 == n or not _is_word(text[e + 1])):
+                    return True
+            i = text.find(k, i + 1)
     return False
 
 
@@ -1006,9 +1032,14 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
             + (f"\n- ⚠️ {note}" if note else ""))
 
 
+_LINKED_MEMO = {}
+
+
 def _linked(rc, project_root):
     """regression_checklist.skip_bookkeeping, True in a LINKED worktree; an older regression_checklist without it: False (writes, as before)."""
-    return getattr(rc, "skip_bookkeeping", lambda _p: False)(project_root)
+    if project_root not in _LINKED_MEMO:   # #1127: each ask is several git subprocesses; one process, one answer
+        _LINKED_MEMO[project_root] = getattr(rc, "skip_bookkeeping", lambda _p: False)(project_root)
+    return _LINKED_MEMO[project_root]
 
 
 def _checklist_on(project_root):
