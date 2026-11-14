@@ -94,6 +94,16 @@ want 2 Bash "$W2" "for t in a; do pushd $M; echo x > q-\$t; done" "for-loop R6d:
 want 2 Bash "$W2" "for t; do echo x > q-\$t; done" "for-loop R6e: for t; do (không có in)"
 want 0 Bash "$W2" 'for t in a b; do echo ${t} > /tmp/q-${t}.log; done' "for-loop R6: ca đối chứng \${t} vẫn qua"
 
+# #1102 R7 (reviewer bounce 5, whitelist): `for t;` sau `t=`, `printf -v` khi vòng khác tên, `for` giả trong nháy, tên che bằng `$(..)` / nháy / `$'\x74'`.
+want 2 Bash "$W2" "set -- $M/a.txt; t=/tmp/ok; for t; do echo x > \$t; done" "for-loop R7a: for t; sau t="
+want 2 Bash "$W2" "t=/tmp/ok; for i in 1; do printf -v t $M/a.txt; echo x > \$t; done" "for-loop R7b: printf -v khi vòng khác tên"
+want 2 Bash "$W2" "for t in a.txt; do echo \"; for p in /tmp/out; do\" > \$p$M/\$t; echo done; done" "for-loop R7c: for giả trong nháy"
+want 2 Bash "$W2" "t=/tmp/ok; printf -v \$(basename /t) $M/a.txt; echo x > \$t" "for-loop R7d: printf -v \$(..)"
+want 2 Bash "$W2" "t=/tmp/ok; printf -v t\"f\" $M/a.txt; echo x > \$t" "for-loop R7d: printf -v t\"f\""
+want 2 Bash "$W2" "t=/tmp/ok; declare t\"f\"=$M/a.txt; echo x > \$t" "for-loop R7d: declare t\"f\"="
+want 2 Bash "$W2" "t=/tmp/ok; printf -v \$'\\x74' $M/a.txt; echo x > \$t" "for-loop R7d: printf -v \$'\\x74'"
+want 0 Bash "$W2" 'for t in a b; do echo x > /tmp/q-$t.log; done' "for-loop R7: ca đối chứng vẫn qua"
+
 # hiệu năng: thư mục đích có hàng nghìn entry - hook không liệt kê / glob thư mục, nên không chậm đáng kể
 BIG="$TMP/big"; mkdir -p "$BIG"; python3 -I -c 'import sys; [open(sys.argv[1] + "/q-%d.log" % i, "w").close() for i in range(5000)]' "$BIG"
 T0=$(python3 -I -c 'import time; print(time.time())')

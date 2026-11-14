@@ -2291,10 +2291,26 @@ _SHELL_SET_VARS = frozenset({"_", "REPLY", "PWD", "OLDPWD", "OPTARG", "OPTIND", 
 _SOURCES_FILE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*(?:source|\.)\s")
 
 
+# R7 (reviewer #1102, whitelist): builtins that set a variable with no `NAME=` in the text (`printf -v`, `read`, `mapfile`, `declare` …); the
+# plain static expansion cannot see them, so a line holding one never has its `$VAR` target expanded
+_ASSIGNING_BUILTIN = re.compile(r"\b(?:read|mapfile|readarray|getopts|select|declare|typeset|local|unset|let|eval)\b|\bprintf\b[^;&|\n]*\s-v")
+
+
+def _for_line_plain(cmd):
+    """R7 whitelist for the for-loop expansion: the line holds no quote, comment, backslash, `$(`, backtick, `$'`, `((`, no `$` that is not a plain
+    $NAME / ${NAME}, no variable-setting builtin, and every `for` word is a real `for NAME in <fixed words>; do` clause (a `for` inside
+    text, or `for NAME;`, makes the count differ). Anything else: not expanded, the target stays refused."""
+    if any(x in cmd for x in ('"', "'", "`", "#", "\\", "$(", "$'", "((")) or _ASSIGNING_BUILTIN.search(cmd):
+        return False
+    if re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", cmd):
+        return False
+    return len(re.findall(r"\bfor\b", cmd)) == len(_FOR_CLAUSE.findall(cmd))
+
+
 def _for_var_reassigned(target, cmd):
     """`target` uses a variable that is the NAME of a `for` of this line AND is assigned (`NAME=`, `NAME+=`) somewhere in it: the plain static
     expansion would take the assignment for the value (the loop sets it per round), so the caller refuses the target (review kế hoạch #1102)."""
-    loops = {m.group(1) for m in re.finditer(r"\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\b", cmd)}   # any list: `for t in $(ls)` sets t too
+    loops = {m.group(1) for m in re.finditer(r"\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\b", cmd)}   # any list, or none (`for t;`): the loop sets t too
     if not loops:
         return False
     used = {m.group(1) or m.group(2) for m in _VAR_USE.finditer(target)}
@@ -2306,6 +2322,8 @@ def _for_loop_targets(target, cmd):
     và mọi chỗ dùng nó nằm trong thân do…done; None (không biết -> người gọi chặn) trong mọi trường hợp khác: NAME còn được gán ở đâu đó
     trong dòng, hai vòng cùng tên, thiếu done, danh sách không phải từ cố định, dòng có ln / mkdir / mv / cp …, hơn _FOR_MAX_COMBOS tổ hợp."""
     if "`" in target or _MAKES_PATH.search(cmd) or "<<" in cmd or _SOURCES_FILE.search(cmd) or _for_var_reassigned(target, cmd):
+        return None
+    if not _for_line_plain(cmd):
         return None
     # R6 (reviewer #1102): the shell may change the variable or the directory behind the hook's back - eval / a `.` word anywhere (`{ . f; }`),
     # a `cd` / `pushd` in the line (relative targets move), a `${NAME…}` operator form (`${t#x}`, `${t:-y}`), a variable the shell sets itself
@@ -2415,7 +2433,7 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
         cands = [t]
         if "$" in t or "`" in t:
             raw_t, t = t, _expand_static_vars(t, cmd)
-            if t is not None and _for_var_reassigned(raw_t, cmd):   # `t=/tmp/ok; for t in a.txt; do … > $t`: the assignment is not the loop's value
+            if t is not None and (_for_var_reassigned(raw_t, cmd) or _ASSIGNING_BUILTIN.search(cmd)):   # `t=/tmp/ok; for t in a.txt; do … > $t`, `printf -v t …`: the text's assignment is not the value
                 return True
             if t is None and loose:   # cwd không phải repo: `> "$TMPDIR/x"` không phải ghi vào main (review #427 vòng 2)
                 continue
