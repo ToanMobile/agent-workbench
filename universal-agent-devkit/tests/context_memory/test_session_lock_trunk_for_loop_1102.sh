@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# #1102 (đối chiếu #1099, #1151): (a) `for NAME in <từ cố định>; do … > /tmp/q-$NAME.log; done` được qua khi MỌI giá trị khai triển ra ngoài
-# main, mọi biến chưa biết khác vẫn bị chặn; (b) công cụ sửa file của Grok (search_replace, hashline_edit) ghi vào main bị chặn như Edit,
-# ghi vào worktree thì qua. Replay hook thật session_lock.sh với phong bì Grok (như test_session_lock_grok_shell.sh).
+# #1102 (#1099, #1151; orchestrator decision 14/11: no static for-loop expansion in the hook, INSTINCT-104): (a) a redirect whose target holds a variable
+# the line does not assign stays refused, for-loop shapes included (the QA worker writes to literal paths instead: test_qa_detached_worktree.sh);
+# (b) the Grok edit tools (search_replace, hashline_edit) writing into main are refused like Edit, into a worktree they pass. Replays the real session_lock.sh hook.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 unset WORKTREE_TRUNK_MODE DEVKIT_ALLOW_SHARED_CHECKOUT SB_BOARD_WORKER
@@ -38,123 +38,14 @@ want() {
   [ "$rc" = "$1" ] && ok "$5 [$2: rc $rc]" || fail "$5 [$2: rc $rc, want $1] $(head -c 140 "$TMP/err" | tr '\n' ' ')"
 }
 
-# (a) for-loop tĩnh
-want 0 Bash "$M" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "for-loop: redirect /tmp/q-\$t.log, giá trị cố định"
-want 0 Bash "$M" "for t in a b; do echo x > $OUT/\$t.log; done" "for-loop: redirect vào thư mục ngoài main"
-want 2 Bash "$M" 'for t in a b; do echo x >/tmp/q-$u.log; done' "for-loop: biến chưa biết khác vẫn chặn"
-want 2 Bash "$M" 'for t in a b; do echo x > $t; done' "for-loop: đích tương đối trong main (cwd = main)"
-want 2 Bash "$M" 'for t in .a b; do echo x > $t; done' "for-loop: tiền tố '.' -> file trong main"
-want 2 Bash "$M" "for t in ../main/a.txt; do echo x > $OUT/\$t; done" "for-loop: giá trị có ../ đi vào main"
-want 2 Bash "$M" "for t in ../../main/a.txt; do echo x > $OUT/sub/\$t; done" "for-loop: ../.. thật vào main"
-want 2 Bash "$M" "for t in a.txt; do echo x > $TMP/lnk/\$t; done" "for-loop: symlink vào main"
-want 2 Bash "$M" "for t in a.txt; do ln -sfn $M $OUT/l; echo x > $OUT/l/\$t; done" "for-loop: ln cùng dòng"
-want 2 Bash "$M" 'for t in a?; do echo x > /tmp/q-$t; done' "for-loop: ký tự ? trong giá trị"
-want 2 Bash "$M" 'for t in *; do echo x > /tmp/q-$t; done' "for-loop: glob trong danh sách"
-want 2 Bash "$M" 'for t in $(ls); do echo x > /tmp/q-$t; done' "for-loop: danh sách là thay thế lệnh"
-want 2 Bash "$M" "for t in a b; do echo x > $M/\$t.txt; done" "for-loop: đích tuyệt đối trong main"
-want 2 Bash "$M" 't=/tmp/ok; for t in a.txt; do echo x > $t; done' "for-loop: NAME còn được gán trước vòng lặp"
-want 2 Bash "$M" 'for t in a.txt; do echo x > $t; t=/tmp/ok; done' "for-loop: NAME gán lại trong thân"
-want 2 Bash "$M" 'for t in a.txt; do echo x > $t' "for-loop: thiếu done"
-want 2 Bash "$M" 'echo x > $t; for t in /tmp/a; do :; done' "for-loop: redirect dùng \$t TRƯỚC vòng lặp"
-want 2 Bash "$M" 'for t in /tmp/a; do :; done; echo x > $t' "for-loop: redirect dùng \$t SAU vòng lặp"
-want 2 Bash "$M" 'for t in a; do for t in b; do echo x > /tmp/q-$t; done; done' "for-loop: hai vòng cùng tên"
-want 2 Bash "$M" 'for a in 1 2 3 4 5 6 7 8 9; do for b in 1 2 3 4 5 6 7 8 9; do echo x > /tmp/q-$a-$b; done; done' "for-loop: quá 64 tổ hợp"
-want 0 Bash "$M" 'for a in 1 2; do for b in x y; do echo x > /tmp/q-$a-$b; done; done' "for-loop: hai biến lồng nhau, ngoài main"
-want 2 Bash "$M" 't=/tmp/ok; for t in $(ls); do echo x > $t; done' "for-loop: danh sách động, NAME đã gán trước đó"
-# #1102 R1 (reviewer bounce): biến vòng lặp bị gán lại bằng lệnh nội bộ (không phải `NAME=`): giá trị đến từ file / stdin, hook không biết nó trỏ đâu
-want 2 Bash "$M" 'for t in a; do read t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: read gán lại NAME"
-want 2 Bash "$M" 'for t in a; do printf -v t %s "$(cat /tmp/p)"; echo x > /tmp/q-$t; done' "for-loop R1: printf -v gán lại NAME"
-want 2 Bash "$M" 'for t in a; do mapfile -t t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: mapfile gán lại NAME"
-want 2 Bash "$M" 'for t in a; do readarray t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: readarray gán lại NAME"
-want 2 Bash "$M" 'for t in a; do declare t=$(cat /tmp/p); echo x > /tmp/q-$t; done' "for-loop R1: declare gán lại NAME"
-want 2 Bash "$M" 'for t in a; do export t; read t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: export + read"
-want 2 Bash "$M" 'for t in a; do getopts x t; echo x > /tmp/q-$t; done' "for-loop R1: getopts gán NAME"
-want 2 Bash "$M" 'for t in a; do read -r a t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: read -r nhiều tên"
-want 0 Bash "$M" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "for-loop R1: ca đối chứng vẫn qua"
-# #1102 R5 (reviewer bounce 3): for lồng cùng tên, đích hai biến, cờ gộp (`-vt`, `-at`) và `. file` gán NAME mà văn bản không có `t=`
-want 2 Bash "$M" 'for t in a; do for t in $(cat /tmp/p); do echo x > /tmp/q-$t; done; done' "for-loop R5: vòng trong cùng tên, danh sách động"
-want 2 Bash "$M" 'for t in a; do for t in b $(cat /tmp/p); do echo x > /tmp/q-$t; done; done' "for-loop R5: vòng trong cùng tên, danh sách lẫn"
-want 2 Bash "$M" 'for a in 1; do for t in b; do echo x > /tmp/$a-$t; t=/tmp/ok; done; done' "for-loop R5: đích hai biến, NAME gán lại trong thân"
-want 2 Bash "$M" 'for t in a; do printf -vt %s "$(cat /tmp/p)"; echo x > /tmp/q-$t; done' "for-loop R5: printf -vt (cờ gộp)"
-want 2 Bash "$M" 'for t in a; do read -at < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R5: read -at (cờ gộp)"
-want 2 Bash "$M" 'for t in a; do . /tmp/p.sh; echo x > /tmp/q-$t; done' "for-loop R5: . file có thể gán NAME"
-want 2 Bash "$M" 'for t in a; do source /tmp/p.sh; echo x > /tmp/q-$t; done' "for-loop R5: source file có thể gán NAME"
-want 0 Bash "$M" 'for t in a b; do ./run.sh -v >/tmp/q-$t.log; done' "for-loop R5: ca đối chứng (./run.sh, cờ -v) vẫn qua"
-# #1102 R6 (reviewer bounce 4): biến vòng bị đổi ngầm - eval, `{ . f; }`, ${t#..}, _ / REPLY / PWD, cd trong vòng, `for t; do`.
-# cwd = $W2 (worktree, ngoài main): hook tưởng đích là tên tương đối an toàn, còn thực tế shell ghi vào main.
-want 2 Bash "$W2" "for t in a; do eval \"t=$M/x\"; echo x > \$t; done" "for-loop R6a: eval gán NAME"
-want 2 Bash "$W2" "for t in a; do { . /tmp/p.sh; }; echo x > \$t; done" "for-loop R6a: { . file; } gán NAME"
-want 2 Bash "$W2" "for t in $M/a; do echo x > \${t#$M/}; cd $M; done" "for-loop R6b: \${t#..} cắt tiền tố"
-want 2 Bash "$W2" "for t in a; do echo x > \${t:-$M/x}; done" "for-loop R6b: \${t:-..}"
-want 2 Bash "$W2" "for _ in a; do echo x > \$_; done" "for-loop R6c: biến _ do shell đặt"
-want 2 Bash "$W2" "for PWD in a; do echo x > \$PWD/f; done" "for-loop R6c: biến PWD"
-want 2 Bash "$W2" "for REPLY in a; do echo x > \$REPLY; done" "for-loop R6c: biến REPLY"
-want 2 Bash "$W2" "for t in a; do cd $M; echo x > q-\$t; done" "for-loop R6d: cd trong vòng, đích tương đối"
-want 2 Bash "$W2" "for t in a; do pushd $M; echo x > q-\$t; done" "for-loop R6d: pushd trong vòng"
-want 2 Bash "$W2" "for t; do echo x > q-\$t; done" "for-loop R6e: for t; do (không có in)"
-want 0 Bash "$W2" 'for t in a b; do echo ${t} > /tmp/q-${t}.log; done' "for-loop R6: ca đối chứng \${t} vẫn qua"
-
-# #1102 R7 (reviewer bounce 5, whitelist): `for t;` sau `t=`, `printf -v` khi vòng khác tên, `for` giả trong nháy, tên che bằng `$(..)` / nháy / `$'\x74'`.
-want 2 Bash "$W2" "set -- $M/a.txt; t=/tmp/ok; for t; do echo x > \$t; done" "for-loop R7a: for t; sau t="
-want 2 Bash "$W2" "t=/tmp/ok; for i in 1; do printf -v t $M/a.txt; echo x > \$t; done" "for-loop R7b: printf -v khi vòng khác tên"
-want 2 Bash "$W2" "for t in a.txt; do echo \"; for p in /tmp/out; do\" > \$p$M/\$t; echo done; done" "for-loop R7c: for giả trong nháy"
-want 2 Bash "$W2" "t=/tmp/ok; printf -v \$(basename /t) $M/a.txt; echo x > \$t" "for-loop R7d: printf -v \$(..)"
-want 2 Bash "$W2" "t=/tmp/ok; printf -v t\"f\" $M/a.txt; echo x > \$t" "for-loop R7d: printf -v t\"f\""
-want 2 Bash "$W2" "t=/tmp/ok; declare t\"f\"=$M/a.txt; echo x > \$t" "for-loop R7d: declare t\"f\"="
-want 2 Bash "$W2" "t=/tmp/ok; printf -v \$'\\x74' $M/a.txt; echo x > \$t" "for-loop R7d: printf -v \$'\\x74'"
-want 0 Bash "$W2" 'for t in a b; do echo x > /tmp/q-$t.log; done' "for-loop R7: ca đối chứng vẫn qua"
-
-# #1102 R8 (reviewer bounce 6, từ chối mọi ký tự mở rộng và mọi gán biến ngoài mệnh đề for): ln theo đường dẫn, glob / brace / tilde trong đích,
-# `done` làm đối số, biến khác được gán trong lệnh, gán sau `do` / readonly.
-want 2 Bash "$W2" "for t in a; do /bin/ln -sfn $M $OUT/l; echo x > $OUT/l/\$t; done" "for-loop R8-1: /bin/ln cùng dòng"
-want 2 Bash "$W2" "for t in a; do ./ln -sfn $M $OUT/l; echo x > $OUT/l/\$t; done" "for-loop R8-1: ./ln cùng dòng"
-want 2 Bash "$W2" "for t in a.txt; do echo x > $TMP/m?in/\$t; done" "for-loop R8-2: glob ? trong đích"
-want 2 Bash "$W2" "for t in a.txt; do echo x > $TMP/mai*/\$t; done" "for-loop R8-2: glob * trong đích"
-want 2 Bash "$W2" "for t in a.txt; do tee {/tmp/x,$M/\$t} < /dev/null; done" "for-loop R8-2: brace trong đối số"
-want 2 Bash "$W2" "for t in a.txt; do echo x > ~/\$t; done" "for-loop R8-2: tilde trong đích"
-want 2 Bash "$W2" "for t in a; do echo x > /tmp/q-\$t; echo done; done" "for-loop R8-3: done làm đối số"
-want 2 Bash "$W2" "for t in a; do X=/tmp; echo x > \$X/\$t; done" "for-loop R8-4: biến khác được gán trong lệnh"
-want 2 Bash "$W2" "for t in a; do readonly t=$M/x; echo x > \$t; done" "for-loop R8-5: readonly gán biến vòng"
-want 2 Bash "$W2" "for t in a; do t=$M/x; echo x > \$t; done" "for-loop R8-5: gán ngay sau do"
-want 0 Bash "$W2" 'for t in a b; do ./run.sh -v >/tmp/q-$t.log 2>&1; done' "for-loop R8: ca đối chứng vẫn qua"
-
-# #1102 R9 (reviewer bounce 7): zsh áp bộ sửa đổi `:gs/a/b/`, `:s/a/b/`, `:h` ngay sau `$NAME` / `${NAME}` - hook chỉ thấy chữ, từ chối mọi `:` theo sau tên biến.
-want 2 Bash "$W2" "for t in $TMP/main-x/a.txt; do echo x > \$t:gs/-x//; done" "for-loop R9: \$t:gs/-x//"
-want 2 Bash "$W2" "for t in $TMP/main-x/a.txt; do echo x > \$t:s/-x//; done" "for-loop R9: \$t:s/a/b/"
-want 2 Bash "$W2" "for t in $M/sub/a.txt; do echo x > \$t:h/b; done" "for-loop R9: \$t:h"
-want 2 Bash "$W2" "for t in $TMP/main-x/a.txt; do echo x > \${t}:gs/-x//; done" "for-loop R9: \${t}:gs/-x//"
-want 0 Bash "$W2" 'for t in a b; do echo x > /tmp/q-$t.log; done' "for-loop R9: ca đối chứng vẫn qua"
-
-# #1102 R10 (audit T0481, whitelist chặt): gán đầu câu / sau do / ${t:=} / `for \<newline>` / tên che bằng nháy, biến shell tự đặt, link
-want 2 Bash "$W2" "t=/tmp/ok; for t in a; do t=$M/a.txt; echo x > \$t; done" "for-loop R10: gán đầu câu rồi gán sau do"
-want 2 Bash "$W2" "for t in a; do t=$M/a.txt; echo x > \$t; done" "for-loop R10: do t=main"
-want 2 Bash "$W2" "for t in a; do : \${t:=$M/a.txt}; echo x > \$t; done" "for-loop R10: \${t:=..}"
-want 2 Bash "$W2" "t=/tmp/ok; for \\
-t in a; do echo x > $M/\$t; done" "for-loop R10: for tách dòng bằng backslash"
-want 2 Bash "$W2" "t=/tmp/ok; pr\"i\"ntf -v t $M/a.txt; for i in a; do echo x > \$t; done" "for-loop R10: pr\"i\"ntf -v"
-want 2 Bash "$W2" "for DIRSTACK in a; do echo x > \$DIRSTACK; done" "for-loop R10: DIRSTACK"
-want 2 Bash "$W2" "for t in a; do link $M/a.txt $OUT/l-a; echo x > $OUT/l-\$t; done" "for-loop R10: link cùng dòng"
-want 0 Bash "$W2" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "for-loop R10: mẫu QA thật vẫn qua"
-
-# #1102 R11 (audit T0484, whitelist): dòng không có từ `for` mà biến vẫn bị gán lại ngoài vị trí đầu câu (`{ t=..; }`, `then t=`, `${t:=..}`, `printf -v` che bằng nháy),
-# và biến vòng là tên shell tự đặt (BASH_COMMAND, HISTCMD, HISTCHARS, USERNAME): tên biến vòng chỉ được nằm trong danh sách trắng.
-want 2 Bash "$W2" "t=/tmp/ok; pr\"i\"ntf -v t $M/a.txt; echo pwned > \$t" "for-loop R11: pr\"i\"ntf -v không có for"
-want 2 Bash "$W2" "t=/tmp/ok; { t=$M/a.txt; }; echo pwned > \$t" "for-loop R11: { t=main; }"
-want 2 Bash "$W2" "t=/tmp/ok; if true; then t=$M/a.txt; fi; echo pwned > \$t" "for-loop R11: then t=main"
-want 2 Bash "$W2" "t=/tmp/ok; : \${t:=$M/a.txt}; echo pwned > \$t" "for-loop R11: \${t:=main}"
-want 2 Bash "$W2" "for BASH_COMMAND in /tmp/ok; do $M/a.txt; (echo pwned) > \$BASH_COMMAND; done" "for-loop R11: BASH_COMMAND"
-for V in HISTCMD HISTCHARS USERNAME; do
-  want 2 Bash "$W2" "for $V in a; do echo x > \$$V; done" "for-loop R11: vòng $V"
-done
-want 0 Bash "$W2" 't=/tmp/ok; echo x > $t' "for-loop R11: ca đối chứng gán một lần vẫn qua"
-want 0 Bash "$W2" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "for-loop R11: mẫu QA thật vẫn qua"
-
-# hiệu năng: thư mục đích có hàng nghìn entry - hook không liệt kê / glob thư mục, nên không chậm đáng kể
-BIG="$TMP/big"; mkdir -p "$BIG"; python3 -I -c 'import sys; [open(sys.argv[1] + "/q-%d.log" % i, "w").close() for i in range(5000)]' "$BIG"
-T0=$(python3 -I -c 'import time; print(time.time())')
-want 0 Bash "$M" "for t in a b c; do echo x > $BIG/q-\$t.log; done" "for-loop: thư mục 5000 entry vẫn qua"
-T1=$(python3 -I -c 'import time; print(time.time())')
-python3 -I -c 'import sys; sys.exit(0 if float(sys.argv[2]) - float(sys.argv[1]) < 3.0 else 1)' "$T0" "$T1" && ok "for-loop: thư mục lớn không làm hook chậm (<3 s)" || fail "for-loop: thư mục lớn làm hook chậm"
+# (a) variable redirect targets stay refused (same as before #1102)
+want 2 Bash "$M" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "variable redirect in a for-loop: refused"
+want 2 Bash "$W2" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "variable redirect in a for-loop from a worktree: refused"
+want 2 Bash "$M" 'echo x >/tmp/q-$u.log' "unknown variable in a redirect: refused"
+want 2 Bash "$M" 'for a in c; do for b in d; do for t in a.txt; do $a$b /m; echo x > $t; done; done; done' "nested loop R12: refused"
+want 0 Bash "$M" 'bash x.sh >/tmp/q-a.log' "literal redirect outside main: allowed"
+want 0 Bash "$W2" 'bash x.sh >/tmp/q-a.log 2>&1' "literal redirect from a worktree: allowed"
+want 2 Bash "$M" "echo x > $M/a.txt" "literal redirect into main: refused"
 
 # (b) công cụ sửa file của Grok
 for T in search_replace hashline_edit; do

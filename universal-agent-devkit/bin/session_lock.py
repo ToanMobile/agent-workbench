@@ -55,7 +55,7 @@ LOCK = "devkit-session.lock"
 LOG = "devkit-session.log"
 GUARD = "devkit-session.guard"
 GUARD_WAIT_S = 2.0   # the guard covers a read, a pid check and one small write: held for about a millisecond
-# #1102: công cụ sửa file của Grok (search_replace, hashline_edit) khoá theo file_path / path như Edit: trước đây ghi được checkout chính ở trunk mode
+# #1102: Grok edit tools (search_replace, hashline_edit) are locked by file_path / path like Edit: they used to write the main checkout in trunk mode
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "search_replace", "hashline_edit"}
 # Tên Grok (`run_terminal_command`, id cũ `run_terminal_cmd`) và Cursor (`Shell`) đặt cho công cụ mà Claude gọi là Bash. Grok chạy hook của
 # project theo matcher `Bash` nhưng payload mang tên công cụ CỦA NÓ, nên guard so `tool_name == "Bash"` chưa từng xét lệnh Grok nào: lúc
@@ -2277,139 +2277,6 @@ def _expand_static_vars(target, cmd):
     return None if unknown or "$" in out or "`" in out else out
 
 
-# #1102: `for NAME in <từ cố định>; do … > /tmp/q-$NAME.log; done` - worker QA chạy test từng file. Từ cố định = chỉ [A-Za-z0-9_./:@%+=,-]: không $, `, nháy,
-# glob (* ? [), brace, ~, thay thế lệnh. Không heuristic về dạng tên file (PR #1101 bị vượt bốn lần): mỗi giá trị được thay vào đích rồi đi đúng
-# đường cũ (_expand_static_vars + _lands_in_main), nên `..`, tiền tố `.`, đường tuyệt đối vào main tự bị chặn.
-_FOR_CLAUSE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+([A-Za-z0-9_./:@%+=,\- \t]+?)\s*;\s*do\b")
-# lệnh có thể tạo link / thư mục ngay trước redirect: realpath lúc PreToolUse chưa thấy chúng (review kế hoạch #1102) - không khai triển, chặn như cũ
-_MAKES_PATH = _Re(r"(?<![\w-])(?:ln|link|mkdir|mv|cp|rsync|install|tar|unzip)(?![\w-])")   # R8: `/bin/ln`, `./ln` too (no `/` `.` in the lookbehind)
-_FOR_MAX_COMBOS = 64
-_FOR_UNSAFE = re.compile(r"\beval\b|(?:^|[\s;&|(){}!`'\"])(?:source|\.)(?=\s)")
-_SHELL_SET_VARS = frozenset({"_", "REPLY", "PWD", "OLDPWD", "OPTARG", "OPTIND", "IFS", "PATH", "HOME", "SECONDS", "RANDOM", "LINENO",
-                             "BASH_REMATCH", "COMP_WORDS", "DIRSTACK", "BASH_SUBSHELL", "histchars", "KEYBOARD_HACK", "PIPESTATUS", "status", "pipestatus", "reply"})
-# R11: the loop variable of the expansion is a lowercase letter or a short plain word; every other name (shell / zsh specials included) stays refused
-_FOR_NAME_OK = re.compile(r"(?:[a-z]|file|name|test|item|target|suite|spec)\Z")
-
-
-def _name_assigned_oddly(raw_t, cmd):
-    """R11 (audit T0484, whitelist for the plain `NAME=value` expansion): a variable of `raw_t` may be expanded only when every bare occurrence of its
-    name in the line is a visible `NAME=` at a statement start. `{ t=x; }`, `then t=x`, `${t:=x}`, `printf -v t`, `pr"i"ntf -v t` leave an extra
-    bare `t` (or one `_VAR_ASSIGN` cannot see): the value is unknown, the caller refuses the target."""
-    if "<<" in cmd:
-        cmd = _strip_heredocs(cmd, shell_only=True)   # only bodies a shell runs count: a python / data heredoc (`S='x'; print(S)`) is no shell text
-    for n in {m.group(1) or m.group(2) for m in _VAR_USE.finditer(raw_t)}:
-        rest = re.sub(r"\$%s\b|\$\{%s\}" % (n, n), " ", cmd)
-        bare = len(re.findall(r"(?<![\w./$-])%s(?![\w./-])" % n, rest))
-        seen = sum(1 for m in _VAR_ASSIGN.finditer(cmd) if m.group(1) == n)
-        if bare != seen:
-            return True
-    return False
-
-
-# R5 (reviewer #1102): `. file` / `source file` run text the hook cannot read, and it may set the loop variable
-_SOURCES_FILE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*(?:source|\.)\s")
-
-
-# R7 (reviewer #1102, whitelist): builtins that set a variable with no `NAME=` in the text (`printf -v`, `read`, `mapfile`, `declare` …); the
-# plain static expansion cannot see them, so a line holding one never has its `$VAR` target expanded
-_ASSIGNING_BUILTIN = re.compile(r"\b(?:read|mapfile|readarray|getopts|select|declare|typeset|local|unset|let|eval|readonly|export|trap|set|shift|while|until)\b|\bprintf\b[^;&|\n]*\s-v")
-
-
-def _for_line_plain(cmd):
-    """R7 whitelist for the for-loop expansion: the line holds no quote, comment, backslash, `$(`, backtick, `$'`, `((`, no `$` that is not a plain
-    $NAME / ${NAME}, no variable-setting builtin, and every `for` word is a real `for NAME in <fixed words>; do` clause (a `for` inside
-    text, or `for NAME;`, makes the count differ). Anything else: not expanded, the target stays refused."""
-    if any(x in cmd for x in ('"', "'", "`", "#", "\\", "$(", "$'", "((")) or _ASSIGNING_BUILTIN.search(cmd):
-        return False
-    if re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", cmd):
-        return False
-    # R9: zsh applies csh-style modifiers right after `$NAME` / `${NAME}` (`$t:gs/a//`, `:h`, `:s/a/b/`); the hook only sees text, so refuse any `:` there
-    if re.search(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\}):", cmd):
-        return False
-    # R8: no `=` outside the `for` clauses (any assignment, `--flag=x` too), no glob / brace / tilde character once `${NAME}` is set aside, and every
-    # `done` word closes a `for` (a `done` argument would skew the do…done span)
-    bare = _FOR_CLAUSE.sub(" ", cmd)
-    if "=" in bare or re.search(r"[*?\[\]{}~]", re.sub(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", " ", bare)):
-        return False
-    n_for = len(re.findall(r"\bfor\b", cmd))
-    return n_for == len(_FOR_CLAUSE.findall(cmd)) == len(re.findall(r"\bdone\b", cmd))
-
-
-def _for_var_reassigned(target, cmd):
-    """`target` uses a variable that is the NAME of a `for` of this line AND is assigned (`NAME=`, `NAME+=`) somewhere in it: the plain static
-    expansion would take the assignment for the value (the loop sets it per round), so the caller refuses the target (review kế hoạch #1102)."""
-    loops = {m.group(1) for m in re.finditer(r"\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\b", cmd)}   # any list, or none (`for t;`): the loop sets t too
-    if not loops:
-        return False
-    used = {m.group(1) or m.group(2) for m in _VAR_USE.finditer(target)}
-    return bool(used & loops & {m.group(1) for m in _VAR_ASSIGN.finditer(cmd)})
-
-
-def _for_loop_targets(target, cmd):
-    """Danh sách đích cụ thể của `target` (một từ redirect có $VAR) khi mọi biến chưa gán của nó là biến của một `for NAME in <từ cố định>; do`
-    và mọi chỗ dùng nó nằm trong thân do…done; None (không biết -> người gọi chặn) trong mọi trường hợp khác: NAME còn được gán ở đâu đó
-    trong dòng, hai vòng cùng tên, thiếu done, danh sách không phải từ cố định, dòng có ln / mkdir / mv / cp …, hơn _FOR_MAX_COMBOS tổ hợp."""
-    if "`" in target or _MAKES_PATH.search(cmd) or "<<" in cmd or _SOURCES_FILE.search(cmd) or _for_var_reassigned(target, cmd):
-        return None
-    if not _for_line_plain(cmd):
-        return None
-    # R6 (reviewer #1102): the shell may change the variable or the directory behind the hook's back - eval / a `.` word anywhere (`{ . f; }`),
-    # a `cd` / `pushd` in the line (relative targets move), a `${NAME…}` operator form (`${t#x}`, `${t:-y}`), a variable the shell sets itself
-    # (`_`, REPLY, PWD …) or a `for NAME;` with no `in` (positional parameters): block as before
-    if _FOR_UNSAFE.search(cmd) or DIR_CHANGE.search(cmd) or re.search(r"\$\{[A-Za-z_][A-Za-z0-9_]*[^A-Za-z0-9_}]", cmd):
-        return None
-    if any(m.group(1) in _SHELL_SET_VARS or not _FOR_NAME_OK.match(m.group(1)) for m in re.finditer(r"\bfor\s+([A-Za-z_][A-Za-z0-9_]*)", cmd)):
-        return None   # R11 (audit T0484): a blacklist of shell-set names kept missing one (BASH_COMMAND, HISTCMD, USERNAME …): only known plain names loop
-    if re.search(r"\bfor\s+[A-Za-z_][A-Za-z0-9_]*\s*(?:;|$)", cmd):
-        return None
-    names = [m.group(1) or m.group(2) for m in _VAR_USE.finditer(target)]
-    if not names or re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", target):
-        return None
-    assigned = {m.group(1) for m in _VAR_ASSIGN.finditer(cmd)}
-    clauses = {}   # NAME -> (giá trị, vị trí hết `do`)
-    for m in _FOR_CLAUSE.finditer(cmd):
-        if m.group(1) in clauses:
-            return None
-        clauses[m.group(1)] = (m.group(2).split(), m.end())
-    loop = [n for n in dict.fromkeys(names) if n not in assigned]
-    if not loop or any(n not in clauses or not clauses[n][0] for n in loop):
-        return None
-    # R1 (reviewer #1102): `read t`, `printf -v t`, `mapfile t`, `declare t=`, `getopts x t` … set the variable with no `t=` in the text. NAME may
-    # appear only as the `for NAME in` header and as $NAME / ${NAME}; any other bare word NAME (a command argument) -> unknown, block as before
-    for n in loop:
-        rest = re.sub(r"\bfor\s+%s\s+in\b" % n, " ", cmd, count=1)   # count=1: a second `for NAME in` (nested, same name) stays and blocks
-        rest = re.sub(r"\$\{?%s\b\}?" % n, " ", rest)
-        if re.search(r"(?<![\w./-])(?:-[A-Za-z]*)?%s(?![\w./-])" % n, rest):   # also NAME ending a flag cluster: `printf -vt`, `read -at`
-            return None
-    combos = 1
-    for n in loop:
-        combos *= len(clauses[n][0])
-    if combos > _FOR_MAX_COMBOS:
-        return None
-    for n in loop:   # mọi chỗ dùng $n phải nằm trong thân do…done của vòng của nó
-        start, depth, end = clauses[n][1], 1, None
-        for m in re.finditer(r"\b(?:for|while|until|select|done)\b", cmd[start:]):
-            depth += -1 if m.group(0) == "done" else 1
-            if depth == 0:
-                end = start + m.start()
-                break
-        if end is None:
-            return None
-        for m in re.finditer(r"\$(?:%s\b|\{%s\})" % (n, n), cmd):
-            if not start <= m.start() < end:
-                return None
-    out = []
-    import itertools  # noqa: PLC0415 - only on this rare path; the hook runs before every tool call
-    for pick in itertools.product(*(clauses[n][0] for n in loop)):
-        env = dict(zip(loop, pick))
-        t = _VAR_USE.sub(lambda m: env.get(m.group(1) or m.group(2), m.group(0)), target)
-        t = _expand_static_vars(t, cmd) if "$" in t else t   # a variable the line assigns: the usual rule (None: unknown)
-        if t is None:
-            return None
-        out.append(t)
-    return out
-
-
 def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
     """trunk_write for one Bash script: what its segments write, then - three levels deep - the scripts it hides from them (_nested_scripts:
     substitutions, echo / printf / cat-heredoc piped to a shell or interpreter, a here-string). A script that cannot be tokenised counts as a
@@ -2458,32 +2325,20 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
             continue
         if kind not in ("redirect", "file"):
             continue
-        cands = [t]
         if "$" in t or "`" in t:
-            raw_t, t = t, _expand_static_vars(t, cmd)
-            # #1102 (decision 14/11, whitelist): a line with a `for` word (a `\<newline>` split joined first) is expanded ONLY by the strict
-            # _for_loop_targets pattern; the plain assignment expansion never applies to it (`t=/tmp/ok;`, `do t=$M/a`, `: ${t:=..}` slipped past)
-            if t is not None and re.search(r"\bfor\b", cmd.replace("\\\n", "")):
-                t = None
-            if t is not None and (_for_var_reassigned(raw_t, cmd) or _ASSIGNING_BUILTIN.search(cmd) or _name_assigned_oddly(raw_t, cmd)):   # `t=/tmp/ok; for t in a.txt; do … > $t`, `printf -v t …`: the text's assignment is not the value
-                return True
+            t = _expand_static_vars(t, cmd)
             if t is None and loose:   # cwd không phải repo: `> "$TMPDIR/x"` không phải ghi vào main (review #427 vòng 2)
                 continue
-            if t is None:   # #1102: a for-loop variable over fixed words is expanded; every other unknown variable stays refused
-                cands = _for_loop_targets(raw_t, cmd)
-            else:
-                cands = [t]
-            if cands is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
+            if t is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
                 return True
-        for t in cands:
-            try:
-                p = os.path.expanduser(t)
-            except ValueError:   # `~a<NUL>b`: không file nào có nó (như _lands_in_main) - bỏ đích này, xét tiếp (review #427 vòng 3: hook từng văng)
-                continue
-            if not os.path.isabs(p) and cd_unsafe:
-                return True
-            if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
-                return True
+        try:
+            p = os.path.expanduser(t)
+        except ValueError:   # `~a<NUL>b`: không file nào có nó (như _lands_in_main) - bỏ đích này, xét tiếp (review #427 vòng 3: hook từng văng)
+            continue
+        if not os.path.isabs(p) and cd_unsafe:
+            return True
+        if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
+            return True
     if depth < 3:
         moved = any(DIR_CHANGE.search(text) for text in texts)
         for body in _nested_scripts(cmd):
