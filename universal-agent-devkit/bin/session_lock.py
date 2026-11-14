@@ -2287,6 +2287,25 @@ _FOR_MAX_COMBOS = 64
 _FOR_UNSAFE = re.compile(r"\beval\b|(?:^|[\s;&|(){}!`'\"])(?:source|\.)(?=\s)")
 _SHELL_SET_VARS = frozenset({"_", "REPLY", "PWD", "OLDPWD", "OPTARG", "OPTIND", "IFS", "PATH", "HOME", "SECONDS", "RANDOM", "LINENO",
                              "BASH_REMATCH", "COMP_WORDS", "DIRSTACK", "BASH_SUBSHELL", "histchars", "KEYBOARD_HACK", "PIPESTATUS", "status", "pipestatus", "reply"})
+# R11: the loop variable of the expansion is a lowercase letter or a short plain word; every other name (shell / zsh specials included) stays refused
+_FOR_NAME_OK = re.compile(r"(?:[a-z]|file|name|test|item|target|suite|spec)\Z")
+
+
+def _name_assigned_oddly(raw_t, cmd):
+    """R11 (audit T0484, whitelist for the plain `NAME=value` expansion): a variable of `raw_t` may be expanded only when every bare occurrence of its
+    name in the line is a visible `NAME=` at a statement start. `{ t=x; }`, `then t=x`, `${t:=x}`, `printf -v t`, `pr"i"ntf -v t` leave an extra
+    bare `t` (or one `_VAR_ASSIGN` cannot see): the value is unknown, the caller refuses the target."""
+    if "<<" in cmd:
+        cmd = _strip_heredocs(cmd, shell_only=True)   # only bodies a shell runs count: a python / data heredoc (`S='x'; print(S)`) is no shell text
+    for n in {m.group(1) or m.group(2) for m in _VAR_USE.finditer(raw_t)}:
+        rest = re.sub(r"\$%s\b|\$\{%s\}" % (n, n), " ", cmd)
+        bare = len(re.findall(r"(?<![\w./$-])%s(?![\w./-])" % n, rest))
+        seen = sum(1 for m in _VAR_ASSIGN.finditer(cmd) if m.group(1) == n)
+        if bare != seen:
+            return True
+    return False
+
+
 # R5 (reviewer #1102): `. file` / `source file` run text the hook cannot read, and it may set the loop variable
 _SOURCES_FILE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*(?:source|\.)\s")
 
@@ -2339,8 +2358,8 @@ def _for_loop_targets(target, cmd):
     # (`_`, REPLY, PWD …) or a `for NAME;` with no `in` (positional parameters): block as before
     if _FOR_UNSAFE.search(cmd) or DIR_CHANGE.search(cmd) or re.search(r"\$\{[A-Za-z_][A-Za-z0-9_]*[^A-Za-z0-9_}]", cmd):
         return None
-    if any(m.group(1) in _SHELL_SET_VARS for m in re.finditer(r"\bfor\s+([A-Za-z_][A-Za-z0-9_]*)", cmd)):
-        return None
+    if any(m.group(1) in _SHELL_SET_VARS or not _FOR_NAME_OK.match(m.group(1)) for m in re.finditer(r"\bfor\s+([A-Za-z_][A-Za-z0-9_]*)", cmd)):
+        return None   # R11 (audit T0484): a blacklist of shell-set names kept missing one (BASH_COMMAND, HISTCMD, USERNAME …): only known plain names loop
     if re.search(r"\bfor\s+[A-Za-z_][A-Za-z0-9_]*\s*(?:;|$)", cmd):
         return None
     names = [m.group(1) or m.group(2) for m in _VAR_USE.finditer(target)]
@@ -2446,7 +2465,7 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
             # _for_loop_targets pattern; the plain assignment expansion never applies to it (`t=/tmp/ok;`, `do t=$M/a`, `: ${t:=..}` slipped past)
             if t is not None and re.search(r"\bfor\b", cmd.replace("\\\n", "")):
                 t = None
-            if t is not None and (_for_var_reassigned(raw_t, cmd) or _ASSIGNING_BUILTIN.search(cmd)):   # `t=/tmp/ok; for t in a.txt; do … > $t`, `printf -v t …`: the text's assignment is not the value
+            if t is not None and (_for_var_reassigned(raw_t, cmd) or _ASSIGNING_BUILTIN.search(cmd) or _name_assigned_oddly(raw_t, cmd)):   # `t=/tmp/ok; for t in a.txt; do … > $t`, `printf -v t …`: the text's assignment is not the value
                 return True
             if t is None and loose:   # cwd không phải repo: `> "$TMPDIR/x"` không phải ghi vào main (review #427 vòng 2)
                 continue

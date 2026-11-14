@@ -136,6 +136,19 @@ want 2 Bash "$W2" "for DIRSTACK in a; do echo x > \$DIRSTACK; done" "for-loop R1
 want 2 Bash "$W2" "for t in a; do link $M/a.txt $OUT/l-a; echo x > $OUT/l-\$t; done" "for-loop R10: link cùng dòng"
 want 0 Bash "$W2" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "for-loop R10: mẫu QA thật vẫn qua"
 
+# #1102 R11 (audit T0484, whitelist): dòng không có từ `for` mà biến vẫn bị gán lại ngoài vị trí đầu câu (`{ t=..; }`, `then t=`, `${t:=..}`, `printf -v` che bằng nháy),
+# và biến vòng là tên shell tự đặt (BASH_COMMAND, HISTCMD, HISTCHARS, USERNAME): tên biến vòng chỉ được nằm trong danh sách trắng.
+want 2 Bash "$W2" "t=/tmp/ok; pr\"i\"ntf -v t $M/a.txt; echo pwned > \$t" "for-loop R11: pr\"i\"ntf -v không có for"
+want 2 Bash "$W2" "t=/tmp/ok; { t=$M/a.txt; }; echo pwned > \$t" "for-loop R11: { t=main; }"
+want 2 Bash "$W2" "t=/tmp/ok; if true; then t=$M/a.txt; fi; echo pwned > \$t" "for-loop R11: then t=main"
+want 2 Bash "$W2" "t=/tmp/ok; : \${t:=$M/a.txt}; echo pwned > \$t" "for-loop R11: \${t:=main}"
+want 2 Bash "$W2" "for BASH_COMMAND in /tmp/ok; do $M/a.txt; (echo pwned) > \$BASH_COMMAND; done" "for-loop R11: BASH_COMMAND"
+for V in HISTCMD HISTCHARS USERNAME; do
+  want 2 Bash "$W2" "for $V in a; do echo x > \$$V; done" "for-loop R11: vòng $V"
+done
+want 0 Bash "$W2" 't=/tmp/ok; echo x > $t' "for-loop R11: ca đối chứng gán một lần vẫn qua"
+want 0 Bash "$W2" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "for-loop R11: mẫu QA thật vẫn qua"
+
 # hiệu năng: thư mục đích có hàng nghìn entry - hook không liệt kê / glob thư mục, nên không chậm đáng kể
 BIG="$TMP/big"; mkdir -p "$BIG"; python3 -I -c 'import sys; [open(sys.argv[1] + "/q-%d.log" % i, "w").close() for i in range(5000)]' "$BIG"
 T0=$(python3 -I -c 'import time; print(time.time())')
