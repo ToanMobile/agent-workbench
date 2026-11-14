@@ -35,7 +35,7 @@ PY
 for op in '["project","field-list","0","--owner","","--format","json"]' \
           '["project","item-list","null","--owner","null","--format","json"]' \
           '["project","field-list","1","--owner","","--format","json"]' \
-          '["project","item-list","-3","--owner","ToanMobile"]'; do
+          '["project","view","abc","--owner","ToanMobile"]'; do
   out=$(halt_with "$op")
   { printf '%s\n' "$out" | grep -qx ReadHalted && [ ! -e "$HALT" ]; } \
     && ok "malformed read $op raises ReadHalted and writes no board halt" \
@@ -45,7 +45,8 @@ done
 
 for op in '["project","item-list","1","--owner","ToanMobile","--format","json"]' \
           '["project","item-list","--owner","ToanMobile","1","--format","json"]' \
-          '["project","field-list","01","--owner","ToanMobile"]'; do
+          '["project","field-list","01","--owner","ToanMobile"]' \
+          '["project","item-list","-L","100","--owner","ToanMobile","1"]'; do
   out=$(halt_with "$op")
   [ -s "$HALT" ] && ok "well-formed repo-less read $op still halts the board (fail closed)" || fail "well-formed read $op wrote no halt: $out"
   rm -f "$HALT"
@@ -72,9 +73,67 @@ out=$(check_with)
 printf '%s' '{"reason":"x","attempts":3,"at":1,"operation":{"args":["project","field-list","0","--owner","","--format","json"],"kind":"fields","meta":null}}' > "$HALT"
 PY="$(command -v python3)"   # no gh on PATH: a replay attempt fails instead of reaching GitHub
 out=$( cd "$R" && PATH="/nonexistent:/usr/bin:/bin" "$PY" "$READ" --resume 2>&1 ); rc=$?
-{ [ "$rc" -eq 0 ] && [ ! -e "$HALT" ] && printf '%s\n' "$out" | grep -q "malformed"; } \
+{ [ "$rc" -eq 0 ] && [ ! -e "$HALT" ] && printf '%s\n' "$out" | grep -q "malformed.*kept at .*github-halt-malformed-"; } \
   && ok "--resume (watchdog) sets the malformed halt aside without replaying it" \
   || fail "--resume on malformed halt: rc=$rc halt=$([ -e "$HALT" ] && echo kept || echo gone) out=$out"
+rm -f "$HALT"
+# Race on the --resume path: a REAL halt replaces the malformed one between the read and the rename. It must go back
+# into place, and --resume must report halted (79), not 0.
+printf '%s' '{"reason":"x","attempts":3,"at":1,"operation":{"args":["project","field-list","0","--owner","","--format","json"],"kind":"fields","meta":null}}' > "$HALT"
+race_resume() {
+  ( cd "$R" && PATH="/nonexistent:/usr/bin:/bin" "$PY" - "$READ" "$HALT" <<'PY' 2>&1 )
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location('gr', sys.argv[1]); mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+real_replace, done, halt_file = os.replace, [], sys.argv[2]
+def racing_replace(src, dst):
+    if not done:
+        done.append(1)
+        open(halt_file, 'w').write('{"reason":"real","attempts":3,"at":2,"operation":{"args":["project","field-list","1","--owner","ToanMobile"],"kind":"fields"}}')
+    return real_replace(src, dst)
+mod.os.replace = racing_replace
+sys.argv = ['read', '--resume']
+print('rc=%s' % mod.main())
+PY
+}
+out=$(race_resume)
+{ printf '%s\n' "$out" | grep -q "rc=79" && grep -q '"real"' "$HALT" 2>/dev/null; } \
+  && ok "--resume race: a real halt written between read and rename is put back, rc=79" \
+  || fail "--resume race: out=$out halt=$(head -c 60 "$HALT" 2>/dev/null)"
+printf '%s\n' "$out" | grep -qi reconcil && fail "--resume race: stderr names reconcile (watchdog would take the write-halt path)" \
+  || ok "--resume race: no reconcile wording, the watchdog keeps halt-wait"
+rm -f "$HALT"
+
+set_aside_with() {   # $1 = gone|unreadable → prints what _set_aside returned and whether the halt is in place
+  ( cd "$R" && "$PY" - "$READ" "$HALT" "$1" <<'PY' 2>&1 )
+import importlib.util, sys, pathlib
+spec = importlib.util.spec_from_file_location('gr', sys.argv[1]); mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+path, mode = pathlib.Path(sys.argv[2]), sys.argv[3]
+if mode == 'gone':
+    print('ret=%r' % mod._set_aside(path, 'x', 'malformed'))
+else:
+    text = path.read_text()
+    real_read = pathlib.Path.read_text
+    def failing_read(self, *a, **k):
+        if 'github-halt-malformed-' in self.name:
+            raise PermissionError('denied')
+        return real_read(self, *a, **k)
+    pathlib.Path.read_text = failing_read
+    print('ret=%r' % mod._set_aside(path, text, 'malformed'))
+print('in_place=%s' % path.exists())
+PY
+}
+rm -f "$HALT"
+out=$(set_aside_with gone)
+printf '%s\n' "$out" | grep -q "ret='already gone'" && ok "_set_aside: a record another check took first counts as gone" || fail "gone: $out"
+printf '%s' '{"reason":"real","attempts":3,"at":2,"operation":{"args":["project","field-list","1","--owner","ToanMobile"],"kind":"fields"}}' > "$HALT"
+out=$(set_aside_with unreadable)
+{ printf '%s\n' "$out" | grep -q "ret=None" && printf '%s\n' "$out" | grep -q "in_place=True"; } \
+  && ok "_set_aside: an error after the rename puts the record back (the board stays halted)" || fail "unreadable: $out"
+rm -f "$HALT"
+out=$(halt_with '["project","item-list","-3","--owner","ToanMobile"]')
+{ printf '%s\n' "$out" | grep -qx ReadHalted && [ ! -e "$HALT" ]; } && ok "a negative project number is still malformed" || fail "-3: $out"
 rm -f "$HALT"
 printf '%s' '{"reason":"x","attempts":3,"at":1,"operation":{"args":["project","field-list","1","--owner","ToanMobile","--format","json"],"kind":"fields"}}' > "$HALT"
 out=$(check_with)

@@ -94,10 +94,11 @@ def check_halt():
             text, target, home, record = None, None, None, None
         malformed = text is not None and isinstance(record, dict) and _malformed_op(record.get('operation'))
         if (target and home and target != home) or malformed:
-            if _set_aside(path, text, 'malformed' if malformed else 'foreign'):
+            kept = _set_aside(path, text, 'malformed' if malformed else 'foreign')
+            if kept:
                 why = 'a malformed read (empty owner or invalid project number)' if malformed else \
                     f'{target} (not this checkout, {home})'
-                print(f'[github-read] ignored a halt for {why}; set aside', file=sys.stderr)
+                print(f'[github-read] ignored a halt for {why}; kept at {kept}', file=sys.stderr)
                 return
     raise ReadHalted('GitHub reads are halted; inspect the saved reason and explicitly restart the run')
 
@@ -228,27 +229,43 @@ def _malformed_op(operation):
             return True
     # Only a positional number in its usual place is judged; a flag first (`item-list --owner X 1`) is not provably broken.
     if len(args) >= 3 and args[0] == 'project' and args[1] in ('item-list', 'field-list', 'view') \
-            and not args[2].startswith('--'):
+            and not (args[2].startswith('-') and not re.fullmatch(r'-\d+', args[2])):   # `-L` is a flag, `-3` a bad number
         return not re.fullmatch(r'0*[1-9]\d*', args[2].strip())
     return False
+
+
+def _put_back(aside, path):
+    """Return a renamed record to the active halt path without overwriting a halt written meanwhile (halt() uses
+    open('x')); if one was, the record stays at `aside` and that newer halt keeps the board stopped."""
+    try:
+        os.link(aside, path)
+        aside.unlink()
+    except FileExistsError:
+        pass
+    except OSError as error:
+        print(f'[github-read] could not put the halt back from {aside}: {error}', file=sys.stderr)
 
 
 def _set_aside(path, text, kind):
     """Rename the halt we judged to github-halt-<kind>-*.json. Another worker may have replaced it with a REAL halt
     between the read and the rename: only the record we judged goes aside; anything else goes back and still halts.
-    True when set aside (or already gone), False when a different record is (back) in place."""
+    Returns where it went (a str), 'already gone' when another check took it first, or None when a different record is
+    (back) in place or a step failed: the board stays halted."""
     aside = path.with_name(f'github-halt-{kind}-{time.time_ns()}.json')
     try:
         os.replace(path, aside)
-        if aside.read_text() == text:
-            return True
-        if not path.exists():
-            os.replace(aside, path)
     except FileNotFoundError:
-        return not path.exists()   # another check set the same record aside first
+        return None if path.exists() else 'already gone'   # another check set the same record aside first
     except OSError as error:
         print(f'[github-read] could not set aside the {kind} halt: {error}', file=sys.stderr)
-    return False
+        return None
+    try:
+        if aside.read_text() == text:
+            return str(aside)
+    except OSError as error:
+        print(f'[github-read] could not set aside the {kind} halt: {error}', file=sys.stderr)
+    _put_back(aside, path)
+    return None
 
 
 def _home_repo():
@@ -731,9 +748,11 @@ def main():
                 record = json.loads(text)
                 operation = record.get('operation')
                 if _malformed_op(operation):   # replaying it can never pass: set it aside (14/11 07:00, board halted 2 h)
-                    if not _set_aside(path, text, 'malformed'):
-                        raise ReadHalted('the halt record changed while it was being set aside; inspect it again')
-                    print('[github-read] set aside a malformed halt (empty owner or invalid project number)', file=sys.stderr)
+                    kept = _set_aside(path, text, 'malformed')
+                    if not kept:
+                        raise ReadHalted('the malformed halt could not be set aside (changed or unwritable); inspect it again')
+                    print(f'[github-read] set aside a malformed halt (empty owner or invalid project number); kept at {kept}',
+                          file=sys.stderr)
                     return 0
                 if args.reconciled is not None:
                     if isinstance(operation, dict):
