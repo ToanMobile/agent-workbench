@@ -36,8 +36,8 @@ alters observable behaviour; (5) what stays unverified.
   same size thresholds, or auth, payment, database migration, production Crashlytics triage, core
   architecture: `antigravity-pm` `plan_review` / `pm_plan` before code; after the gate exits 0, an
   independent Antigravity `audit` (or the `/giao` flow) of the whole diff and code safety, judged by the 7 golden
-  standards (core-rules §18 lists them and the /100 scoring); large tasks keep the bilateral
-  review record.
+  standards (core-rules §18 lists them and the /100 scoring); the bilateral review record is
+  required for large tasks only.
 - Simple or medium task (local bug fix, UI tweak, test update, script fix, 1–2 file logic): the agent
   that was called, Claude or Antigravity, does it A to Z and verifies it itself (paired test RED→GREEN,
   gate exit 0), with no second-agent review. Trivia: choose, ask no one.
