@@ -228,9 +228,24 @@ def with_java_home(env):
 
 def sh(cmd, cwd=None, timeout=None, env=None, shell=False):
     """(exit, stdout+stderr) trong process group riêng: hết giờ / SIGTERM thì giết cả cây con. Hết giờ: exit 124."""
-    p = subprocess.Popen(cmd, cwd=cwd, env=env, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         text=True, errors="replace", start_new_session=True)
+    # SIGTERM đến giữa lúc spawn (con đã chạy, cha chưa vào try) làm con mồ côi: hoãn nó tới khi try giữ được p, rồi phát lại trong try.
+    pending = []
     try:
+        old = signal.signal(signal.SIGTERM, lambda *_: pending.append(1))
+    except ValueError:   # không phải main thread: không đổi handler được
+        old = None
+    p = None
+    try:
+        p = subprocess.Popen(cmd, cwd=cwd, env=env, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, errors="replace", start_new_session=True)
+    finally:
+        if old is not None:
+            signal.signal(signal.SIGTERM, old)
+            if pending and p is None:   # Popen hỏng: không có con để giết, phát lại SIGTERM ngay
+                os.kill(os.getpid(), signal.SIGTERM)
+    try:
+        if pending:
+            os.kill(os.getpid(), signal.SIGTERM)   # handler thật chạy trong try ⇒ nhánh BaseException giết cả nhóm con
         out, _ = p.communicate(timeout=timeout)
         return p.returncode, out
     except subprocess.TimeoutExpired:
