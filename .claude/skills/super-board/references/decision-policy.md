@@ -48,6 +48,6 @@ Dòng đầu (sau khi bỏ marker) là `[orchestrator] [decision]`, người đ�
 - `super-board-deps.sh`: `needsYou` = nhãn `needs-you` hiện tại, hoặc comment 🙋 mà không có `[decision]` hợp lệ mới hơn.
 - `super-board-needs-you.py mark`: có `[decision]` hợp lệ mới hơn comment needs-you gần nhất thì không gắn lại, trừ khi `--action`
   rơi vào danh sách dừng (lái xe, secret, quyền push, thanh toán, mất dữ liệu …).
-- `super-board-qa-report.py` (merge gate): `[decision]` hợp lệ mới hơn report `[qa] [report]` mới nhất thì các mục `❌ Not done` của report đó không chặn merge.
+- `super-board-qa-report.py` (merge gate): `[decision]` hợp lệ mới hơn report `[qa] [report]` mới nhất thì các mục `❌ Not done` của report đó không chặn merge Decision trên PR hay trên issue của thẻ (nhánh `issue-<N>`, #1175; so `createdAt`, thiếu thời gian thì không gỡ) đều tính.
 
 Lùi: `decision_policy.enabled: false` trong config của board (schema: `config-schema.json`).
