@@ -3629,7 +3629,17 @@ self_reload_tick() {
   disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
   if [ "$disk" != "$new" ]; then
     cur=$(git symbolic-ref -q --short HEAD 2>/dev/null) || cur=""
-    if [ "$cur" != "$BASE_BRANCH" ]; then
+    if [ -z "$cur" ] \
+      && [ "$disk" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] && git diff --cached --quiet -- "$rel" 2>/dev/null; then
+      # #1107: detached HEAD (gate/review dừng giữa chừng) không có nhánh để ff; runner trên đĩa sạch ⇒ chỉ thay đúng file runner bằng bản origin.
+      # ponytail: bin/ helper khác vẫn bản cũ tới khi main về lại nhánh; nâng lên finish nếu helper đổi cùng lúc làm hỏng runner mới.
+      reload_swap_self "origin/${BASE_BRANCH}:${rel}" \
+        || { reload_warn "$new" "main checkout is detached and the origin copy of super-board-run.sh could not be swapped in (unreadable or fails bash -n)"; return 0; }
+      # không ff/finish trên detached HEAD, và không trả file về HEAD (reload_restore_self sẽ xoá bản vừa thay): nạp ngay
+      log "♻ self-reload: origin/${BASE_BRANCH} changed super-board-run.sh (${RELOAD_RUN_SUM:0:7} → ${new:0:7}) with main detached — restarting on the swapped-in runner (${ACTIVE_WORKERS:-0} live worker(s) will be adopted)"
+      reload_exec "$RELOAD_SELF"
+      return 0
+    elif [ "$cur" != "$BASE_BRANCH" ]; then
       reload_warn "$new" "main checkout is on branch '${cur:-detached}', not ${BASE_BRANCH}; bring it level, then the next idle tick reloads"
       return 0
     fi
