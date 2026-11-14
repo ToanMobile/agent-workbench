@@ -2284,6 +2284,9 @@ _FOR_CLAUSE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*for\s+([A
 # lệnh có thể tạo link / thư mục ngay trước redirect: realpath lúc PreToolUse chưa thấy chúng (review kế hoạch #1102) - không khai triển, chặn như cũ
 _MAKES_PATH = _Re(r"(?<![\w./-])(?:ln|mkdir|mv|cp|rsync|install|tar|unzip)(?![\w-])")
 _FOR_MAX_COMBOS = 64
+_FOR_UNSAFE = re.compile(r"\beval\b|(?:^|[\s;&|(){}!`'\"])(?:source|\.)(?=\s)")
+_SHELL_SET_VARS = frozenset({"_", "REPLY", "PWD", "OLDPWD", "OPTARG", "OPTIND", "IFS", "PATH", "HOME", "SECONDS", "RANDOM", "LINENO",
+                             "BASH_REMATCH", "COMP_WORDS", "PIPESTATUS", "status", "pipestatus", "reply"})
 # R5 (reviewer #1102): `. file` / `source file` run text the hook cannot read, and it may set the loop variable
 _SOURCES_FILE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*(?:source|\.)\s")
 
@@ -2303,6 +2306,15 @@ def _for_loop_targets(target, cmd):
     và mọi chỗ dùng nó nằm trong thân do…done; None (không biết -> người gọi chặn) trong mọi trường hợp khác: NAME còn được gán ở đâu đó
     trong dòng, hai vòng cùng tên, thiếu done, danh sách không phải từ cố định, dòng có ln / mkdir / mv / cp …, hơn _FOR_MAX_COMBOS tổ hợp."""
     if "`" in target or _MAKES_PATH.search(cmd) or "<<" in cmd or _SOURCES_FILE.search(cmd) or _for_var_reassigned(target, cmd):
+        return None
+    # R6 (reviewer #1102): the shell may change the variable or the directory behind the hook's back - eval / a `.` word anywhere (`{ . f; }`),
+    # a `cd` / `pushd` in the line (relative targets move), a `${NAME…}` operator form (`${t#x}`, `${t:-y}`), a variable the shell sets itself
+    # (`_`, REPLY, PWD …) or a `for NAME;` with no `in` (positional parameters): block as before
+    if _FOR_UNSAFE.search(cmd) or DIR_CHANGE.search(cmd) or re.search(r"\$\{[A-Za-z_][A-Za-z0-9_]*[^A-Za-z0-9_}]", cmd):
+        return None
+    if any(m.group(1) in _SHELL_SET_VARS for m in re.finditer(r"\bfor\s+([A-Za-z_][A-Za-z0-9_]*)", cmd)):
+        return None
+    if re.search(r"\bfor\s+[A-Za-z_][A-Za-z0-9_]*\s*(?:;|$)", cmd):
         return None
     names = [m.group(1) or m.group(2) for m in _VAR_USE.finditer(target)]
     if not names or re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", target):

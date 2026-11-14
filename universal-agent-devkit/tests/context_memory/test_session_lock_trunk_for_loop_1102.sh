@@ -80,6 +80,20 @@ want 2 Bash "$M" 'for t in a; do read -at < /tmp/p; echo x > /tmp/q-$t; done' "f
 want 2 Bash "$M" 'for t in a; do . /tmp/p.sh; echo x > /tmp/q-$t; done' "for-loop R5: . file có thể gán NAME"
 want 2 Bash "$M" 'for t in a; do source /tmp/p.sh; echo x > /tmp/q-$t; done' "for-loop R5: source file có thể gán NAME"
 want 0 Bash "$M" 'for t in a b; do ./run.sh -v >/tmp/q-$t.log; done' "for-loop R5: ca đối chứng (./run.sh, cờ -v) vẫn qua"
+# #1102 R6 (reviewer bounce 4): biến vòng bị đổi ngầm - eval, `{ . f; }`, ${t#..}, _ / REPLY / PWD, cd trong vòng, `for t; do`.
+# cwd = $W2 (worktree, ngoài main): hook tưởng đích là tên tương đối an toàn, còn thực tế shell ghi vào main.
+want 2 Bash "$W2" "for t in a; do eval \"t=$M/x\"; echo x > \$t; done" "for-loop R6a: eval gán NAME"
+want 2 Bash "$W2" "for t in a; do { . /tmp/p.sh; }; echo x > \$t; done" "for-loop R6a: { . file; } gán NAME"
+want 2 Bash "$W2" "for t in $M/a; do echo x > \${t#$M/}; cd $M; done" "for-loop R6b: \${t#..} cắt tiền tố"
+want 2 Bash "$W2" "for t in a; do echo x > \${t:-$M/x}; done" "for-loop R6b: \${t:-..}"
+want 2 Bash "$W2" "for _ in a; do echo x > \$_; done" "for-loop R6c: biến _ do shell đặt"
+want 2 Bash "$W2" "for PWD in a; do echo x > \$PWD/f; done" "for-loop R6c: biến PWD"
+want 2 Bash "$W2" "for REPLY in a; do echo x > \$REPLY; done" "for-loop R6c: biến REPLY"
+want 2 Bash "$W2" "for t in a; do cd $M; echo x > q-\$t; done" "for-loop R6d: cd trong vòng, đích tương đối"
+want 2 Bash "$W2" "for t in a; do pushd $M; echo x > q-\$t; done" "for-loop R6d: pushd trong vòng"
+want 2 Bash "$W2" "for t; do echo x > q-\$t; done" "for-loop R6e: for t; do (không có in)"
+want 0 Bash "$W2" 'for t in a b; do echo ${t} > /tmp/q-${t}.log; done' "for-loop R6: ca đối chứng \${t} vẫn qua"
+
 # hiệu năng: thư mục đích có hàng nghìn entry - hook không liệt kê / glob thư mục, nên không chậm đáng kể
 BIG="$TMP/big"; mkdir -p "$BIG"; python3 -I -c 'import sys; [open(sys.argv[1] + "/q-%d.log" % i, "w").close() for i in range(5000)]' "$BIG"
 T0=$(python3 -I -c 'import time; print(time.time())')
