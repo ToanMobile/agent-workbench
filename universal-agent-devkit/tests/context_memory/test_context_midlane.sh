@@ -150,12 +150,16 @@ fi
 
 # ── 6. không ghi bytecode vào cây kit (kit link vào repo app, #813) ───────────────
 # TMPDIR tương đối: prompt_context.sh không đặt PYTHONPYCACHEPREFIX; Claude Code không xuất PYTHONDONTWRITEBYTECODE ở đây.
-touch "$TMP/mark"; sleep 1
+# #1183: hook chạy từ bản sao riêng của kit (hook tìm kit theo đường dẫn thật của chính nó) và chỉ quét bản sao: quét kit thật
+# thì `python3 -I` của test chạy song song (-I bỏ qua PYTHONPYCACHEPREFIX) ghi .pyc vào scripts/ làm ca này đỏ oan trên CI.
+K6="$TMP/kit6"; mkdir -p "$K6"
+cp -R "$DEVKIT_DIR/hooks" "$DEVKIT_DIR/scripts" "$DEVKIT_DIR/bin" "$K6/"
+find "$K6" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
 TR6="$P/tr6.jsonl"; turn "$TR6" 10000
 printf '{"session_id":"s-pyc","transcript_path":"%s","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"Bash"}' "$TR6" "$P" \
   | env -u PYTHONDONTWRITEBYTECODE -u PYTHONPYCACHEPREFIX TMPDIR=rel-tmp CLAUDE_PROJECT_DIR="$P" \
-    bash "$DEVKIT_DIR/hooks/prompt_context.sh" --midlane >/dev/null 2>&1
-new_pyc="$(find "$DEVKIT_DIR/scripts" -name '*.pyc' -newer "$TMP/mark" 2>/dev/null | head -3)"
+    bash "$K6/hooks/prompt_context.sh" --midlane >/dev/null 2>&1
+new_pyc="$(find "$K6/scripts" -name '*.pyc' 2>/dev/null | head -3)"
 [ -z "$new_pyc" ] && ok "không có prefix pycache: không ghi .pyc vào cây kit" || fail "hook giữa lượt ghi bytecode vào cây kit: $new_pyc"
 
 # ── 7. transcript là thư mục: không mở, log stderr (review PR #878) ─────────────
