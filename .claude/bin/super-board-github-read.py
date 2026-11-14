@@ -98,7 +98,7 @@ def check_halt():
             if kept:
                 why = 'a malformed read (empty owner or invalid project number)' if malformed else \
                     f'{target} (not this checkout, {home})'
-                print(f'[github-read] ignored a halt for {why}; kept at {kept}', file=sys.stderr)
+                print(f'[github-read] ignored a halt for {why}; ' + ('another check set it aside' if kept == 'already gone' else f'kept at {kept}'), file=sys.stderr)
                 return
     raise ReadHalted('GitHub reads are halted; inspect the saved reason and explicitly restart the run')
 
@@ -239,11 +239,21 @@ def _put_back(aside, path):
     open('x')); if one was, the record stays at `aside` and that newer halt keeps the board stopped."""
     try:
         os.link(aside, path)
-        aside.unlink()
     except FileExistsError:
-        pass
+        return
+    except OSError:   # no hard links here (exFAT, SMB): an exclusive create keeps the same no-overwrite rule
+        try:
+            with path.open('x') as stream:
+                stream.write(aside.read_text())
+        except FileExistsError:
+            return
+        except OSError as error:
+            print(f'[github-read] could not put the halt back from {aside}: {error}', file=sys.stderr)
+            return
+    try:
+        aside.unlink()
     except OSError as error:
-        print(f'[github-read] could not put the halt back from {aside}: {error}', file=sys.stderr)
+        print(f'[github-read] halt put back; the aside copy remains at {aside}: {error}', file=sys.stderr)
 
 
 def _set_aside(path, text, kind):
@@ -751,7 +761,8 @@ def main():
                     kept = _set_aside(path, text, 'malformed')
                     if not kept:
                         raise ReadHalted('the malformed halt could not be set aside (changed or unwritable); inspect it again')
-                    print(f'[github-read] set aside a malformed halt (empty owner or invalid project number); kept at {kept}',
+                    print('[github-read] set aside a malformed halt (empty owner or invalid project number); '
+                          + ('another check set it aside' if kept == 'already gone' else f'kept at {kept}'),
                           file=sys.stderr)
                     return 0
                 if args.reconciled is not None:

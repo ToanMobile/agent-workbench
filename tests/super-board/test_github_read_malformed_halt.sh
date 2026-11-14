@@ -132,6 +132,40 @@ out=$(set_aside_with unreadable)
 { printf '%s\n' "$out" | grep -q "ret=None" && printf '%s\n' "$out" | grep -q "in_place=True"; } \
   && ok "_set_aside: an error after the rename puts the record back (the board stays halted)" || fail "unreadable: $out"
 rm -f "$HALT"
+# A newer halt created (halt() uses open('x')) between the rename and the put-back must not be overwritten; and with no
+# hard links (exFAT/SMB) the record must still go back.
+put_back_with() {   # $1 = newer|nolink
+  ( cd "$R" && "$PY" - "$READ" "$HALT" "$1" <<'PY' 2>&1 )
+import importlib.util, os, sys, pathlib
+spec = importlib.util.spec_from_file_location('gr', sys.argv[1]); mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+path, mode = pathlib.Path(sys.argv[2]), sys.argv[3]
+path.write_text('{"reason":"judged","operation":{"args":["project","field-list","0","--owner",""]}}')
+real_replace = os.replace
+def racing(src, dst):
+    open(src, 'w').write('{"reason":"other"}')   # the record we judged is replaced before the rename
+    real_replace(src, dst)
+    if mode == 'newer':
+        open(src, 'x').write('{"reason":"newer"}')   # halt() writes a fresh one right after the rename
+mod.os.replace = racing
+if mode == 'nolink':
+    def nolink(*a, **k):
+        raise OSError(45, 'Operation not supported')
+    mod.os.link = nolink
+print('ret=%r' % mod._set_aside(path, path.read_text(), 'malformed'))
+print('active=%s' % (path.read_text() if path.exists() else 'NONE'))
+print('asides=%d' % len(list(path.parent.glob('github-halt-malformed-*.json'))))
+PY
+}
+rm -f "$HALT" "$(dirname "$HALT")"/github-halt-malformed-*.json
+out=$(put_back_with newer)
+{ printf '%s\n' "$out" | grep -q "ret=None" && printf '%s\n' "$out" | grep -q 'active={"reason":"newer"}' && printf '%s\n' "$out" | grep -q "asides=1"; } \
+  && ok "_set_aside: a halt written after the rename is not overwritten by the put-back" || fail "newer: $out"
+rm -f "$HALT" "$(dirname "$HALT")"/github-halt-malformed-*.json
+out=$(put_back_with nolink)
+{ printf '%s\n' "$out" | grep -q "ret=None" && printf '%s\n' "$out" | grep -q 'active={"reason":"other"}'; } \
+  && ok "_set_aside: without hard links the different record still goes back (board stays halted)" || fail "nolink: $out"
+rm -f "$HALT" "$(dirname "$HALT")"/github-halt-malformed-*.json
 out=$(halt_with '["project","item-list","-3","--owner","ToanMobile"]')
 { printf '%s\n' "$out" | grep -qx ReadHalted && [ ! -e "$HALT" ]; } && ok "a negative project number is still malformed" || fail "-3: $out"
 rm -f "$HALT"
