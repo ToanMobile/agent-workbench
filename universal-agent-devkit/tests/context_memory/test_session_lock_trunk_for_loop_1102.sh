@@ -118,6 +118,13 @@ want 2 Bash "$W2" "for t in a; do readonly t=$M/x; echo x > \$t; done" "for-loop
 want 2 Bash "$W2" "for t in a; do t=$M/x; echo x > \$t; done" "for-loop R8-5: gán ngay sau do"
 want 0 Bash "$W2" 'for t in a b; do ./run.sh -v >/tmp/q-$t.log 2>&1; done' "for-loop R8: ca đối chứng vẫn qua"
 
+# #1102 R9 (reviewer bounce 7): zsh áp bộ sửa đổi `:gs/a/b/`, `:s/a/b/`, `:h` ngay sau `$NAME` / `${NAME}` - hook chỉ thấy chữ, từ chối mọi `:` theo sau tên biến.
+want 2 Bash "$W2" "for t in $TMP/main-x/a.txt; do echo x > \$t:gs/-x//; done" "for-loop R9: \$t:gs/-x//"
+want 2 Bash "$W2" "for t in $TMP/main-x/a.txt; do echo x > \$t:s/-x//; done" "for-loop R9: \$t:s/a/b/"
+want 2 Bash "$W2" "for t in $M/sub/a.txt; do echo x > \$t:h/b; done" "for-loop R9: \$t:h"
+want 2 Bash "$W2" "for t in $TMP/main-x/a.txt; do echo x > \${t}:gs/-x//; done" "for-loop R9: \${t}:gs/-x//"
+want 0 Bash "$W2" 'for t in a b; do echo x > /tmp/q-$t.log; done' "for-loop R9: ca đối chứng vẫn qua"
+
 # hiệu năng: thư mục đích có hàng nghìn entry - hook không liệt kê / glob thư mục, nên không chậm đáng kể
 BIG="$TMP/big"; mkdir -p "$BIG"; python3 -I -c 'import sys; [open(sys.argv[1] + "/q-%d.log" % i, "w").close() for i in range(5000)]' "$BIG"
 T0=$(python3 -I -c 'import time; print(time.time())')

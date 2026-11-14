@@ -2304,6 +2304,9 @@ def _for_line_plain(cmd):
         return False
     if re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", cmd):
         return False
+    # R9: zsh applies csh-style modifiers right after `$NAME` / `${NAME}` (`$t:gs/a//`, `:h`, `:s/a/b/`); the hook only sees text, so refuse any `:` there
+    if re.search(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\}):", cmd):
+        return False
     # R8: no `=` outside the `for` clauses (any assignment, `--flag=x` too), no glob / brace / tilde character once `${NAME}` is set aside, and every
     # `done` word closes a `for` (a `done` argument would skew the do…done span)
     bare = _FOR_CLAUSE.sub(" ", cmd)
