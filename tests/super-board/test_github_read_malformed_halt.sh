@@ -43,9 +43,13 @@ for op in '["project","field-list","0","--owner","","--format","json"]' \
   rm -f "$HALT"
 done
 
-out=$(halt_with '["project","item-list","1","--owner","ToanMobile","--format","json"]')
-[ -s "$HALT" ] && ok "a well-formed repo-less read still halts the board (fail closed)" || fail "well-formed read wrote no halt: $out"
-rm -f "$HALT"
+for op in '["project","item-list","1","--owner","ToanMobile","--format","json"]' \
+          '["project","item-list","--owner","ToanMobile","1","--format","json"]' \
+          '["project","field-list","01","--owner","ToanMobile"]'; do
+  out=$(halt_with "$op")
+  [ -s "$HALT" ] && ok "well-formed repo-less read $op still halts the board (fail closed)" || fail "well-formed read $op wrote no halt: $out"
+  rm -f "$HALT"
+done
 
 check_with() {
   ( cd "$R" && python3 - "$READ" <<'PY' 2>&1 )
