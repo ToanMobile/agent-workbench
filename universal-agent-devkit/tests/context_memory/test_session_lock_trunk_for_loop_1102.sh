@@ -71,6 +71,15 @@ want 2 Bash "$M" 'for t in a; do export t; read t < /tmp/p; echo x > /tmp/q-$t; 
 want 2 Bash "$M" 'for t in a; do getopts x t; echo x > /tmp/q-$t; done' "for-loop R1: getopts gán NAME"
 want 2 Bash "$M" 'for t in a; do read -r a t < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R1: read -r nhiều tên"
 want 0 Bash "$M" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "for-loop R1: ca đối chứng vẫn qua"
+# #1102 R5 (reviewer bounce 3): for lồng cùng tên, đích hai biến, cờ gộp (`-vt`, `-at`) và `. file` gán NAME mà văn bản không có `t=`
+want 2 Bash "$M" 'for t in a; do for t in $(cat /tmp/p); do echo x > /tmp/q-$t; done; done' "for-loop R5: vòng trong cùng tên, danh sách động"
+want 2 Bash "$M" 'for t in a; do for t in b $(cat /tmp/p); do echo x > /tmp/q-$t; done; done' "for-loop R5: vòng trong cùng tên, danh sách lẫn"
+want 2 Bash "$M" 'for a in 1; do for t in b; do echo x > /tmp/$a-$t; t=/tmp/ok; done; done' "for-loop R5: đích hai biến, NAME gán lại trong thân"
+want 2 Bash "$M" 'for t in a; do printf -vt %s "$(cat /tmp/p)"; echo x > /tmp/q-$t; done' "for-loop R5: printf -vt (cờ gộp)"
+want 2 Bash "$M" 'for t in a; do read -at < /tmp/p; echo x > /tmp/q-$t; done' "for-loop R5: read -at (cờ gộp)"
+want 2 Bash "$M" 'for t in a; do . /tmp/p.sh; echo x > /tmp/q-$t; done' "for-loop R5: . file có thể gán NAME"
+want 2 Bash "$M" 'for t in a; do source /tmp/p.sh; echo x > /tmp/q-$t; done' "for-loop R5: source file có thể gán NAME"
+want 0 Bash "$M" 'for t in a b; do ./run.sh -v >/tmp/q-$t.log; done' "for-loop R5: ca đối chứng (./run.sh, cờ -v) vẫn qua"
 # hiệu năng: thư mục đích có hàng nghìn entry - hook không liệt kê / glob thư mục, nên không chậm đáng kể
 BIG="$TMP/big"; mkdir -p "$BIG"; python3 -I -c 'import sys; [open(sys.argv[1] + "/q-%d.log" % i, "w").close() for i in range(5000)]' "$BIG"
 T0=$(python3 -I -c 'import time; print(time.time())')

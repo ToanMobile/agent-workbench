@@ -2284,6 +2284,8 @@ _FOR_CLAUSE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*for\s+([A
 # lệnh có thể tạo link / thư mục ngay trước redirect: realpath lúc PreToolUse chưa thấy chúng (review kế hoạch #1102) - không khai triển, chặn như cũ
 _MAKES_PATH = _Re(r"(?<![\w./-])(?:ln|mkdir|mv|cp|rsync|install|tar|unzip)(?![\w-])")
 _FOR_MAX_COMBOS = 64
+# R5 (reviewer #1102): `. file` / `source file` run text the hook cannot read, and it may set the loop variable
+_SOURCES_FILE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*(?:source|\.)\s")
 
 
 def _for_var_reassigned(target, cmd):
@@ -2300,7 +2302,7 @@ def _for_loop_targets(target, cmd):
     """Danh sách đích cụ thể của `target` (một từ redirect có $VAR) khi mọi biến chưa gán của nó là biến của một `for NAME in <từ cố định>; do`
     và mọi chỗ dùng nó nằm trong thân do…done; None (không biết -> người gọi chặn) trong mọi trường hợp khác: NAME còn được gán ở đâu đó
     trong dòng, hai vòng cùng tên, thiếu done, danh sách không phải từ cố định, dòng có ln / mkdir / mv / cp …, hơn _FOR_MAX_COMBOS tổ hợp."""
-    if "`" in target or _MAKES_PATH.search(cmd) or "<<" in cmd:
+    if "`" in target or _MAKES_PATH.search(cmd) or "<<" in cmd or _SOURCES_FILE.search(cmd) or _for_var_reassigned(target, cmd):
         return None
     names = [m.group(1) or m.group(2) for m in _VAR_USE.finditer(target)]
     if not names or re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", target):
@@ -2317,9 +2319,9 @@ def _for_loop_targets(target, cmd):
     # R1 (reviewer #1102): `read t`, `printf -v t`, `mapfile t`, `declare t=`, `getopts x t` … set the variable with no `t=` in the text. NAME may
     # appear only as the `for NAME in` header and as $NAME / ${NAME}; any other bare word NAME (a command argument) -> unknown, block as before
     for n in loop:
-        rest = re.sub(r"\bfor\s+%s\s+in\b" % n, " ", cmd)
+        rest = re.sub(r"\bfor\s+%s\s+in\b" % n, " ", cmd, count=1)   # count=1: a second `for NAME in` (nested, same name) stays and blocks
         rest = re.sub(r"\$\{?%s\b\}?" % n, " ", rest)
-        if re.search(r"(?<![\w./-])%s(?![\w./-])" % n, rest):
+        if re.search(r"(?<![\w./-])(?:-[A-Za-z]*)?%s(?![\w./-])" % n, rest):   # also NAME ending a flag cluster: `printf -vt`, `read -at`
             return None
     combos = 1
     for n in loop:
