@@ -101,6 +101,7 @@ ABBREV = {
     "am": ("--no-verify", "--no-quiet"),
     "gc": ("--prune", ""),
     "worktree": ("--force", ""),
+    "tag": ("--delete --force", "--format --file"),
     "update-ref": ("--stdin", ""),
     "symbolic-ref": ("--delete", "--short --quiet --recurse --no-recurse"),
     "remote": ("--delete --no-auto", "--auto --verbose"),
@@ -248,6 +249,22 @@ def danger_in_git(sub, args, lit=False):
             return "push --force/--delete/--mirror ghi đè hoặc xoá trên remote"
         if any(a.startswith("+") or a.startswith(":") for a in pos):
             return "push +refspec / :ref ghi đè hoặc xoá trên remote"
+    if sub == "tag":   # (14/11, C4a) -d / --delete removes a tag, -f / --force moves one: its old commit may be reachable from nothing else
+        k = 0
+        while k < len(args) and args[k] != "--":
+            a = args[k]
+            if a.split("=", 1)[0] in ("--delete", "--force"):
+                return "tag -d/-f xoá hoặc ghi đè tag (commit cũ của tag có thể không còn ref nào giữ)"
+            if a.startswith("-") and not a.startswith("--"):
+                for j, ch in enumerate(a[1:], 1):
+                    if ch in "df":
+                        return "tag -d/-f xoá hoặc ghi đè tag (commit cũ của tag có thể không còn ref nào giữ)"
+                    if ch in "mFu":   # -m MSG / -F FILE / -u KEY: the rest of the word, or the next word, is its value
+                        k += 0 if a[j + 1:] else 1
+                        break
+            elif a in ("--message", "--file", "--local-user", "--sort", "--cleanup"):
+                k += 1
+            k += 1
     if sub == "stash" and pos[:1] and pos[0] in ("drop", "clear"):
         return "stash drop/clear mất stash"
     if sub == "reflog" and pos[:1] and pos[0] in ("expire", "delete"):

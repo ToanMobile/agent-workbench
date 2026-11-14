@@ -260,7 +260,81 @@ def adb_shell(rest):
     return j < len(rest) and re.match(r"(?:shell|exec-out)(?![\w-])", rest[j]) is not None
 
 
-BRACE = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
+# ── Text a shell reads on its stdin (14/11, C4b; tests/gates/test_guard_zero_defect_c4.sh) ────────────────────────────────────────
+# `echo STR | bash`, `printf FMT | sh`, `bash <<< STR`: the shell runs STR like a -c script. The hardware gate reads it with these three
+# (block_dangerous_git_main.py has had its own reader since 2026-10-09: feed_texts / reads_script, left as it is).
+_FEED_ESC = re.compile(r"\\(x[0-9A-Fa-f]{1,2}|0?[0-7]{1,3}|[ntr\\])")
+_FEED_CHR = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
+
+
+def _feed_unescape(s):
+    def one(m):
+        e = m.group(1)
+        if e in _FEED_CHR:
+            return _FEED_CHR[e]
+        return chr(int(e[1:], 16)) if e[0] == "x" else chr(int(e, 8) & 0xFF)
+    return _FEED_ESC.sub(one, s)
+
+
+def reads_stdin_script(rest):
+    """True when a shell with the words rest runs what arrives on its stdin: no -c, no script operand (or -s / a lone -), and its stdin is
+    not redirected (< FILE, a heredoc, a here-string: here_string_words reads that one)."""
+    j, s_flag = 0, False
+    while j < len(rest):
+        a = rest[j]
+        if a.startswith("<"):
+            return False
+        if REDIRECT.match(a):
+            j += 2 if REDIRECT_ALONE.fullmatch(a) else 1
+            continue
+        if a == "--":
+            j += 1
+            break
+        if len(a) > 1 and a[0] in "-+":
+            short = a[0] == "-" and not a.startswith("--")
+            if short and "c" in a[1:]:
+                return False
+            s_flag = s_flag or (short and "s" in a[1:])
+            j += 2 if a in SHELL_OPTS_WITH_ARG else 1
+            continue
+        break
+    return s_flag or j >= len(rest) or rest[j] == "-"
+
+
+def here_string_words(rest):
+    """The words a command gets as here-strings: `<<< WORD` and `<<<WORD`."""
+    out = []
+    for k, a in enumerate(rest):
+        if a == "<<<":
+            out += rest[k + 1:k + 2]
+        elif a.startswith("<<<"):
+            out.append(a[3:])
+    return out
+
+
+def literal_feed(seg):
+    """Readings of what the simple command seg writes to a pipe when it is a literal echo / printf (as typed, and with its backslash
+    escapes read); None when it is another command or a word of it is filled in at run time ($VAR, a substitution)."""
+    i = prefix_end(seg)
+    if i >= len(seg):
+        return None
+    prog, args = seg[i].rsplit("/", 1)[-1], [a for a in seg[i + 1:] if not REDIRECT.match(a)]
+    if prog not in ("echo", "printf") or any("$" in a or "`" in a for a in args):
+        return None
+    if prog == "echo":
+        while args and re.fullmatch(r"-[neE]+", args[0]):
+            args = args[1:]
+        text = " ".join(args)
+        return [text, _feed_unescape(text)]
+    args = args[1:] if args[:1] == ["--"] else args
+    if not args:
+        return [""]
+    vals = iter(args[1:])
+    filled = re.sub(r"%(?:%|[-+ #0]*\d*(?:\.\d+)?[a-zA-Z])", lambda m: "%" if m.group(0) == "%%" else next(vals, ""), args[0])
+    return [_feed_unescape(filled), "\n".join(_feed_unescape(a) for a in args)]
+
+
+BRACE =re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
 
 
 BRACE_BOMB = "/"   # what a brace expansion past the cap is judged as: the worst target there is

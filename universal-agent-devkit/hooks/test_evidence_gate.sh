@@ -217,8 +217,16 @@ binding_scan = re.sub(r"[`\"“”]", "", scan)
 sentences = re.split(r"(?:\n|[!?](?=\s|$)|\.(?=\s|$))", scan)
 binding_sentences = re.split(r"(?:\n|[!?](?=\s|$)|\.(?=\s|$))", binding_scan)
 
+# 2026-11-14 (Zero-Defect C1a / C1c, tests/gates/test_evidence_zero_defect_c1.sh). The first branch (group tp) no longer runs over a
+# ":" ("Kết quả pytest: 1 failed, 4 passed" is a report of the run, its counts are read by the np branch), knows "kiểm thử" and the
+# plainer results "qua hết", "không (còn) lỗi"; a ":" right before the result is its own branch ("Kết quả test: pass", "Tests: ✔ 5/5").
+# (group tc; "Kết quả chạy test: 5 thành công, 0 thất bại"). np: a bare runner summary "N passed" ("5 passed in 0.03s"). The three
+# groups are filtered in _claim_matches (_gap_fails, _clause_fails).
 CLAIM = re.compile(
-    r"(test[^.\n]{0,24}(?:pass|xanh|green|thành công)"
+    r"((?P<tp>(?:test|kiểm\s+thử)[^.\n:]{0,24}(?:pass|xanh|green|thành công|qua\s+hết|đều\s+qua|không\s+(?:còn\s+|có\s+)?lỗi))"
+    r"|(?P<tc>(?:test|kiểm\s+thử)[^.\n:]{0,24}:\s*(?:[✔✓✅]|(?:(?:đều|all|đã|tất\s+cả|toàn\s+bộ|[1-9]\d*)\s+)?(?:pass|xanh|green|ok\b|thành\s+công|đạt)))"
+    r"|\btests?\s+(?:(?!(?:not|never|chưa|không)\b)\w+\s+){0,2}?succe(?:ed(?:s|ed)?|ss(?:ful|fully)?)\b"
+    r"|(?P<np>(?<![\w.,/])[1-9]\d*\s+(?:tests?\s+)?(?:passed|passing)\b)"
     r"|(?:pass|xanh|green)[^.\n]{0,24}test"
     r"|\d+\s*/\s*\d+\s+test"
     r"|tests?\s+passed"
@@ -304,7 +312,7 @@ _NEG = r"(?:\b(?:chưa|không|chẳng|never|not|no|none\s+of\s+the|zero|did\s+no
 # "chưa phải đã fix" (2026-10-14) is the negation too. Not "không phải" / "chẳng phải": "Không phải đã fix lỗi X rồi sao?" is a rhetorical
 # question that asserts, and "không phải A mà B" asserts B (OCR + principal-code-reviewer 14/10).
 NEG_BEFORE_RESULT = re.compile(r"(?:\bchưa\s+phải(?:\s+là)?|" + _NEG + r")\s+(?:(?:có|được|hề|all|yet|been|tất\s+cả|the)\s+)*$", re.I)
-NEG_IN_MATCH = re.compile(_NEG + r"\s+(?:(?:có|được|hề|yet|been)\s+)*(?:pass|xanh|green|thành\s+công|đạt)", re.I)
+NEG_IN_MATCH = re.compile(_NEG + r"\s+(?:(?:có|được|hề|yet|been)\s+)*(?:pass|xanh|green|thành\s+công|đạt|qua\s+hết|đều\s+qua)", re.I)
 NEG_RUN = re.compile(
     r"(?:\b(?:chưa|không|chẳng|never|not|did\s+not|have\s+not|has\s+not|cannot|không\s+thể|chưa\s+thể)|n't)"
     r"\s+(?:(?:được|hề|yet|been|thể)\s+)?"
@@ -497,6 +505,31 @@ def is_nonassertive(sentence, match, kind):
         )
     return bool(OUTCOME_GUIDANCE_PREFIX.search(prefix))
 
+# C1c (2026-11-14): an honest report of a FAILING run carries the runner's own counts ("Test vẫn fail: 1 failed, 4 passed"). Local rules
+# only, never a negation anywhere in the sentence:
+#   tp: a failure COUNT or "vẫn / still fail" between "test" and the result word ends the match ("pytest báo 1 failed, 4 passed"),
+#       unless a turning word follows it ("Test: 1 failed trước đó, giờ pass hết": the failure is the past). A bare failure word does
+#       not: it may be the test's name or a denial ("Test xử lý lỗi pass", "Test hết đỏ, xanh hết", "Test chưa từng fail, pass hết");
+#   np, tc: "N passed" / "test: N pass" is no claim when its own clause (cut at nhưng / but / giờ / bây giờ / now) counts a failure or says it still fails.
+# "0 failed", "không (còn) lỗi", "without errors" are no failure: only a non-zero count or "vẫn / still fail" is (_REAL_FAIL).
+_FAIL_TURN = re.compile(r"\b(?:giờ|bây\s+giờ|now|đã|rồi|nhưng|but|sau\s+đó|then|thành|sang)\b|→|->|=>", re.I)
+_CLAUSE_TURN = re.compile(r"\b(?:nhưng|but|giờ|bây\s+giờ|now)\b", re.I)
+_REAL_FAIL = re.compile(r"(?<![\d.,])[1-9]\d*\s+(?:tests?\s+)?(?:failed|failing|failures?|errors?|fail|lỗi|thất\s+bại)\b"
+                        r"|\b(?:vẫn|still)\s+(?:còn\s+)?(?:fail\w*|đỏ|lỗi|failing)\b", re.I)
+
+def _gap_fails(text):
+    last = None
+    for last in _REAL_FAIL.finditer(text):
+        pass
+    return bool(last and not _FAIL_TURN.search(text, last.end()))
+
+def _clause_fails(sent, m):
+    lo = 0
+    for t in _CLAUSE_TURN.finditer(sent, 0, m.start()):
+        lo = t.end()
+    t = _CLAUSE_TURN.search(sent, m.end())
+    return bool(_REAL_FAIL.search(sent, lo, t.start() if t else len(sent)))
+
 claimed = False
 def _claim_matches(sent):
     """CLAIM matches; after one that crosses a clause break the scan resumes at the last break inside it, so an exempted
@@ -508,6 +541,9 @@ def _claim_matches(sent):
         m = CLAIM.search(sent, pos)
         if not m:
             return
+        if (m.group("tp") and _gap_fails(m.group("tp"))) or ((m.group("np") or m.group("tc")) and _clause_fails(sent, m)):
+            pos = m.start() + 1      # no claim by this branch; another branch may still match inside it
+            continue
         yield m
         cut = None
         for b in CLAUSE_BREAK.finditer(sent, m.start(), m.end()):
@@ -531,8 +567,13 @@ for sent in sentences:
 OUTCOME = re.compile(
     r"(đã\s+fix\b(?!\s+gì\b|\s+được\s+gì\s*(?:[:?(]|$))|đã\s+sửa\s+xong|đã\s+(?:được\s+)?sửa\s+(?:xong\s+)?(?:bug|lỗi)"
     r"|(?:bug|lỗi)[^.\n]{0,32}đã\s+(?:được\s+)?sửa\b"
-    r"|đã\s+khắc\s+phục|đã\s+xử\s+lý"
-    r"|đã\s+giải\s+quyết(?:\s+xong)?|hết\s+bug"
+    r"|đã\s+(?:được\s+)?khắc\s+phục|đã\s+(?:được\s+)?xử\s+lý"
+    r"|đã\s+(?:được\s+)?giải\s+quyết(?:\s+xong)?|hết\s+bug"
+    # 2026-11-14 (C1a): plainer outcome wording that named no "fix" ("Lỗi crash đã hết", "This fixes the crash", "no longer reproduces",
+    # "Works now", "works as expected").
+    r"|(?:lỗi|bug|crash)[^.\n]{0,32}đã\s+hết\b(?!\s+hạn)"
+    r"|\b(?:this|that|it|which|commit|change|patch)\s+fixes\b|\bno\s+longer\s+(?:reproduces?|reproducible|occurs?|happens?|crash(?:es)?)\b"
+    r"|\bworks?\s+now\b|\bnow\s+works?\b|\bworks?\s+as\s+expected\b"
     r"|(?:the\s+)?fix\s+(?:works?|worked|has\s+worked|(?:đã\s+)?có\s+tác\s+dụng)"
     r"|bug\s+đã\s+(?:được\s+)?fix|(?:lỗi|bug)[^.\n]{0,48}không\s+(?:còn\s+)?tái\s+hiện(?:\s+nữa)?"
     r"|(?<!\bwhat\swas\s)\bfixed\b|\bresolved\b|\b(?:bug|issue|crash|error)\s+(?:is|was|has)\s+(?:now\s+)?gone\b)", re.I)
@@ -2355,6 +2396,28 @@ _RUNNER_NAMES = r"(?:pytest|jest|vitest|mocha|npm|npx|yarn|pnpm|bun|deno|node|ca
 _RUNNER_MISSING = re.compile(r"\bNo module named '?(?:pytest|unittest)\b|(?:^|[\s/])" + _RUNNER_NAMES + r": (?:command )?not found\b"
                              r"|command not found: " + _RUNNER_NAMES + r"\b", re.M)
 
+# 2026-11-14 (Zero-Defect C1b, tests/gates/test_evidence_zero_defect_c1.sh): a runner turn that ran NO test is no verdict, neither the
+# green that backs "test pass" nor the RED half of check 7's pair (pytest exit 5 after `-k <typo>`).
+#   _NO_RUN_FLAG: the runner was asked to list, not to run (`pytest --collect-only`, `--co`, `--version`, `--help`, `cargo test -- --list`).
+#   _zero_tests: the result says no test ran ("no tests ran", "0 passed", "Tests run: 0", "collected 0 items"), or holds only skipped /
+#       deselected / collected counts with no pass summary, or holds nothing at all: only for exit 0, stdout not sent to a file, and
+#       a command that is the one runner alone (`echo x && pytest -q` with an empty result stays as it was: tests/verification/
+#       test_evidence_issue427.sh E4 control. ponytail: a silent run behind another command is still green; bind it when one shows up).
+# A run whose output went to a file (`pytest > log 2>&1; echo "rc=$?"`) and a summary like Gradle's BUILD SUCCESSFUL are judged as before.
+_NO_RUN_FLAG = re.compile(r"(?<![\w-])(?:--collect-only|--co|--version|-V|--help|-h|--list|--list-tests|--listTests|--fixtures|--markers"
+                          r"|--setup-plan)(?![\w-])")
+_ZERO_RAN = re.compile(r"(?i:\bno tests ran\b|(?<![\d.,])0 passed\b|\bTests run: 0\b|\bRan 0 tests\b|\bcollected 0 items\b"
+                       r"|(?<![\d.,])0 tests? (?:passed|ran|executed|collected)\b|\bno tests? (?:found|collected|were run)\b)")
+_NONRUN_COUNT = re.compile(r"(?i:(?<![\d.,])\d+\s+(?:skipped|deselected)\b|(?<![\d.,])\d+\s+tests?\s+collected\b)")
+
+def _zero_tests(is_error, txt, segs, res):
+    if (RUNNER_PASS_RX.search(txt) or NODE_PASS_RX.search(txt) or NUNIT_PASS_RX.search(txt) or MVN_PASS_RX.search(txt)
+            or GRADLE_PASS_RX.search(txt) or DEVKIT_SUITE_GREEN.search(txt)):
+        return False
+    if _ZERO_RAN.search(txt) or _NONRUN_COUNT.search(txt):
+        return True
+    return not is_error and not txt.strip() and len(segs) == 1 and bool(res) and not any(_away(segs[i]) for i, _ in res)
+
 def runner_state(is_error, txt, pm_run=False, command=""):
     """"red", "green", "gate-green" (the DevKit gate: a green for checks 2 and 7, not for auto_link), or None (not a verdict) for one runner tool_result."""
     if command and _spoofed(command):
@@ -2493,6 +2556,11 @@ def runner_state(is_error, txt, pm_run=False, command=""):
     trapped = bool(command) and _exit_trapped(command)     # #427 E4: mã thoát của tool là của trap, không tin theo chiều nào
     masked = (trapped or any(_hidden(segs, i, txt) for i, _ in res) or (not compound and not _exit_is_the_runs(command, segs, res))
               or any(_compound_masks(segs[i]) for i, _ in res if _COMPOUND.match(segs[i])) or (compound and _loose_simple(segs, res, command)))
+    if command and any(_NO_RUN_FLAG.search(_QUOTED.sub(" ", segs[i])) for i, _ in res):
+        return None              # C1b: the runner listed or printed help, it ran no test
+    if (command and _zero_tests(is_error, txt, segs, res) and not RUNNER_FAIL_RX.search(txt)
+            and not ((compound or masked) and DEVKIT_SUITE_RED.search(txt))):
+        return None              # C1b: no test ran, so no green and no RED half
     if (is_error and not trapped) or RUNNER_FAIL_RX.search(txt) or ((compound or masked) and DEVKIT_SUITE_RED.search(txt)):
         return "red"
     if is_error:
@@ -2523,7 +2591,8 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         return "green" if (_pass_summary(txt, segs, unbound) or DEVKIT_SUITE_GREEN.search(txt)) else None
     return "green"
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
-           ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm")
+           ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm",
+           ".sh", ".bash", ".zsh")   # 2026-11-14: a shell script is source too (hooks, the kit itself): editing one after a green run aged nothing
 # A file the session wrote in a TEMP dir that is not the project itself (the scratchpad the harness tells every agent to use, /tmp,
 # $TMPDIR) is a helper, not the code a test claim is about: it must not age a green run or ask for its RED-check. Measured 2026-10-10 over
 # 1227 real transcripts: 62 of 171 blocks of this gate came right after the last source file written lay in such a dir. A project that
@@ -2556,8 +2625,11 @@ bugs_touched = set()
 SCRIPT_TEST_RX = re.compile(
     r"(\.(test|spec)\.(m|c)?[jt]sx?$|(^|/)test_[^/]*\.py$|_test\.(py|go|dart)$|Tests?\.swift$|_spec\.rb$)")
 SCRIPT_TEST_DIR_RX = re.compile(r"(^|/)(tests?|__tests__|spec)/[^/]+\.(py|[jt]sx?|mjs|cjs|rb|swift|dart|rs)$")
+# A shell test (tests/…/x.sh, hooks/tests/x.sh): a test file for check 7's marker and auto_link, like the script tests above. Not in
+# SCRIPT_TEST_RX on purpose: the RED-check of an edited script test reads runner output that names the file, kit suites print none.
+SHELL_TEST_RX = re.compile(r"(^|/)(tests?|__tests__|spec)/(?:[^/]+/)*[^/]+\.(sh|bash|zsh)$")
 def is_test_path(fp):
-    return bool(SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)
+    return bool(SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp) or SHELL_TEST_RX.search(fp)
                 or "/src/test/" in fp or "/src/androidTest/" in fp or re.search(r"/Tests?/.*\.cs$|Tests?\.cs$", fp))
 
 # #427 R4: `[\w./-]+\.(test|spec)…` không neo, nên từ MỖI vị trí của một dải `a/a/a/…` 200 KB nó chạy tới cuối dải: bậc hai, hook bị giết
@@ -2574,7 +2646,50 @@ last_scratch_src_idx = -1   # the last source file written in a temp dir: the fa
 # Check 2 vẫn dùng last_src_edit_idx: claim "test pass" vẫn cần một lần chạy sau lần sửa file test cuối.
 last_fix_edit_idx = -1
 last_scratch_fix_idx = -1
-edit_log = []             # (transcript position, file path) of every Edit/Write/NotebookEdit
+edit_log = []             # (transcript position, file path) of every Edit/Write/MultiEdit/NotebookEdit
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")   # 2026-11-14: MultiEdit was no edit, so it aged no green run
+# A Bash command that writes a source file (`sed -i … src/a.py`, `echo … >> src/a.py`, `… | tee src/a.py`, a heredoc `cat > x.sh`) is a
+# source edit as well. Write targets come from hooks/shell_writes.py (the scanner of worktree_guard and proof_gate), not a second parser:
+# its "redirect" and "file" targets that end in SRC_EXT. A target holding $VAR or a backtick is unknown and skipped; so is a command
+# with no write verb in it (the cheap prefilter keeps the scanner off every `git status`). A command that is itself a test run is not
+# read: its position is the run's, so a write in it cannot be placed before or after that run (`pytest -q | tail -3; sed -i … src/a.py`
+# stays evidence: tests/verification/test_evidence_backlog427.sh 12d. ponytail: a write after the run in ONE command ages nothing).
+# ponytail: chmod / touch / rm of a source file next to a real write verb also age the run; split the verbs in shell_writes if that ever blocks.
+_SRC_WRITE_HINT = re.compile(r">|\b(?:tee|sed|perl|cp|mv|dd|install|rsync|patch|truncate)\b")
+_SRC_NAME = re.compile(r"\.(?:" + "|".join(e[1:] for e in SRC_EXT) + r")(?![\w.])")
+_SW = [False]
+def _shell_writes():
+    if _SW[0] is False:
+        _SW[0] = None
+        me = os.environ.get("TE_SELF", "")
+        d_ = os.path.dirname(os.path.realpath(me)) if me else ""
+        if os.path.isabs(d_):
+            try:
+                sys.path.append(d_)          # after the stdlib, never before it
+                sys.dont_write_bytecode = True
+                import shell_writes
+                _SW[0] = shell_writes
+            except Exception as e:
+                logline(f"[{ts}] hooks/shell_writes.py not loaded ({e!r}): Bash writes of source files are not read")
+    return _SW[0]
+
+def bash_src_writes(cmd, wd):
+    if not (_SRC_WRITE_HINT.search(cmd) and _SRC_NAME.search(cmd)) or is_test_runner(cmd):
+        return []
+    sw = _shell_writes()
+    if sw is None:
+        return []
+    try:
+        tg = sw.targets(cmd, wd)
+    except Exception as e:
+        logline(f"[{ts}] shell_writes.targets failed ({e!r}) on a Bash command")
+        return []
+    out = []
+    for kind, target, base in tg or ():
+        if kind in ("redirect", "file") and isinstance(target, str) and target.endswith(SRC_EXT) and "$" not in target and "`" not in target:
+            target = os.path.expanduser(target)
+            out.append(target if os.path.isabs(target) else os.path.join(base or wd, target))
+    return out
 no_id_tool_indices = []
 test_edit_idx = {}       # simple class name -> transcript position of its last edit
 red_idx = {}             # suite name -> transcript position where it was seen RED
@@ -2811,11 +2926,23 @@ if tp and os.path.exists(tp):
                             # Không có id, hoặc input không phải dict: không suy ra lượt chỉ đọc.
                             no_id_tool_indices.append(blk_idx)
                         if not isinstance(binp, dict):
-                            if nm in ("Edit", "Write", "NotebookEdit"):
+                            if nm in EDIT_TOOLS:
                                 # Input hỏng vẫn là sửa nguồn: except phía dưới ghi log và chặn lời khai pass (#649, P3a).
                                 raise TypeError(f"input is {type(binp).__name__}, not a dict")
                             continue
-                        if nm not in ("Edit", "Write", "NotebookEdit"):
+                        if nm == "Bash":
+                            _wd = rec.get("cwd")
+                            for fp in bash_src_writes(str(binp.get("command", "")), _wd if isinstance(_wd, str) and os.path.isabs(_wd) else repo):
+                                if _is_scratch(fp):
+                                    last_scratch_src_idx = blk_idx
+                                    if not is_test_path(fp):
+                                        last_scratch_fix_idx = blk_idx
+                                else:
+                                    last_src_edit_idx = blk_idx
+                                    if not is_test_path(fp):
+                                        last_fix_edit_idx = blk_idx
+                            continue
+                        if nm not in EDIT_TOOLS:
                             continue
                         fp = binp.get("file_path") or ""
                         if isinstance(fp, str) and fp and _is_scratch(fp):
@@ -2896,7 +3023,7 @@ if tp and os.path.exists(tp):
                         # source edit (fail-closed).
                         logline(f"[{ts}] transcript line {lineno} block {blk_idx} skipped ({blk.get('type')} "
                                 f"{blk.get('name') or blk.get('tool_use_id') or ''}): {e!r}")
-                        if blk.get("type") == "tool_use" and blk.get("name") in ("Edit", "Write", "NotebookEdit"):
+                        if blk.get("type") == "tool_use" and blk.get("name") in EDIT_TOOLS:
                             last_src_edit_idx = last_fix_edit_idx = blk_idx
     except Exception as e:
         logline(f"[{ts}] transcript scan fail: {e!r}")
