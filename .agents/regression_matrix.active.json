@@ -4476,6 +4476,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "qa-report-issue-decision",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-decision.py",
+        "tests/super-board/test_merge_gate_qa_report_issue_decision.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-QA-ISSUE-DECISION-01",
+          "name": "#1175: preflight qa-report của merge gate nhận [decision] hợp lệ trên issue thẻ (mới hơn report QA theo createdAt) như trên PR; cũ hơn, người lạ, marker lane khác, thiếu thời gian, DANH SÁCH DỪNG, đọc issue lỗi, decision_policy tắt vẫn exit 11; report sạch không đọc issue",
+          "command": "bash tests/super-board/test_merge_gate_qa_report_issue_decision.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

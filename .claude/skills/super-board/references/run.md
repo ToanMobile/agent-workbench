@@ -860,8 +860,8 @@ file in order and stops at the first rule that answers:
 
 1. A rule answers → post one comment on the issue whose first line is `[orchestrator] [decision]` and which carries
    `<!-- sb-decision:orchestrator -->`: the rule number, the reason, the evidence and "Quyết định cuối, không hỏi lại".
-   Post the same comment on the card's open PR when it has one: the merge gate's `super-board-qa-report.py` reads
-   only PR comments. Then run `python3 .claude/bin/super-board-needs-you.py unmark --repo <owner/name> --issue <N>`
+   The merge gate's `super-board-qa-report.py` reads the card too (#1175), so posting the same comment on the card's open PR
+   is no longer required. Then run `python3 .claude/bin/super-board-needs-you.py unmark --repo <owner/name> --issue <N>`
    and move the card: Review when it has a PR to land (the merge protocol lands it; Done means merged), Ready when
    work is left, Done only when nothing needs merging (closed as not planned with 🤷, or its AC already met).
 2. The case is on the stop list of decision-policy.md (a real person or device, a change to product AC or scope,
