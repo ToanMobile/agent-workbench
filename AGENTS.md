@@ -86,7 +86,7 @@ calibration, the paired oracle and the gate (core-rules §4).
   no hook takes the screenshot.
 
 ## Every prompt (standing law)
-Applies to Claude Code, Gemini CLI, Antigravity, Codex and Cursor, to every turn that changes
+Applies to Claude Code, Gemini CLI, Antigravity, Codex, Cursor and Grok, to every turn that changes
 a file. A turn that changes nothing (a question, a review, a plan) is answered directly: no gate,
 no image, no status line. In a changing turn a missing step opens the reply with CHƯA XONG and
 stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
@@ -140,15 +140,15 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 - Act, don't offer: a defect an audit or review finds here is fixed in the same turn (oracle, gate,
   proof) unless the fix needs the ask list; never end a turn with a menu of prescribed steps (tests,
   gate, fresh-context review, proof capture): do them.
-- Never hand the work to the user: no `!`
+- Never hand the work to the user (2026-10-09: "tự xử lý luôn đi, tôi không đọc đâu"): no `!`
   command, no "run this", no checklist. The agent runs the gate of every repo the change reaches,
   the fresh-context review and its fixes, the Antigravity audit when required, the kit install and host re-sync, commit and push. Only the "ask
   the user" list below, a login only the user can type and a switch the kit reserves go to the user.
 - **Auto 100%** (chủ repo 2026-11-02: "tự auto toàn bộ ko cần người phải duyệt hay comment hay cho
   quyền"; quyền công cụ: câu cuối): không bước nào chờ người duyệt, comment, review hay merge, trừ
   danh sách hỏi bên dưới và cổng human-gate của merge_policy super-board (mục Super Board); cần
-  người duyệt thứ hai thì đó là agent khác (Antigravity audit, review lane). Agent TỰ AUTO DUYỆT
-  thay đổi code khi test PASS, không hỏi "Duyệt / không duyệt". Commit, push fast-forward kể cả
+  người duyệt thứ hai thì đó là agent khác (Antigravity audit, review lane). Agent tự duyệt
+  code khi test PASS, không hỏi. Commit, push fast-forward kể cả
   `main`, mở và merge PR thường, sửa code, sửa test: tự làm (test cũ bị sửa vẫn cần agent khác
   duyệt, mục dưới; luật dự án/người dùng cấm commit/push thì mục Git thắng). Hỏi người dùng CHỈ KHI: force-push
   hoặc viết lại lịch sử đã chia sẻ; xoá file/dữ liệu cực kỳ quan trọng không khôi phục được từ
@@ -160,15 +160,15 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
   lệnh bị từ chối; ghi CHƯA XONG cho bước đó kèm quyền cần và lý do, làm hết phần còn lại.
 - An edited existing test needs cross-approval by another agent: commit, then an Antigravity
   `pm_dispatch kind=audit` on the PR head and `pm_verdict kind=audit verdict=pass auditedHead=<head>`;
-  the gate reads that pass record (else `agent-kit approve-tests <task-id>`). The editor never approves its
+  the gate reads the PM's scoped pass record (else `agent-kit approve-tests <task-id>`). No Grok. The editor never approves its
   own test (`--auto-approve-tests`, `AUTO-APPROVE:` approve nothing); never ask the user: the
-  author cannot post `approved-head`: start a reviewer session to post it.
-- Clean up what you create: delete a repo copy, stage
+  author cannot post `approved-head`: a reviewer session posts it.
+- Clean up what you create (33 GB filled a disk): delete a repo copy, stage
   kit or fixture once served; what must outlive the session lives in the ignored `.agents/local/`.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
   are Vietnamese; replies match the user's language; identifiers, commands and paths stay English (core-rules §2.3).
-- Long session or big refactor ahead: checkpoint and compact, don't fill the window. Read code
+- Long session or big refactor: checkpoint and compact. Read code
   by range (Read offset/limit, codebase-memory); never `cat` a big file.
 - Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.
 <!-- devkit-essentials:end -->
