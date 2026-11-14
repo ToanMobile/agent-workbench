@@ -2282,7 +2282,7 @@ def _expand_static_vars(target, cmd):
 # đường cũ (_expand_static_vars + _lands_in_main), nên `..`, tiền tố `.`, đường tuyệt đối vào main tự bị chặn.
 _FOR_CLAUSE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+([A-Za-z0-9_./:@%+=,\- \t]+?)\s*;\s*do\b")
 # lệnh có thể tạo link / thư mục ngay trước redirect: realpath lúc PreToolUse chưa thấy chúng (review kế hoạch #1102) - không khai triển, chặn như cũ
-_MAKES_PATH = _Re(r"(?<![\w./-])(?:ln|mkdir|mv|cp|rsync|install|tar|unzip)(?![\w-])")
+_MAKES_PATH = _Re(r"(?<![\w-])(?:ln|mkdir|mv|cp|rsync|install|tar|unzip)(?![\w-])")   # R8: `/bin/ln`, `./ln` too (no `/` `.` in the lookbehind)
 _FOR_MAX_COMBOS = 64
 _FOR_UNSAFE = re.compile(r"\beval\b|(?:^|[\s;&|(){}!`'\"])(?:source|\.)(?=\s)")
 _SHELL_SET_VARS = frozenset({"_", "REPLY", "PWD", "OLDPWD", "OPTARG", "OPTIND", "IFS", "PATH", "HOME", "SECONDS", "RANDOM", "LINENO",
@@ -2293,7 +2293,7 @@ _SOURCES_FILE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*(?:sour
 
 # R7 (reviewer #1102, whitelist): builtins that set a variable with no `NAME=` in the text (`printf -v`, `read`, `mapfile`, `declare` …); the
 # plain static expansion cannot see them, so a line holding one never has its `$VAR` target expanded
-_ASSIGNING_BUILTIN = re.compile(r"\b(?:read|mapfile|readarray|getopts|select|declare|typeset|local|unset|let|eval)\b|\bprintf\b[^;&|\n]*\s-v")
+_ASSIGNING_BUILTIN = re.compile(r"\b(?:read|mapfile|readarray|getopts|select|declare|typeset|local|unset|let|eval|readonly|export|trap|set|shift|while|until)\b|\bprintf\b[^;&|\n]*\s-v")
 
 
 def _for_line_plain(cmd):
@@ -2304,7 +2304,13 @@ def _for_line_plain(cmd):
         return False
     if re.search(r"\$(?![A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*\})", cmd):
         return False
-    return len(re.findall(r"\bfor\b", cmd)) == len(_FOR_CLAUSE.findall(cmd))
+    # R8: no `=` outside the `for` clauses (any assignment, `--flag=x` too), no glob / brace / tilde character once `${NAME}` is set aside, and every
+    # `done` word closes a `for` (a `done` argument would skew the do…done span)
+    bare = _FOR_CLAUSE.sub(" ", cmd)
+    if "=" in bare or re.search(r"[*?\[\]{}~]", re.sub(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", " ", bare)):
+        return False
+    n_for = len(re.findall(r"\bfor\b", cmd))
+    return n_for == len(_FOR_CLAUSE.findall(cmd)) == len(re.findall(r"\bdone\b", cmd))
 
 
 def _for_var_reassigned(target, cmd):

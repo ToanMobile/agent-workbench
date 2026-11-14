@@ -104,6 +104,20 @@ want 2 Bash "$W2" "t=/tmp/ok; declare t\"f\"=$M/a.txt; echo x > \$t" "for-loop R
 want 2 Bash "$W2" "t=/tmp/ok; printf -v \$'\\x74' $M/a.txt; echo x > \$t" "for-loop R7d: printf -v \$'\\x74'"
 want 0 Bash "$W2" 'for t in a b; do echo x > /tmp/q-$t.log; done' "for-loop R7: ca đối chứng vẫn qua"
 
+# #1102 R8 (reviewer bounce 6, từ chối mọi ký tự mở rộng và mọi gán biến ngoài mệnh đề for): ln theo đường dẫn, glob / brace / tilde trong đích,
+# `done` làm đối số, biến khác được gán trong lệnh, gán sau `do` / readonly.
+want 2 Bash "$W2" "for t in a; do /bin/ln -sfn $M $OUT/l; echo x > $OUT/l/\$t; done" "for-loop R8-1: /bin/ln cùng dòng"
+want 2 Bash "$W2" "for t in a; do ./ln -sfn $M $OUT/l; echo x > $OUT/l/\$t; done" "for-loop R8-1: ./ln cùng dòng"
+want 2 Bash "$W2" "for t in a.txt; do echo x > $TMP/m?in/\$t; done" "for-loop R8-2: glob ? trong đích"
+want 2 Bash "$W2" "for t in a.txt; do echo x > $TMP/mai*/\$t; done" "for-loop R8-2: glob * trong đích"
+want 2 Bash "$W2" "for t in a.txt; do tee {/tmp/x,$M/\$t} < /dev/null; done" "for-loop R8-2: brace trong đối số"
+want 2 Bash "$W2" "for t in a.txt; do echo x > ~/\$t; done" "for-loop R8-2: tilde trong đích"
+want 2 Bash "$W2" "for t in a; do echo x > /tmp/q-\$t; echo done; done" "for-loop R8-3: done làm đối số"
+want 2 Bash "$W2" "for t in a; do X=/tmp; echo x > \$X/\$t; done" "for-loop R8-4: biến khác được gán trong lệnh"
+want 2 Bash "$W2" "for t in a; do readonly t=$M/x; echo x > \$t; done" "for-loop R8-5: readonly gán biến vòng"
+want 2 Bash "$W2" "for t in a; do t=$M/x; echo x > \$t; done" "for-loop R8-5: gán ngay sau do"
+want 0 Bash "$W2" 'for t in a b; do ./run.sh -v >/tmp/q-$t.log 2>&1; done' "for-loop R8: ca đối chứng vẫn qua"
+
 # hiệu năng: thư mục đích có hàng nghìn entry - hook không liệt kê / glob thư mục, nên không chậm đáng kể
 BIG="$TMP/big"; mkdir -p "$BIG"; python3 -I -c 'import sys; [open(sys.argv[1] + "/q-%d.log" % i, "w").close() for i in range(5000)]' "$BIG"
 T0=$(python3 -I -c 'import time; print(time.time())')
