@@ -55,7 +55,8 @@ LOCK = "devkit-session.lock"
 LOG = "devkit-session.log"
 GUARD = "devkit-session.guard"
 GUARD_WAIT_S = 2.0   # the guard covers a read, a pid check and one small write: held for about a millisecond
-EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# #1102: Grok edit tools (search_replace, hashline_edit) are locked by file_path / path like Edit: they used to write the main checkout in trunk mode
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "search_replace", "hashline_edit"}
 # Tên Grok (`run_terminal_command`, id cũ `run_terminal_cmd`) và Cursor (`Shell`) đặt cho công cụ mà Claude gọi là Bash. Grok chạy hook của
 # project theo matcher `Bash` nhưng payload mang tên công cụ CỦA NÓ, nên guard so `tool_name == "Bash"` chưa từng xét lệnh Grok nào: lúc
 # 03:05:22 +07 ngày 11/11 lệnh `git checkout --detach origin/<nhánh>` của worker review Grok trong checkout chính đi qua hook này và để
@@ -1511,7 +1512,7 @@ def trunk_env_in_settings(tool, tool_input, command):
         texts = [ti.get("content"), ti.get("new_string"), ti.get("new_source")] + [e.get("new_string") for e in ti.get("edits") or [] if isinstance(e, dict)]
         if any(isinstance(t, str) and off(t) for t in texts):
             return True
-        if tool in ("Edit", "MultiEdit"):   # a value-only edit (`"1"` -> `"0"`) names no key: judge the file as it becomes (OCR2 8)
+        if tool in ("Edit", "MultiEdit", "search_replace"):   # a value-only edit (`"1"` -> `"0"`) names no key: judge the file as it becomes (OCR2 8)
             cur = _read_text(path)
             after = _edited(cur, ti) if cur is not None and not off(cur) else None
             return after is not None and off(after)
