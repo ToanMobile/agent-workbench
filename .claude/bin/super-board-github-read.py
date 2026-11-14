@@ -91,16 +91,18 @@ def check_halt():
         except FileNotFoundError:
             return   # another check set it aside first
         except (OSError, ValueError, AttributeError, TypeError):
-            text, target, home = None, None, None
-        if target and home and target != home:
-            aside = path.with_name(f'github-halt-foreign-{time.time_ns()}.json')
+            text, target, home, record = None, None, None, None
+        malformed = text is not None and isinstance(record, dict) and _malformed_op(record.get('operation'))
+        if (target and home and target != home) or malformed:
+            aside = path.with_name(f"github-halt-{'malformed' if malformed else 'foreign'}-{time.time_ns()}.json")
             try:
                 os.replace(path, aside)
                 # Another worker may have replaced the file with a REAL halt between the read and the rename: only the
                 # record we judged may be set aside; anything else goes back (or stays) and still halts.
                 if aside.read_text() == text:
-                    print(f'[github-read] ignored a halt for {target} (not this checkout, {home}); kept at {aside}',
-                          file=sys.stderr)
+                    why = 'a malformed read (empty owner or invalid project number)' if malformed else \
+                        f'{target} (not this checkout, {home})'
+                    print(f'[github-read] ignored a halt for {why}; kept at {aside}', file=sys.stderr)
                     return
                 if not path.exists():
                     os.replace(aside, path)
@@ -224,6 +226,23 @@ def _op_repo(operation):
     return slug.lower() if re.fullmatch(r'[\w.-]+/[\w.-]+', slug) else None
 
 
+def _malformed_op(operation):
+    """14/11: a read with an empty/'null' `--owner` or a `project …` number that is not a positive integer is a caller bug
+    (unset config, test fixture), not a GitHub failure. Replaying it can never succeed, so it must not halt the board."""
+    args = operation.get('args') if isinstance(operation, dict) else None
+    if not isinstance(args, list):
+        return False
+    args = [str(a) for a in args]
+    for i, a in enumerate(args):
+        if a == '--owner' and (i + 1 == len(args) or args[i + 1].strip() in ('', 'null')):
+            return True
+        if a.startswith('--owner=') and a[len('--owner='):].strip() in ('', 'null'):
+            return True
+    if len(args) >= 3 and args[0] == 'project' and args[1] in ('item-list', 'field-list', 'view'):
+        return not re.fullmatch(r'[1-9]\d*', args[2].strip())
+    return False
+
+
 def _home_repo():
     """owner/name of the checkout's origin, or None when it cannot be read (then the halt is written: fail closed)."""
     try:
@@ -242,6 +261,10 @@ def halt(reason, attempts, operation=None, verify=None):
     if target and home and target != home:
         print(f'[github-read] HALT not recorded: the failed read targets {target}, not this checkout ({home})',
               file=sys.stderr)
+        raise ReadHalted(reason)
+    if _malformed_op(operation):
+        print(f"[github-read] HALT not recorded: malformed read {' '.join(map(str, operation['args']))!r} "
+              '(empty owner or invalid project number), fix the caller', file=sys.stderr)
         raise ReadHalted(reason)
     path = halt_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -699,6 +722,12 @@ def main():
                 text = path.read_text()
                 record = json.loads(text)
                 operation = record.get('operation')
+                if _malformed_op(operation):   # replaying it can never pass: set it aside (14/11 07:00, board halted 2 h)
+                    aside = path.with_name(f'github-halt-malformed-{time.time_ns()}.json')
+                    path.replace(aside)
+                    print(f'[github-read] set aside a malformed halt (empty owner or invalid project number); kept at {aside}',
+                          file=sys.stderr)
+                    return 0
                 if args.reconciled is not None:
                     if isinstance(operation, dict):
                         raise ValueError('this halt saved a read to replay: restart it with --resume alone, not --reconciled')

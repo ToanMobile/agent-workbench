@@ -4476,6 +4476,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-github-read-malformed-halt",
+      "watch_files": [
+        ".claude/bin/super-board-github-read.py",
+        "tests/super-board/test_github_read_malformed_halt.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-GITHUB-READ-MALFORMED-HALT-01",
+          "name": "14/11 07:00 (board đứng 2 giờ): lệnh đọc có --owner rỗng/null hoặc số project không phải số nguyên dương không ghi halt của board; halt dị dạng có sẵn bị check_halt và --resume (watchdog) cất sang github-halt-malformed-*.json; lệnh đọc hợp lệ không nêu repo vẫn halt",
+          "command": "bash tests/super-board/test_github_read_malformed_halt.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
