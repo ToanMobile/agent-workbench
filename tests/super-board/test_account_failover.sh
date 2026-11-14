@@ -182,20 +182,27 @@ note_worker_limit "wl/worker-build-43.log"
 
 # 8d. #1121: lỗi hết tiền/billing (HTTP 402 Payment Required, "balance exhausted") cũng là hết limit: không đánh dấu thì runner giao lại
 # thẻ cho account chết, worker chết sau 4-6 s mỗi lần (early-death lặp lại, kitbug09c38fc46c3c).
+# Log dưới đây chép NGUYÊN VĂN từ docs/super-board/runs/2026-11-11-agent-workbench-workers/worker-review-838.log (dispatch
+# 2026-11-11T15:41:52Z, exit=1 sau 4 s; runner ghi "early end" lúc 22:31:27 giờ VN), chỉ bỏ dòng `prompt:` dài.
 rm -f "$TMP/state/usage-"*.json
 cat > "$TMP/repo/wl/worker-review-44.log" <<'LOG'
-=== dispatch lane=review issue=#44 at 2026-11-11T22:32:01Z ===
-account_pool: engine=antigravity account=antigravity config_dir=/Users/x/.gemini/antigravity
+=== dispatch lane=review issue=#838 at 2026-11-11T15:41:52Z ===
+account_pool: engine=grok account=grok config_dir=
 Internal error: {
-  "message": "API error (status 402 Payment Required): usage balance exhausted",
+  "message": "API error (status 402 Payment Required): Grok Build usage balance exhausted",
   "http_status": 402
 }
+Error: Internal error: {
+  "message": "API error (status 402 Payment Required): Grok Build usage balance exhausted",
+  "http_status": 402
+}
+
 worker_exit: exit=1 signal=none elapsed=4s
 LOG
 note_worker_limit "wl/worker-review-44.log"
-r=$(paused_until antigravity); now=$(date +%s)
+r=$(paused_until grok); now=$(date +%s)
 [ -n "$r" ] && [ "$r" -gt $((now + 3000)) ] && [ "$r" -le $((now + 3700)) ] \
-  && ok "8d: 402 Payment Required / balance exhausted: account paused for about an hour" \
+  && ok "8d: real #838 log (402 Payment Required / balance exhausted): account paused for about an hour" \
   || fail "8d: 402 balance exhausted not recognised (resets_at='$r')"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_account_failover: all passed" || { echo "❌ test_account_failover: $FAILS failed"; exit 1; }

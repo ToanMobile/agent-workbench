@@ -949,9 +949,10 @@ issue_locked() {
   if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     return 0
   fi
+  LIMIT_PAUSED=0
   [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
   note_worker_exit "$issue"
-  note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
+  [ "${LIMIT_PAUSED:-0}" = 1 ] || note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
   note_worker_end "$issue"
   [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
   rm -f "$lock"
@@ -971,6 +972,7 @@ note_worker_limit() {
   # `account_pool:` của lần giao đó là 100 % tới giờ reset (không đọc được giờ thì 1 giờ), đúng dạng usage-<acct>.json
   # mà pool đọc. Chỉ ghi file của account đó, không ghi usage.json chung (file chung kéo theo `switch` credential
   # toàn cục của người dùng). Lỗi ở đây không bao giờ chặn runner.
+  LIMIT_PAUSED=0   # #1121: 1 when this call paused the account; the reaper then skips the early-death ledger (the limit is the cause, the pause the cure)
   [ -f "$1" ] || return 0
   worker_ended_clean "$1" && return 0   # a finished turn's report may quote a limit message; only a death pauses an account
   local out
@@ -1012,7 +1014,7 @@ os.replace(tmp, path)
 print(acct[1], time.strftime('%H:%M', time.localtime(resets)))
 PY
 ) || { log "⚠ could not read worker log $1 for an account limit"; return 0; }
-  [ -z "$out" ] || log "account ${out% *} hit its limit — paused until ${out#* }; next dispatch takes the pool's next account"
+  [ -z "$out" ] || { LIMIT_PAUSED=1; log "account ${out% *} hit its limit — paused until ${out#* }; next dispatch takes the pool's next account"; }
   return 0
 }
 
@@ -2587,9 +2589,10 @@ reap_finished_locks() {
     case "$issue" in *[!0-9]*|'') continue ;; esac
     read_lock "$issue"
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
+      LIMIT_PAUSED=0
       [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
       note_worker_exit "$issue"
-      note_early_death "$issue"
+      [ "${LIMIT_PAUSED:-0}" = 1 ] || note_early_death "$issue"
       note_worker_end "$issue"
       # #288: PID chết rời danh sách "đã thấy ở QA": Tester mới tái dùng PID đó phải bắt đầu sạch (ân hạn Ready → QA).
       [ -z "$PID" ] || QA_SEEN_IN_QA=$(printf '%s\n' ${QA_SEEN_IN_QA:-} | grep -vxF -- "$PID" | tr '\n' ' ') || true
