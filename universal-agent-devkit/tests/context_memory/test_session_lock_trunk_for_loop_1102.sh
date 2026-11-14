@@ -125,6 +125,17 @@ want 2 Bash "$W2" "for t in $M/sub/a.txt; do echo x > \$t:h/b; done" "for-loop R
 want 2 Bash "$W2" "for t in $TMP/main-x/a.txt; do echo x > \${t}:gs/-x//; done" "for-loop R9: \${t}:gs/-x//"
 want 0 Bash "$W2" 'for t in a b; do echo x > /tmp/q-$t.log; done' "for-loop R9: ca đối chứng vẫn qua"
 
+# #1102 R10 (audit T0481, whitelist chặt): gán đầu câu / sau do / ${t:=} / `for \<newline>` / tên che bằng nháy, biến shell tự đặt, link
+want 2 Bash "$W2" "t=/tmp/ok; for t in a; do t=$M/a.txt; echo x > \$t; done" "for-loop R10: gán đầu câu rồi gán sau do"
+want 2 Bash "$W2" "for t in a; do t=$M/a.txt; echo x > \$t; done" "for-loop R10: do t=main"
+want 2 Bash "$W2" "for t in a; do : \${t:=$M/a.txt}; echo x > \$t; done" "for-loop R10: \${t:=..}"
+want 2 Bash "$W2" "t=/tmp/ok; for \\
+t in a; do echo x > $M/\$t; done" "for-loop R10: for tách dòng bằng backslash"
+want 2 Bash "$W2" "t=/tmp/ok; pr\"i\"ntf -v t $M/a.txt; for i in a; do echo x > \$t; done" "for-loop R10: pr\"i\"ntf -v"
+want 2 Bash "$W2" "for DIRSTACK in a; do echo x > \$DIRSTACK; done" "for-loop R10: DIRSTACK"
+want 2 Bash "$W2" "for t in a; do link $M/a.txt $OUT/l-a; echo x > $OUT/l-\$t; done" "for-loop R10: link cùng dòng"
+want 0 Bash "$W2" 'for t in a b; do bash x.sh >/tmp/q-$t.log; done' "for-loop R10: mẫu QA thật vẫn qua"
+
 # hiệu năng: thư mục đích có hàng nghìn entry - hook không liệt kê / glob thư mục, nên không chậm đáng kể
 BIG="$TMP/big"; mkdir -p "$BIG"; python3 -I -c 'import sys; [open(sys.argv[1] + "/q-%d.log" % i, "w").close() for i in range(5000)]' "$BIG"
 T0=$(python3 -I -c 'import time; print(time.time())')

@@ -2282,11 +2282,11 @@ def _expand_static_vars(target, cmd):
 # đường cũ (_expand_static_vars + _lands_in_main), nên `..`, tiền tố `.`, đường tuyệt đối vào main tự bị chặn.
 _FOR_CLAUSE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+([A-Za-z0-9_./:@%+=,\- \t]+?)\s*;\s*do\b")
 # lệnh có thể tạo link / thư mục ngay trước redirect: realpath lúc PreToolUse chưa thấy chúng (review kế hoạch #1102) - không khai triển, chặn như cũ
-_MAKES_PATH = _Re(r"(?<![\w-])(?:ln|mkdir|mv|cp|rsync|install|tar|unzip)(?![\w-])")   # R8: `/bin/ln`, `./ln` too (no `/` `.` in the lookbehind)
+_MAKES_PATH = _Re(r"(?<![\w-])(?:ln|link|mkdir|mv|cp|rsync|install|tar|unzip)(?![\w-])")   # R8: `/bin/ln`, `./ln` too (no `/` `.` in the lookbehind)
 _FOR_MAX_COMBOS = 64
 _FOR_UNSAFE = re.compile(r"\beval\b|(?:^|[\s;&|(){}!`'\"])(?:source|\.)(?=\s)")
 _SHELL_SET_VARS = frozenset({"_", "REPLY", "PWD", "OLDPWD", "OPTARG", "OPTIND", "IFS", "PATH", "HOME", "SECONDS", "RANDOM", "LINENO",
-                             "BASH_REMATCH", "COMP_WORDS", "PIPESTATUS", "status", "pipestatus", "reply"})
+                             "BASH_REMATCH", "COMP_WORDS", "DIRSTACK", "BASH_SUBSHELL", "histchars", "KEYBOARD_HACK", "PIPESTATUS", "status", "pipestatus", "reply"})
 # R5 (reviewer #1102): `. file` / `source file` run text the hook cannot read, and it may set the loop variable
 _SOURCES_FILE = re.compile(r"(?:^|(?<=[;&|\n(])|(?<=\bdo)|(?<=\bthen))\s*(?:source|\.)\s")
 
@@ -2442,6 +2442,10 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
         cands = [t]
         if "$" in t or "`" in t:
             raw_t, t = t, _expand_static_vars(t, cmd)
+            # #1102 (decision 14/11, whitelist): a line with a `for` word (a `\<newline>` split joined first) is expanded ONLY by the strict
+            # _for_loop_targets pattern; the plain assignment expansion never applies to it (`t=/tmp/ok;`, `do t=$M/a`, `: ${t:=..}` slipped past)
+            if t is not None and re.search(r"\bfor\b", cmd.replace("\\\n", "")):
+                t = None
             if t is not None and (_for_var_reassigned(raw_t, cmd) or _ASSIGNING_BUILTIN.search(cmd)):   # `t=/tmp/ok; for t in a.txt; do … > $t`, `printf -v t …`: the text's assignment is not the value
                 return True
             if t is None and loose:   # cwd không phải repo: `> "$TMPDIR/x"` không phải ghi vào main (review #427 vòng 2)
