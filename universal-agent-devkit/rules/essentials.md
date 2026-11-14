@@ -24,8 +24,8 @@ alters observable behaviour; (5) what stays unverified.
   same size thresholds, or auth, payment, database migration, production Crashlytics triage, core
   architecture: `antigravity-pm` `plan_review` / `pm_plan` before code; after the gate exits 0, an
   independent Antigravity `audit` (or the `/giao` flow) of the whole diff and code safety, judged by the 7 golden
-  standards (core-rules §18 lists them and the /100 scoring); the bilateral review record is
-  required for large tasks only.
+  standards (core-rules §18 lists them and the /100 scoring); large tasks keep the bilateral
+  review record.
 - Simple or medium task (local bug fix, UI tweak, test update, script fix, 1–2 file logic): the agent
   that was called, Claude or Antigravity, does it A to Z and verifies it itself (paired test RED→GREEN,
   gate exit 0), with no second-agent review. Trivia: choose, ask no one.
@@ -135,8 +135,8 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 - **Auto 100%** (chủ repo 2026-11-02: "tự auto toàn bộ ko cần người phải duyệt hay comment hay cho
   quyền"; quyền công cụ: câu cuối): không bước nào chờ người duyệt, comment, review hay merge, trừ
   danh sách hỏi bên dưới và cổng human-gate của merge_policy super-board (mục Super Board); cần
-  người duyệt thứ hai thì đó là agent khác (Antigravity audit, review lane). Agent TỰ AUTO DUYỆT
-  thay đổi code khi test PASS, không hỏi "Duyệt / không duyệt". Commit, push fast-forward kể cả
+  người duyệt thứ hai thì đó là agent khác (Antigravity audit, review lane). Agent tự duyệt
+  code khi test PASS, không hỏi. Commit, push fast-forward kể cả
   `main`, mở và merge PR thường, sửa code, sửa test: tự làm (test cũ bị sửa vẫn cần agent khác
   duyệt, mục dưới; luật dự án/người dùng cấm commit/push thì mục Git thắng). Hỏi người dùng CHỈ KHI: force-push
   hoặc viết lại lịch sử đã chia sẻ; xoá file/dữ liệu cực kỳ quan trọng không khôi phục được từ
@@ -148,14 +148,14 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
   lệnh bị từ chối; ghi CHƯA XONG cho bước đó kèm quyền cần và lý do, làm hết phần còn lại.
 - An edited existing test needs cross-approval by another agent: commit, then an Antigravity
   `pm_dispatch kind=audit` on the PR head and `pm_verdict kind=audit verdict=pass auditedHead=<head>`;
-  the gate reads the PM's scoped pass record (else `agent-kit approve-tests <task-id>`). No Grok (13/11). The editor never approves its
+  the gate reads the PM's scoped pass record (else `agent-kit approve-tests <task-id>`). No Grok. The editor never approves its
   own test (`--auto-approve-tests`, `AUTO-APPROVE:` approve nothing); never ask the user: the
-  author cannot post `approved-head`: start a reviewer session to post it.
+  author cannot post `approved-head`: a reviewer session posts it.
 - Clean up what you create (33 GB filled a disk): delete a repo copy, stage
   kit or fixture once served; what must outlive the session lives in the ignored `.agents/local/`.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
   are Vietnamese; replies match the user's language; identifiers, commands and paths stay English (core-rules §2.3).
-- Long session or big refactor ahead: checkpoint and compact, don't fill the window. Read code
+- Long session or big refactor: checkpoint and compact. Read code
   by range (Read offset/limit, codebase-memory); never `cat` a big file.
 - Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.
