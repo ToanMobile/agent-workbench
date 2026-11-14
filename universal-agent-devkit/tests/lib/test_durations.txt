@@ -526,3 +526,5 @@
 3 tests/gates/test_review_gate_repeat_short.sh
 5 tests/gates/test_guard_remote_ref_forge.sh
 4 tests/gates/test_hardware_literal_dollar_1159.sh
+2 tests/context_memory/test_prompt_hook_repeat_later_second.sh
+1 tests/gates/test_gate_full_sh_spawn_sigterm.sh
