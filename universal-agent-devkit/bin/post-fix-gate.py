@@ -6457,6 +6457,7 @@ RUN_LOG_KEEP_LINES = 4000
 RUN_LOG_LINE_MAX = 3000
 RUN_LOG_STALE_TMP_S = 3600        # a rotation temp file older than this belongs to a dead run
 _MAIN_T0 = None                   # time.monotonic() at the start of main()
+_TRACE_SELECT = False            # #667: DEVKIT_TRACE_MAP_SELECT=1 — lượt impacted bỏ suite mà map test→nguồn chứng minh không bị ảnh hưởng
 _SHADOW_ON = False                # #476: DEVKIT_SHADOW_MAP=1 đọc ở đầu main() rồi gỡ khỏi env, để suite con (test_gate_run_log) không thấy
 _SHADOW = None                   # #476: (shadow_skip, shadow_miss) của lượt này — map test→nguồn so với cách chọn cũ; chỉ log
 _MAIN_LOAD1 = None                # #472 C: tải 1 phút lúc main() bắt đầu (runs.jsonl load1)
@@ -6969,9 +6970,10 @@ def _shadow_compare(project_dir, rules, matrix_path, covers, regression_tests, f
 
 
 def main():
-    global _MAIN_T0, _STEP_LAST, _MAIN_LOAD1, _SHADOW_ON
+    global _MAIN_T0, _STEP_LAST, _MAIN_LOAD1, _SHADOW_ON, _TRACE_SELECT
     _MAIN_T0 = time.monotonic()
     _SHADOW_ON = os.environ.pop("DEVKIT_SHADOW_MAP", "") == "1"
+    _TRACE_SELECT = os.environ.pop("DEVKIT_TRACE_MAP_SELECT", "") == "1"
     os.environ.pop(SCOPED_NO_CONSISTENCY_ENV, None)
     os.environ.pop(SCOPED_TESTS_ENV, None)   # #644: giá trị kế thừa không được thu hẹp cả pre-commit (run_staged_audit chạy trước khối --scoped)
     try:
@@ -7690,6 +7692,20 @@ def main():
             if extra:
                 print(f"  • {tr('Cached-full: xét thêm suite không bị chọn (chạy khi chưa có PASS cho khoá nội dung hiện tại)', 'Cached-full: also considering unselected suites (run unless their content key already passed)')}: "
                       f"{len(extra)}")
+
+    # #667 AC2: cờ DEVKIT_TRACE_MAP_SELECT=1 — lượt impacted (không --full) bỏ suite mà map test→nguồn (cùng map với shadow #476) chứng minh
+    # không đụng file đổi. Map không biết đủ ⇒ suite vẫn chạy (shadow_select). impacted_tests đã chụp trước nên kết luận "có test" không đổi.
+    # ponytail: opt-in, mặc định tắt; bật mặc định khi trung vị impacted đo thật giảm (luật 20) mà shadow_miss vẫn rỗng.
+    if _TRACE_SELECT and run_tests and not force_reason and sc is not None and regression_tests:
+        try:
+            _sel = [t for t in regression_tests if not (t.get("matrix_added") or t.get("stale_rerun") or t.get("keyed_full"))]
+            _run_ids, _skip_ids = sc.shadow_select(_sel, [str(f) for f in modified_files])
+            if _skip_ids:
+                _drop = set(_skip_ids)
+                regression_tests[:] = [t for t in regression_tests if t.get("id") not in _drop]
+                print(f"  • {CYAN}{tr('Map test→nguồn: bỏ', 'Trace map: skipped')} {len(_drop)} suite: {', '.join(sorted(i[:40] for i in _drop)[:10])}{RESET}")
+        except Exception as e:  # noqa: BLE001 — không dựng được map: giữ cách chọn cũ
+            log_warn(f"trace select: {e!r}")
 
     # 25/10 (audit B1): run_impacted.sh (DIFF_DEPENDENT) chỉ bỏ script của suite chạy TRƯỚC nó (DEVKIT_GATE_DONE). Đứng giữa ma trận, hay
     # trước suite STALE / cached-full thêm vào cuối ở trên, nó chạy lại đúng các script đó lần hai (REG-DK-ALL-01: 44 % thời gian gate của
