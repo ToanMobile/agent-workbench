@@ -48,9 +48,9 @@ commands/*   tests/installer/test_install_cli.sh tests/installer/test_install_id
 *hooks/hooks.json   tests/installer/test_prompt_hook_missing.sh tests/installer/test_agent_health.sh tests/gates/test_guard_secrets.sh tests/installer/test_uninstall.sh tests/installer/test_install_idempotency.sh tests/installer/test_install_safety.sh tests/installer/test_platform_rules.sh
 # hai cặp audit 25/10 nêu tên (test chỉ nhắc tài liệu, giữ nguyên độ phủ cũ)
 AGENTS.md   tests/worktree_git/test_worktree.sh
-rules/core-rules.md   tests/gates/test_postfix_gate.sh tests/gates/test_proof_gate.sh tests/gates/test_proof_gate_report_after_push.sh
+rules/core-rules.md   tests/gates/test_postfix_gate.sh tests/gates/test_proof_gate.sh tests/gates/test_proof_gate_report_after_push.sh tests/context_memory/test_report_template_five_items.sh
 # scripts/governance/context_sync.py chép rules/essentials.md vào khối AGENTS.md lúc cài / đổi profile
-rules/essentials.md   tests/installer/test_platform_rules.sh tests/context_memory/test_profile_split.sh
+rules/essentials.md   tests/installer/test_platform_rules.sh tests/context_memory/test_profile_split.sh tests/context_memory/test_report_template_five_items.sh
 # bin/install.sh, agent-config.py (agent-kit init|profile) đọc profile.json; agent-config chép regression_matrix.json của profile; agent-health
 # parse template ma trận; devkit_uninstall.py so ma trận của dự án với các ma trận của kit
 profiles/*/profile.json   tests/installer/test_install_cli.sh tests/installer/test_install_claude_only.sh tests/context_memory/test_completion.sh tests/gates/test_regression_gate_hook.sh tests/verification/test_matrix_detect.sh tests/worktree_git/test_relink_skills.sh
