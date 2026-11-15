@@ -61,7 +61,7 @@ sys.path.insert(0, sys.argv[1]); import verdict_seal as vs
 repo, head, kb, base = sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
 tree = subprocess.run(["git", "-C", repo, "rev-parse", head + "^{tree}"], capture_output=True, text=True).stdout.strip()
 p = json.dumps({"v": 1, "head": head, "tree": tree, "base": base, "edited": ["src/Core.kt", "tests/t.sh"], "verdict": "pass",
-                "ts": "t", "nonce": "n"}, sort_keys=True, separators=(",", ":"))
+                "ts": "t", "nonce": "n", "attempts": 1}, sort_keys=True, separators=(",", ":"))
 os.makedirs(os.path.dirname(vs.seal_path(head)), exist_ok=True)
 json.dump({"payload": p, "sig": base64.b64encode(vs.sign(bytes([kb]) * 32, p.encode())).decode()}, open(vs.seal_path(head), "w"))
 PY

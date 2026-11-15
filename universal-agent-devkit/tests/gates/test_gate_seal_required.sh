@@ -14,6 +14,8 @@ export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
 export DEVKIT_PM_HOME_TEST=1
 mkdir -p "$TMP/repo" && cd "$TMP/repo" || exit 1
 git init -q -b main . && git config user.email t@t && git config user.name t && git config commit.gpgsign false
+echo old > old && git add old && git commit -qm c0
+OLD="$(git rev-parse HEAD)"
 mkdir tests && echo 'assert 1' > tests/test_a.sh && git add . && git commit -qm c1
 BASE="$(git rev-parse HEAD)"
 git checkout -q -b pr && echo 'true' > tests/test_a.sh && git commit -qam weaken
@@ -21,11 +23,11 @@ WEAK="$(git rev-parse HEAD)"
 echo doc > README && git add README && git commit -qm harmless
 HEAD_SHA="$(git rev-parse HEAD)"
 AUDIT_CHECK="$REPO_ROOT/.claude/bin/super-board-audit-check.py"
-python3 - "$DEVKIT_DIR/bin" "$TMP" "$HEAD_SHA" "$BASE" "$WEAK" "$AUDIT_CHECK" <<'PY'
+python3 - "$DEVKIT_DIR/bin" "$TMP" "$HEAD_SHA" "$BASE" "$WEAK" "$AUDIT_CHECK" "$OLD" <<'PY'
 import base64, importlib.util, json, os, subprocess, sys
 sys.path.insert(0, sys.argv[1])
 import push_gate as pg
-tmp, head, base, weak, audit_check = sys.argv[2:7]
+tmp, head, base, weak, audit_check, old = sys.argv[2:8]
 repo = os.path.join(tmp, "repo")
 fails = []
 def check(name, cond):
@@ -42,7 +44,7 @@ json.dump({"id": tid, "project": os.path.realpath(repo),
 
 # seal mode OFF: old behaviour
 os.environ.pop("DEVKIT_VERDICT_SEAL_PUB", None)
-if not os.path.lexists("/usr/local/etc/devkit/verdict-seal.pub"):
+if not os.path.lexists("/private/etc/devkit/verdict-seal.pub"):
     check("mode off: unsealed record still counts (no lock-out before install)", pg.audited_head(repo, tid) == head)
 
 # seal mode ON with a test key
@@ -59,7 +61,7 @@ check("unsealed: chain_audit None (cannot check), not False", ac.chain_audit(hea
 
 tree = subprocess.run(["git", "-C", repo, "rev-parse", head + "^{tree}"], capture_output=True, text=True).stdout.strip()
 def seal(b, edited, verdict="pass"):
-    p = json.dumps({"v": 1, "head": head, "tree": tree, "base": b, "edited": edited, "verdict": verdict, "ts": "t", "nonce": "n"},
+    p = json.dumps({"v": 1, "head": head, "tree": tree, "base": b, "edited": edited, "verdict": verdict, "ts": "t", "nonce": "n", "attempts": 1},
                    sort_keys=True, separators=(",", ":"))
     os.makedirs(os.path.dirname(vs.seal_path(head)), exist_ok=True)
     json.dump({"payload": p, "sig": base64.b64encode(vs.sign(key, p.encode())).decode()}, open(vs.seal_path(head), "w"))
@@ -82,6 +84,15 @@ t["dispatches"][0].pop("auditBase"); t["dispatches"][0].pop("verdict"); t["dispa
 json.dump(t, open(os.path.join(d, "task.json"), "w"))
 seal(base, ["tests/test_a.sh"])
 check("signed scope used, task.json scope ignored", pg.audit_scope(repo, tid) == (base, ["tests/test_a.sh"]))
+# Audit T0001 blocker: base = an OLDER trunk ancestor (before the test existed: the test shows as Added) is refused too.
+seal(old, [])
+check("seal with base older than merge-base(trunk, head): audited_head None", pg.audited_head(repo, tid) is None)
+# Audit T0001 minor: a later REVISE dispatch on the same head voids the signed scope.
+seal(base, ["tests/test_a.sh"])
+t = json.load(open(os.path.join(d, "task.json")))
+t["dispatches"].append({"kind": "audit", "agent": "antigravity", "at": "2026-11-15T05:00:00Z", "auditedHead": head, "verdict": "fail"})
+json.dump(t, open(os.path.join(d, "task.json"), "w"))
+check("later REVISE on same head: audit_scope None", pg.audit_scope(repo, tid) is None)
 seal(base, ["tests/test_a.sh"], verdict="fail")
 check("sealed fail: audited_head None", pg.audited_head(repo, tid) is None)
 # Advisor/plan review v1 finding 5: the test switches never reach a real repository. The kit's own checkout is not under a

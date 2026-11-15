@@ -40,7 +40,7 @@ repo = os.path.join(tmp, "repo")
 tree = subprocess.run(["git", "-C", repo, "rev-parse", head + "^{tree}"], capture_output=True, text=True).stdout.strip()
 
 def write(key, **over):
-    p = {"v": 1, "head": head, "tree": tree, "base": base, "edited": ["f"], "verdict": "pass", "ts": "t", "nonce": "n"}
+    p = {"v": 1, "head": head, "tree": tree, "base": base, "edited": ["f"], "verdict": "pass", "ts": "t", "nonce": "n", "attempts": 1}
     p.update(over)
     s = json.dumps(p, sort_keys=True, separators=(",", ":"))
     os.makedirs(os.path.dirname(vs.seal_path(head)), exist_ok=True)
@@ -59,6 +59,10 @@ write(good, tree="1" * 40)
 check("tree mismatch -> None", vs.verify(repo, head, test_fixture=True) is None)
 write(good, verdict="fail")
 check("fail seal is not a pass", vs.verify(repo, head, test_fixture=True) is not None and vs.sealed_pass(repo, head, test_fixture=True) is None)
+write(good, attempts=4)
+check("pass past MAX_ATTEMPTS -> not a pass", vs.sealed_pass(repo, head, test_fixture=True) is None)
+write(good, attempts=None)
+check("attempts missing -> None", vs.verify(repo, head, test_fixture=True) is None)
 write(good)
 d = json.load(open(vs.seal_path(head))); d["payload"] = d["payload"].replace('"base":"' + base, '"base":"' + head)
 json.dump(d, open(vs.seal_path(head), "w"))
@@ -69,6 +73,14 @@ os.environ["DEVKIT_VERDICT_SEAL_PUB"] = os.path.join(os.environ["HOME"].replace(
 check("override outside tmp ignored (fixture: mode off)", vs.trusted_pubkey(test_fixture=True) == (False, None))
 del os.environ["DEVKIT_VERDICT_SEAL_PUB"]
 check("no override: mode follows root-owned key file", vs.seal_mode() == os.path.lexists(vs.PUBKEY_PATH))
+# review P3: non-canonical point (x = 0 with sign 1) is rejected (RFC 8032 §5.1.3)
+check("non-canonical point rejected", vs._decompress(int.to_bytes((vs._P - 1) | (1 << 255), 32, "little")) is None)
+# review P3: anchor in a dir macOS keeps root-owned; an absent key under a user-writable ancestor is NOT "off"
+check("anchor under /private/etc", vs.PUBKEY_PATH.startswith("/private/etc/"))
+saved = vs.PUBKEY_PATH
+vs.PUBKEY_PATH = os.path.join(tmp, "nodir", "verdict-seal.pub")
+check("absent key under user-writable ancestor: on, unreadable", vs.trusted_pubkey(test_fixture=False) == (True, None))
+vs.PUBKEY_PATH = saved
 check("fixture_repo: tmp repo yes", vs.fixture_repo(repo))
 check("fixture_repo: the kit's own repo no", not vs.fixture_repo(os.path.dirname(os.path.dirname(sys.argv[1]))))
 print("ALL OK" if not fails else f"FAILS={len(fails)}")

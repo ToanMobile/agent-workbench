@@ -6,7 +6,7 @@ The payload {v, head, tree, base, edited, verdict, ts, nonce} is built and signe
 uid `_devkitseal` (sudoers entry, root-owned script): it clones the repo, computes base/edited itself, runs agy and has the
 Swift signer (Keychain key of `_devkitseal`) sign the result. The agent's uid cannot read that key, so it cannot forge a seal.
 
-Seal mode is ON only when the trusted public key exists: /usr/local/etc/devkit/verdict-seal.pub, owned by root, not group/other
+Seal mode is ON only when the trusted public key exists: /private/etc/devkit/verdict-seal.pub, owned by root, not group/other
 writable, every parent dir root-owned and not group/other writable. No environment variable turns it off. Tests may point at
 another key with DEVKIT_VERDICT_SEAL_PUB only when the caller says it runs a test fixture (push_gate.pm_home_test_fixture()) AND
 that key sits under a system temp dir.
@@ -23,8 +23,9 @@ import subprocess
 import sys
 import tempfile
 
-PUBKEY_PATH = "/usr/local/etc/devkit/verdict-seal.pub"
-AUDIT_ENTRY = "/usr/local/libexec/devkit/verdict-seal-audit"
+PUBKEY_PATH = "/private/etc/devkit/verdict-seal.pub"   # review P3: /private/etc stays root-owned (Homebrew owns /usr/local on Intel)
+AUDIT_ENTRY = "/private/etc/devkit/libexec/verdict-seal-audit"   # root-owned chain (the sudoers target)
+MAX_ATTEMPTS = 3   # audits of the same change (base + edited paths) whose pass still counts (verdict-seal-audit ledger)
 SEAL_USER = "_devkitseal"
 TEST_TMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
 SHA40 = re.compile(r"[0-9a-f]{40}")
@@ -71,7 +72,7 @@ def _equal(a, b):
 def _recover_x(y, sign):
     if y >= _P:
         return None
-    x2 = (y * y - 1) * _inv(_D * y * y + 1)
+    x2 = (y * y - 1) * _inv(_D * y * y + 1) % _P
     if x2 == 0:
         return None if sign else 0
     x = pow(x2, (_P + 3) // 8, _P)
@@ -202,7 +203,12 @@ def trusted_pubkey(test_fixture=False):
             return True, _read_pub(override)
         return False, None
     if not os.path.lexists(PUBKEY_PATH):
-        return False, None
+        # Review P3: "absent = off" is only safe when the agent could not have moved the key away: the nearest existing
+        # ancestor must be root-owned and not group/other writable all the way up; otherwise fail closed.
+        anc = os.path.dirname(PUBKEY_PATH)
+        while not os.path.lexists(anc) and os.path.dirname(anc) != anc:
+            anc = os.path.dirname(anc)
+        return (False, None) if _root_owned_chain(anc) else (True, None)
     if not _root_owned_chain(PUBKEY_PATH):
         return True, None
     return True, _read_pub(PUBKEY_PATH)
@@ -249,8 +255,10 @@ def verify(top, head, test_fixture=False):
         if not isinstance(payload, dict) or payload.get("v") != 1 or payload.get("head") != head:
             return None
         base, edited = payload.get("base"), payload.get("edited")
+        attempts = payload.get("attempts")
         if not isinstance(base, str) or not SHA40.fullmatch(base) or not isinstance(edited, list) \
-                or not all(isinstance(e, str) for e in edited) or payload.get("verdict") not in ("pass", "fail"):
+                or not all(isinstance(e, str) for e in edited) or payload.get("verdict") not in ("pass", "fail") \
+                or not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 1:
             return None
         rc, tree = _git(top, "rev-parse", "--verify", "-q", head + "^{tree}")
         if rc != 0 or not isinstance(payload.get("tree"), str) or tree != payload["tree"]:
@@ -261,9 +269,9 @@ def verify(top, head, test_fixture=False):
 
 
 def sealed_pass(top, head, test_fixture=False):
-    """Payload of a valid PASS seal of `head`, or None."""
+    """Payload of a valid PASS seal of `head` within MAX_ATTEMPTS audits of the same change, or None."""
     p = verify(top, head, test_fixture)
-    return p if p and p["verdict"] == "pass" else None
+    return p if p and p["verdict"] == "pass" and p["attempts"] <= MAX_ATTEMPTS else None
 
 
 def request(repo, head):

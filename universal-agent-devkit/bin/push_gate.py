@@ -501,7 +501,7 @@ def seal_mode(top):
     valid seal. A kit with verdict_seal.py missing while the key file exists → True (fail closed: every audit refused)."""
     lib = _seal_lib()
     if lib is None:
-        return os.path.lexists("/usr/local/etc/devkit/verdict-seal.pub")
+        return os.path.lexists("/private/etc/devkit/verdict-seal.pub")
     return lib.seal_mode(_seal_fixture(top))
 
 
@@ -522,11 +522,12 @@ def _trunk_ref(top):
 
 
 def sealed_scope(top, sha):
-    """Signed payload of a valid PASS seal of `sha` (dict: base, edited, ...) whose SIGNED base is an ancestor of (or equal to)
-    merge-base(trunk of `top`, sha); None otherwise. #632 B plan review v2: the seal helper can be pointed at a fake repo whose
-    trunk is a weakening commit; the base check here, at the root every reader goes through, makes such a seal worthless: every
-    commit of the PR that is not on trunk lies inside base..sha, the diff the auditor saw. In the merge gate trunk is origin/main
-    fetched from GitHub (the agent cannot move it); a local gate trusts local refs as it does today."""
+    """Signed payload of a valid PASS seal of `sha` (dict: base, edited, ...) whose SIGNED base EQUALS merge-base(trunk of `top`,
+    sha); None otherwise. #632 B: the seal helper can be pointed at a fake repo. Plan review v2: a fake trunk past merge-base (a
+    weakening commit) hides the weakening. Audit T0001: an OLDER trunk ancestor hides it too (the test shows as Added, or the base
+    version predates the assertion the PR removes). Only base == merge-base makes base..sha exactly the PR's own change, which is
+    what the auditor must have seen. Trunk moving forward never changes merge-base(trunk, sha); merging main into the PR changes the
+    head, which needs a new seal anyway. In the merge gate trunk is origin/main fetched from GitHub; a local gate trusts local refs."""
     lib = _seal_lib()
     payload = lib.sealed_pass(top, sha, _seal_fixture(top)) if lib else None
     trunk = _trunk_ref(top) if payload else None
@@ -537,7 +538,7 @@ def sealed_scope(top, sha):
     except (OSError, subprocess.SubprocessError):
         return None
     mb = mb.strip()
-    if rc != 0 or not SHA40.fullmatch(mb) or not head_after(top, payload["base"], mb):
+    if rc != 0 or not SHA40.fullmatch(mb) or payload["base"] != mb:
         return None
     return payload
 
@@ -695,8 +696,16 @@ def audit_scope(top, task_id):
         if not head:
             continue
         if seal_mode(top):
-            # #632 B: phạm vi lấy từ seal đã ký (helper tự tính base và edited, base đã kiểm ⊑ merge-base(trunk, head) ở sealed_scope),
+            # #632 B: phạm vi lấy từ seal đã ký (helper tự tính base và edited, base đã kiểm == merge-base(trunk, head) ở sealed_scope),
             # không từ task.json; không đòi lượt dispatch có auditBase (pm_verdict chỉ ghi verdict vào lượt có auditBase).
+            # Audit T0001 (minor): lượt audit gần nhất của task trên CÙNG head mà fail, hoặc chưa kết luận dù có auditBase (pm_verdict
+            # chỉ ghi verdict vào lượt có auditBase; lượt không có auditBase không bao giờ có verdict), thì seal pass cũ hết hiệu lực.
+            disp = task.get("dispatches") if isinstance(task.get("dispatches"), list) else []
+            runs = [x for x in disp if isinstance(x, dict) and x.get("kind") == "audit"]
+            newest = max(enumerate(runs), key=lambda iv: (str(iv[1].get("at") or ""), iv[0]))[1] if runs else None
+            if newest and newest.get("auditedHead") == head and (newest.get("verdict") == "fail"
+                                                                 or (not newest.get("verdict") and newest.get("auditBase"))):
+                return None
             signed = sealed_scope(top, head)
             return (signed["base"], list(signed["edited"])) if signed else None
         dispatches = task.get("dispatches") if isinstance(task.get("dispatches"), list) else []
