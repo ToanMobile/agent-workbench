@@ -797,15 +797,15 @@ TEST_TMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders"
 
 
 def pm_home_test_fixture():
-    """True chỉ cho fixture của test: DEVKIT_PM_HOME_TEST=1 VÀ pm home nằm dưới thư mục tạm của hệ thống (tempfile.gettempdir(), /tmp,
-    /var/folders). Khi đó approved() tính biên bản pm giả; post-fix-gate vẫn coi lượt đó là nới lỏng (không cấp biên nhận).
-    ponytail: agent tự đặt được cả hai trên dòng lệnh — lane git guard chặn gán chúng; nâng lên biên bản do PM server ký nếu thấy lách."""
+    """True chỉ cho fixture của test: DEVKIT_PM_HOME_TEST=1 VÀ pm home nằm dưới một gốc tạm cố định (TEST_TMP_ROOTS: /tmp,
+    /var/folders); không dùng tempfile.gettempdir() vì nó theo TMPDIR người gọi đặt (review R1 #632). Khi đó approved() tính
+    biên bản pm giả; post-fix-gate vẫn coi lượt đó là nới lỏng (không cấp biên nhận). Với repo thật, seal mode (#632 B) không
+    bao giờ coi đây là fixture (_seal_fixture đòi cả repo nằm dưới gốc tạm), nên biên bản pm viết tay không thành audit pass."""
     if os.environ.get("DEVKIT_PM_HOME_TEST") != "1":
         return False
     try:
-        import tempfile  # noqa: PLC0415
         home = os.path.realpath(pm_state_home())
-        roots = {os.path.realpath(r) for r in (tempfile.gettempdir(), *TEST_TMP_ROOTS)}
+        roots = {os.path.realpath(r) for r in TEST_TMP_ROOTS}
     except OSError:
         return False
     return any(home.startswith(r.rstrip(os.sep) + os.sep) for r in roots if r and r != os.sep)
@@ -855,8 +855,9 @@ def approved(top, rng):
     auditedHead (audited_head) has the same tree as that commit and as the tip of rng (audit T0066, #605: no replay);
     (False, why) when a Test-approved-by line is there but does not count; (False, None) when there is none.
     Audit 2026-10-09: the old check was `"Test-approved-by:" in git log`, so "fix; Test-approved-by: whatever" passed.
-    #632 B: once the owner installs the verdict-seal pubkey, audited_head counts only heads with a Keychain-signed seal, so a
-    hand-written ~/.antigravity-pm record no longer passes. ponytail: before that install it still does (seal mode off)."""
+    #632 B: when the verdict-seal pubkey is installed (/private/etc/devkit, root-owned; universal-agent-devkit/docs/verdict-seal-setup.md),
+    audited_head counts only heads with a Keychain-signed seal, so a hand-written ~/.antigravity-pm record does not pass. The key
+    install is the owner's one-time sudo step; until it is done seal mode is off and the PM record is read as before."""
     rc, out = git(top, "log", "--format=%H%x01%(trailers:key=Test-approved-by,valueonly,unfold)%x00", rng)
     if rc != 0:
         return False, None

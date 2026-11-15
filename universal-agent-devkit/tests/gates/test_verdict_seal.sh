@@ -83,6 +83,19 @@ check("absent key under user-writable ancestor: on, unreadable", vs.trusted_pubk
 vs.PUBKEY_PATH = saved
 check("fixture_repo: tmp repo yes", vs.fixture_repo(repo))
 check("fixture_repo: the kit's own repo no", not vs.fixture_repo(os.path.dirname(os.path.dirname(sys.argv[1]))))
+# review R1: a caller-set TMPDIR (parent of the real repo) must not turn the real repo, its pm home or a key into a "fixture"
+import tempfile
+real = os.path.realpath(os.path.dirname(os.path.dirname(sys.argv[1])))
+parent = os.path.dirname(real)
+os.environ["TMPDIR"] = parent; tempfile.tempdir = None
+check("TMPDIR=parent of real repo: fixture_repo still no", not vs.fixture_repo(real))
+os.environ["DEVKIT_VERDICT_SEAL_PUB"] = os.path.join(real, "evil.pub")
+check("TMPDIR=parent of real repo: key override still ignored", vs.trusted_pubkey(test_fixture=True) == (False, None))
+del os.environ["DEVKIT_VERDICT_SEAL_PUB"]
+sys.path.insert(0, sys.argv[1]); import push_gate as pg
+os.environ["DEVKIT_PM_HOME_TEST"] = "1"; os.environ["ANTIGRAVITY_PM_STATE_HOME"] = os.path.join(real, ".pm-evil")
+check("TMPDIR=parent of real repo: pm home not a test fixture", not pg.pm_home_test_fixture())
+os.environ["ANTIGRAVITY_PM_STATE_HOME"] = os.path.join(tmp, "pm")
 print("ALL OK" if not fails else f"FAILS={len(fails)}")
 sys.exit(1 if fails else 0)
 PY

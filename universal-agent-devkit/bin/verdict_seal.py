@@ -21,7 +21,6 @@ import re
 import stat
 import subprocess
 import sys
-import tempfile
 
 PUBKEY_PATH = "/private/etc/devkit/verdict-seal.pub"   # review P3: /private/etc stays root-owned (Homebrew owns /usr/local on Intel)
 AUDIT_ENTRY = "/private/etc/devkit/libexec/verdict-seal-audit"   # root-owned chain (the sudoers target)
@@ -150,8 +149,9 @@ def ed25519_verify(pub, msg, sig):
 
 # ---- trust anchor ----
 def _under_tmp(path):
+    """Under a fixed system temp root only: never tempfile.gettempdir(), which follows the caller's TMPDIR (review R1)."""
     real = os.path.realpath(path)
-    roots = {os.path.realpath(r) for r in (tempfile.gettempdir(), *TEST_TMP_ROOTS)}
+    roots = {os.path.realpath(r) for r in TEST_TMP_ROOTS}
     return any(real.startswith(r.rstrip(os.sep) + os.sep) for r in roots if r and r != os.sep)
 
 
