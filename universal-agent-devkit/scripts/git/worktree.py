@@ -1023,6 +1023,38 @@ def _reuse_lane(main, wt, branch, base, lane, no_init=False, profile=None):
     return 0
 
 
+def _detach_idle_holder(main, holder, branch):
+    """#1198: the branch of a PR is held by a worktree nobody works in (no live session: `_holder` empty; clean: no uncommitted path,
+    no rebase/merge in progress): `git switch --detach` it (no file touched, the branch keeps every commit) so the lane can take the
+    branch. A commit only its HEAD reflog names (no branch, remote or tag holds it) gets a tag keep/<issue>-<sha7> first. True when the
+    branch is free now; False (nothing changed) for a live session, any work or anything that cannot be told: the lane stays Blocked."""
+    try:
+        if _holder(main, holder) or _uncommitted(holder) != 0 or _in_progress(holder):
+            return False
+        log = git(holder, "log", "-g", "--format=%H", "-n", "50", check=False)
+        reflog = list(dict.fromkeys(log.stdout.split())) if log.returncode == 0 else None
+        if reflog is None:
+            return False
+        unheld = set()
+        if reflog:
+            r = git(holder, "rev-list", "--stdin", "--not", "--branches", "--remotes", "--tags", inp="\n".join(reflog) + "\n", check=False)
+            if r.returncode != 0:
+                return False
+            unheld = set(r.stdout.split())
+        m = re.search(r"issue-(\d+)", branch) or re.search(r"issue-(\d+)", os.path.basename(holder))
+        for sha in (x for x in reflog if x in unheld):   # tips only: the reflog entries themselves
+            tag = f"keep/{m.group(1) if m else 'x'}-{sha[:7]}"
+            if git(holder, "tag", tag, sha, check=False).returncode != 0 and git(holder, "rev-parse", "-q", "--verify", f"refs/tags/{tag}", check=False).returncode != 0:
+                return False
+            print("• " + tr(f"giữ commit chỉ có trong reflog bằng tag {tag}", f"kept a reflog-only commit with the tag {tag}"), file=sys.stderr)
+        if git(holder, "switch", "--detach", check=False).returncode != 0:
+            return False
+        print("• " + tr(f"worktree nhàn rỗi {holder} đã detach khỏi {branch}", f"idle worktree {holder} detached from {branch}"), file=sys.stderr)
+        return True
+    except (Exception, SystemExit):  # noqa: BLE001 - cannot tell: the holder is live, the old refusal stands
+        return False
+
+
 def cmd_add(cwd, args):
     base, profile, no_init, share_memory, session, lane, pos = None, None, False, False, None, None, []
     for a in args:
@@ -1066,6 +1098,8 @@ def cmd_add(cwd, args):
             return _reuse_lane(main, wt, branch, base, lane, no_init, profile)
         die(tr(f"{wt} đã có và không rỗng", f"{wt} exists and is not empty"))
     holder = next((e["path"] for e in _worktree_entries(main)[1:] if lane and branch and e["branch"] == branch), None)
+    if holder and _detach_idle_holder(main, holder, branch):   # #1198: an idle, clean holder is moved off the branch, the lane goes on
+        holder = None
     if holder:   # git's own "already used by worktree" names no way out; the Tester behind a Builder's leftover worktree needs one
         # agent-kit (kit) chứ không `git worktree remove` trần: git trần từ chối dấu vết cài DevKit mà worktree lane nào cũng có (AGENTS.md
         # sinh lại, hook link vào kit) dù không mất gì — 11 thẻ Blocked 20/10; kit chỉ từ chối (✖) khi có việc sẽ mất
