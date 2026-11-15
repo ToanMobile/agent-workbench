@@ -17,20 +17,22 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
    - Giữ nguyên 2 chế độ DEMO / LIVE (mọi bảng nghiệp vụ mới phải có cột mode nếu hệ thống hỗ trợ dual mode).
    - Chạy đủ bộ test cục bộ (`npm test`, `gradlew test`). Thử nghiệm trên các chế độ tương ứng.
 3. **Bằng chứng nghiệm thu & Báo cáo Tự nhiên Súc tích (BẮT BUỘC):**
-   - MỌI báo cáo kiểm thử / nghiệm thu BẮT BUỘC có **bằng chứng thật của trạng thái THÀNH CÔNG (Pass / Success State)**. Luật đứng nằm ở `rules/essentials.md` mục "Every prompt": cùng lượt phải có `post-fix-gate.py --run-tests --scoped` exit 0 — biên nhận scoped (và biên nhận task; repo đi PR: biên nhận merge gate thay cho nó, không chạy gate local); task không chạy tay `--full`: scoped tự leo `--full` khi đụng file lõi, điểm gộp (merge queue / merge train của repo đi PR, `agent-kit integrate` của repo trunk-push) chạy cùng `--scoped`, `--full` đêm do skill `gate-full`; push nhận biên nhận scoped hoặc `--full` của đúng cây đó — và, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4), một PNG chụp trong lượt (`reports/proof-<yyyyMMdd-HHmmss>.png`), gắn vào câu trả lời. Serial trong `.adb-denylist` hoặc bị luật dự án cấm thì không chụp. Ảnh chụp bằng `python3 .agents/devkit/bin/proof-capture.py`: serial đã khai mà offline thì lệnh không screencap vào địa chỉ đó và không đổi sang máy khác đang cắm — nó mở AVD rồi chụp. Lệnh thoát khác 0 thì CHƯA XONG. Cấm vẽ ảnh hoặc lấy XML test thay ảnh. Kèm **Báo Cáo Nghiệm Thu 4 Mục**, mỗi mục 1–2 dòng (vừa giới hạn 12 dòng ở §13):
-     1. **Đã fix được gì (What Was Fixed):** Tên lỗi, nguyên nhân gốc, cơ chế lỗi, bằng chứng đối lập (RED ➔ GREEN).
-     2. **Đã chặn đứng bug cũ nào (Zero Reopened Bugs):** Danh sách các rào chắn bất biến lịch sử (`immutable_guards`) và test hồi quy được chạy lại đạt `[x] PASS`.
-     3. **Nguy cơ bug mới nào đã triệt tiêu (Zero Collateral Damage):** Kết quả rà soát điểm gọi ngược (inbound callers) và module liên đới, xác nhận không có tác dụng phụ.
-     4. **Trạng thái an toàn mã nguồn:** Kết quả quét bí mật/token (SẠCH), chống code lười biếng (0 placeholder), và phân tích tĩnh Alibaba OCR (0 leak).
+   - MỌI báo cáo kiểm thử / nghiệm thu BẮT BUỘC có **bằng chứng thật của trạng thái THÀNH CÔNG (Pass / Success State)**. Luật đứng nằm ở `rules/essentials.md` mục "Every prompt": cùng lượt phải có `post-fix-gate.py --run-tests --scoped` exit 0 — biên nhận scoped (và biên nhận task; repo đi PR: biên nhận merge gate thay cho nó, không chạy gate local); task không chạy tay `--full`: scoped tự leo `--full` khi đụng file lõi, điểm gộp (merge queue / merge train của repo đi PR, `agent-kit integrate` của repo trunk-push) chạy cùng `--scoped`, `--full` đêm do skill `gate-full`; push nhận biên nhận scoped hoặc `--full` của đúng cây đó — và, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4), một PNG chụp trong lượt (`reports/proof-<yyyyMMdd-HHmmss>.png`), gắn vào câu trả lời. Serial trong `.adb-denylist` hoặc bị luật dự án cấm thì không chụp. Ảnh chụp bằng `python3 .agents/devkit/bin/proof-capture.py`: serial đã khai mà offline thì lệnh không screencap vào địa chỉ đó và không đổi sang máy khác đang cắm — nó mở AVD rồi chụp. Lệnh thoát khác 0 thì CHƯA XONG. Cấm vẽ ảnh hoặc lấy XML test thay ảnh. Kèm **Báo Cáo Nghiệm Thu 5 Mục**, mỗi mục 1–2 dòng (vừa giới hạn 12 dòng ở §13); mỗi con số ghi nguồn `tự chạy` hoặc `agent báo`:
+     1. **Đã làm gì / Đã fix gì (What Was Done / Fixed):** Lỗi hoặc thay đổi, nguyên nhân gốc, cơ chế lỗi, bằng chứng đối lập (RED ➔ GREEN); việc không phải bug: thay đổi + cách kiểm.
+     2. **Chặn bug cũ (Zero Reopened Bugs):** Test hồi quy và rào chắn bất biến lịch sử (`immutable_guards`) đã chạy lại, kèm kết quả.
+     3. **Nguy cơ bug mới (Zero Collateral Damage):** Phép so cũ–mới đã chạy (lệnh, số đầu vào, số ca đổi kết quả) hoặc `chưa so — <lý do>`; "đã rà caller" không kèm phép so không được tính.
+     4. **An toàn mã nguồn:** Kết quả quét bí mật/token, placeholder; OCR chỉ ghi khi đã chạy, không thì `OCR: không chạy — <lý do>`.
+     5. **Còn hở / chưa kiểm:** Liệt kê những gì chưa kiểm hoặc còn hở, hoặc `không có`.
+   - `ponytail: hook proof_gate chỉ kiểm mục 1–4; đòi mục 5 khi thấy bàn giao thật thiếu nó`
    - **Quy chuẩn ngôn ngữ báo cáo, bàn giao & comment:**
-     - **Mặc định:** Comment mã nguồn (code comments), báo cáo nghiệm thu 4 mục, bàn giao, PR reviews, và commit messages mặc định viết bằng **Tiếng Anh (English)**.
-     - **Dự án cấu hình `"lang": "vi"`:** Toàn bộ comment mã nguồn, báo cáo nghiệm thu 4 mục (Đã fix gì, Chặn bug cũ, Nguy cơ bug mới, An toàn mã nguồn), bàn giao, và commit messages viết bằng **Tiếng Việt**. Tên biến/hàm/class và đường dẫn giữ Tiếng Anh.
+     - **Mặc định:** Comment mã nguồn (code comments), báo cáo nghiệm thu 5 mục, bàn giao, PR reviews, và commit messages mặc định viết bằng **Tiếng Anh (English)**.
+     - **Dự án cấu hình `"lang": "vi"`:** Toàn bộ comment mã nguồn, báo cáo nghiệm thu 5 mục (Đã làm gì / Đã fix gì, Chặn bug cũ, Nguy cơ bug mới, An toàn mã nguồn, Còn hở / chưa kiểm), bàn giao, và commit messages viết bằng **Tiếng Việt**. Tên biến/hàm/class và đường dẫn giữ Tiếng Anh.
    - Kèm **Biên Bản Phản Biện Song Phương Claude ↔ Antigravity (CHỈ BẮT BUỘC VỚI TASK LỚN):**
      - Với task lớn (≥2 modules, ≥3 files, >200 LOC net diff hoặc luồng rủi ro cao):
        - **Điểm số đánh giá chất lượng (Thang 100):** Claude Score: X/100 · Antigravity Score: Y/100 · Điểm đồng thuận: Z/100 (ngưỡng nghiệm thu $\ge 95/100$, không có tiêu chuẩn nào $< 90$).
        - **Antigravity phản biện gì & chọn/làm gì:** Tóm tắt điểm Antigravity chất vấn (về blast radius, graph, tài nguyên, 7 tiêu chuẩn vàng) và quyết định/hành động đã chọn.
        - **Claude phản biện gì & chọn/làm gì:** Tóm tắt điểm Claude Opus chất vấn (về semantic edge-cases, logic, paired test RED→GREEN) và quyết định/hành động đã chọn.
-     - Với task đơn giản / trung bình: agent được gọi tự thực thi và nghiệm thu trực tiếp theo 4 mục kỹ thuật cốt lõi trên, không cần biên bản 2 agent.
+     - Với task đơn giản / trung bình: agent được gọi tự thực thi và nghiệm thu trực tiếp theo 5 mục báo cáo trên, không cần biên bản 2 agent.
    - **Ảnh nghiệm thu tinh gọn:** Đúng 1 dòng ảnh hiển thị trực tiếp (không lặp path): `![Ảnh nghiệm thu](reports/proof-<stamp>.png)` — tuyệt đối không vẽ heading dài dòng hay lặp link rườm rà.
    - Báo cáo thiếu bằng chứng hoặc thiếu các mục trên bị coi là CHƯA ĐỦ ĐIỀU KIỆN nghiệm thu.
 4. **Commit & Bàn giao:**
@@ -130,9 +132,9 @@ Mọi dòng mã sinh ra hoặc sửa đổi BẮT BUỘC phải tuân thủ 5 ng
    - Mọi báo cáo tiến độ/kết quả bàn giao BẮT BUỘC mở đầu bằng 3 dòng súc tích:
      - **Dòng 1 — Trạng thái một từ:** `XONG` / `CHƯA XONG` / `CHỜ DUYỆT` (hoặc `DONE` / `NOT DONE` / `AWAITING APPROVAL` nếu dùng tiếng Anh).
      - **Dòng 2 — Kết quả người dùng nhận được:** Mô tả giá trị thực tế bằng ngôn ngữ đời thường, ngắn gọn.
-     - **Dòng 3 — Bước tiếp theo:** Hành động kế tiếp cần thực hiện.
+     - **Dòng 3 — Mã thoát gate, ảnh, bước tiếp theo:** mã thoát gate; ảnh + serial hoặc `ảnh: không cần — <lý do>`; rồi bước tiếp theo (một nguồn: `rules/essentials.md` bước 5).
 2. **Giới hạn độ dài & Tránh rối mắt:**
-   - Báo cáo tóm tắt khống chế tối đa 12 dòng.
+   - Phần tóm tắt (3 dòng mở đầu + 5 mục báo cáo §2.3) của task nhỏ/vừa khống chế tối đa 12 dòng; task lớn được thêm biên bản phản biện / bảng điểm reviewer ngoài giới hạn đó.
    - Tuyệt đối KHÔNG xổ logcat thô, terminal trace dài dòng hay thuật ngữ nội bộ gây rối mắt người dùng trừ khi được yêu cầu phân tích sâu.
 
 ## 14. Kỷ luật Chống Spam Thao Tác Nâng Cao (Debounce >= 1000ms & Instant Disable)
@@ -162,7 +164,7 @@ Mọi dòng mã sinh ra hoặc sửa đổi BẮT BUỘC phải tuân thủ 5 ng
    - **Khi thiết kế / refactor:** Tự động kết hợp `grill-plan` (stress-test) ➔ `deep-module-design` (interface seam) / `deprecation-migration` ➔ `documentation-and-adrs` (ghi ADR).
    - **Khi làm việc với Android:** Tự động kích hoạt `android-real-device-qa` (đo FPS SurfaceFlinger, dump view hierarchy, ANR logcat triage, DEX scan).
    - **Khi điều phối Leader PM ↔ Worker:** Tự động kích hoạt `giao` (giao thức 7 giai đoạn có cổng nghiệm thu cứng).
-   - **Trước khi hoàn tất:** chạy review context sạch (`open-code-review` / `principal-code-reviewer`; **[hook]** `review_gate.sh` chặn dừng khi code đổi mà chưa review) và báo cáo nghiệm thu 4 mục với bằng chứng ở §2.3.
+   - **Trước khi hoàn tất:** chạy review context sạch (`open-code-review` / `principal-code-reviewer`; **[hook]** `review_gate.sh` chặn dừng khi code đổi mà chưa review) và báo cáo nghiệm thu 5 mục với bằng chứng ở §2.3.
 3. **Điều kiện kích hoạt từng skill:** bảng điều phối theo giai đoạn vòng đời ở `AGENTS.md` §8.2 (nguồn duy nhất).
 
 ## 17. Quy Chuẩn Tối Ưu Hóa Token & Quản Trị Ngân Sách Ngữ Cảnh (Token Economics & Context Budget Management)
@@ -192,7 +194,7 @@ Mọi phương án kỹ thuật và kết quả nghiệm thu BẮT BUỘC đối
 7. **Dễ tiêu hủy & Tiến hóa (Deletable & Backward Compatible):** Ranh giới module khép kín, sẵn sàng bị xóa bỏ sạch sẽ khi hết hạn mà không để lại mô sẹo hay phá vỡ hợp đồng dữ liệu cũ.
 
 ### Quy Chuẩn Điểm Đánh Giá & Hiển Thị Nghiệm Thu (Thang Điểm 100):
-- **Chấm điểm Agent (Agent Quality Score /100):** Mỗi Agent được chấm điểm độc lập trên thang 100 dựa trên mức độ đáp ứng 7 tiêu chuẩn vàng. Điều kiện để nghiệm thu bàn giao: Cả hai Agent đều phải đạt $\ge 95/100$, không có bất kỳ tiêu chuẩn nào dưới 90 điểm. Điểm đồng thuận = trung bình cộng của hai Agent.
+- **Chấm điểm Agent (Agent Quality Score /100):** Mỗi Agent được chấm điểm độc lập trên thang 100 dựa trên mức độ đáp ứng 7 tiêu chuẩn vàng. Điều kiện để nghiệm thu bàn giao: Cả hai Agent đều phải đạt $\ge 95/100$, không có bất kỳ tiêu chuẩn nào dưới 90 điểm. Điểm đồng thuận = trung bình cộng của hai Agent. Mỗi điểm nêu chuẩn vàng bị trừ và lý do; có reviewer độc lập thì ghi điểm của reviewer, điểm tự chấm không thay được.
 - **Ảnh nghiệm thu tinh gọn:** Nhúng đúng 1 dòng ảnh hiển thị trực tiếp (không lặp path): `![Ảnh nghiệm thu](reports/proof-<stamp>.png)`.
 
 ### Bậc review của PR: S / M / L (chủ repo duyệt 02/11, #858)
