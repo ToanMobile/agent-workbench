@@ -41,6 +41,9 @@ PROOF_HEADING = re.compile(r"^#{1,6}\s*Acceptance criteria\b", re.I)  # "## AC +
 AC_ITEM = re.compile(r"^\s*-\s*\[([ xX])\]\s*(.*)$")
 PROOF = re.compile(r"^\s*↳\s*(\S.*)$")
 AC_ID = re.compile(r"\bAC\s*-?\s*#?\d+", re.I)
+OTHER_REPO_AC = re.compile(r"\(\s*repo\s*:\s*[^)\s][^)]*\)", re.I)  # #1199: AC gắn `(repo: <khác>)` đo ở repo khác, không phải AC của PR này
+SPLIT_WORD = re.compile(r"đã\s+tách|tách\s+sang|thuộc", re.I)        # #1199: lời khai AC đã tách/thuộc repo khác (kèm owner/repo#N)
+CROSS_REPO_REF = re.compile(r"\b[\w.-]+/[\w.-]+#\d+\b")             # `owner/repo#N`: AC đã tách thành issue ở repo khác
 BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S")
 TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
 _CONFIG = os.environ.get("SB_CONFIG") or None  # decision_policy.enabled=false của config tắt luật này
@@ -83,8 +86,18 @@ def ac_texts(body):
 
 
 def names_ac(text, acs):
-    low = text.lower()
-    return bool(AC_ID.search(text)) or any(a in low for a in acs)
+    """#1199: kiểm từng vế (tách theo `;`). AC gắn `(repo: khác)` và mã AC trần chỉ được coi là đã tách khi CHÍNH vế đó dẫn `owner/repo#N`."""
+    for clause in re.split(r"[;；]", text):
+        low = clause.lower()
+        split_off = bool(CROSS_REPO_REF.search(clause))
+        for a in acs:
+            if a in low and not (split_off and OTHER_REPO_AC.search(a)):
+                return True
+        # Mã AC trần chỉ là "đã tách" khi chính đoạn nhỏ (ngăn bởi , hay ngoặc) vừa nói đã tách/thuộc vừa dẫn `owner/repo#N`.
+        for sub in re.split(r"[,，()（）]", clause):
+            if AC_ID.search(sub) and not (CROSS_REPO_REF.search(sub) and SPLIT_WORD.search(sub)):
+                return True
+    return False
 
 
 # #516: bộ đọc [decision] dùng chung; tên file có gạch ngang nên nạp bằng importlib.
@@ -241,7 +254,10 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None)
                 break
             parts.append(nxt.strip())
         text = " ".join(p for p in parts if p).strip()
-        if text.strip(" .").lower() not in EMPTY_VALUES and names_ac(text, acs):
+        if text.strip(" .").lower() in EMPTY_VALUES:
+            continue
+        # #1199: mỗi dòng/bullet của mục kiểm riêng, để dòng dẫn issue repo khác không che AC cục bộ ở dòng kia.
+        if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
             # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.
             if not decided or _DEC.is_stop(text):
                 items.append(text)
