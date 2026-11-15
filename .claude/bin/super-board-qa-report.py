@@ -2,7 +2,8 @@
 
     super-board-qa-report.py --meta <pr.json> [--head <sha40> --repo <path> --base <ref>]
 
-`--meta` là `gh pr view --json body,comments,author`. Thoát 0 khi sạch; thoát 1 và in từng dòng `qa-report: <lý do>` khi:
+`--meta` là `gh pr view --json body,comments,author`. `--issue-comments` (tuỳ chọn, #1175) là comment của issue thẻ: `[decision]`
+hợp lệ ở đó, createdAt mới hơn report QA mới nhất, gỡ các mục Not done như decision trên PR (thiếu thời gian = không gỡ). Thoát 0 khi sạch; thoát 1 và in từng dòng `qa-report: <lý do>` khi:
   - comment `[qa] [report]` MỚI NHẤT của người đáng tin còn mục `❌ Not done:` NÊU TÊN một AC của PR: mã AC (`AC1`, `AC 7`) hoặc
     nguyên văn một mục trong khối AC của thân PR. Ghi chú phạm vi ("thuộc #358", "đã tách sang #352", "không có ảnh (không có UI)")
     không nêu AC nên không bị từ chối. Mục có thể nhiều dòng: các dòng thụt lề / gạch đầu dòng ngay dưới nó thuộc cùng mục;
@@ -23,6 +24,7 @@ ponytail: authorAssociation COLLABORATOR gồm cả quyền read (gh pr view kh�
 `collaborators/<login>/permission` như super-board-approval.py khi có repo nhiều cộng tác viên chỉ-đọc.
 """
 import argparse
+from datetime import datetime
 import importlib.util
 import json
 import os
@@ -201,14 +203,32 @@ def stale_qa(comments, pr_author, head, repo, base):
     return None
 
 
-def latest_qa_unfinished(comments, pr_author=None, body=""):
+def _when(comment):
+    """createdAt (GraphQL) / created_at (REST) của comment thành datetime có múi giờ; None khi thiếu hay không đọc được."""
+    raw = (comment.get("createdAt") or comment.get("created_at")) if isinstance(comment, dict) else None
+    if not isinstance(raw, str):
+        return None
+    try:
+        t = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else None
+
+
+def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None):
     latest, latest_at = latest_qa(comments, pr_author)
     if latest is None:
         return []
     # #516: [decision] hợp lệ mới hơn report QA đã xử lý các mục còn mở của nó (luật 1–5 của chủ), nên không chặn merge.
     # ponytail: một decision gỡ MỌI mục Not done của report cũ hơn nó (không đối chiếu từng AC); đối chiếu theo mã AC
     # khi thấy một decision gỡ nhầm mục nó không nhắc.
-    decided = _DEC.newest_valid_index(comments, _DEC.load_policy(_CONFIG)) > latest_at
+    policy = _DEC.load_policy(_CONFIG)
+    decided = _DEC.newest_valid_index(comments, policy) > latest_at
+    # #1175: decision đăng trên ISSUE của thẻ (nơi decision-policy.md bảo đăng) cũng tính. Hai danh sách khác nhau nên so createdAt;
+    # thiếu hay hỏng thời gian ở một bên thì không xếp được thứ tự ⇒ không gỡ (fail closed).
+    qa_at = _when(comments[latest_at]) if issue_comments else None
+    if not decided and qa_at:
+        decided = any(_DEC.is_valid(c, policy) and (_when(c) or qa_at) > qa_at for c in issue_comments)
     acs = ac_texts(body)
     items = []
     for i, line in enumerate(latest):
@@ -251,7 +271,7 @@ def ac_without_proof(body):
     return bad
 
 
-def run(meta_path, head=None, repo=".", base=None):
+def run(meta_path, head=None, repo=".", base=None, issue_comments_path=None):
     try:
         with open(meta_path, encoding="utf-8") as fh:
             meta = json.load(fh)
@@ -264,8 +284,19 @@ def run(meta_path, head=None, repo=".", base=None):
     author = meta.get("author")
     pr_author = author.get("login") if isinstance(author, dict) else None
     body = meta.get("body") if isinstance(meta.get("body"), str) else ""
+    issue_comments = []
+    if issue_comments_path:
+        try:
+            with open(issue_comments_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError) as exc:
+            # Không phải "không quyết định được" (exit 2 = cổng người): chỉ là không có decision trên issue, chặn như cũ.
+            print(f"qa-report: không đọc được comment issue của thẻ ({exc}); bỏ qua decision trên issue", file=sys.stderr)
+            data = []
+        data = data.get("comments") if isinstance(data, dict) else data
+        issue_comments = [c for c in data if isinstance(c, dict)] if isinstance(data, list) else []
     problems = [f"qa-report: report QA mới nhất còn việc chưa xong: {t[:200]}"
-                for t in latest_qa_unfinished(meta.get("comments"), pr_author, body)]
+                for t in latest_qa_unfinished(meta.get("comments"), pr_author, body, issue_comments)]
     problems += [f"qa-report: AC đã tích [x] nhưng không có dòng bằng chứng '↳': {t[:200]}" for t in ac_without_proof(body)]
     stale = stale_qa(meta.get("comments"), pr_author, head, repo, base) if head and base else None
     if stale:
@@ -281,9 +312,10 @@ def main():
     ap.add_argument("--head", help="sha40 head PR: bật ghim sha QA (T0255); thiếu thì bỏ qua")
     ap.add_argument("--repo", default=".", help="repo git chứa head và base")
     ap.add_argument("--base", help="ref base, ví dụ origin/main")
+    ap.add_argument("--issue-comments", help="#1175: comment của issue thẻ (`gh issue view --json comments`): [decision] ở đó cũng tính")
     args = ap.parse_args()
     try:
-        return run(args.meta, args.head, args.repo, args.base)
+        return run(args.meta, args.head, args.repo, args.base, args.issue_comments)
     except Exception as exc:  # noqa: BLE001 — lỗi bất ngờ phải thành "không quyết định được" (2), không thành lỗi build
         print(f"qa-report: lỗi bất ngờ khi đối chiếu ({type(exc).__name__}: {exc})", file=sys.stderr)
         return 2
