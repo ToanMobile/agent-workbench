@@ -319,6 +319,7 @@ WAITING_ON_JQ='def waiting_on: [((.labels // []) + (.content.labels // []))[] | 
   | any(test("^waiting-on:#[0-9]+$"));
 def file_wait: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("⏳ chờ thẻ khác") != null;'
 # #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
+session_sweep_helper() { printf '%s' "${SB_SESSION_SWEEP:-$(dirname "$SB_GITHUB_READ")/super-board-session-sweep.py}"; }
 waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
 # P3: cờ dependency_unblock_v1 (mặc định tắt). Env SB_DEPENDENCY_UNBLOCK_V1=0|1 thắng; không thì `dependency_unblock_v1` trong
 # <checkout chính>/.agents/local/flags.json (git common dir, như guard_v2 của super-board-needs-you.py). Thiếu/hỏng = tắt.
@@ -949,9 +950,10 @@ issue_locked() {
   if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     return 0
   fi
+  LIMIT_PAUSED=0
   [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
   note_worker_exit "$issue"
-  note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
+  [ "${LIMIT_PAUSED:-0}" = 1 ] || note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
   note_worker_end "$issue"
   [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
   rm -f "$lock"
@@ -971,6 +973,7 @@ note_worker_limit() {
   # `account_pool:` của lần giao đó là 100 % tới giờ reset (không đọc được giờ thì 1 giờ), đúng dạng usage-<acct>.json
   # mà pool đọc. Chỉ ghi file của account đó, không ghi usage.json chung (file chung kéo theo `switch` credential
   # toàn cục của người dùng). Lỗi ở đây không bao giờ chặn runner.
+  LIMIT_PAUSED=0   # #1121: 1 when this call paused the account; the reaper then skips the early-death ledger (the limit is the cause, the pause the cure)
   [ -f "$1" ] || return 0
   worker_ended_clean "$1" && return 0   # a finished turn's report may quote a limit message; only a death pauses an account
   local out
@@ -982,7 +985,7 @@ acct = re.search(r'^account_pool: engine=\S+ account=([A-Za-z0-9_.-]+)', section
 tail = '\n'.join([l for l in section.splitlines() if l.strip() and not l.startswith('worker_exit:')][-3:])
 # Claude Code: "You've hit your session limit · resets 10:50pm (Asia/Saigon)" (đo 16/10). Ba mẫu sau là mã quota của
 # Gemini/xAI, chưa đo trên agy/grok thật.
-hit = re.search(r"hit your (?:[\w-]+ )?limit|usage[ _]limit[ _]reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded", tail, re.I)
+hit = re.search(r"hit your (?:[\w-]+ )?limit|usage[ _]limit[ _]reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded|402 Payment Required|balance exhausted", tail, re.I)
 if not acct or not hit:
     sys.exit(0)
 now = int(time.time())
@@ -1012,7 +1015,7 @@ os.replace(tmp, path)
 print(acct[1], time.strftime('%H:%M', time.localtime(resets)))
 PY
 ) || { log "⚠ could not read worker log $1 for an account limit"; return 0; }
-  [ -z "$out" ] || log "account ${out% *} hit its limit — paused until ${out#* }; next dispatch takes the pool's next account"
+  [ -z "$out" ] || { LIMIT_PAUSED=1; log "account ${out% *} hit its limit — paused until ${out#* }; next dispatch takes the pool's next account"; }
   return 0
 }
 
@@ -2587,9 +2590,10 @@ reap_finished_locks() {
     case "$issue" in *[!0-9]*|'') continue ;; esac
     read_lock "$issue"
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
+      LIMIT_PAUSED=0
       [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
       note_worker_exit "$issue"
-      note_early_death "$issue"
+      [ "${LIMIT_PAUSED:-0}" = 1 ] || note_early_death "$issue"
       note_worker_end "$issue"
       # #288: PID chết rời danh sách "đã thấy ở QA": Tester mới tái dùng PID đó phải bắt đầu sạch (ân hạn Ready → QA).
       [ -z "$PID" ] || QA_SEEN_IN_QA=$(printf '%s\n' ${QA_SEEN_IN_QA:-} | grep -vxF -- "$PID" | tr '\n' ' ') || true
@@ -3148,6 +3152,29 @@ $(printf '%s' "$closed" | jq -r --argjson cards "$PROJECT_ITEMS_JSON" '
 EOF2
   [ "$failed" -eq 1 ] || SWEEP_CLOSED_NEXT=$((now + ${SB_CLOSED_SWEEP_EVERY:-300}))
   [ "$moved" -eq 1 ]
+}
+
+# #1193: thẻ `session` (hooks/session_card.sh) của phiên chat đã chết, không PR mở `Closes #N`, kẹt Building mãi vì
+# sweep_closed_cards chỉ chuyển thẻ có issue đã ĐÓNG. Helper đóng issue đó (phiên không tiến trình, im > SB_SESSION_DEAD_HOURS);
+# đóng được ít nhất một thẻ thì đặt lại nhịp sweep_closed_cards để thẻ về Done ngay tick này. Nhịp SB_SESSION_SWEEP_EVERY (300 s),
+# chỉ chạy khi board có thẻ session chưa Done. Helper lỗi: log, tick sau thử lại, không bao giờ exit runner. Trả 0 khi đã đóng thẻ.
+sweep_dead_sessions() {
+  local now items out rc=0 closed
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -e 'any(.items[]?; .status != "Done" and .content.type == "Issue" and
+    ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("session")))' >/dev/null 2>&1 || return 1
+  now=$(date +%s)
+  [ "$now" -lt "${SESSION_SWEEP_NEXT:-0}" ] && return 1
+  items=$(mktemp "${TMPDIR:-/tmp}/sb-session-items.XXXXXX") || { log "⚠ session sweep: mktemp failed — retrying next tick"; return 1; }
+  printf '%s' "$PROJECT_ITEMS_JSON" > "$items"
+  out=$(python3 "$(session_sweep_helper)" sweep --config "$CONFIG_PATH" --items "$items" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -f "$items"
+  if [ "$rc" -ne 0 ]; then log "⚠ session sweep failed (exit ${rc}) — retrying next tick"; fi
+  SESSION_SWEEP_NEXT=$((now + ${SB_SESSION_SWEEP_EVERY:-300}))
+  closed=$(printf '%s' "$out" | jq -r '[(.closed // [])[] | "#\(.)"] | join(" ")' 2>/dev/null) || closed=""
+  [ -n "$closed" ] || return 1
+  log "session sweep: ended session card(s) closed ${closed} — closed-card sweep follows"
+  SWEEP_CLOSED_NEXT=0
+  return 0
 }
 
 # #601: gỡ nhãn `waiting-on:#N` khi #N đã CLOSED/MERGED (helper `sweep` tự gọi gh). Chỉ chạy khi board có thẻ mang nhãn đó; nhịp
@@ -3915,6 +3942,7 @@ while true; do
   ACTIVE_WORKERS=$(( BUILD_COUNT + QA_COUNT + REVIEW_COUNT ))   # một trần chung cho cả 3 lane
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
+  sweep_dead_sessions || true                              # #1193 (đặt lại nhịp của sweep_closed_cards ngay dưới)
   if sweep_closed_cards; then tick_fetch || continue; fi   # #558
   if sweep_waiting_on; then tick_fetch || continue; fi     # #601
   if sweep_file_wait; then tick_fetch || continue; fi      # #556
