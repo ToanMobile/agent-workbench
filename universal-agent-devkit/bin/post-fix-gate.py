@@ -134,8 +134,9 @@ def skip_separate_unity_compile(command: str, unity_will_test: bool) -> bool:
     return "test" not in cmd.split("compile", 1)[-1]
 
 # Key names whose assigned value is treated as a credential. A prefix is allowed
-# (DB_PASSWORD, ghToken), a suffix is not (passwordHint, tokenType).
-_SECRET_KEY = r"[\w.\-]*?(?:api[_\-]?key|apikey|access[_\-]?token|auth[_\-]?token|refresh[_\-]?token|token|client[_\-]?secret|secret|password|passwd|pwd|private[_\-]?key|keystore[_\-]?password|key[_\-]?password|signing[_\-]?key[_\-]?password|keystore[_\-]?base64|(?:db|admin|user|root|auth|redis|pg|mysql)[_\-]?pass)"
+# (DB_PASSWORD, ghToken), a suffix is not (passwordHint, tokenType), but for `key` after `secret` (SECRET_KEY,
+# secretKey, JWT_SECRET_KEY, client_secret_key: 2026-11-14; secret_key_name is still the name of a key).
+_SECRET_KEY = r"[\w.\-]*?(?:api[_\-]?key|apikey|access[_\-]?token|auth[_\-]?token|refresh[_\-]?token|token|client[_\-]?secret|secret(?:[_\-]?key)?|password|passwd|pwd|private[_\-]?key|keystore[_\-]?password|key[_\-]?password|signing[_\-]?key[_\-]?password|keystore[_\-]?base64|(?:db|admin|user|root|auth|redis|pg|mysql)[_\-]?pass)"
 
 # The names the shapes added on 2026-11-14 also read (the older rules keep _SECRET_KEY, word for word).
 _SECRET_KEY_ANY = _SECRET_KEY[:-1] + r"|passphrase|access[_\-]?key|signing[_\-]?key)"
@@ -215,8 +216,8 @@ SECRET_PATTERNS = [
 
 # Unquoted `key = value` only in config-style files, where it is the normal syntax
 # (in code an unquoted right-hand side is an expression, not a literal).
-CONFIG_SECRET_PATTERN = (r"(?im)^\s*(?:export\s+)?" + _SECRET_KEY + r"\s*[:=]\s*([^\s\"'#]{8,})\s*$",
-                         "Hardcoded Secret (config file)", 1)
+CONFIG_SECRET_PATTERN = (r"(?im)^\s*(?:export\s+)?" + _SECRET_KEY + r"\s*[:=][ \t]*([^\s\"'#]{8,})\s*$",
+                         "Hardcoded Secret (config file)", 1)   # [ \t]* after the sign: an empty `API_KEY=` is not the next line
 CONFIG_EXTENSIONS = (".properties", ".env", ".yml", ".yaml", ".ini", ".cfg", ".conf", ".toml")
 
 PLACEHOLDER_VALUE = re.compile(
@@ -279,7 +280,7 @@ LAZY_CODE_PATTERNS = [
     # `// ... existing code ...`, `/* ... existing code here ... */`, `/** … */`, `{/* … */}`, `<!-- ... existing code ... -->`,
     # `// … existing code …`, `// ... (existing code) ...`, `// ...rest`, `// ... the rest ...`, `// ... keep existing code ...`.
     # No word boundary after the keyword and \s* around the ellipsis, as before 2026-11-14: nothing the old patterns
-    # reported may pass (the one approved pass, a JS rest element named in a comment, is decided in lazy_match_is_data).
+    # reported may pass (the one approved pass, a rest element named on the line that spreads it: lazy_match_is_data).
     (r"(?i)" + _LAZY_LEAD + r"\s*" + _LAZY_ELL + r"\s*[(\[]?\s*(?:(?:and\s+)?the\s+|keep\s+)?(?:existing|rest|remaining)",
      "Lazy placeholder (// ... existing code ...)"),
     # A comment opening with an ellipsis and saying the code was left out: `// ... other methods unchanged ...`,
@@ -321,6 +322,11 @@ LAZY_STUB_PATTERNS = [
 ]
 # `// ...remaining holds the others`: the dots glued to an identifier, then more words.
 _LAZY_REST_REF_RE = re.compile(r"(?://|#|/\*)[ \t]*\.\.\.([A-Za-z_$][\w$]*)[ \t]+\S")
+# The four patterns of the scan before 2026-11-14, word for word; with the files it read (lazy_parent_scope): what they
+# reported there is reported, quoted or not. The one approved pass is the same-line rest element (_lazy_rest_ref_same_line).
+_LAZY_PARENT_RES = tuple(re.compile(p) for p in (
+    r"(?i)//\s*\.\.\.\s*(existing|rest|remaining)", r"(?i)/\*\s*\.\.\.\s*(existing|rest|remaining)\s*\*/",
+    r"(?i)#\s*\.\.\.\s*(existing|rest|remaining)", r"(?i)//\s*TODO:?\s*implement\s+rest"))
 
 UI_EXTENSIONS = {".kt", ".java", ".tsx", ".jsx", ".dart", ".vue", ".swift", ".xml"}
 CODE_EXTENSIONS = UI_EXTENSIONS | {".py", ".ts", ".js", ".go", ".rs", ".cpp", ".c", ".h", ".cs", ".shader", ".hlsl"}
@@ -386,11 +392,34 @@ def lazy_patterns_for(rel_file: str) -> list:
     return LAZY_CODE_PATTERNS + [(pat, label) for exts, pat, label in LAZY_STUB_PATTERNS if rel_file.endswith(exts)]
 
 
+def lazy_parent_scope(rel_file: str) -> bool:
+    """Files the placeholder scan read before 2026-11-14: code extensions outside test paths, scripts/ and third-party dirs."""
+    return (not is_test_path(rel_file) and not has_dir(rel_file, "scripts", *THIRD_PARTY_DIRS)
+            and rel_file.endswith(tuple(CODE_EXTENSIONS)))
+
+
+def _lazy_rest_ref_same_line(content: str, start: int) -> bool:
+    """The comment at `start` names (dots glued to the identifier, words after it: _LAZY_REST_REF_RE) a rest element
+    that the CODE of the same line spreads before the comment, as in `const {a, ...remaining} = props;`. Closed:
+    a comment on its own line is never one, whatever the file spreads elsewhere; nor is a spread that sits inside a
+    string or an earlier comment of that line (no quote and no comment opener before it)."""
+    ref = _LAZY_REST_REF_RE.match(content, start)
+    if not ref:
+        return False
+    code = content[content.rfind("\n", 0, start) + 1:start]
+    spread = re.search(r"[{\[(,][ \t]*\.\.\." + re.escape(ref.group(1)) + r"(?![\w$])", code)
+    return bool(spread and not re.search(r"[\"'`#]|//|/\*", code[:spread.start()]))
+
+
 def lazy_match_is_data(rel_file: str, content: str, m, spans=None) -> bool:
-    """A pattern match that is not an elided body: inside a same-line string literal; inside a heredoc body of a shell
-    TEST file (the kit's own tests carry such payloads; a production script's heredoc is code it writes out); or a
-    comment naming a rest element of the code: `{a, ...remaining}` in the file and `// ...remaining holds the others`,
-    the dots glued to that same identifier and words after it. Dots then a space, or the word ending the line, count."""
+    """A pattern match that is not an elided body: a comment naming a rest element spread on its own line
+    (_lazy_rest_ref_same_line); inside a same-line string literal; inside a heredoc body of a shell TEST file (the
+    kit's own tests carry such payloads; a production script's heredoc is code it writes out). A match the scan
+    reported before 2026-11-14 (its patterns, in a file it read) is data only by the first rule."""
+    if _lazy_rest_ref_same_line(content, m.start()):
+        return True
+    if lazy_parent_scope(rel_file) and any(p.match(content, m.start()) for p in _LAZY_PARENT_RES):
+        return False
     at = m.start("ph") if "ph" in m.re.groupindex else m.start()   # a phrase rule: where the phrase is, not the comment opener
     if _in_string_literal(content, at, m.end()):
         return True
@@ -398,9 +427,6 @@ def lazy_match_is_data(rel_file: str, content: str, m, spans=None) -> bool:
         spans = _heredoc_spans(content) if spans is None else spans
         if any(a <= m.start() < b for a, b in spans):
             return True
-    ref = _LAZY_REST_REF_RE.match(content, m.start())
-    if ref and re.search(r"[{\[(,][ \t]*\.\.\." + re.escape(ref.group(1)) + r"(?![\w$])", content):
-        return True
     return False
 
 

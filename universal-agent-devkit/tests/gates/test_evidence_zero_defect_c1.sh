@@ -10,6 +10,9 @@
 #      was read as a pass claim: "test" / "pytest" stands within 24 characters of "passed" (CLAIM `test[^.\n]{0,24}pass`). The same
 #      report with no such word ("Still failing: 1 failed, 4 passed.") was free at 5db81236 and is here as a guard: closing C1a's
 #      "5 passed in 0.03s" must not start blocking it. Two-way: a pass claim over the same failing run is still a block.
+# Phase 3 (review of bc5b7e3c, sections A1-A3 at the end): the C1c exemption is a CLOSED rule (the pass count of a failing runner
+# summary, nothing else): "Test sau fix 3 lỗi đều pass." had become free; more runner turns that ran no test (go, cargo, Gradle, npm,
+# dotnet, jest, vitest); source rewrites after the green run that name no write verb (git apply, patch, stash pop, formatters, …).
 # Phase 2 (same day, Antigravity audit T0479 + plan review v2) added: the no-run flags and zero-test results beyond the three above, with
 # the runs that must stay evidence (output sent to a file, Gradle, a pass among skips); a zero-test run as the RED half of check 7;
 # a source change after the green run by MultiEdit, by an Edit of a .sh file or by a Bash write (sed -i, >>, tee, heredoc), with the
@@ -110,6 +113,12 @@ run 0 "$EDIT" 'It does not work now.'
 run 0 "$EDIT" 'The crash still reproduces.'
 run 0 "$EDIT" 'Lỗi vẫn chưa được khắc phục.'
 run 0 "$EDIT" 'The tests did not succeed.'
+# Real Stop point (replay of 369, 2026-11-15): a review report, "- **Review:** hai điểm lần trước làm bounce đã được xử lý." The passive
+# "đã được xử lý / khắc phục / giải quyết" is an outcome claim only about a defect named before it (lỗi, bug, crash, sự cố, vấn đề).
+run 0 "$EDIT" '- **Review:** hai điểm lần trước làm bounce đã được xử lý.'
+run 0 "$EDIT" 'Hai nhận xét của reviewer đã được giải quyết trong commit sau.'
+run 2 "$EDIT" '- **Review:** hai lỗi lần trước làm bounce đã được xử lý.'
+run 2 "$EDIT" 'Vấn đề đã được giải quyết.'
 echo "-- C1a. the same transcript: a plan, a question, a not-run / not-verified statement is no claim (must pass)"
 run 0 "$EDIT" 'Tôi đã đọc file và sẽ chạy test ở bước sau.'
 run 0 "$EDIT" 'Chưa chạy test.'
@@ -161,13 +170,15 @@ run 2 "$EDIT" 'Test xử lý lỗi pass.'
 run 2 "$EDIT" 'Test hết đỏ, xanh hết.'
 run 2 "$EDIT" 'Test chưa từng fail, pass hết.'
 run 2 "$EDIT" 'Test A fail, test B pass.'
-echo "-- C1c guards. a failing count in the same clause as the pass count (free at 5db81236, must stay free)"
+echo "-- C1c guards. a failing count right beside the pass count: the summary of a failing run (must pass)"
 run 0 "$RED" 'Vẫn fail: 1 failed, 4 passed.'
 run 0 "$RED" 'Kết quả: 4 passed, 1 failed.'
 run 0 "$RED" 'Kết quả chạy test: 4 pass, 1 fail.'
 run 0 "$RED" 'Test đỏ: 4 passed, 1 failed.'
 run 0 "$RED" 'pytest báo 1 failed, 4 passed; tôi chưa sửa xong.'
-run 0 "$RED" 'pytest: 2 errors, 3 passed.'      # this one was a false block at 5db81236 ("pytest" near "passed"), like the two of C1c
+run 0 "$RED" '2 tests fail, 3 passed.'
+run 0 "$RED" 'pytest still fails: 1 failed, 4 passed.'
+run 2 "$RED" 'pytest: 2 errors, 3 passed.'      # "N errors" is not in the closed list (A1): blocked as at 5db81236, a known false block
 
 echo "-- C1b. more runner turns that ran no test (must block)"
 CO="$TMP/co.jsonl";       after_edit "$CO" 'pytest --co -q' $'tests/test_foo.py::test_a\n\n1 test collected in 0.01s' false
@@ -229,6 +240,111 @@ run 0 "$TMP/shtest.jsonl" 'Đã fix lỗi crash.'
 run 2 "$TMP/shtest.jsonl" 'Đã fix lỗi. 5/5 test pass.'
 transcript "$TMP/shsrc.jsonl" "$(steps "$PAIR" '[["edit","scripts/run.sh"]]')"
 run 2 "$TMP/shsrc.jsonl" 'Đã fix lỗi crash.'
+
+echo "-- A1. the C1c exemption is closed: N lỗi / N errors count what was FIXED, never a failing run (blocked at 5db81236, must block)"
+for tr in "$EDIT" "$RED"; do
+  run 2 "$tr" 'Test sau fix 3 lỗi đều pass.'
+  run 2 "$tr" 'All tests after fixing 2 errors pass.'
+  run 2 "$tr" 'Tests covering the 3 errors pass.'
+  run 2 "$tr" 'Đã sửa 2 lỗi, test pass hết.'
+  run 2 "$tr" '0 failed, 5 passed'
+done
+run 2 "$EDIT" 'Tests for 2 failing paths pass.'
+run 2 "$EDIT" 'Test 2 lỗi parse xanh.'
+run 2 "$EDIT" 'Sửa 3 lỗi, 5 passed.'
+run 2 "$RED" 'Tests with 1 error pass.'
+run 2 "$RED" 'Test 1 failed, 4 passed giờ đã xanh.'      # a second result outside the failing summary is the claim
+run 2 "$RED" 'Test đã xanh: 1 failed, 4 passed.'
+run 2 "$RED" 'Sau khi sửa 3 failed tests thì 5 passed.'  # the two counts are not side by side: no summary line
+echo "-- A1. the ':' is no way out of the first branch (blocked at 5db81236, must block)"
+run 2 "$EDIT" 'Tests: all 5 pass.'
+run 2 "$EDIT" 'Test suite: now all green.'
+run 2 "$EDIT" 'Test hồi quy: chạy lại pass.'
+run 2 "$EDIT" 'Kết quả test: đã chạy, tất cả đều pass.'
+run 2 "$EDIT" 'Test login: giờ pass rồi.'
+run 2 "$EDIT" 'Kết quả test: 5 pass sau khi sửa 2 lỗi.'
+echo "-- A1 control. a question about the outcome is no claim (free at 5db81236, must stay free)"
+run 0 "$EDIT" 'Tôi sẽ chạy lại test để xem lỗi đã hết chưa.'
+
+echo "-- A2. more runner turns that ran no test (must block)"
+GO_NONE=$'?   \texample.com/app\t[no test files]'
+GO_NORUN=$'testing: warning: no tests to run\nPASS\nok  \texample.com/app\t0.002s [no tests to run]'
+CARGO0=$'     Running unittests src/lib.rs (target/debug/deps/app-1a2b)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s'
+CARGO3=$'running 3 tests\ntest t::a ... ok\ntest t::b ... ok\ntest t::c ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n   Doc-tests app\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s'
+GR_DRY=$':compileJava SKIPPED\n:compileTestJava SKIPPED\n:test SKIPPED\n\nBUILD SUCCESSFUL in 1s'
+GR_NOSRC=$'> Task :compileJava UP-TO-DATE\n> Task :compileTestJava NO-SOURCE\n> Task :testClasses UP-TO-DATE\n> Task :test NO-SOURCE\n\nBUILD SUCCESSFUL in 1s'
+GR_MIX=$'> Task :lib:compileTestJava NO-SOURCE\n> Task :lib:test NO-SOURCE\n> Task :app:compileTestJava\n> Task :app:test\n\nBUILD SUCCESSFUL in 3s'
+NPM_NONE=$'> app@1.0.0 test\n> echo "Error: no test specified" && exit 1\n\nError: no test specified'
+norun() { echo "   $1"; after_edit "$TMP/norun.jsonl" "$2" "$3" "${4:-false}"; run 2 "$TMP/norun.jsonl" 'Test pass.'; }
+norun 'go test: [no test files]'              'go test ./...' "$GO_NONE"
+norun 'go test: [no tests to run]'            'go test -run TestNope ./...' "$GO_NORUN"
+norun 'cargo test: running 0 tests'           'cargo test' "$CARGO0"
+norun 'cargo test --no-run'                   'cargo test --no-run' $'   Compiling app v0.1.0 (/p)\n    Finished test [unoptimized + debuginfo] target(s) in 0.52s'
+norun 'gradlew test --dry-run'                './gradlew test --dry-run' "$GR_DRY"
+norun 'gradlew test -m'                       './gradlew test -m' "$GR_DRY"
+norun 'gradlew test: every test task NO-SOURCE' './gradlew test' "$GR_NOSRC"
+norun 'gradlew :app:testDebugUnitTest NO-SOURCE' './gradlew :app:testDebugUnitTest' $'> Task :app:compileDebugUnitTestKotlin NO-SOURCE\n> Task :app:testDebugUnitTest NO-SOURCE\n\nBUILD SUCCESSFUL in 4s'
+norun 'npm test: no test specified (exit 0)'  'npm test' $'> app@1.0.0 test\n> echo "no test specified"\n\nno test specified'
+norun 'npm test: no test specified (exit 1)'  'npm test' "$NPM_NONE" true
+norun 'dotnet test: No test is available'     'dotnet test' 'No test is available in /p/bin/Debug/net8.0/app.dll. Make sure that test discoverer & executors are registered and platform & framework version settings are appropriate and try again.'
+norun 'jest: No tests found (exit 0)'         'npx jest --passWithNoTests' 'No tests found, exiting with code 0'
+norun 'jest: No tests found (exit 1)'         'npx jest' 'No tests found, exiting with code 1' true
+norun 'vitest: No test files found (exit 0)'  'npx vitest run --passWithNoTests' 'No test files found, exiting with code 0'
+norun 'vitest: No test files found (exit 1)'  'npx vitest run' 'No test files found, exiting with code 1' true
+echo "-- A2. such a turn is no RED half of check 7 either (must block)"
+for pair in "npm test|$NPM_NONE" 'npx vitest run|No test files found, exiting with code 1' "go test ./...|$GO_NONE"; do
+  transcript "$TMP/pair0.jsonl" "$(steps "$(bash_step "${pair%%|*}" "${pair#*|}" true)" "$E1" "$(bash_step "$RUN" "$PY_PASS" false)")"
+  run 2 "$TMP/pair0.jsonl" 'Đã fix lỗi crash.'
+done
+echo "-- A2 controls. a run with tests among packages / targets / tasks that have none, and the flags of another runner (must pass)"
+ran() { echo "   $1"; after_edit "$TMP/ran.jsonl" "$2" "$3" false; run 0 "$TMP/ran.jsonl" 'Test pass.'; }
+ran 'go test: one package ok, one without test files' 'go test ./...' $'ok  \texample.com/app\t0.012s\n?   \texample.com/cmd\t[no test files]'
+ran 'go test: ok (cached)'                    'go test ./...' $'ok  \texample.com/app\t(cached)'
+ran 'cargo test: 3 tests, 0 doc-tests'        'cargo test' "$CARGO3"
+ran 'gradlew test: one module NO-SOURCE, one ran' './gradlew test' "$GR_MIX"
+ran 'gradlew test: no task line'              './gradlew test' 'BUILD SUCCESSFUL in 3s'
+ran 'python3 -m pytest -m slow'               'python3 -m pytest -m slow -q' "$PY_PASS"
+ran 'npm test: 5 passed'                      'npm test' 'Tests:       5 passed, 5 total'
+
+echo "-- A3. a source rewrite after the green run that names no write verb or no source file ages that run (must block)"
+echo "   git apply";                           late "$(bash_step 'git apply fix.patch' '' false)"
+echo "   git apply --3way after cd";           late "$(bash_step 'cd src && git apply --3way ../fix.patch' '' false)"
+echo "   patch -p1 < fix.patch";               late "$(bash_step 'patch -p1 < fix.patch' 'patching file src/app.py' false)"
+echo "   git stash pop";                       late "$(bash_step 'git stash pop' '' false)"
+echo "   git checkout <ref> -- src/app.py";    late "$(bash_step 'git checkout HEAD~1 -- src/app.py' '' false)"
+echo "   git restore --source=<ref> src/app.py"; late "$(bash_step 'git restore --source=HEAD~1 src/app.py' '' false)"
+echo "   black src/app.py";                    late "$(bash_step 'black src/app.py' 'reformatted src/app.py' false)"
+echo "   ruff check --fix src";                late "$(bash_step 'ruff check --fix src' 'Fixed 1 error' false)"
+echo "   ruff format";                         late "$(bash_step 'ruff format' '1 file reformatted' false)"
+echo "   npx prettier --write";                late "$(bash_step 'npx prettier --write src/a.ts' 'src/a.ts 10ms' false)"
+echo "   eslint --fix";                        late "$(bash_step 'npx eslint src --fix' '' false)"
+echo "   gofmt -w";                            late "$(bash_step 'gofmt -w main.go' '' false)"
+echo "   ktlint -F";                           late "$(bash_step 'ktlint -F' '' false)"
+echo "   python3 -c open(src, w)";             late "$(bash_step "python3 -c \"open('src/app.py','w').write('def f(): return 3')\"" '' false)"
+echo "   python3 -c open(src, a)";             late "$(bash_step "python3 -c \"open('src/app.py', 'a').write('x = 1')\"" '' false)"
+echo "   python3 -c Path.write_text";          late "$(bash_step "python3 -c \"from pathlib import Path; Path('src/app.py').write_text('x = 1')\"" '' false)"
+echo "   node -e writeFileSync";               late "$(bash_step "node -e \"require('fs').writeFileSync('src/a.ts','export const a = 2')\"" '' false)"
+echo "-- A3 controls. the read-only form of the same commands leaves the run standing (must pass)"
+echo "   git apply --check";                   keep "$(bash_step 'git apply --check fix.patch' '' false)"
+echo "   git stash list";                      keep "$(bash_step 'git stash list' '' false)"
+echo "   git checkout <ref> -- notes.md";      keep "$(bash_step 'git checkout HEAD~1 -- notes.md' '' false)"
+# Real Stop point (replay of 369, 2026-11-15): a review session restored AGENTS.md and reported "gate PASS 7/7"; the redirect word
+# `2>&1` was read as a path with no extension, so the restore of a .md file aged the green gate run. Control: the same line on a source file.
+echo "   git checkout -q -- AGENTS.md 2>&1";   keep "$(bash_step 'git checkout -q -- AGENTS.md 2>&1; agent-kit worktree remove /p/.claude/worktrees/issue-1121-review 2>&1 | tail -3' '' false)"
+echo "   git restore notes.md > /dev/null";    keep "$(bash_step 'git restore notes.md > /dev/null 2>&1' '' false)"
+echo "   (control) git checkout -q -- src/app.py 2>&1"; late "$(bash_step 'git checkout -q -- src/app.py 2>&1; agent-kit worktree remove /p/.claude/worktrees/issue-1121-review 2>&1 | tail -3' '' false)"
+echo "   git restore --staged";                keep "$(bash_step 'git restore --staged src/app.py' '' false)"
+echo "   black --check";                       keep "$(bash_step 'black --check src' 'All done!' false)"
+echo "   ruff check (no --fix)";               keep "$(bash_step 'ruff check src' 'All checks passed!' false)"
+echo "   ruff format --check";                 keep "$(bash_step 'ruff format --check src' '' false)"
+echo "   prettier --check";                    keep "$(bash_step 'prettier --check src' '' false)"
+echo "   eslint --fix-dry-run";                keep "$(bash_step 'eslint --fix-dry-run src' '' false)"
+echo "   gofmt -l";                            keep "$(bash_step 'gofmt -l .' '' false)"
+echo "   patch --dry-run";                     keep "$(bash_step 'patch --dry-run -p1 < fix.patch' '' false)"
+echo "   python3 -c open(src) to read";        keep "$(bash_step "python3 -c \"print(open('src/app.py').read())\"" 'def f():' false)"
+echo "   python3 -c open(notes.md, w)";        keep "$(bash_step "python3 -c \"open('notes.md','w').write('x')\"" '' false)"
+echo "   grep of the words git apply";         keep "$(bash_step "grep -rn 'git apply' notes.md" '' false)"
+echo "   echo of the words ruff format";       keep "$(bash_step "echo 'ruff check --fix src; ruff format'" 'ruff check --fix src; ruff format' false)"
 
 echo "cases: $N"
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

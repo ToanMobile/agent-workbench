@@ -11,6 +11,12 @@
 #  C3c  secret assignments the scan missed: `export API_KEY=…` in a script, `os.environ["API_KEY"] = "…"`,
 #       `<string name="api_key">…</string>`, `buildConfigField(… "API_KEY", "\"…\"")`, `"Authorization": "Bearer …"`,
 #       `DB_PASS = "…"`; controls: the same shapes holding a reference or a placeholder value pass.
+#  R5   round 5 (independent review of bc5b7e3c against its parent 5db81236):
+#       A1 the rest-element pass is closed: only a comment on the SAME line as code spreading that identifier before it;
+#          a comment on its own line is reported whatever the file spreads. A quoted `// ... existing code ...` in a file
+#          the parent scan read is reported as the parent did (reverses the v2 pass C2t-06 for production code files).
+#       A2 `API_KEY=` with an empty value no longer reads the next line as its value (config files).
+#       A3 key names holding `secret` before `key`: SECRET_KEY, secretKey, JWT_SECRET_KEY, client_secret_key.
 # Every "secret" below is a fake the fixture writer joins at run time (@F@ tokens): this file holds no value a scan matches.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -112,7 +118,7 @@ CASES = [
     ("C2t-05", "pass", "lazy", "tests/test_fixture.sh", "pattern inside a heredoc body and a printf literal (.sh test)",
      "#!/bin/sh\ncat > out.py <<'EOF'\ndef g():\n    " + LINE_HASH + "    return 2\nEOF\n"
      "printf 'def h():\\n    # ... existing code ...\\n' > out2.py\n"),
-    ("C2t-06", "pass", "lazy", "src/payload.py", "pattern inside a quoted literal (production file)",
+    ("C2t-06", "flag", "lazy", "src/payload.py", "parent-reported wording inside a quoted literal of a code file the parent scan read",
      "SAMPLE = \"// ... existing code ...\"\n"),
     # ── v2: a secret as the fallback value ──
     ("C3f-01", "flag", "content", "src/d1.py", "os.environ.get(\"API_SECRET\", \"<fake>\")", 'import os\nS = os.environ.get("API_SECRET", "@F@")\n'),
@@ -272,9 +278,55 @@ group("C3l", "pass", "name", [
     ("secrets.json.example", "secrets.json.example (template)", '{"a": 1}\n'),
     ("src/secrets_manager.py", "src/secrets_manager.py", "def get(name):\n    return name\n"),
 ])
+# R5-A1: the rest-element pass is a same-line rule
+JSF = "export function f(p) {\n%s\n  return p\n}\n"
+group("C2r", "flag", "lazy", [
+    ("src/Card.tsx", "// ...rest of the component unchanged on its own line, the file spreads ...rest",
+     "export function Card({title, ...rest}) {\n  // ...rest of the component unchanged\n  return <div {...rest}>{title}</div>\n}\n"),
+    ("src/Card2.tsx", "// ...rest of the code on its own line, the file spreads ...rest",
+     "export function Card({title, ...rest}) {\n  // ...rest of the code\n  return null\n}\n"),
+    ("src/r03.js", "same line, but the code spreads another identifier", JSF % "  const {a, ...other} = p; // ...rest of the code unchanged"),
+    ("src/r04.js", "the spread is itself inside a comment", JSF % "  // {a, ...rest} // ...rest of the code unchanged"),
+    ("src/r05.js", "the spread is on the previous line", JSF % "  const {a, ...rest} = p;\n  // ...rest of the code unchanged"),
+    ("src/r06.js", "the spread is inside a string of that line", JSF % "  const s = \"{a, ...rest}\"; // ...rest of the code unchanged"),
+    ("src/r07.ts", "parent-reported wording in backticks (code file the parent scan read)", "export const s = `// ... existing code ...`\n"),
+])
+group("C2s", "pass", "lazy", [
+    ("src/w01.js", "array rest element named on its line", JSF % "  const [head, ...rest] = p; // ...rest holds the tail"),
+    ("src/w02.ts", "parameter rest element named on its line", "export function g(a: number, ...remaining: number[]) { // ...remaining is summed below\n  return a\n}\n"),
+    ("src/w03.py", "a wording the parent never reported, inside a quoted literal", "HINT = \"# your code here\"\n"),
+    ("lib/w04.rb", "quoted literal in a file kind the parent never read", "SAMPLE = \"# ... existing code ...\"\n"),
+])
+# R5-A2: an empty value is not the next line
+group("C3n", "pass", "content", [
+    (".env.example", "API_KEY= (empty) then PORT=3000", "API_KEY=\nPORT=3000\n"),
+    ("conf/empty.properties", "api_key= (empty) then server.port=8080", "api_key=\nserver.port=8080\n"),
+    ("conf/empty.yml", "password: (empty) then a nested key", "db:\n  password:\n  poolSizeMax:\n"),
+])
+group("C3o", "flag", "content", [
+    ("conf/real.properties", "API_KEY=<32 chars> in a .properties", "API_KEY=@F32@\n"),
+    ("conf/real.yml", "api_key: <32 chars> in a .yml", "svc:\n  api_key: @F32@\n"),
+    ("conf/real.ini", "password = <32 chars> in a .ini (spaces around =)", "[db]\npassword = @F32@\n"),
+])
+# R5-A3: `secret` before `key`
+group("C3q", "flag", "content", [
+    ("src/u01.py", "SECRET_KEY = '<30 chars>'", "SECRET_KEY = '@F30@'\n"),
+    ("src/u02.ts", "export const secretKey = \"<fake>\"", 'export const secretKey = "@F@"\n'),
+    ("src/u03.kt", "const val JWT_SECRET_KEY = \"<fake>\"", 'const val JWT_SECRET_KEY = "@F@"\n'),
+    ("src/u04.py", "DJANGO_SECRET_KEY = \"<fake>\"", 'DJANGO_SECRET_KEY = "@F@"\n'),
+    ("src/u05.py", "client_secret_key = \"<fake>\"", 'client_secret_key = "@F@"\n'),
+    ("conf/u06.yml", "secret_key: <32 chars> in a .yml", "app:\n  secret_key: @F32@\n"),
+])
+group("C3r", "pass", "content", [
+    ("src/v01.py", "SECRET_KEY = os.environ[\"SECRET_KEY\"]", 'import os\nSECRET_KEY = os.environ["SECRET_KEY"]\n'),
+    ("src/v02.ts", "secretKey = config.secretKey", "export const secretKey = config.secretKey\n"),
+    ("src/v03.py", "SECRET_KEY = \"changeme\"", 'SECRET_KEY = "changeme"\n'),
+    ("src/v04.py", "secret_key_name = \"primary\"", 'secret_key_name = "primary"\n'),
+    ("src/v05.py", "secret_key_name = \"<fake>\" (the name of a key, not a key)", 'secret_key_name = "@F@"\n'),
+])
 rows = []
 for cid, want, kind, path, title, body in CASES:
-    body = body.replace("@F32@", F32).replace("@F40@", F40).replace("@FK@", "fake-" + F).replace("@FT@", "fake-" + "token")
+    body = body.replace("@F32@", F32).replace("@F30@", F32[:30]).replace("@F40@", F40).replace("@FK@", "fake-" + F).replace("@FT@", "fake-" + "token")
     body = body.replace("@SLACK@", "https://hooks.slack.com/" + "services/T00000000/B00000000/" + F32[:24])
     body = body.replace("@TG@", "1234567890" + ":AA" + F40[:33]).replace("@F@", F)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

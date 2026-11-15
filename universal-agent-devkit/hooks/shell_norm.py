@@ -753,6 +753,49 @@ def dq_nested_quote(text):
     return False
 
 
+def sq_backticks(text):
+    """The positions of the backticks that are DATA: inside a closed '…' at the top level of text, where no shell expands anything (git commit -m
+    'fix: `rm -rf ~` is refused' was refused by the hardware gate, 14/11 round 2). Fail closed: a span counts only when this scan AND the lexer
+    (_lexer_quotes) both read it as single-quoted, and the scan stops (what it found so far stays) at the first thing that changes how quotes
+    are read after it: a comment, a top-level backtick, $( ${ $' anywhere outside single quotes, an unclosed quote. Nothing at all in a text
+    with a heredoc or a here-string (a body is not quote-scoped) or with a double quote inside "$( )" (dq_nested_quote). The quoted text is
+    data only to THIS shell: a caller that hands it to another shell (bash -c, eval, ssh) reads it again there, as a text of its own.
+    ponytail: a '…' after a $( … ) or inside one keeps the old reading (its backticks count as a substitution); upgrade with a context stack."""
+    if "`" not in text or "\x27" not in text or "<<" in text or dq_nested_quote(text):
+        return set()
+    lexer = {(a, b) for a, b in _lexer_quotes(text)[1] if text[a] == "\x27"}
+    out, i, n, wstart = set(), 0, len(text), True
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            wstart = False
+        elif c == "\x27":
+            j = text.find("\x27", i + 1)
+            if j < 0:
+                break
+            if (i, j) in lexer:
+                out.update(k for k in range(i + 1, j) if text[k] == "`")
+            i = j + 1
+            wstart = False
+        elif c == "\x22":
+            j = i + 1
+            while j < n and text[j] != "\x22":
+                if text[j] == "`" or (text[j] == "$" and text[j + 1:j + 2] in ("(", "{")):
+                    return out
+                j += 2 if text[j] == "\\" else 1
+            if j >= n:
+                break
+            i = j + 1
+            wstart = False
+        elif c == "`" or (c == "$" and text[i + 1:i + 2] in ("(", "{", "\x27")) or (c == "#" and wstart):
+            break
+        else:
+            wstart = c in " \t\n;&|("
+            i += 1
+    return out
+
+
 _CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
 
 

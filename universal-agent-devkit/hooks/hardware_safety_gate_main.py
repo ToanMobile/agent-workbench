@@ -310,9 +310,68 @@ def writes_file(words):
             return True
     return False
 
+DATA_MARK = ""   # stands for a data backtick while a text is rewritten or lexed
+GIT_TEXT_SUBS, GH_TEXT_SUBS = {"commit", "tag"}, {"pr", "issue", "release"}
+
+def data_backticks(text):
+    """(14/11 round 2) The positions of the backticks of text that are data: inside a closed single-quoted string (shell_norm.sq_backticks:
+    the shell expands nothing there) that is an argument of a command which only prints, searches or stores it: echo, printf, grep, rg,
+    git commit / tag, gh pr / issue / release (git commit -m, echo and gh pr create --body with a backtick payload in single quotes were
+    refused). All or nothing, fail closed: empty when one such string is anything else (a script of bash -c, eval, ssh, watch, trap, an
+    alias, a NAME= value: another shell reads it and runs the backticks), when its command is piped into anything but a plain reader,
+    or when the text has a ( ) group or does not lex."""
+    data = shell_norm.sq_backticks(text)
+    if not data:
+        return data
+    try:
+        toks = shell_norm.lex_words("".join(DATA_MARK if k in data else c for k, c in enumerate(text.replace(DATA_MARK, " "))))
+    except ValueError:
+        return set()
+    segs, seps, seg, glue = [], [], [], False
+    for tk in toks + [";"]:
+        if tk == "&" and seg and re.fullmatch(r"\d*>>?", seg[-1]):   # N>&M, as data_stripped reads it
+            seg[-1], glue = seg[-1] + "&", True
+        elif glue:
+            seg[-1], glue = seg[-1] + tk, False
+        elif set(tk) <= set(";&|()\n"):
+            if "(" in tk or ")" in tk:
+                return set()
+            if seg:
+                segs.append(seg)
+                seps.append(tk.strip("\n") or ";")
+            seg = []
+        else:
+            seg.append(tk)
+    if any(w in ("function", "alias") for s in segs for w in s[:shell_norm.prefix_end(s) + 1]):
+        return set()   # function echo { eval "$1"; } / alias echo=eval: the data command may be something else
+    for n, s in enumerate(segs):
+        if not any(DATA_MARK in w for w in s):
+            continue
+        i = shell_norm.prefix_end(s)
+        if i >= len(s) or any(DATA_MARK in w for w in s[:i + 1]):
+            return set()
+        prog, rest = os.path.basename(s[i]), s[i + 1:]
+        if not ((prog in DATA_CMDS and not any(a.startswith("--pre") for a in rest))
+                or (prog == "git" and rest[:1] and rest[0] in GIT_TEXT_SUBS) or (prog == "gh" and rest[:1] and rest[0] in GH_TEXT_SUBS)):
+            return set()
+        for x, a in enumerate(rest):   # the file it writes is named once: echo '…' > x.sh && sh x.sh keeps the old reading
+            if shell_norm.REDIRECT.match(a) and a[:1] != "<":
+                name = os.path.basename((rest[x + 1] if x + 1 < len(rest) else "") if shell_norm.REDIRECT_ALONE.fullmatch(a)
+                                        else re.sub(r"^[\d&]*>[>|&]?", "", a))
+                if not name or (not NULL_REDIRECT.fullmatch(a) and name != "null" and text.count(name) > 1):
+                    return set()
+        k = n
+        while seps[k] in ("|", "|&") and k + 1 < len(segs):   # every later stage of the pipeline is a plain reader that writes no file
+            k += 1
+            j = shell_norm.prefix_end(segs[k])
+            if not (j < len(segs[k]) and os.path.basename(segs[k][j]) in DATA_PIPE_READERS and not writes_file(segs[k][j + 1:])):
+                return set()
+    return data
+
 def data_stripped(text):
     """(text rebuilt from its words, the same without the text arguments of its data commands), or None when nothing may be taken out."""
-    if DATA_NEVER.search(text) or shell_norm.drop_comments(text) != text:
+    data = data_backticks(text)   # (14/11 round 2) a backtick inside a closed '…' of a data command is no substitution
+    if DATA_NEVER.search("".join(" " if k in data else c for k, c in enumerate(text)) if data else text) or shell_norm.drop_comments(text) != text:
         return None
     try:
         if shell_norm.dq_nested_quote(text):
@@ -1516,6 +1575,168 @@ def interp_temp_var(code, name):
     bound = re.search(r"\b" + INTERP_TEMP + r"\([^()]*\)[ \t]+as[ \t]+" + name + r"\b", code)
     return len(temp) == len(assigns) and bool(temp or bound)
 
+# (14/11 round 2, replay of 12,000 real commands) node -e "… for (const f of fs.readdirSync(t)) fs.rmSync(p.join(t, f), {recursive: true})"
+# with t = os.tmpdir() was refused: cleaning probe folders under the temp folder is daily work. Closed rule: the target is safe when the
+# SAME program builds it from the temp root, as a child of it:
+#   root:   os.tmpdir(), tempfile.gettempdir(), Dir.tmpdir, process.env.TMPDIR, os.environ["TMPDIR"] (.get, os.getenv, ENV[]), a
+#           mkdtemp / mkdtempSync / TemporaryDirectory / mkstemp / mktmpdir call, or a variable every assignment of which is one of these;
+#   child:  join(root | child, part…) (path.join, os.path.join, File.join), root + "/part" …, a template literal or f-string that starts
+#           with the root and a slash; a part is a string literal with no .. component that is not absolute, or the loop variable of a
+#           listing of a root (for … of fs.readdirSync(root), for … in os.listdir(root), .forEach(f => …) after it);
+#   target: a child, or a variable every assignment of which is a child or a mkdtemp call.
+# Still refused: the root itself, a way out of it (.., an absolute part), a variable of unknown origin or one assigned anything else,
+# and every program of a command that sets the temp folder (TMPDIR=…, tempfile.tempdir = …, os.tmpdir = …).
+INTERP_TMPROOT = re.compile(r"(?:require\([\x27\x22]os[\x27\x22]\)\.|\bos\.)tmpdir\(\)|\b(?:tempfile\.)?gettempdir\(\)|\bDir\.tmpdir\b"
+                            r"|\bprocess\.env\.TMPDIR\b|\bos\.environ\[[\x27\x22]TMPDIR[\x27\x22]\]|\bos\.environ\.get\([\x27\x22]TMPDIR[\x27\x22]\)"
+                            r"|\bos\.getenv\([\x27\x22]TMPDIR[\x27\x22]\)|\bENV\[[\x27\x22]TMPDIR[\x27\x22]\]")
+INTERP_TMP_SET = re.compile(r"(?:\b(?:TMPDIR|TEMP|TMP|environ|ENV)\b|\.(?:env|tempdir|tmpdir|gettempdir|mkdtemp\w*|mkstemp|TemporaryDirectory|mktmpdir)\b)"
+                            r"[\x27\x22]?\]?[ \t]*=(?![=>~])|\b(?:setenv|putenv|unsetenv)\b|\bdelete\b|\bdel\b")
+INTERP_LISTING = re.compile(r"\b(?:readdirSync|listdir|children)\(")
+INTERP_ASSIGN = r"[ \t]*(?:[-+*/%|&^:]|\|\||&&|\?\?|\*\*|<<|>>)?=(?![=>~])"
+
+def interp_args(e):
+    """(callee, [arguments]) when the expression e is exactly one call NAME(…) whose parenthesis closes at its end, else None;
+    interp_parts(e, sep): e cut at the top-level sep (outside quotes and brackets)."""
+    m = re.match(r"[A-Za-z_][\w.]*(?=\()", e)
+    if not m or not e.endswith(")"):
+        return None
+    parts = interp_parts(e[m.end() + 1:-1], ",")
+    return None if parts is None else (m.group(0), parts)
+
+def interp_parts(e, sep):
+    out, depth, q, start, j = [], 0, None, 0, 0
+    while j < len(e):
+        c = e[j]
+        if q:
+            if c == "\\":
+                j += 1
+            elif c == q:
+                q = None
+        elif c in "\x27\x22\x60":
+            q = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0:
+                return None   # the call closed before the end of e: not one call
+        elif depth == 0 and c == sep:
+            out.append(e[start:j].strip())
+            start = j + 1
+        j += 1
+    if q or depth:
+        return None
+    return out + [e[start:].strip()]
+
+def interp_assigns(code, name):
+    """The right-hand side of every assignment to the variable name (compound ones too: d += "/.." is read as its own value)."""
+    return [interp_first_arg(code, m.end(), False) for m in re.finditer(r"(?<![\w.$])" + re.escape(name) + INTERP_ASSIGN, code)]
+
+def interp_bound(code, name):
+    """The spans (kind, position) where name is bound by a loop, an arrow function, a block or a parameter list."""
+    n = re.escape(name)
+    out = [("for", m.end()) for m in re.finditer(r"\bfor\b[ \t]*\(?[ \t]*(?:const[ \t]+|let[ \t]+|var[ \t]+)?" + n + r"[ \t]+(?:of|in)\b", code)]
+    out += [("fn", m.start()) for m in re.finditer(r"(?:\([ \t]*" + n + r"[ \t]*\)|(?<![\w.$])" + n + r")[ \t]*=>|\|[ \t]*" + n + r"[ \t]*\|", code)]
+    out += [("other", m.start()) for m in re.finditer(r"\b(?:function\b[^(]*|def[ \t]+\w+|lambda)[ \t(]*[^)\n:]*(?<![\w.$])" + n + r"\b[^)\n:]*[):]", code)
+            if not any(m.start() <= p <= m.end() for _k, p in out)]
+    return out
+
+def interp_temp_root(code, e, depth=0):
+    """True when e is the temp root or a folder the program made with mkdtemp: something a child is built from (see above)."""
+    if depth > 4:
+        return False
+    if INTERP_TMPROOT.fullmatch(e):
+        return True
+    call = interp_args(e)
+    if call:
+        return re.fullmatch(r"(?:[\w.]+\.)?" + INTERP_TEMP, call[0]) is not None
+    if not re.fullmatch(r"[A-Za-z_]\w*", e) or interp_bound(code, e):
+        return False
+    if interp_temp_var(code, e):
+        return True
+    assigns = interp_assigns(code, e)
+    return bool(assigns) and all(interp_temp_root(code, a, depth + 1) for a in assigns)
+
+def interp_listed(code, name):
+    """True when name is only ever the loop variable of a listing of a temp root: a directory entry name (never .., never absolute)."""
+    bound = interp_bound(code, name)
+    if not bound or interp_assigns(code, name):
+        return False
+    for kind, pos in bound:
+        if kind == "other":
+            return False
+        # for … of LISTING(root): the listing follows; LISTING(root).filter(f => …).forEach(f => …): it stands before, in the same statement
+        span = code[pos:pos + 200].split("{")[0].split("\n")[0] if kind == "for" else re.split(r"[;\n]", code[:pos])[-1]
+        calls = [interp_first_arg(span, m.end(), True) for m in INTERP_LISTING.finditer(span)]
+        if not calls or not all(interp_temp_root(code, c) for c in calls):
+            return False
+    return True
+
+def interp_tail_ok(tail):
+    """The text after a temp root in a concatenation or a template (a listed variable shown as X): /name…, with no .. component."""
+    return tail.startswith("/") and ".." not in tail.split("/") and re.search(r"[^/.\s]", tail) is not None and "\\" not in tail
+
+def interp_temp_child(code, e, depth=0):
+    """True when the expression e is a path under a temp root, built in this program (see above)."""
+    if depth > 4 or not e:
+        return False
+    call = interp_args(e)
+    if call:   # path.join(root, part…), os.path.join, File.join
+        args = call[1]
+        if not re.fullmatch(r"(?:[\w.]+\.)?join", call[0]) or len(args) < 2 \
+                or not (interp_temp_root(code, args[0]) or interp_temp_child(code, args[0], depth + 1)):
+            return False
+        for a in args[1:]:
+            lit = INTERP_LIT.fullmatch(a)
+            if lit:
+                v = lit.group(1) if lit.group(1) is not None else lit.group(2)
+                if a[:1] not in "\x27\x22" or not v.strip("./ \t") or v[:1] in "/~" or ".." in v.split("/"):
+                    return False
+            elif not (re.fullmatch(r"[A-Za-z_]\w*", a) and interp_listed(code, a)):
+                return False
+        return True
+    tpl = re.fullmatch(r"\x60\$\{([^{}]+)\}([^\x60\\]*)\x60|[fF](?:\x27\{([^{}]+)\}([^\x27\\]*)\x27|\x22\{([^{}]+)\}([^\x22\\]*)\x22)", e)
+    if tpl:   # `${root}/name-${f}`, f"{root}/name"
+        g = [x for x in tpl.groups() if x is not None]
+        js = e[:1] == "\x60"
+        tail, ok = g[1], [True]
+        def var(m):
+            ok[0] = ok[0] and interp_listed(code, m.group(1))
+            return "X"
+        tail = re.sub(r"\$\{([A-Za-z_]\w*)\}" if js else r"\{([A-Za-z_]\w*)\}", var, tail)
+        return ok[0] and not re.search(r"\$\{" if js else r"[{}]", tail) and interp_tail_ok(tail) \
+            and (interp_temp_root(code, g[0].strip()) or interp_temp_child(code, g[0].strip(), depth + 1))
+    parts = interp_parts(e, "+")
+    if parts and len(parts) > 1:   # root + "/name" + f
+        if not (interp_temp_root(code, parts[0]) or interp_temp_child(code, parts[0], depth + 1)):
+            return False
+        tail = ""
+        for a in parts[1:]:
+            lit = INTERP_LIT.fullmatch(a)
+            if lit and a[:1] in "\x27\x22":
+                tail += lit.group(1) if lit.group(1) is not None else lit.group(2)
+            elif re.fullmatch(r"[A-Za-z_]\w*", a) and interp_listed(code, a):
+                tail += "X"
+            else:
+                return False
+        return interp_tail_ok(tail)
+    return False
+
+def interp_temp_target(code, arg):
+    """True when the delete target arg is under a temp root this program names (see above); never when the command sets the temp folder."""
+    if INTERP_TMP_SET.search(cmd):
+        return False
+    tpl = re.fullmatch(r"\\?\$\((.*)\)", arg, re.S)   # a JS template literal as rm_walk hands it over: its backticks are $( ) by now
+    if tpl:
+        arg = "\x60" + re.sub(r"\\$", "", tpl.group(1).replace("\\$", "$")) + "\x60"
+    if interp_temp_child(code, arg):
+        return True
+    if not re.fullmatch(r"[A-Za-z_]\w*", arg) or interp_bound(code, arg):
+        return False
+    made = lambda a: (interp_args(a) or ("", 0))[0] and re.fullmatch(r"(?:[\w.]+\.)?" + INTERP_TEMP, interp_args(a)[0]) is not None
+    assigns = interp_assigns(code, arg)
+    return bool(assigns) and all(interp_temp_child(code, a) or made(a) for a in assigns)
+
 # (14/11) An interpreter that hands a command line to a shell or starts a program: os.system("…"), subprocess.run([…]) / run("…",
 # shell=True), os.popen, child_process.execSync, ruby / perl system(…). The command is read from the string literals of the call (the
 # first one alone: a command line; all of them joined: an argument list) and judged by rm_problem, the same way as the script of bash -c.
@@ -1563,7 +1784,7 @@ def interp_rm_problem(code, cwds, env, strict):
             continue
         if api in ("rmSync", "rmdirSync") and "recursive" not in code[m.end():m.end() + 300]:
             continue   # fs.rmSync(file): one file
-        arg = interp_first_arg(code, m.end(), paren)
+        raw = arg = interp_first_arg(code, m.end(), paren)
         arg = INTERP_CWD.sub("\x27.\x27", INTERP_HOME.sub("\x27~\x27", arg))
         for _ in range(3):   # Path(os.path.expanduser("~")) …
             arg = INTERP_WRAP.sub(lambda w: w.group(1) or w.group(2), arg)
@@ -1574,6 +1795,8 @@ def interp_rm_problem(code, cwds, env, strict):
                 return why + f" ({api}: xoá đệ quy trong chương trình của interpreter)"
         elif re.fullmatch(r"[A-Za-z_]\w*", arg) and interp_temp_var(code, arg):
             continue   # d = tempfile.mkdtemp(); shutil.rmtree(d): a temp folder the program made itself
+        elif strict and arg and interp_temp_target(code, raw):
+            continue   # (14/11 round 2) fs.rmSync(path.join(os.tmpdir(), name)): a child of the temp root, built in this program
         elif strict and arg:
             return (f"{api}({arg[:60]}): xoá đệ quy trong chương trình nội tuyến của interpreter mà đích không phải chuỗi literal — cổng không "
                     f"đọc được đích. Viết đường dẫn bằng chữ, hoặc dùng rm -rf <đường dẫn> để cổng xét")
@@ -2424,7 +2647,11 @@ def rm_walk(text, cwds, depth, remote, env):
     """rm_problem of one reading of the text (comments already cut, continuations already decided)."""
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
     # (unresolvable, refused) while the inner command is walked as its own segment.
-    text = re.sub(r"`([^`]*)`?", r"$(\1)", text)
+    # (14/11 round 2) not a data backtick (data_backticks: inside a closed '…' that echo, grep, git commit, gh pr … only print or store)
+    data = data_backticks(text)
+    if data:
+        text = "".join(DATA_MARK if k in data else c for k, c in enumerate(text.replace(DATA_MARK, " ")))
+    text = re.sub(r"`([^`]*)`?", r"$(\1)", text).replace(DATA_MARK, "`")
     text = mktemp_rewrite(text)   # NAME=$(mktemp …) → NAME=__MKTEMP_<n>__ (assign)
     text = FIND_OP.sub(lambda m: (m.group(1) or "") + FIND_OP_WORD[m.group(2) or m.group(3) or m.group(4)], text)
     text = zsh_qualifiers(text)
@@ -2475,7 +2702,8 @@ def rm_walk(text, cwds, depth, remote, env):
                     env.pop(name, None)
             for tok_seg in seg:  # "$(…)" / `…` inside a quoted word runs too — #427 vòng 2: trước lệnh chứa nó (chạy trước), như shell
                 if "(" in tok_seg and depth < 5:
-                    why = rm_problem(tok_seg.split("(", 1)[1].rstrip(")"), cwds, depth + 1, remote)
+                    # a backtick still in a word of this walk was inside a closed '…' (every other one is $( now): data here as well
+                    why = rm_problem(tok_seg.split("(", 1)[1].rstrip(")").replace("`", ""), cwds, depth + 1, remote)
                     if why and not COLLECT[0]:
                         return why
             if head in CD_WORDS:   # review vòng 3: cả chdir (cd của zsh)

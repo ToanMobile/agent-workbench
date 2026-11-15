@@ -184,4 +184,174 @@ check 0 hw 'find . -name "*.py"'
 check 0 hw 'find ~ -name "*.py"'
 check 0 hw 'find . -name "*.log" | xargs rm'
 
+echo "── C4f git: checkout / restore whose paths are the whole tree or come from a file list (round 2)"
+printf 'dirty\n' >> "$P/src/a.kt"   # an uncommitted change: what these commands throw away
+check 2 git 'git diff --name-only | xargs git checkout'
+check 2 git 'git ls-files -m | xargs git checkout'
+check 2 git 'git diff --name-only | xargs git checkout HEAD'
+check 2 git 'git diff --name-only | xargs -n1 git checkout'
+check 2 git 'git diff --name-only | xargs -I{} git checkout {}'
+check 2 git 'git status --porcelain | xargs git checkout'
+check 2 git 'git checkout $(git diff --name-only)'
+check 2 git 'git checkout "$(git diff --name-only)"'
+check 2 git 'git checkout `git ls-files -m`'
+check 2 git 'git checkout $(git status --porcelain | cut -c4-)'
+check 2 git 'git checkout $(find src -name "*.kt")'
+check 2 git 'git checkout $(ls src)'
+check 2 git 'git checkout -q $(git diff --name-only)'
+check 2 git 'git checkout :/'
+check 2 git "git checkout ':/*'"
+check 2 git "git checkout ':(top)'"
+check 2 git 'git checkout "$PWD"'
+check 2 git 'git checkout $PWD'
+check 2 git 'git checkout "${PWD}"'
+check 2 git 'git checkout $(pwd)'
+check 2 git 'git checkout "$(pwd)"'
+check 2 git 'git checkout "$PWD/src/a.kt"'
+check 2 git 'git checkout -- "$PWD"'
+check 2 git 'git checkout -- :/'
+check 2 git 'git checkout .'
+check 2 git 'git checkout -- src/a.kt'
+check 2 git 'git restore $(git diff --name-only)'
+check 2 git 'git ls-files -m | xargs git restore'
+check 2 git 'git diff --name-only | xargs git restore'
+check 2 git 'git ls-files -m | xargs git restore README.md'   # the file named is backed up, the ones stdin adds are not
+check 2 git 'echo main | xargs git checkout'   # closed rule: whatever feeds xargs, its operands are not read
+check 2 git 'git restore :/'
+check 2 git 'git restore "$PWD"'
+check 2 git 'git restore .'
+check 2 git "bash -c 'git diff --name-only | xargs git checkout'"
+echo "── C4f git: controls, a branch switch and commands that lose nothing keep their verdict"
+check 0 git 'git checkout main'
+check 0 git 'git checkout feat'
+check 0 git 'git checkout -'
+check 2 git 'git checkout -b feature'   # the one-branch rule, as before
+check 0 git 'DEVKIT_ALLOW_BRANCH=1 git checkout -b feature'
+check 0 git 'git checkout $(git merge-base HEAD origin/main)'
+check 0 git 'git checkout "$(git rev-parse HEAD~1)"'
+check 0 git 'git checkout "$BRANCH"'
+check 0 git 'git checkout $BRANCH'
+check 0 git 'git switch main'
+check 0 git 'git switch "$BRANCH"'
+check 0 git 'git restore --staged src/a.kt'
+check 0 git 'git restore --staged $(git diff --name-only --cached)'
+check 0 git 'git diff --name-only | xargs git restore --staged'
+check 0 git 'git diff --name-only | xargs git add'
+check 0 git 'git ls-files -m | xargs wc -l'
+check 0 git 'git ls-files -m | xargs git diff --stat'
+check 0 git 'git ls-files -m | xargs git log --oneline --'
+check 0 git 'git checkout :/init'   # :/text is a revision: the newest commit whose message matches
+check 0 git 'git add $(git diff --name-only)'
+check 0 git 'git diff $(git merge-base HEAD main)'
+check 0 git 'echo "$PWD" && git status'
+
+echo "── C4g hw: a backtick inside single quotes is data (the shell expands nothing there)"
+check 0 hw "git commit -m 'fix(guard): \`rm -rf ~\` now blocked'"
+check 0 hw "echo 'never \`rm -rf ~\`' >> docs/x.md"
+check 0 hw "gh pr create --body 'note: \`rm -rf ~\` is refused'"
+check 0 hw "git commit -m 'docs: \`npm publish\` is refused'"
+check 0 hw "echo 'a' 'never \`rm -rf ~\`'"
+echo "── C4g hw: controls, the shell does expand these"
+check 2 hw 'echo "x `rm -rf ~`"'
+check 2 hw 'git commit -m "fix: `rm -rf ~` now blocked"'
+check 2 hw 'echo `rm -rf ~`'
+check 2 hw 'echo x`rm -rf ~`'
+check 2 hw 'echo "$(rm -rf ~)"'
+check 2 hw "echo 'a'\`rm -rf ~\`'b'"
+check 2 hw "echo 'a' \`rm -rf ~\` 'b'"
+check 2 hw "echo \"it's\" \`rm -rf ~\` 'b'"
+check 2 hw "echo \\'a \`rm -rf ~\` b\\'"
+check 2 hw "echo 'x' && rm -rf ~"
+check 2 hw "bash -c 'echo \`rm -rf ~\`'"
+check 2 hw "eval 'echo \`rm -rf ~\`'"
+check 2 hw "echo 'never \`rm -rf ~\`' | sh"
+check 2 hw "echo 'never \`rm -rf ~\`' > x.sh && sh x.sh"
+check 2 hw "echo 'never \`rm -rf ~\`' | tee x.sh | sh"
+check 2 hw "echo 'never \`rm -rf ~\`' | xargs -I{} sh -c {}"
+check 2 hw "X='echo \`rm -rf ~\`'; eval \"\$X\""
+check 2 hw "alias x='echo \`rm -rf ~\`'; x"
+check 2 hw "watch 'echo \`rm -rf ~\`'"
+check 2 hw "trap 'echo \`rm -rf ~\`' EXIT"
+check 2 hw "ssh host 'echo \`rm -rf ~\`'"
+check 2 hw "docker run x sh -c 'echo \`rm -rf ~\`'"
+check 2 hw "function echo { eval \"\$1\"; }; echo 'x \`rm -rf ~\`'"   # the data command is shadowed
+check 2 hw "alias echo=eval; echo 'x \`rm -rf ~\`'"
+check 2 hw "alias printf=eval; printf 'x \`rm -rf ~\`'"
+check 2 hw "echo() { eval \"\$1\"; }; echo 'x \`rm -rf ~\`'"
+check 2 hw "git -c alias.x='!echo \`rm -rf ~\`' x"
+check 2 hw "echo 'a \`date\`' && echo \`rm -rf ~\`"
+check 2 hw "( echo 'never \`rm -rf ~\`' )"   # a group: the old reading stays (not modeled)
+echo "── C4g git: the same through the git guard"
+check 0 git "git commit -m 'fix(guard): \`git reset --hard\` now blocked'"
+check 0 git "echo 'never \`git reset --hard\`' >> docs/x.md"
+check 0 git "gh pr create --body 'note: \`git reset --hard\` is refused'"
+check 2 git 'echo "x `git reset --hard`"'
+check 2 git 'echo `git reset --hard`'
+check 2 git 'echo "$(git reset --hard)"'
+check 2 git "echo 'a'\`git reset --hard\`'b'"
+check 2 git "bash -c 'echo \`git reset --hard\`'"
+check 2 git "eval 'echo \`git reset --hard\`'"
+
+echo "── C4h hw: an interpreter that removes a folder it builds from the temp root (replay of 12,000 real commands, 14/11)"
+N="const fs=require('fs'),os=require('os'),p=require('path');"
+check 0 hw "node -e \"${N}const t=os.tmpdir();let n=0;for(const f of fs.readdirSync(t)){if(f.startsWith('probe-')){fs.rmSync(p.join(t,f),{recursive:true,force:true});n++}}console.log('removed',n)\""
+check 0 hw "node -e \"${N}fs.rmSync(p.join(os.tmpdir(),'probe-1'),{recursive:true,force:true})\""
+check 0 hw "node -e \"${N}const d=p.join(os.tmpdir(),'probe-1');fs.rmSync(d,{recursive:true,force:true})\""
+check 0 hw "node -e \"${N}fs.rmSync(os.tmpdir()+'/probe-1',{recursive:true,force:true})\""
+check 0 hw "node -e \"${N}const t=os.tmpdir();fs.rmSync(\\\`\\\${t}/probe-1\\\`,{recursive:true,force:true})\""
+check 0 hw "node -e \"${N}const d=fs.mkdtempSync(p.join(os.tmpdir(),'x-'));fs.rmSync(d,{recursive:true,force:true})\""
+check 0 hw "node -e \"${N}const d=fs.mkdtempSync(p.join(os.tmpdir(),'x-'));fs.rmSync(p.join(d,'sub'),{recursive:true,force:true})\""
+check 0 hw "node -e \"${N}fs.rmSync(p.join(process.env.TMPDIR,'probe-1'),{recursive:true,force:true})\""
+check 0 hw "node -e \"${N}const t=os.tmpdir();fs.readdirSync(t).filter(f=>f.startsWith('probe-')).forEach(f=>fs.rmSync(p.join(t,f),{recursive:true,force:true}))\""
+check 0 hw "python3 -c \"import shutil,tempfile,os; shutil.rmtree(os.path.join(tempfile.gettempdir(),'probe-1'))\""
+check 0 hw "python3 -c \"import shutil,tempfile,os; t=tempfile.gettempdir(); d=os.path.join(t,'probe-1'); shutil.rmtree(d, ignore_errors=True)\""
+check 0 hw "python3 -c \"import shutil,tempfile,os; shutil.rmtree(tempfile.gettempdir()+'/probe-1')\""
+check 0 hw "python3 -c \"import shutil,tempfile,os; t=tempfile.gettempdir(); shutil.rmtree(f'{t}/probe-1')\""
+check 0 hw "python3 -c \"import shutil,os; shutil.rmtree(os.path.join(os.environ['TMPDIR'],'probe-1'))\""
+check 0 hw "python3 -c \"import shutil,tempfile,os; d=tempfile.mkdtemp(); shutil.rmtree(os.path.join(d,'sub'))\""
+check 0 hw "python3 -c \"
+import shutil,tempfile,os
+t=tempfile.gettempdir()
+for n in os.listdir(t):
+    if n.startswith('probe-'): shutil.rmtree(os.path.join(t,n))
+\""
+check 0 hw "ruby -e \"require 'fileutils'; require 'tmpdir'; FileUtils.rm_rf(File.join(Dir.tmpdir,'probe-1'))\""
+check 0 hw "node -e \"${N}const tmpdir=os.tmpdir();fs.rmSync(p.join(tmpdir,'probe-1'),{recursive:true,force:true})\""
+check 0 hw "python3 -c \"import shutil,tempfile,os; tmpdir=tempfile.gettempdir(); shutil.rmtree(os.path.join(tmpdir,'probe-1'))\""
+echo "── C4h hw: controls, the temp root itself, a way out of it and a path of unknown origin are still refused"
+check 2 hw "node -e \"${N}fs.rmSync(os.tmpdir(),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}const t=os.tmpdir();fs.rmSync(t,{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}fs.rmSync(p.join(os.tmpdir(),'..'),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}fs.rmSync(p.join(os.tmpdir(),'a','..','..'),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}fs.rmSync(p.join(os.tmpdir()),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}fs.rmSync(p.join(os.tmpdir(),'.'),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}fs.rmSync(p.join(os.tmpdir(),x),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}fs.rmSync(p.join(base,'probe-1'),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}let d=p.join(os.tmpdir(),'probe-1');d=os.homedir();fs.rmSync(d,{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}let d=p.join(os.tmpdir(),'probe-1');d+='/../..';fs.rmSync(d,{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}let t=os.tmpdir();t='/';fs.rmSync(p.join(t,'usr'),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}fs.rmSync(os.tmpdir()+'/..',{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}fs.rmSync(os.tmpdir()+'x',{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}fs.rmSync(os.tmpdir()+'/',{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}const t=os.tmpdir();fs.rmSync(\\\`\\\${t}/../x\\\`,{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}const t=os.tmpdir();fs.rmSync(\\\`\\\${t}\\\`,{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}const t=os.tmpdir();for(const f of fs.readdirSync(os.homedir())){fs.rmSync(p.join(t,f),{recursive:true,force:true})}\""
+check 2 hw "node -e \"${N}const t=os.tmpdir();for(const f of ['..']){fs.rmSync(p.join(t,f),{recursive:true,force:true})}\""
+check 2 hw "node -e \"${N}for(const f of fs.readdirSync(os.homedir())){fs.rmSync(p.join(os.homedir(),f),{recursive:true,force:true})}\""
+check 2 hw "TMPDIR=/ node -e \"${N}fs.rmSync(p.join(os.tmpdir(),'usr'),{recursive:true,force:true})\""
+check 2 hw "export TMPDIR=\$HOME; node -e \"${N}fs.rmSync(p.join(os.tmpdir(),'Documents'),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}process.env.TMPDIR='/';fs.rmSync(p.join(process.env.TMPDIR,'usr'),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}os.tmpdir=()=>'/';fs.rmSync(p.join(os.tmpdir(),'usr'),{recursive:true,force:true})\""
+check 2 hw "python3 -c \"import shutil,tempfile; shutil.rmtree(tempfile.gettempdir())\""
+check 2 hw "python3 -c \"import shutil,tempfile,os; shutil.rmtree(os.path.join(tempfile.gettempdir(),'..'))\""
+check 2 hw "python3 -c \"import shutil,tempfile,os; shutil.rmtree(os.path.join(tempfile.gettempdir(),'/'))\""
+check 2 hw "python3 -c \"import shutil,tempfile,os; shutil.rmtree(os.path.join(tempfile.gettempdir(),'a','/etc'))\""
+check 2 hw "python3 -c \"import shutil,tempfile,os; shutil.rmtree(os.path.join(tempfile.gettempdir(),x))\""
+check 2 hw "python3 -c \"import shutil,tempfile,os; t=tempfile.gettempdir(); t=os.path.expanduser('~'); shutil.rmtree(os.path.join(t,'x'))\""
+check 2 hw "python3 -c \"import shutil,tempfile,os; tempfile.tempdir='/'; shutil.rmtree(os.path.join(tempfile.gettempdir(),'usr'))\""
+check 2 hw "python3 -c \"import shutil,tempfile,os; t=tempfile.gettempdir(); shutil.rmtree(f'{t}/../x')\""
+check 2 hw "python3 -c \"import shutil,os; shutil.rmtree(os.path.join(os.environ['HOME'],'probe-1'))\""
+check 2 hw "ruby -e \"require 'fileutils'; require 'tmpdir'; FileUtils.rm_rf(Dir.tmpdir)\""
+check 2 hw "ruby -e \"require 'fileutils'; require 'tmpdir'; FileUtils.rm_rf(File.join(Dir.tmpdir,'..'))\""
+
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }
