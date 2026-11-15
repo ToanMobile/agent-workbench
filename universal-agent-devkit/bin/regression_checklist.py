@@ -979,7 +979,7 @@ def _runner(project: Path, cwd: str, seg: str):
 def _command_lines(text: str) -> list:
     """The command lines of a wrapper script or task: no comment, no heredoc body; a quoted
     string is kept only as a path-like word ("$X…" → $Q, prose → Q)."""
-    out, end = [], None
+    out, end, cont = [], None, ""
     for line in text.splitlines():
         if end is not None:
             if line.strip() == end:
@@ -991,8 +991,15 @@ def _command_lines(text: str) -> list:
         code = re.sub(r"(?:^|\s)#.*$", "", line).strip()
         code = re.sub(r"(['\"])(.*?)\1", lambda q: "$Q" if "$" in q.group(2) else
                       ("Q" if re.search(r"\s", q.group(2)) else q.group(2)), code)
+        # #1102: a backslash-continued line is one command — the next line's first word is an argument, not a command
+        if code.endswith("\\") and not code.endswith("\\\\") and end is None:
+            cont += code[:-1].rstrip() + " "
+            continue
+        code, cont = (cont + code).strip(), ""
         if code:
             out.append(code)
+    if cont.strip():
+        out.append(cont.strip())
     return out
 
 
