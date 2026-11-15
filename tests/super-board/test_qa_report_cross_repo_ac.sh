@@ -52,4 +52,13 @@ mk "$TMP/g.json" "$AC_LOCAL" "❌ Not done:
 - AC3 thuộc ToanMobile/GeelyEx2#43"
 [ "$(run "$TMP/g.json")" = 0 ] && ok "mọi bullet đều dẫn issue repo khác: qua" || { fail "bullet đã tách vẫn bị chặn"; cat "$TMP/out"; }
 
+mk "$TMP/h.json" "$AC_LOCAL" "❌ Not done: AC1 chưa đạt, xem ToanMobile/GeelyEx2#42"
+[ "$(run "$TMP/h.json")" = 1 ] && ok "mã AC trần + chỉ dẫn (xem) issue repo khác, không nói đã tách: vẫn exit 1" || { fail "mã AC trần lọt vì cùng vế có owner/repo#N"; cat "$TMP/out"; }
+
+mk "$TMP/i.json" "$AC_LOCAL" "❌ Not done: AC1 chưa đạt, AC2 đã tách sang ToanMobile/GeelyEx2#42"
+[ "$(run "$TMP/i.json")" = 1 ] && ok "cùng vế ngăn bằng dấu phẩy: AC1 cục bộ không bị che bởi AC2 đã tách" || { fail "vế phẩy bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/j.json" "$AC_LOCAL" "❌ Not done: AC1 (xem ToanMobile/GeelyEx2#42) chưa đạt"
+[ "$(run "$TMP/j.json")" = 1 ] && ok "mã AC trần cạnh ref trong ngoặc, không nói đã tách: vẫn exit 1" || { fail "ref trong ngoặc làm lọt AC1"; cat "$TMP/out"; }
+
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAILS=$FAILS"; exit 1; }

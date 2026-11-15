@@ -42,6 +42,7 @@ AC_ITEM = re.compile(r"^\s*-\s*\[([ xX])\]\s*(.*)$")
 PROOF = re.compile(r"^\s*↳\s*(\S.*)$")
 AC_ID = re.compile(r"\bAC\s*-?\s*#?\d+", re.I)
 OTHER_REPO_AC = re.compile(r"\(\s*repo\s*:\s*[^)\s][^)]*\)", re.I)  # #1199: AC gắn `(repo: <khác>)` đo ở repo khác, không phải AC của PR này
+SPLIT_WORD = re.compile(r"đã\s+tách|tách\s+sang|thuộc", re.I)        # #1199: lời khai AC đã tách/thuộc repo khác (kèm owner/repo#N)
 CROSS_REPO_REF = re.compile(r"\b[\w.-]+/[\w.-]+#\d+\b")             # `owner/repo#N`: AC đã tách thành issue ở repo khác
 BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S")
 TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
@@ -92,8 +93,10 @@ def names_ac(text, acs):
         for a in acs:
             if a in low and not (split_off and OTHER_REPO_AC.search(a)):
                 return True
-        if AC_ID.search(clause) and not split_off:
-            return True
+        # Mã AC trần chỉ là "đã tách" khi chính đoạn nhỏ (ngăn bởi , hay ngoặc) vừa nói đã tách/thuộc vừa dẫn `owner/repo#N`.
+        for sub in re.split(r"[,，()（）]", clause):
+            if AC_ID.search(sub) and not (CROSS_REPO_REF.search(sub) and SPLIT_WORD.search(sub)):
+                return True
     return False
 
 
