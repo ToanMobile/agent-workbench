@@ -5,11 +5,12 @@
 - **Mã định danh (Code Identifiers)**: Tên hàm, tên biến, tên class, struct, file path, và command luôn giữ nguyên **Tiếng Anh**.
 
 ## 2. Báo Cáo Tiến Độ & Nghiệm Thu (Reports & Handovers)
-- **Báo cáo nghiệm thu 4 mục**: Bắt buộc viết bằng **Tiếng Việt**:
-  1. Đã fix gì (What Was Fixed): Tên lỗi, nguyên nhân gốc, cơ chế lỗi, bằng chứng đối lập (RED ➔ GREEN).
-  2. Đã chặn đứng bug cũ nào (Zero Reopened Bugs): Rào chắn bất biến lịch sử và test hồi quy đạt PASS.
-  3. Nguy cơ bug mới nào đã triệt tiêu (Zero Collateral Damage): Rà soát inbound callers, module liên đới.
-  4. Trạng thái an toàn mã nguồn: Quét secret (SẠCH), 0 placeholder, OCR tĩnh (0 leak).
+- **Báo cáo nghiệm thu 5 mục** (chi tiết: `rules/core-rules.md` §2.3): Bắt buộc viết bằng **Tiếng Việt**, mỗi con số ghi nguồn `tự chạy` hoặc `agent báo`:
+  1. Đã làm gì / Đã fix gì: Lỗi hoặc thay đổi, nguyên nhân gốc, bằng chứng đối lập (RED ➔ GREEN).
+  2. Chặn bug cũ: Test hồi quy và rào chắn bất biến lịch sử đã chạy lại, kèm kết quả.
+  3. Nguy cơ bug mới: Phép so cũ–mới đã chạy (lệnh, số đầu vào, số ca đổi kết quả) hoặc `chưa so — <lý do>`.
+  4. An toàn mã nguồn: Quét secret, placeholder; OCR chỉ ghi khi đã chạy, không thì `OCR: không chạy — <lý do>`.
+  5. Còn hở / chưa kiểm: Liệt kê, hoặc `không có`.
 - **Trạng thái mở đầu**: Sử dụng `XONG` / `CHƯA XONG` / `CHỜ DUYỆT`.
 
 ## 3. Git Commit & Pull Request
