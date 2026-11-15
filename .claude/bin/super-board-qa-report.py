@@ -41,6 +41,8 @@ PROOF_HEADING = re.compile(r"^#{1,6}\s*Acceptance criteria\b", re.I)  # "## AC +
 AC_ITEM = re.compile(r"^\s*-\s*\[([ xX])\]\s*(.*)$")
 PROOF = re.compile(r"^\s*↳\s*(\S.*)$")
 AC_ID = re.compile(r"\bAC\s*-?\s*#?\d+", re.I)
+OTHER_REPO_AC = re.compile(r"\(\s*repo\s*:\s*[^)\s][^)]*\)", re.I)  # #1199: AC gắn `(repo: <khác>)` đo ở repo khác, không phải AC của PR này
+CROSS_REPO_REF = re.compile(r"\b[\w.-]+/[\w.-]+#\d+\b")             # `owner/repo#N`: AC đã tách thành issue ở repo khác
 BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S")
 TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
 _CONFIG = os.environ.get("SB_CONFIG") or None  # decision_policy.enabled=false của config tắt luật này
@@ -77,14 +79,17 @@ def ac_texts(body):
         m = AC_ITEM.match(line) if in_ac else None
         if m:
             t = m.group(2).rstrip("\\").strip().lower()
-            if len(t) >= MIN_AC_TEXT:
+            if len(t) >= MIN_AC_TEXT and not OTHER_REPO_AC.search(t):
                 texts.append(t)
     return texts
 
 
 def names_ac(text, acs):
     low = text.lower()
-    return bool(AC_ID.search(text)) or any(a in low for a in acs)
+    if any(a in low for a in acs):
+        return True
+    # #1199: mã AC trần (`AC3`) trong mục dẫn issue repo khác là AC đã tách, không phải AC của repo này.
+    return bool(AC_ID.search(text)) and not CROSS_REPO_REF.search(text)
 
 
 # #516: bộ đọc [decision] dùng chung; tên file có gạch ngang nên nạp bằng importlib.
