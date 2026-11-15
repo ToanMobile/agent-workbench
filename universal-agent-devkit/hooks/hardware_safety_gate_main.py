@@ -11,7 +11,7 @@ def _fail_closed(etype, value, tb):
     finally:
         os._exit(2)
 sys.excepthook = _fail_closed
-import json, re, fnmatch, shlex, shutil, subprocess, signal, unicodedata
+import json, re, fnmatch, functools, shlex, shutil, subprocess, signal, unicodedata
 # Watchdog: the hook limit is 10 s (.claude/settings.json) and a hook killed there is no verdict. A command the parser cannot judge in 7 s
 # (a pattern word[^;&|\n]*rare re-scans the line for every word: 15 s for 60 KB of `dd dd dd …`) is refused with a reason. SIGALRM also
 # interrupts a regex search in the middle (checked on Python 3.9 and 3.14). tests/gates/test_hook_big_command_fast_path.sh
@@ -302,6 +302,64 @@ DATA_PIPE_READERS = {"cat", "wc", "grep", "egrep", "fgrep", "rg", "sort", "uniq"
 DATA_NEVER = re.compile(r"\$\(|\x60|<<|[<>]\(|\beval\b")
 NULL_REDIRECT = re.compile(r"\d*(?:>>?|&>)(?:/dev/null|&\d)")
 
+def data_cmd(prog, rest):
+    """True when prog with its words rest only prints or searches its text arguments: rg --pre CMD runs CMD, printf -v NAME stores the
+    text in a variable the line may run ($X, OCR review 15/11)."""
+    return prog in DATA_CMDS and not any(a.startswith("--pre") for a in rest) \
+        and not (prog == "printf" and any(a.startswith("-v") for a in rest))
+
+def plain_reader(words):
+    """True when the simple command words (its prefix included) is a plain reader of its input: in DATA_PIPE_READERS, and it writes no
+    file (OCR review 15/11: sort -o / --output, uniq IN OUT, less -o / --log-file wrote the text to a file) and starts nothing
+    (sort --compress-program, rg --pre, less +!cmd). Long options are refused by their prefix: getopt takes an abbreviation (--out)."""
+    j = shell_norm.prefix_end(words)
+    if j >= len(words):
+        return False
+    prog, args = os.path.basename(words[j]), words[j + 1:]
+    if prog not in DATA_PIPE_READERS or writes_file(args):
+        return False
+    pos, opts, k, ended = [], [], 0, False
+    while k < len(args):   # the operands and the options, redirect words and their targets left out
+        a = args[k]
+        if shell_norm.REDIRECT.match(a):
+            k += 2 if shell_norm.REDIRECT_ALONE.fullmatch(a) else 1
+            continue
+        if ended or a == "-" or not a.startswith("-"):
+            pos.append(a)
+        elif a == "--":
+            ended = True
+        else:
+            opts.append(a)
+            if prog == "uniq" and a in ("-f", "-s", "-w"):
+                k += 1   # its value
+        k += 1
+    short = "".join(a[1:] for a in opts if not a.startswith("--"))
+    longs = [a[2:].lower() for a in opts if a.startswith("--")]
+    if prog == "sort":
+        return "o" not in short and not any(a.startswith(("o", "co")) for a in longs)
+    if prog == "uniq":
+        return len(pos) <= 1   # uniq IN OUT writes OUT
+    if prog == "less":
+        return "o" not in short.lower() and not any(a.startswith("l") for a in longs) and not any(a.startswith("+") for a in args)
+    if prog == "rg":
+        return not any(a.startswith("--pre") for a in args)
+    return True
+
+# (OCR review 15/11) A line that writes a data command's text to a file and also runs or sources a file: the written file may be the one
+# that runs (echo '…' > x.sh; sh ./x*.sh, a glob the file name check cannot follow). No data exemption for the line.
+FILE_RUNNERS = shell_norm.SHELLS | shell_norm.RUNNERS | {"source", ".", "exec", "xargs", "find", "env"}
+
+def runs_file(segs):
+    """True when a simple command of segs runs or sources a file: a shell, source / ., an interpreter, a runner, a path or glob as program."""
+    for s in segs:
+        i = shell_norm.prefix_end(s)
+        if i < len(s):
+            p = s[i]
+            b = os.path.basename(p)
+            if "/" in p or re.search(r"[*?\[]", p) or b in FILE_RUNNERS or shell_norm.INTERPRETER.fullmatch(b):
+                return True
+    return False
+
 def writes_file(words):
     """True when a word of the simple command redirects its output anywhere but /dev/null or another descriptor."""
     for k, a in enumerate(words):
@@ -351,20 +409,19 @@ def data_backticks(text):
         if i >= len(s) or any(DATA_MARK in w for w in s[:i + 1]):
             return set()
         prog, rest = os.path.basename(s[i]), s[i + 1:]
-        if not ((prog in DATA_CMDS and not any(a.startswith("--pre") for a in rest))
+        if not (data_cmd(prog, rest)
                 or (prog == "git" and rest[:1] and rest[0] in GIT_TEXT_SUBS) or (prog == "gh" and rest[:1] and rest[0] in GH_TEXT_SUBS)):
             return set()
         for x, a in enumerate(rest):   # the file it writes is named once: echo '…' > x.sh && sh x.sh keeps the old reading
             if shell_norm.REDIRECT.match(a) and a[:1] != "<":
                 name = os.path.basename((rest[x + 1] if x + 1 < len(rest) else "") if shell_norm.REDIRECT_ALONE.fullmatch(a)
                                         else re.sub(r"^[\d&]*>[>|&]?", "", a))
-                if not name or (not NULL_REDIRECT.fullmatch(a) and name != "null" and text.count(name) > 1):
+                if not name or (not NULL_REDIRECT.fullmatch(a) and name != "null" and (text.count(name) > 1 or runs_file(segs))):
                     return set()
         k = n
         while seps[k] in ("|", "|&") and k + 1 < len(segs):   # every later stage of the pipeline is a plain reader that writes no file
             k += 1
-            j = shell_norm.prefix_end(segs[k])
-            if not (j < len(segs[k]) and os.path.basename(segs[k][j]) in DATA_PIPE_READERS and not writes_file(segs[k][j + 1:])):
+            if not plain_reader(segs[k]):
                 return set()
     return data
 
@@ -398,6 +455,11 @@ def data_stripped(text):
     # publish"; } | sh passed), so nothing is taken out, as before the data exemption existed
     if any(w in ("{", "}") for s in segs for w in s[:shell_norm.prefix_end(s) + 1]):
         return None
+    def data_writer(s):
+        i = shell_norm.prefix_end(s)
+        return i < len(s) and data_cmd(os.path.basename(s[i]), s[i + 1:]) and writes_file(s[i + 1:])
+    if any(data_writer(s) for s in segs) and runs_file(segs):   # (OCR review 15/11) the file it writes may be the one that runs
+        return None
     full, cut, removed = [], [], False
     for n, s in enumerate(segs):
         i = shell_norm.prefix_end(s)
@@ -407,11 +469,10 @@ def data_stripped(text):
         piped, k = True, n   # every later stage of the pipeline is a plain reader that writes no file
         while piped and seps[k] in ("|", "|&") and k + 1 < len(segs):
             k += 1
-            j = shell_norm.prefix_end(segs[k])
-            piped = j < len(segs[k]) and os.path.basename(segs[k][j]) in DATA_PIPE_READERS and not writes_file(segs[k][j + 1:])
+            piped = plain_reader(segs[k])
         if writes or not piped:
             pass
-        elif prog in DATA_CMDS and not any(a.startswith("--pre") for a in rest):   # rg --pre CMD runs CMD
+        elif data_cmd(prog, rest):
             keep = s[:i + 1]
         elif prog == "git" and rest[:1] == ["commit"]:   # git with a global option (-c alias.x=!…, -C) is read as before
             keep, j = s[:i + 2], 1
@@ -1571,6 +1632,12 @@ def interp_first_arg(code, i, paren):
 
 INTERP_TEMP = r"(?:mkdtemp|mkdtempSync|TemporaryDirectory|mkstemp|mktmpdir)\b"
 
+# (OCR review 15/11) Each delete call read the whole program again for its variable (assignments, bindings, the temp-folder setting):
+# 700 rmSync calls in a 30 KB node -e took 3.3 s. The answers per (program, name) are kept: one scan per variable, not per call.
+# ponytail: a program with hundreds of DISTINCT variables still costs one scan each; index all names in one pass if one shows up.
+_memo = functools.lru_cache(maxsize=None)
+
+@_memo
 def interp_temp_var(code, name):
     """True when the variable name is filled from tempfile in this program and by nothing else: every `name =` of it is a mkdtemp /
     TemporaryDirectory / mkstemp call (or it is the `as name` of a `with TemporaryDirectory()`)."""
@@ -1635,10 +1702,12 @@ def interp_parts(e, sep):
         return None
     return out + [e[start:].strip()]
 
+@_memo
 def interp_assigns(code, name):
     """The right-hand side of every assignment to the variable name (compound ones too: d += "/.." is read as its own value)."""
-    return [interp_first_arg(code, m.end(), False) for m in re.finditer(r"(?<![\w.$])" + re.escape(name) + INTERP_ASSIGN, code)]
+    return tuple([interp_first_arg(code, m.end(), False) for m in re.finditer(r"(?<![\w.$])" + re.escape(name) + INTERP_ASSIGN, code)])
 
+@_memo
 def interp_bound(code, name):
     """The spans (kind, position) where name is bound by a loop, an arrow function, a block or a parameter list."""
     n = re.escape(name)
@@ -1646,7 +1715,7 @@ def interp_bound(code, name):
     out += [("fn", m.start()) for m in re.finditer(r"(?:\([ \t]*" + n + r"[ \t]*\)|(?<![\w.$])" + n + r")[ \t]*=>|\|[ \t]*" + n + r"[ \t]*\|", code)]
     out += [("other", m.start()) for m in re.finditer(r"\b(?:function\b[^(]*|def[ \t]+\w+|lambda)[ \t(]*[^)\n:]*(?<![\w.$])" + n + r"\b[^)\n:]*[):]", code)
             if not any(m.start() <= p <= m.end() for _k, p in out)]
-    return out
+    return tuple(out)
 
 def interp_temp_root(code, e, depth=0):
     """True when e is the temp root or a folder the program made with mkdtemp: something a child is built from (see above)."""
@@ -1729,9 +1798,13 @@ def interp_temp_child(code, e, depth=0):
         return interp_tail_ok(tail)
     return False
 
+@_memo
+def interp_sets_tmp(c):
+    return INTERP_TMP_SET.search(c) is not None
+
 def interp_temp_target(code, arg):
     """True when the delete target arg is under a temp root this program names (see above); never when the command sets the temp folder."""
-    if INTERP_TMP_SET.search(cmd):
+    if interp_sets_tmp(cmd):
         return False
     tpl = re.fullmatch(r"\\?\$\((.*)\)", arg, re.S)   # a JS template literal as rm_walk hands it over: its backticks are $( ) by now
     if tpl:
@@ -1783,12 +1856,37 @@ def interp_commands(code):
                 out.append(" ".join(shlex.quote(x) for x in lits))
     return out
 
-def interp_rm_problem(code, cwds, env, strict):
-    """Why a recursive delete in the interpreter program text code is refused, or None (see above)."""
+# (OCR review 15/11) The inline program of an interpreter command: the word after -c / -e / -p / -E / -r / --eval / --print (alone or
+# ending a flag cluster: -Ic, -lne), a flag word with text glued to it (-c"…" lexes as one word), --eval=…, and the words after a
+# here-string. A script name, a module and its arguments (python3 tools/rm_rf.py, -m pytest -k "rm_rf or tmp") are not a program.
+INLINE_FLAG = re.compile(r"-[A-Za-z]*[ceEpr]|--eval|--print")
+
+def inline_programs(rest):
+    out, k = [], 0
+    while k < len(rest):
+        a = rest[k]
+        if INLINE_FLAG.fullmatch(a) and k + 1 < len(rest):
+            out.append(rest[k + 1])
+            k += 1
+        elif a.startswith("<<<"):
+            out.extend(rest[k:k + 2])
+            k += 1
+        elif (a.startswith("-") and not a.startswith("--")) or a.startswith(("--eval=", "--print=")):
+            out.append(a)
+        k += 1
+    return out
+
+# a call without parentheses is real only as a statement or a method / namespace call: FileUtils.rm_rf '/', include FileUtils; rm_rf '/',
+# File::Path::rmtree '/'. Not a word of a string or a regex (print('never rm_rf anything'), .scan(/rm_rf/)).
+INTERP_BARE_CALL = re.compile(r"(?:^|[;\n{(]|\bdo|\bthen|\belse|[\w)\]](?:\.|::))[ \t]*$")
+
+def interp_rm_problem(code, cwds, env, strict, bare=True):
+    """Why a recursive delete in the interpreter program text code is refused, or None (see above). bare: a call without parentheses
+    is read too (ruby / perl)."""
     for m in INTERP_RM.finditer(code):
         api, paren = m.group(1), bool(m.group(2))
-        if not paren and not api.startswith("rm_r"):   # only ruby FileUtils.rm_rf / rm_r are called without parentheses
-            continue
+        if not paren and not (bare and api.startswith("rm_r") and INTERP_BARE_CALL.search(code[max(0, m.start() - 40):m.start()])):
+            continue   # only ruby FileUtils.rm_rf / rm_r are called without parentheses
         if api in ("rmSync", "rmdirSync") and "recursive" not in code[m.end():m.end() + 300]:
             continue   # fs.rmSync(file): one file
         raw = arg = interp_first_arg(code, m.end(), paren)
@@ -2413,7 +2511,8 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         script_links(rest[0], cwds, depth, remote, False)
         return None
     if (shell_norm.INTERPRETER.fullmatch(prog) or prog in shell_norm.RUNNERS) and not remote and not COLLECT[0]:
-        why = next(filter(None, (interp_rm_problem(a, cwds, env, True) for a in rest if "rm" in a)), None)   # (14/11, C4c)
+        bare = any(re.fullmatch(r"(?:j|truffle)?ruby[\d.]*|perl[\d.]*", os.path.basename(w)) for w in [prog] + rest)
+        why = next(filter(None, (interp_rm_problem(a, cwds, env, True, bare) for a in inline_programs(rest) if "rm" in a)), None)   # (14/11, C4c)
         if why:
             return why
         for a in rest:   # (14/11) os.system("…"), subprocess.run([…]), execSync("…"): the command line, judged like the script of bash -c

@@ -19,6 +19,10 @@ DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HW="${HW_HOOK:-$DEVKIT_DIR/hooks/hardware_safety_gate.sh}"
 GG="${GG_HOOK:-$DEVKIT_DIR/hooks/block-dangerous-git.sh}"
 . "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, the scratch repo $P (src/, build/, README.md, branch feat), check
+# a home folder of its own (OCR review: 61 rows were red with HOME=/nonexistent): ~ is a real folder in every run, removed with TMP
+# (TMPDIR moves beside it: a home folder under the temp root would be scratch the gate lets rm -rf remove)
+export HOME="$TMP/home" TMPDIR="$TMP/tmp"
+mkdir -p "$HOME" "$TMPDIR"
 
 # the scratch project of the lib, plus what these cases name: a tag, docs/, the cache folders (git-ignored, with a file in each),
 # an ignored secret file and the ignored agent memory folder
@@ -401,5 +405,70 @@ check 2 hw "node -e \"${N}delete process.env.TMPDIR;fs.rmSync(p.join(os.tmpdir()
 check 2 hw "node -e \"${N}process.env={TMPDIR:'/'};fs.rmSync(p.join(os.tmpdir(),'usr'),{recursive:true,force:true})\""
 check 2 hw "unset TMPDIR; TMP=/ python3 -c \"import shutil,tempfile,os; shutil.rmtree(os.path.join(tempfile.gettempdir(),'usr'))\""
 check 2 hw "ruby -e \"require 'fileutils'; require 'tmpdir'; ENV['TMPDIR']='/'; FileUtils.rm_rf(File.join(Dir.tmpdir,'usr'))\""
+
+echo "── C4k hw (OCR review): the data exemption does not cover text that is stored and then run"
+check 2 hw 'printf -v X "npm publish"; $X'
+check 2 hw 'printf -v X "npm publish"; eval "$X"'
+check 2 hw "printf -v X 'echo \`rm -rf ~\`'; \$X"
+check 2 hw 'echo "npm publish" | sort -o x.sh; sh x.sh'
+check 2 hw 'echo "adb remount" | sort -o x.sh'
+check 2 hw 'echo "npm publish" | sort --output=x.sh'
+check 2 hw 'echo "npm publish" | sort -uo x.sh'
+check 2 hw 'echo "npm publish" | uniq - x.sh'
+check 2 hw 'echo "npm publish" | less -o x.sh'
+check 2 hw "echo 'x \`rm -rf ~\`' | sort -o x.sh"
+check 2 hw "echo 'never \`rm -rf ~\`' > x.sh; sh ./x*.sh"
+check 2 hw "echo 'never \`rm -rf ~\`' > x.sh; . ./x.s?"
+check 2 hw "echo 'never \`rm -rf ~\`' > a.py; python3 *.py"
+check 2 hw "echo 'never \`rm -rf ~\`' > x; chmod +x x*; ./[x]"
+check 2 hw "echo 'never \`rm -rf ~\`' >> run.sh && bash -x run*"
+echo "── C4k hw: controls, text that is only printed, filtered or stored"
+check 0 hw 'printf "%s\n" "npm publish"'
+check 0 hw 'echo "npm publish" | sort'
+check 0 hw 'echo "npm publish" | sort -u | uniq -c | head -3'
+check 0 hw "echo 'never \`rm -rf ~\`' >> docs/x.md"
+check 0 hw "echo 'never \`rm -rf ~\`' >> docs/x.md; git status; ls docs"
+check 0 hw "echo 'x \`rm -rf ~\`' | sort | uniq"
+
+echo "── C4l hw (OCR review): only the inline program of an interpreter is read, not a script name or another argument"
+check 0 hw 'python3 tools/rm_rf.py build'
+check 0 hw 'python3 -m pytest -k "rm_rf or tmp"'
+check 0 hw "python3 -c \"print('never rm_rf anything')\""
+check 0 hw 'node scripts/clean.js --mode rm_rf'
+check 0 hw 'uv run pytest tests/test_rm_rf.py'
+check 0 hw "ruby -e \"puts File.read('a.rb').scan(/rm_rf/).size\""
+check 0 hw "python3 -c \"import shutil; help(shutil.rmtree)\""
+echo "── C4l hw: controls, the inline program is still read"
+check 2 hw "python3 -c \"import shutil; shutil.rmtree('/')\""
+check 2 hw "python3 -Ic \"import shutil; shutil.rmtree('/')\""
+check 2 hw "python3 -c\"import shutil; shutil.rmtree('/')\""
+check 2 hw "node --eval \"require('fs').rmSync('/',{recursive:true,force:true})\""
+check 2 hw "node -p \"require('fs').rmSync('/',{recursive:true,force:true})\""
+check 2 hw "uv run python -c \"import shutil; shutil.rmtree('/')\""
+check 2 hw "ruby -e \"require 'fileutils'; FileUtils.rm_rf '/'\""
+check 2 hw "ruby -rfileutils -e \"FileUtils.rm_rf('/')\""
+check 2 hw "perl -MFile::Path -e \"remove_tree('/')\" ; ruby -e \"require 'fileutils'; FileUtils.rm_r '..'\""
+
+echo "── C4m hw (OCR review): many delete calls in one program are read in linear time"
+python3 -I - "$HW" "$P" <<'PY' && ok "30 KB / ~700 rmSync calls: within 15x the 3 KB program and under 1.5 s" || fail "the interpreter rule is not linear in the number of delete calls"
+import json, os, subprocess, sys, time
+hw, proj = sys.argv[1], sys.argv[2]
+env = {k: v for k, v in os.environ.items() if k not in ("HARDWARE_SAFETY_GATE", "HARDWARE_OVERRIDE")}
+env.update(CLAUDE_PROJECT_DIR=proj)
+def cost(kb):
+    unit = "fs.rmSync(p.join(t,'a'),{recursive:true});"
+    cmd = "node -e \"const t=os.tmpdir();" + unit * (kb * 1024 // len(unit)) + "\""
+    inp = json.dumps({"session_id": "s", "transcript_path": "", "cwd": proj, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                      "tool_input": {"command": cmd, "description": "d"}})
+    best = None
+    for _ in range(3):
+        t = time.time()
+        rc = subprocess.run(["bash", hw], input=inp, capture_output=True, text=True, cwd=proj, env=env).returncode
+        best = min(best or 99, time.time() - t)
+    return rc, best
+(rc3, t3), (rc30, t30) = cost(3), cost(30)
+print("  3 KB: rc %s %.2fs   30 KB: rc %s %.2fs" % (rc3, t3, rc30, t30))
+sys.exit(0 if rc3 == 0 and rc30 == 0 and t30 <= 15 * t3 and t30 < 1.5 else 1)
+PY
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

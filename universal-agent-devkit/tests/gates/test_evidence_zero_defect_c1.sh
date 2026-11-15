@@ -396,5 +396,24 @@ for c in 'git checkout HEAD~1 -- src/app.py' 'patch -p1 < fix.patch' 'ruff forma
   echo "   $c"; late "$(bash_step "$c" '' false)"
 done
 
+echo "-- R4. a no-run flag belongs to ITS runner: -V is verbose for ctest and 'show version, then run' for mvn (free at 5db81236, must pass)"
+MVN_OK=$'Tests run: 5, Failures: 0, Errors: 0, Skipped: 0\n\nBUILD SUCCESS'
+ran 'ctest -V'                                 'ctest -V' '100% tests passed, 0 tests failed out of 5'
+ran 'ctest --output-on-failure'                'ctest --output-on-failure' '100% tests passed, 0 tests failed out of 5'
+ran 'mvn -B -V test'                           'mvn -B -V test' "$MVN_OK"
+ran 'cargo test -h_parses (a test name with -h in it)' 'cargo test parses-h' $'running 1 test\ntest parses_h ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s'
+echo "-- R4. several runner commands in one line: one real run that passed is the evidence (must pass)"
+ran 'pytest -V; pytest -q'                     'python3 -m pytest -V 2>/dev/null; python3 -m pytest -q' "$PY_PASS"
+ran 'pytest --version && pytest -q'            'pytest --version && pytest -q' $'pytest 8.3.2\n'"$PY_PASS"
+echo "-- R4 controls. the no-run flag of the runner itself, and a line whose every runner command has one (must block)"
+norun 'pytest -V'                              'python3 -m pytest -V' 'pytest 8.3.2'
+norun 'ctest -N'                               'ctest -N' $'Test #1: a\nTest #2: b\n\nTotal Tests: 2'
+norun 'ctest --show-only'                      'ctest --show-only' 'Total Tests: 2'
+norun 'mvn --version'                          'mvn --version test' 'Apache Maven 3.9.6'
+norun 'gradlew --version'                      './gradlew test --version' 'Gradle 8.7'
+norun 'npx jest --listTests'                   'npx jest --listTests' '/p/tests/a.test.js'
+norun 'npm test -- --listTests'                'npm test -- --listTests' '/p/tests/a.test.js'
+norun 'pytest --version; pytest --co -q'       'pytest --version; pytest --co -q' $'pytest 8.3.2\ntests/test_foo.py::test_a\n\n1 test collected in 0.01s'
+
 echo "cases: $N"
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

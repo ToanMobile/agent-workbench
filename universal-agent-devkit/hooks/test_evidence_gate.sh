@@ -780,7 +780,7 @@ TEST_RUNNER_RX = re.compile(
     r"\b(npm|yarn|pnpm|bun)\s+(run\s+)?test|\b(npx\s+)?(jest|vitest|mocha)\b|\bpytest\b|"
     # `-mpytest`, `-Bmpytest` (#427 vòng 3): -m dính module, cờ gộp trước nó như _py_head; `-im` / `-cm` thì không (phân biệt hoa thường).
     r"python\S*\s+(?-i:-[bBdEIOPqsSuvRx]*m)\s*(pytest|unittest)|\b(cargo|go|swift|dotnet|flutter|deno)\s+test\b|"
-    r"\bnode\s+--test\b|\bxcodebuild\b.*\btest\b|\bmvn\s+(test|verify)\b|\bmake\s+(test|check)\b|"
+    r"\bnode\s+--test\b|\bxcodebuild\b.*\btest\b|\bmvnw?(?:\s+-[^\s|;&]+)*\s+(test|verify)\b|\bmake\s+(test|check)\b|"
     r"\bctest\b|\brspec\b|\bphpunit\b|\bgradlew?\b[^\n|;&]*\b\w*[tT]est\w*\b|"
     # Unity: the DevKit's unity-batch.sh test modes (not `compile`/`execute`), a
     # project's scripts/unity-test.sh, or the Editor itself with -runTests.
@@ -2435,14 +2435,12 @@ _RUNNER_MISSING = re.compile(r"\bNo module named '?(?:pytest|unittest)\b|(?:^|[\
 
 # 2026-11-14 (Zero-Defect C1b, tests/gates/test_evidence_zero_defect_c1.sh): a runner turn that ran NO test is no verdict, neither the
 # green that backs "test pass" nor the RED half of check 7's pair (pytest exit 5 after `-k <typo>`).
-#   _NO_RUN_FLAG: the runner was asked to list, not to run (`pytest --collect-only`, `--co`, `--version`, `--help`, `cargo test -- --list`).
+#   _NO_RUN_FLAGS: the runner was asked to list, not to run (`pytest --collect-only`, `--co`, `--version`, `--help`, `cargo test -- --list`).
 #   _zero_tests: the result says no test ran ("no tests ran", "0 passed", "Tests run: 0", "collected 0 items"), or holds only skipped /
 #       deselected / collected counts with no pass summary, or holds nothing at all: only for exit 0, stdout not sent to a file, and
 #       a command that is the one runner alone (`echo x && pytest -q` with an empty result stays as it was: tests/verification/
 #       test_evidence_issue427.sh E4 control. ponytail: a silent run behind another command is still green; bind it when one shows up).
 # A run whose output went to a file (`pytest > log 2>&1; echo "rc=$?"`) and a summary like Gradle's BUILD SUCCESSFUL are judged as before.
-_NO_RUN_FLAG = re.compile(r"(?<![\w-])(?:--collect-only|--co|--version|-V|--help|-h|--list|--list-tests|--listTests|--fixtures|--markers"
-                          r"|--setup-plan)(?![\w-])")
 _ZERO_RAN = re.compile(r"(?i:\bno tests ran\b|(?<![\d.,])0 passed\b|\bTests run: 0\b|\bRan 0 tests\b|\bcollected 0 items\b"
                        r"|(?<![\d.,])0 tests? (?:passed|ran|executed|collected)\b|\bno tests? (?:found|collected|were run)\b"
                        # A2: the default script of npm, dotnet with no discovered test, vitest with no test file
@@ -2451,13 +2449,30 @@ _NONRUN_COUNT = re.compile(r"(?i:(?<![\d.,])\d+\s+(?:skipped|deselected)\b|(?<![
 # Review of bc5b7e3c (A2): no-run flags that mean something else to another runner (`python3 -m pytest`, `pytest -m slow`), so each is
 # read only in a segment of its own runner; and zero-test results that still carry a pass summary (go prints `ok pkg 0.002s [no tests
 # to run]`, cargo `test result: ok. 0 passed`, Gradle `BUILD SUCCESSFUL` over a test task with NO-SOURCE). Closed lists:
-#   _NO_RUN_BY_RUNNER: `gradle(w) … --dry-run | -m`, `cargo … --no-run`, `go test -list`.
+#   _NO_RUN_FLAGS: one row per runner, each flag read only in a segment of its own runner (OCR review of 2193a36a: one list for every
+#       runner read `ctest -V`, verbose, and `mvn -V test`, show the version THEN run, as no run: a real green run was no evidence).
+#       A runner with no row: only --help / --version. A command line with several runner commands is judged on those that do run
+#       (`pytest -V; pytest -q`); when none does, it is no verdict.
 #   _ran_nothing: go: a `[no test files]` / `[no tests to run]` line and no `ok pkg <time>` line without that mark; cargo: `running 0
 #       tests` and no `running N tests`; Gradle: one or more test task lines (`> Task :app:testDebugUnitTest`), every one NO-SOURCE or
 #       SKIPPED (UP-TO-DATE / FROM-CACHE stay a run: the same inputs passed before; a build with no task line is judged as before).
-_NO_RUN_BY_RUNNER = ((re.compile(r"(?:^|[\s/])gradlew?(?=\s|$)"), re.compile(r"(?<![\w-])(?:--dry-run|-m)(?![\w-])")),
-                     (re.compile(r"(?:^|[\s/])cargo\s"), re.compile(r"(?<![\w-])--no-run(?![\w-])")),
-                     (re.compile(r"(?:^|[\s/])go\s+test\b"), re.compile(r"(?<![\w-])-list(?![\w-])")))
+def _flags(*names):
+    return re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(n) for n in names) + r")(?![\w-])")
+_NO_RUN_FLAGS = (
+    (re.compile(r"\bpytest\b|\bpython\S*\s+-\S*m\s*(?:pytest|unittest)\b"),
+     _flags("--collect-only", "--co", "--version", "-V", "--help", "-h", "--fixtures", "--markers", "--setup-plan")),
+    (re.compile(r"(?:^|[\s/])ctest(?=\s|$)"), _flags("-N", "--show-only", "--version", "--help")),
+    (re.compile(r"(?:^|[\s/])go\s+test\b"), _flags("-list", "--help", "-h")),
+    (re.compile(r"(?:^|[\s/])cargo\s"), _flags("--no-run", "--list", "--version", "--help", "-h")),
+    (re.compile(r"\b(?:jest|vitest|mocha)\b"), _flags("--listTests", "--list-tests", "--dry-run", "--version", "--help")),
+    (re.compile(r"(?:^|[\s/])gradlew?(?=\s|$)"), _flags("--dry-run", "-m", "--version", "-v", "--help", "-h")),
+    (re.compile(r"\b(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?test\b"),
+     _flags("--listTests", "--list-tests", "--collect-only", "--co", "--version", "--help")),
+    (re.compile(r"(?:^|[\s/])mvnw?(?=\s|$)"), _flags("--version", "-v", "--help", "-h")),
+    (re.compile(r"(?:^|[\s/])dotnet\s+test\b"), _flags("--list-tests", "-t", "--version", "--help", "-h")),
+    (re.compile(r"(?:^|[\s/])swift\s+test\b"), _flags("--list-tests", "--help")),
+)
+_NO_RUN_OTHER = _flags("--help", "--version")
 _NPM_PLACEHOLDER = re.compile(r"\bError: no test specified\b")
 _GO_NONE = re.compile(r"\[no test files\]|\[no tests to run\]")
 _GO_RAN = re.compile(r"^ok[^\S\n]+\S+[^\S\n]+(?:[\d.]+s|\(cached\))(?![^\n]*\[no tests to run\])", re.M)
@@ -2467,7 +2482,8 @@ _GRADLE_TEST_TASK = re.compile(r"^> Task [\w:.-]*:(?:test(?!Classes\b)\w*|\w+Tes
 
 def _no_run_flag(seg):
     seg = _QUOTED.sub(" ", seg)
-    return bool(_NO_RUN_FLAG.search(seg) or any(who.search(seg) and flag.search(seg) for who, flag in _NO_RUN_BY_RUNNER))
+    rows = [flag for who, flag in _NO_RUN_FLAGS if who.search(seg)]
+    return any(flag.search(seg) for flag in rows) if rows else bool(_NO_RUN_OTHER.search(seg))
 
 def _ran_nothing(txt):
     if _GO_NONE.search(txt) and not _GO_RAN.search(txt):
@@ -2621,12 +2637,14 @@ def runner_state(is_error, txt, pm_run=False, command=""):
             return None
         return "green"
     segs, res = _echoed_codes(command, txt, _runs_as_command) if command else ([], [])
+    if command and res:
+        res = [(i, c) for i, c in res if not _no_run_flag(segs[i])]
+        if not res:
+            return None          # C1b: every runner command of the line listed or printed help, none ran a test
     compound = any(_COMPOUND.match(segs[i]) for i, _ in res)
     trapped = bool(command) and _exit_trapped(command)     # #427 E4: mã thoát của tool là của trap, không tin theo chiều nào
     masked = (trapped or any(_hidden(segs, i, txt) for i, _ in res) or (not compound and not _exit_is_the_runs(command, segs, res))
               or any(_compound_masks(segs[i]) for i, _ in res if _COMPOUND.match(segs[i])) or (compound and _loose_simple(segs, res, command)))
-    if command and any(_no_run_flag(segs[i]) for i, _ in res):
-        return None              # C1b: the runner listed or printed help, it ran no test
     if command and _NPM_PLACEHOLDER.search(txt):
         return None              # A2: the placeholder script of `npm init` ran no test; its own text ("exit 1", blank, "Error: …") reads as "1 error"
     if (command and _zero_tests(is_error, txt, segs, res) and not RUNNER_FAIL_RX.search(txt)

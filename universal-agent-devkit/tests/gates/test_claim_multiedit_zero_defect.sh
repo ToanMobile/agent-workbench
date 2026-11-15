@@ -156,4 +156,71 @@ PY
 matcher "hooks/hooks.json" "$DEVKIT_DIR/hooks/hooks.json"
 matcher "templates/claude_settings.json" "$DEVKIT_DIR/templates/claude_settings.json"
 
+echo "-- E. claim_check.sh: a tool id that is no string (a list, an object, null, a number) neither crashes the hook nor frees the claim"
+# OCR review of 2193a36a: `tool_use_id in test_calls` with a list id raised TypeError (unhashable), the hook left with rc 0 and every claim passed.
+# id_tr <file> <cmd> <result text> <is_error> <id as JSON>: one Bash call and its result, both carrying that id
+id_tr() {
+  python3 - "$@" <<'PY'
+import json, sys
+out, cmd, res, err = sys.argv[1:5]
+tid = json.loads(sys.argv[5])
+with open(out, "w") as fh:
+    fh.write(json.dumps({"type": "user", "message": {"role": "user", "content": "chạy test giúp tôi"}}) + "\n")
+    fh.write(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "id": tid, "name": "Bash", "input": {"command": cmd}}]}}) + "\n")
+    fh.write(json.dumps({"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": tid, "content": res, "is_error": err == "true"}]}}) + "\n")
+PY
+}
+for id in '["a","b"]' '{"k":1}' 'null' '7'; do
+  id_tr "$T" 'ls' 'README.md' false "$id"
+  cc 2 "id $id: no runner call, the claim is still blocked" "$T" "$RAN"
+  id_tr "$T" 'pytest -q' $'Exit code 127\n/bin/zsh:1: command not found: pytest' true "$id"
+  cc 2 "id $id: a runner that never started is still no evidence" "$T" "$RAN"
+  id_tr "$T" 'python3 -m pytest -q' '5 passed in 0.03s' false "$id"
+  cc 0 "id $id: control, the run passed" "$T" "$RAN"
+done
+
+echo "-- F. review_gate.sh / security_gate.sh (Stop): a file edited by MultiEdit is seen like one edited by Edit"
+RG="${RG_HOOK:-$DEVKIT_DIR/hooks/review_gate.sh}"
+SG="${SG_HOOK:-$DEVKIT_DIR/hooks/security_gate.sh}"
+mkdir -p "$R/app/src/main"
+printf 'def f():\n    return 1\n' > "$R/app/util.py"; echo '<manifest/>' > "$R/app/src/main/AndroidManifest.xml"; echo 'notes' > "$R/notes.md"
+git -C "$R" add -A && git -C "$R" commit -qm init
+printf 'def f():\n    return 2\n' > "$R/app/util.py"      # the edit of the transcript is real: an uncommitted diff
+# edit_tr <file> <tool: Edit|MultiEdit> <path> <new text>: one edit call that ran
+edit_tr() {
+  python3 - "$@" <<'PY'
+import json, sys
+out, tool, path, text = sys.argv[1:5]
+inp = {"file_path": path, "old_string": "a", "new_string": text}
+if tool == "MultiEdit":
+    inp = {"file_path": path, "edits": [{"old_string": "a", "new_string": "x = 1"}, {"old_string": "b", "new_string": text}]}
+with open(out, "w") as fh:
+    fh.write(json.dumps({"type": "user", "timestamp": "2026-11-15T00:00:00Z", "message": {"role": "user", "content": "go"}}) + "\n")
+    fh.write(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": tool, "input": inp}]}}) + "\n")
+    fh.write(json.dumps({"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "The file has been updated successfully.", "is_error": False}]}}) + "\n")
+PY
+}
+# stopgate <want rc> <label> <hook> <transcript>
+stopgate() {
+  local want="$1" label="$2" hook="$3" tr="$4" rc
+  N=$((N + 1))
+  printf '{"session_id":"zd-sg-%s","transcript_path":"%s","hook_event_name":"Stop","last_assistant_message":"xong"}' "$N" "$tr" > "$TMP/in.json"
+  ( cd "$R" && env -u SECURITY_GATE -u REVIEW_GATE CLAUDE_PROJECT_DIR="$R" bash "$hook" < "$TMP/in.json" > /dev/null 2> "$TMP/err" ); rc=$?
+  grep -q Traceback "$TMP/err" && rc=99
+  [ "$rc" = "$want" ] && ok "rc $rc: $label" || fail "rc $rc (want $want): $label — $(head -c 160 "$TMP/err" | tr '\n' ' ')"
+}
+E="$TMP/edit.jsonl"
+edit_tr "$E" Edit "$R/app/util.py" 'y = 2';       stopgate 2 "review_gate, control: Edit of an uncommitted code file asks for a review" "$RG" "$E"
+edit_tr "$E" MultiEdit "$R/app/util.py" 'y = 2';  stopgate 2 "review_gate: MultiEdit of the same file asks for it too" "$RG" "$E"
+edit_tr "$E" MultiEdit "$R/notes.md" 'y = 2';     stopgate 0 "review_gate, control: MultiEdit of a .md asks for none" "$RG" "$E"
+PERM='<uses-permission android:name="android.permission.CAMERA"/>'
+edit_tr "$E" Edit "$R/app/src/main/AndroidManifest.xml" "$PERM";      stopgate 2 "security_gate, control: Edit of AndroidManifest.xml asks for a security review" "$SG" "$E"
+edit_tr "$E" MultiEdit "$R/app/src/main/AndroidManifest.xml" "$PERM"; stopgate 2 "security_gate: MultiEdit of it asks for one too" "$SG" "$E"
+edit_tr "$E" Edit "$R/app/util.py" 'webView.addJavascriptInterface(bridge, "app")';      stopgate 2 "security_gate, control: Edit whose TEXT is an attack surface" "$SG" "$E"
+edit_tr "$E" MultiEdit "$R/app/util.py" 'webView.addJavascriptInterface(bridge, "app")'; stopgate 2 "security_gate: the same text in the SECOND edit of a MultiEdit" "$SG" "$E"
+edit_tr "$E" MultiEdit "$R/app/util.py" 'y = 2';  stopgate 0 "security_gate, control: MultiEdit with no attack surface" "$SG" "$E"
+
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

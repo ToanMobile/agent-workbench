@@ -42,6 +42,7 @@ receipt written, the last full one left as it is — re-run in the last session 
 """
 
 import argparse
+import bisect
 import calendar
 import contextlib
 import fnmatch
@@ -247,6 +248,106 @@ def secret_value_is_placeholder(label, value: str) -> bool:
     return bool(FIXTURE_VALUE.match(value) or (extra is not None and extra.match(value)))
 
 
+# The key-name prefix `[\w.\-]*?` of a rule, tried by re.finditer from every start inside one long dotted token
+# (`ab.cd-ab.cd-…`), cost O(n²) per rule: 10 KB took 15 s (OCR review of 2193a36a, 2026-11-15); so did the scheme
+# run of the connection-URL rule. secret_finditer yields exactly re.finditer's matches but tries a start only in the
+# run just before the first place where the rest of the rule (its tail) matches: a match needs its tail there, and that
+# run is the only room its middle has.
+_NAME_CHAR = re.compile(r"[\w.\-]")
+# (head, middle, one character of the middle, the longest text the head matches): the rules that start this way.
+_FAST_SPLITS = (
+    (r"(?i)\b", r"[\w.\-]*?", _NAME_CHAR, 0),
+    (r"(?i)\benv(?:\.|\[[\"'])", r"[\w.\-]*?", _NAME_CHAR, 5),
+    (r"\b[a-z]", r"[a-z0-9+.\-]*", re.compile(r"[a-z0-9+.\-]"), 1),
+)
+_FAST_PLANS = {}
+# A tail that opens with a key-name group is tried only near a hint: every name of those groups holds one of these
+# words, at most _KEY_HINT_REACH characters in (refresh_token, private_key, signing_key). One case-blind search of the
+# whole file per group and rule cost ~4.5 s over the repo, four rules (2026-11-15); str.find of the hints costs ~nothing.
+_KEY_HINT_WORDS = ("key", "token", "secret", "pass", "pwd")
+_KEY_HINT_REACH = 8
+_KEY_HINT_RE = re.compile(r"(?i)(?=key|token|secret|pass|pwd)")   # text that is not ASCII: the same case folding as (?i)
+_KEY_GROUPS = tuple(g[len(r"[\w.\-]*?"):] for g in (_SECRET_KEY, _SECRET_KEY_ANY)) + (r"(?:passphrase|access[_\-]?key|signing[_\-]?key)",)
+_KEY_HINT_CACHE = [None, ()]   # (the content last asked about, its sorted hint positions)
+
+
+def _fast_plan(pat: str):
+    """(full, tail, one middle character, head width, hinted) when pat is `<head><middle><tail>` of _FAST_SPLITS,
+    else None. hinted: the tail opens with a key-name group."""
+    if pat not in _FAST_PLANS:
+        plan = None
+        for head, middle, char, width in _FAST_SPLITS:
+            if pat.startswith(head + middle):
+                flags = re.match(r"\(\?[a-zA-Z]+\)", pat)
+                rest = pat[len(head + middle):]
+                tail = (flags.group(0) if flags else "") + rest
+                plan = (re.compile(pat), re.compile(tail), char, width, rest.startswith(_KEY_GROUPS))
+                break
+        _FAST_PLANS[pat] = plan
+    return _FAST_PLANS[pat]
+
+
+def _key_hints(content: str):
+    """Sorted start of every hint word in content, case-blind, overlaps included."""
+    if _KEY_HINT_CACHE[0] is not content:
+        if content.isascii():
+            low, found = content.lower(), []
+            for word in _KEY_HINT_WORDS:
+                i = low.find(word)
+                while i >= 0:
+                    found.append(i)
+                    i = low.find(word, i + 1)
+            found.sort()
+        else:
+            found = [m.start() for m in _KEY_HINT_RE.finditer(content)]
+        _KEY_HINT_CACHE[:] = [content, found]
+    return _KEY_HINT_CACHE[1]
+
+
+def _tail_search(tail, hinted: bool, content: str, pos: int):
+    """tail.search(content, pos); a hinted tail is tried only at the starts a hint allows, in increasing order."""
+    if not hinted:
+        return tail.search(content, pos)
+    hints = _key_hints(content)
+    done = pos - 1
+    for i in range(bisect.bisect_left(hints, pos), len(hints)):
+        h = hints[i]
+        for k in range(max(done + 1, h - _KEY_HINT_REACH), h + 1):
+            t = tail.match(content, k)
+            if t:
+                return t
+        done = h
+    return None
+
+
+def secret_finditer(pat: str, content: str):
+    """re.finditer(pat, content), linear on long name-like tokens for the rules _fast_plan knows."""
+    plan = _fast_plan(pat)
+    if plan is None:
+        yield from re.finditer(pat, content)
+        return
+    full, tail, char, head, hinted = plan
+    pos = 0
+    while True:
+        t = _tail_search(tail, hinted, content, pos)
+        if t is None:
+            return
+        k = t.start()   # the first tail at or after pos: every match from pos ends its middle here or later
+        j = k
+        while j > pos and char.match(content, j - 1):
+            j -= 1      # start of the run before k (not before pos)
+        m = None
+        for s in range(max(pos, j - head), k + 1):
+            m = full.match(content, s)
+            if m:
+                break
+        if m is None:
+            pos = k + 1   # no match starts at or before k
+            continue
+        yield m
+        pos = m.end() if m.end() > m.start() else m.end() + 1
+
+
 # .env files: forbidden to commit, and scanned with the unquoted `KEY=value` rule too.
 # Any number of suffixes: `.env.production.local` was committable while `.env.local` was not (2026-11-14).
 ENV_FILE_PATTERN = r"(^|/)(\.env(\.[a-zA-Z0-9_-]+)*|[\w.-]+\.env)$"
@@ -411,14 +512,6 @@ def lazy_match_is_data(rel_file: str, content: str, m, spans=None) -> bool:
             return True
     return False
 
-
-def lazy_placeholder_hits(rel_file: str, content: str) -> list:
-    """[(match, label)]: every placeholder in content that counts (no base comparison)."""
-    if not lazy_scan_applies(rel_file) or "\x00" in content[:8192]:
-        return []
-    spans = _heredoc_spans(content) if rel_file.endswith(LAZY_SHELL_EXTENSIONS) else []
-    return [(m, label) for pat, label in lazy_patterns_for(rel_file) for m in re.finditer(pat, content)
-            if not lazy_match_is_data(rel_file, content, m, spans)]
 
 PERF_ANTIPATTERN_PATTERNS = [
     (r"(?i)\bThread\.sleep\(", ("Chặn luồng đồng bộ (Thread.sleep) trên UI/Main Thread", "Blocking call (Thread.sleep) on the UI/main thread")),
@@ -3469,7 +3562,7 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
             if name.endswith(CONFIG_EXTENSIONS) or re.search(ENV_FILE_PATTERN, clean_rel):
                 patterns.append(CONFIG_SECRET_PATTERN)
             for pat, label, group in patterns:
-                for m in re.finditer(pat, content):
+                for m in secret_finditer(pat, content):
                     if group is not None and secret_value_is_placeholder(label, m.group(group)):
                         continue
                     line = content.count("\n", 0, m.start()) + 1

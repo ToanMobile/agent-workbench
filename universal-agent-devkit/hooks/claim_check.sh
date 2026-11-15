@@ -222,6 +222,10 @@ accessed_basenames = set() # files opened via Read/Edit/Write/MultiEdit/Notebook
 # exit 126 / 127, or an error result with no sign that a test ran (command not found, no such file, no pytest module, a call a hook or
 # the permission system refused), is no run. A failing run DID run; a call with no result in the transcript stands as before.
 test_calls = {}            # tool_use id of a runner call -> False once its result says it never started
+def _tid(v):
+    """A tool id as a dict key. One that is no string (a list or an object is unhashable: TypeError, the hook left with rc 0 and every
+    claim passed, OCR review of 2193a36a) is keyed by its JSON text, so a call and its result still pair."""
+    return v if isinstance(v, str) else json.dumps(v, sort_keys=True, default=str)
 TEST_NOT_STARTED = re.compile(r"^\s*Exit code 12[67]\b|\A\s*PreToolUse:\S+ hook error", re.M)
 TEST_RAN = re.compile(r"\b\d+\s+(?:tests?\s+)?(?:passed|passing|failed|failing|failures?|errors?)\b|\bFAIL(?:ED|URE)?\b|\bTests run:"
                       r"|^not ok\b|[✖✘❌]|\btest result:|\bTests?:\s+\d", re.M)
@@ -251,9 +255,9 @@ if tp and os.path.exists(tp):
                 bt = blk.get("type")
                 if bt == "tool_result":
                     c = blk.get("content")
-                    if blk.get("tool_use_id") in test_calls:
+                    if _tid(blk.get("tool_use_id")) in test_calls:
                         t = c if isinstance(c, str) else json.dumps(c, ensure_ascii=False)
-                        test_calls[blk.get("tool_use_id")] = not (
+                        test_calls[_tid(blk.get("tool_use_id"))] = not (
                             TEST_NOT_STARTED.search(t) or (blk.get("is_error") is True and not TEST_RAN.search(t)))
                     corpus_parts.append(
                         c if isinstance(c, str)
@@ -289,7 +293,7 @@ if tp and os.path.exists(tp):
                                      r"\b(cargo|go|swift|dotnet|flutter|deno)\s+test\b|\bxcodebuild\b.*\btest\b|"
                                      r"\bmvn\s+(test|verify)\b|\bmake\s+(test|check)\b|\bctest\b|\brspec\b|\bphpunit\b|"
                                      r"\bbash\s+\S*test\S*\.sh\b", cmd):
-                            test_calls[blk.get("id")] = True   # stands unless its result says it never started (below)
+                            test_calls[_tid(blk.get("id"))] = True   # stands unless its result says it never started (below)
                         if re.search(r"\b(?:grep|rg)\b", cmd):
                             evidence.add("grep")
                         if "logcat" in cmd:

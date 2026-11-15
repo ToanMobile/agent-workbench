@@ -386,3 +386,47 @@ if fails:
     print(f"❌ test_gate_placeholder_secret_zero_defect: {fails}/{total} failed (gate exit {rc})"); sys.exit(1)
 print(f"✅ test_gate_placeholder_secret_zero_defect: all {total} cases passed")
 PY
+RC_CASES=$?
+
+# P3 (OCR review of 2193a36a): the secret scan stays linear on one long dotted token. The key-name prefix `[\w.\-]*?`,
+# tried from every start inside `ab.cd-ab.cd-…`, cost O(n²) per rule: 4 KB took 2.3 s, 10 KB 15 s.
+# Machine-independent: per KB, the 10 KB token costs at most 6x what the 1 KB one does (linear: ~1x; the O(n²) scan:
+# ~10x per KB, 35 s), and under 2 s in all.
+python3 - "$GATE" <<'PY'
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("pfg_p3", sys.argv[1])
+M = importlib.util.module_from_spec(spec)
+argv, sys.argv = sys.argv, ["x"]
+spec.loader.exec_module(M)
+sys.argv = argv
+
+
+def cost(unit, kb):
+    """CPU seconds of run_git_hygiene_audit on one token of kb KB, in a .py and a .yml (best of 3)."""
+    content = "v = " + unit * (kb * 1024 // len(unit)) + "\n"
+    best = None
+    for _ in range(3):
+        rels = [f"src/p3_{kb}.py", f"conf/p3_{kb}.yml"]
+        for rel in rels:
+            M._CONTENT_CACHE[rel] = content
+        t = time.process_time()
+        ok, found = M.run_git_hygiene_audit(rels)
+        t = time.process_time() - t
+        if found:
+            print(f"✖ P3 {unit!r} {kb} KB: a token with no secret was reported: {found}"); sys.exit(1)
+        best = t if best is None else min(best, t)
+    return best
+
+
+fails = 0
+for unit in ("ab.cd-", "env.ab.", "key.token-", "auth.", "webhook.", "a.secret-", "x.credential-"):
+    t1, t10 = cost(unit, 1), cost(unit, 10)
+    good = t10 < 2.0 and t10 / 10 <= 6 * max(t1, 0.0005)
+    fails += not good
+    print(f"{'✔' if good else '✖'} P3 token {unit!r}: 1 KB {t1:.4f} s, 10 KB {t10:.4f} s (limit: <2 s, per KB <=6x the 1 KB one)")
+if fails:
+    print(f"❌ test_gate_placeholder_secret_zero_defect: P3 {fails} token shape(s) scale worse than linear"); sys.exit(1)
+print("✅ test_gate_placeholder_secret_zero_defect: P3 secret scan linear on long tokens")
+PY
+RC_P3=$?
+[ "$RC_CASES" -eq 0 ] && [ "$RC_P3" -eq 0 ]
