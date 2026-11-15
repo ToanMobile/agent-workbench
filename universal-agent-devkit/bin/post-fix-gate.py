@@ -42,6 +42,7 @@ receipt written, the last full one left as it is — re-run in the last session 
 """
 
 import argparse
+import bisect
 import calendar
 import contextlib
 import fnmatch
@@ -134,8 +135,12 @@ def skip_separate_unity_compile(command: str, unity_will_test: bool) -> bool:
     return "test" not in cmd.split("compile", 1)[-1]
 
 # Key names whose assigned value is treated as a credential. A prefix is allowed
-# (DB_PASSWORD, ghToken), a suffix is not (passwordHint, tokenType).
-_SECRET_KEY = r"[\w.\-]*?(?:api[_\-]?key|apikey|access[_\-]?token|auth[_\-]?token|refresh[_\-]?token|token|client[_\-]?secret|secret|password|passwd|pwd|private[_\-]?key|keystore[_\-]?password|key[_\-]?password|signing[_\-]?key[_\-]?password|keystore[_\-]?base64)"
+# (DB_PASSWORD, ghToken), a suffix is not (passwordHint, tokenType), but for `key` after `secret` (SECRET_KEY,
+# secretKey, JWT_SECRET_KEY, client_secret_key: 2026-11-14; secret_key_name is still the name of a key).
+_SECRET_KEY = r"[\w.\-]*?(?:api[_\-]?key|apikey|access[_\-]?token|auth[_\-]?token|refresh[_\-]?token|token|client[_\-]?secret|secret(?:[_\-]?key)?|password|passwd|pwd|private[_\-]?key|keystore[_\-]?password|key[_\-]?password|signing[_\-]?key[_\-]?password|keystore[_\-]?base64|(?:db|admin|user|root|auth|redis|pg|mysql)[_\-]?pass)"
+
+# The names the shapes added on 2026-11-14 also read (the older rules keep _SECRET_KEY, word for word).
+_SECRET_KEY_ANY = _SECRET_KEY[:-1] + r"|passphrase|access[_\-]?key|signing[_\-]?key)"
 
 # (pattern, label, value-group or None). Values with a group are checked against
 # PLACEHOLDER_VALUE so `password = ${DB_PASSWORD}` or `api_key = "changeme"` pass.
@@ -168,20 +173,184 @@ SECRET_PATTERNS = [
     (r"(?m)^\s*//\S+:_(?:authToken|auth|password)\s*=\s*([^\s#]{8,})", "npm registry token (.npmrc)", 1),
     # Credentials inside a connection URL: postgres://user:PASSWORD@host
     (r"\b[a-z][a-z0-9+.\-]*://[^/\s:@\"'`]+:([^/\s@\"'`]{6,})@[\w.\-]", "Credentials in a connection URL", 1),
+    # Shapes the scan missed (Zero-Defect audit 2026-11-14, tests/gates/test_gate_placeholder_secret_zero_defect.sh).
+    # A subscript assignment: os.environ["API_KEY"] = "…"
+    (r"(?i)\b" + _SECRET_KEY_ANY + r"[\"']\]\s*[:=]\s*[\"']([^\"'\s]{8,})[\"']", "Hardcoded secret in a subscript assignment", 1),
+    # A shell export with an unquoted literal: export API_KEY=abc… ($VAR / $(cmd) are placeholders).
+    (r"(?im)^[ \t]*export[ \t]+" + _SECRET_KEY_ANY + r"=([^\s\"'#;]{8,})[ \t]*$", "Hardcoded secret in a shell export", 1),
+    # Android resources: <string name="api_key">value</string>. A resource reference (@string/…, ?attr/…) is not a value;
+    # a UI text is not one either (a translated "Password" label): the value is one unbroken token of 16+ holding a digit.
+    (r"(?i)<string\s+name=\"" + _SECRET_KEY_ANY + r"\"[^>]*>(?![@?])(?=[^<]*\d)([^<\s]{16,})</string>",
+     "Hardcoded secret in a string resource", 1),
+    # Gradle: buildConfigField("String", "API_KEY", "\"value\"") / resValue("string", "api_key", "value")
+    # buildConfigField takes a Java EXPRESSION: only a quoted literal inside it is a value ("System.getenv(\"API_KEY\")" is not).
+    (r"(?i)\bbuildConfigField\s*\(?\s*[\"']\w+[\"']\s*,\s*[\"']" + _SECRET_KEY_ANY
+     + r"[\"']\s*,\s*(?:\"\\\"|'\\?\")([^\"'\\\s]{8,})", "Hardcoded secret in a Gradle build field", 1),
+    (r"(?i)\bresValue\s*\(?\s*[\"']\w+[\"']\s*,\s*[\"']" + _SECRET_KEY_ANY
+     + r"[\"']\s*,\s*[\"']([^\"'\\\s]{8,})[\"']", "Hardcoded secret in a Gradle build field", 1),
+    # An Authorization header carrying a literal bearer token ("Bearer " + token and Bearer $TOKEN are not literals).
+    (r"(?i)\bAuthori[sz]ation[\"']?\s*[:=,]\s*[\"']?\s*Bearer\s+([A-Za-z0-9_\-.=+/]{20,})", "Hardcoded bearer token", 1),
+    # A literal as the fallback of an environment lookup: os.environ.get("API_KEY", "…"), os.getenv("API_KEY", "…"),
+    # process.env.API_KEY || "…", process.env.API_KEY ?? "…".
+    (r"(?i)\b(?:environ\.get|getenv)\s*\(\s*[\"']" + _SECRET_KEY_ANY + r"[\"']\s*,\s*[\"']([^\"'\s]{8,})[\"']",
+     "Hardcoded secret as an environment fallback", 1),
+    (r"(?i)\benv(?:\.|\[[\"'])" + _SECRET_KEY_ANY + r"(?:[\"']\])?\s*(?:\|\||\?\?)\s*[\"'`]([^\"'`\s]{8,})[\"'`]",
+     "Hardcoded secret as an environment fallback", 1),
+    # Quoted assignment to a name the first rule does not read (PASSPHRASE = "…", {"access_key": "…"}, signingKey: `…`).
+    (r"(?i)\b[\w.\-]*?(?:passphrase|access[_\-]?key|signing[_\-]?key)[\"']?\s*[:=]\s*[\"'`]([^\"'`\s]{8,})[\"'`]",
+     "Hardcoded passphrase / access key / signing key", 1),
+    # credential = "…": a path (GOOGLE_APPLICATION_CREDENTIALS = "/etc/app/creds.json") or a fetch mode ("same-origin") is not one.
+    # Nor is a mode word ("anonymous") or a file name: the value is one token of 12+ holding a digit.
+    (r"(?i)\b[\w.\-]*?credentials?[\"']?\s*[:=]\s*[\"'`](?=[^\"'`]*\d)([A-Za-z0-9_\-+=.]{12,})[\"'`]", "Hardcoded credential", 1),
+    # The first rule's names with a JS template literal as the value: apiKey: `…` (an interpolation `${…}` is not a literal).
+    (r"(?i)\b" + _SECRET_KEY + r"[\"']?\s*[:=]\s*`([A-Za-z0-9_\-+=./]{8,})`", "Hardcoded secret in a template literal", 1),
+    # webhook_url = "https://…/<long opaque segment>" (an ordinary endpoint path, /webhooks/stripe, is not a secret)
+    (r"(?i)\b[\w.\-]*?webhook(?:[_\-]?url)?[\"']?\s*[:=]\s*[\"'`](https?://[^\"'`\s]*[A-Za-z0-9_\-]{20,}[^\"'`\s]*)[\"'`]",
+     "Hardcoded webhook URL", 1),
+    # Recognisable by their form alone.
+    (r"https://hooks\.slack\.com/services/T[A-Za-z0-9_]+/B[A-Za-z0-9_]+/[A-Za-z0-9_]{16,}", "Slack webhook URL", None),
+    (r"(?<![\w:])\d{8,10}:[A-Za-z0-9_\-]{30,}", "Telegram bot token", None),
+    # auth=("user", "…") / auth: ["user", "…"]: the second item a literal (a list of scheme names, plain lowercase words, is not)
+    (r"(?i)\bauth[\"']?\s*[:=]\s*[(\[]\s*[\"'][^\"'\n]{0,64}[\"']\s*,\s*[\"']([^\"'\s]{8,})[\"']\s*[)\]]",
+     "Hardcoded credential in an auth pair", 1),
 ]
 
 # Unquoted `key = value` only in config-style files, where it is the normal syntax
 # (in code an unquoted right-hand side is an expression, not a literal).
-CONFIG_SECRET_PATTERN = (r"(?im)^\s*(?:export\s+)?" + _SECRET_KEY + r"\s*[:=]\s*([^\s\"'#]{8,})\s*$",
-                         "Hardcoded Secret (config file)", 1)
+CONFIG_SECRET_PATTERN = (r"(?im)^\s*(?:export\s+)?" + _SECRET_KEY + r"\s*[:=][ \t]*([^\s\"'#]{8,})\s*$",
+                         "Hardcoded Secret (config file)", 1)   # [ \t]* after the sign: an empty `API_KEY=` is not the next line
 CONFIG_EXTENSIONS = (".properties", ".env", ".yml", ".yaml", ".ini", ".cfg", ".conf", ".toml")
 
 PLACEHOLDER_VALUE = re.compile(
     r"(?i)^(\$.*|<.*>|\{\{.*|%.*|x{4,}|\*{4,}|your[_\-].*|change[_\-]?me|placeholder|redacted|example.*|dummy.*|none|null|true|false"
     r"|password|passwd|secret|test|testing)$")
+# A fixture value that says so in plain words, letters only (`export GH_TOKEN=fake-token` in a test). Accepted by the shapes
+# added on 2026-11-14 only (NEW_SHAPE_SECRET_LABELS): the older rules keep the answer they always gave.
+FIXTURE_VALUE = re.compile(r"(?i)^(?:fake|forged|mock)(?:[_\-][a-z]+)+$")
+NEW_SHAPE_SECRET_LABELS = frozenset((
+    "Hardcoded secret in a subscript assignment", "Hardcoded secret in a shell export", "Hardcoded secret in a string resource",
+    "Hardcoded secret in a Gradle build field", "Hardcoded bearer token", "Hardcoded secret as an environment fallback",
+    "Hardcoded passphrase / access key / signing key", "Hardcoded credential", "Hardcoded secret in a template literal",
+    "Hardcoded webhook URL", "Hardcoded credential in an auth pair"))
+# Values one new shape reads that are not secrets there: a fetch credentials mode; scheme names in an auth list.
+NEW_SHAPE_EXTRA_PLACEHOLDER = {
+    "Hardcoded credential": re.compile(r"(?i)^(?:same-origin|.*\.(?:json|ya?ml|txt|pem|p12|cfg|ini|toml))$"),
+    "Hardcoded credential in an auth pair": re.compile(r"^[a-z]+(?:[_\-][a-z]+)*$"),
+}
+
+
+def secret_value_is_placeholder(label, value: str) -> bool:
+    if PLACEHOLDER_VALUE.match(value):
+        return True
+    if label not in NEW_SHAPE_SECRET_LABELS:
+        return False
+    extra = NEW_SHAPE_EXTRA_PLACEHOLDER.get(label)
+    return bool(FIXTURE_VALUE.match(value) or (extra is not None and extra.match(value)))
+
+
+# The key-name prefix `[\w.\-]*?` of a rule, tried by re.finditer from every start inside one long dotted token
+# (`ab.cd-ab.cd-…`), cost O(n²) per rule: 10 KB took 15 s (OCR review of 2193a36a, 2026-11-15); so did the scheme
+# run of the connection-URL rule. secret_finditer yields exactly re.finditer's matches but tries a start only in the
+# run just before the first place where the rest of the rule (its tail) matches: a match needs its tail there, and that
+# run is the only room its middle has.
+_NAME_CHAR = re.compile(r"[\w.\-]")
+# (head, middle, one character of the middle, the longest text the head matches): the rules that start this way.
+_FAST_SPLITS = (
+    (r"(?i)\b", r"[\w.\-]*?", _NAME_CHAR, 0),
+    (r"(?i)\benv(?:\.|\[[\"'])", r"[\w.\-]*?", _NAME_CHAR, 5),
+    (r"\b[a-z]", r"[a-z0-9+.\-]*", re.compile(r"[a-z0-9+.\-]"), 1),
+)
+_FAST_PLANS = {}
+# A tail that opens with a key-name group is tried only near a hint: every name of those groups holds one of these
+# words, at most _KEY_HINT_REACH characters in (refresh_token, private_key, signing_key). One case-blind search of the
+# whole file per group and rule cost ~4.5 s over the repo, four rules (2026-11-15); str.find of the hints costs ~nothing.
+_KEY_HINT_WORDS = ("key", "token", "secret", "pass", "pwd")
+_KEY_HINT_REACH = 8
+_KEY_HINT_RE = re.compile(r"(?i)(?=key|token|secret|pass|pwd)")   # text that is not ASCII: the same case folding as (?i)
+_KEY_GROUPS = tuple(g[len(r"[\w.\-]*?"):] for g in (_SECRET_KEY, _SECRET_KEY_ANY)) + (r"(?:passphrase|access[_\-]?key|signing[_\-]?key)",)
+_KEY_HINT_CACHE = [None, ()]   # (the content last asked about, its sorted hint positions)
+
+
+def _fast_plan(pat: str):
+    """(full, tail, one middle character, head width, hinted) when pat is `<head><middle><tail>` of _FAST_SPLITS,
+    else None. hinted: the tail opens with a key-name group."""
+    if pat not in _FAST_PLANS:
+        plan = None
+        for head, middle, char, width in _FAST_SPLITS:
+            if pat.startswith(head + middle):
+                flags = re.match(r"\(\?[a-zA-Z]+\)", pat)
+                rest = pat[len(head + middle):]
+                tail = (flags.group(0) if flags else "") + rest
+                plan = (re.compile(pat), re.compile(tail), char, width, rest.startswith(_KEY_GROUPS))
+                break
+        _FAST_PLANS[pat] = plan
+    return _FAST_PLANS[pat]
+
+
+def _key_hints(content: str):
+    """Sorted start of every hint word in content, case-blind, overlaps included."""
+    if _KEY_HINT_CACHE[0] is not content:
+        if content.isascii():
+            low, found = content.lower(), []
+            for word in _KEY_HINT_WORDS:
+                i = low.find(word)
+                while i >= 0:
+                    found.append(i)
+                    i = low.find(word, i + 1)
+            found.sort()
+        else:
+            found = [m.start() for m in _KEY_HINT_RE.finditer(content)]
+        _KEY_HINT_CACHE[:] = [content, found]
+    return _KEY_HINT_CACHE[1]
+
+
+def _tail_search(tail, hinted: bool, content: str, pos: int):
+    """tail.search(content, pos); a hinted tail is tried only at the starts a hint allows, in increasing order."""
+    if not hinted:
+        return tail.search(content, pos)
+    hints = _key_hints(content)
+    done = pos - 1
+    for i in range(bisect.bisect_left(hints, pos), len(hints)):
+        h = hints[i]
+        for k in range(max(done + 1, h - _KEY_HINT_REACH), h + 1):
+            t = tail.match(content, k)
+            if t:
+                return t
+        done = h
+    return None
+
+
+def secret_finditer(pat: str, content: str):
+    """re.finditer(pat, content), linear on long name-like tokens for the rules _fast_plan knows."""
+    plan = _fast_plan(pat)
+    if plan is None:
+        yield from re.finditer(pat, content)
+        return
+    full, tail, char, head, hinted = plan
+    pos = 0
+    while True:
+        t = _tail_search(tail, hinted, content, pos)
+        if t is None:
+            return
+        k = t.start()   # the first tail at or after pos: every match from pos ends its middle here or later
+        j = k
+        while j > pos and char.match(content, j - 1):
+            j -= 1      # start of the run before k (not before pos)
+        m = None
+        for s in range(max(pos, j - head), k + 1):
+            m = full.match(content, s)
+            if m:
+                break
+        if m is None:
+            pos = k + 1   # no match starts at or before k
+            continue
+        yield m
+        pos = m.end() if m.end() > m.start() else m.end() + 1
+
 
 # .env files: forbidden to commit, and scanned with the unquoted `KEY=value` rule too.
-ENV_FILE_PATTERN = r"(^|/)(\.env(\.[a-zA-Z0-9_-]+)?|[\w.-]+\.env)$"
+# Any number of suffixes: `.env.production.local` was committable while `.env.local` was not (2026-11-14).
+ENV_FILE_PATTERN = r"(^|/)(\.env(\.[a-zA-Z0-9_-]+)*|[\w.-]+\.env)$"
 
 FORBIDDEN_SECRET_FILES = [
     (r"\.(keystore|jks|p12|pfx|mobileprovision)$", ("Chứng chỉ ký số trần (*.keystore, *.jks, *.p12, *.mobileprovision)", "Raw signing certificate (*.keystore, *.jks, *.p12, *.mobileprovision)")),
@@ -192,21 +361,157 @@ FORBIDDEN_SECRET_FILES = [
     (r"(^|/)(local|keystore)\.properties$", ("Cấu hình cục bộ Android (local.properties / keystore.properties — core-rules §1)",
                                              "Local Android config (local.properties / keystore.properties — core-rules §1)")),
     (ENV_FILE_PATTERN, ("Tệp cấu hình biến môi trường (.env, *.env)", "Environment variable file (.env, *.env)")),
+    (r"(^|/)secrets\.(json|ya?ml)$", ("Tệp chứa secret (secrets.json, secrets.yaml)", "Secrets file (secrets.json, secrets.yaml)")),
+    (r"(^|/)\.(netrc|git-credentials|pypirc|dockercfg)$", ("Tệp thông tin đăng nhập (.netrc, .git-credentials, .pypirc, .dockercfg)",
+                                                           "Credential store file (.netrc, .git-credentials, .pypirc, .dockercfg)")),
 ]
 
 # Only an exact template suffix exempts a file (`.env.example`); a directory named
 # `sample/` or `templates/` does not.
 SAFE_TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist")
 
+# A comment opener: //, #, /* and /**, <!--, a line-leading SQL/Lua --, a ` * ` line of a block comment, a docstring
+# opener at the start of a line. An ellipsis: two or more dots, or the Unicode one.
+_LAZY_LEAD = r"(?://|#|/\*+|<!--|(?m:^)[ \t]*--|(?m:^)[ \t]*\*(?![/*])|(?m:^)[ \t]*(?:\"\"\"|'''))"
+_LAZY_LEAD2 = r"(?://|#|(?<![\w*/])/\*+|<!--|(?m:^)[ \t]*--|(?m:^)[ \t]*\*(?![/*])|(?m:^)[ \t]*(?:\"\"\"|'''))"   # for the 2026-11-14 wordings
+_LAZY_ELL = r"(?:\.{2,}|…)"
+_LAZY_NOUN = r"(?:code|implementation|logic|file|function|functions|method|methods|class|body|imports)"
+_LAZY_END = r"[ \t.…)\]>]*(?:\*/|-->|\"\"\"|''')?[ \t]*$"   # what may follow a phrase that is the whole comment
 LAZY_CODE_PATTERNS = [
-    (r"(?i)//\s*\.\.\.\s*(existing|rest|remaining)", "Lazy placeholder (// ... existing code ...)"),
-    (r"(?i)/\*\s*\.\.\.\s*(existing|rest|remaining)\s*\*/", "Lazy placeholder (/* ... existing code ... */)"),
-    (r"(?i)#\s*\.\.\.\s*(existing|rest|remaining)", "Lazy placeholder (# ... existing code ...)"),
-    (r"(?i)//\s*TODO:?\s*implement\s+rest", "Lazy TODO placeholder (// TODO: implement rest)")
+    # `// ... existing code ...`, `/* ... existing code here ... */`, `/** … */`, `{/* … */}`, `<!-- ... existing code ... -->`,
+    # `// … existing code …`, `// ... (existing code) ...`, `// ...rest`, `// ... the rest ...`, `// ... keep existing code ...`.
+    # No word boundary after the keyword and \s* around the ellipsis, as before 2026-11-14: nothing the old patterns
+    # reported may pass (no exception: a comment naming a rest element, `// ...rest of the code`, is reported too).
+    (r"(?i)" + _LAZY_LEAD + r"\s*" + _LAZY_ELL + r"\s*[(\[]?\s*(?:(?:and\s+)?the\s+|keep\s+)?(?:existing|rest|remaining)",
+     "Lazy placeholder (// ... existing code ...)"),
+    # A comment opening with an ellipsis and saying the code was left out: `// ... other methods unchanged ...`,
+    # `// ... same as before ...`, `// ... previous code ...`, `# ... (phần còn lại không đổi)`, `// ... code cũ ...`.
+    (r"(?i)" + _LAZY_LEAD2 + r"[ \t]*" + _LAZY_ELL + r"[^\n]{0,60}?(?:unchanged|omitted|elided|previous|same[ \t]+as[ \t]+before"
+     r"|còn[ \t]+lại|giữ[ \t]+nguyên|không[ \t]+đổi|như[ \t]+cũ|(?:code|mã)[ \t]+cũ)", "Lazy placeholder (// ... unchanged ...)"),
+    # A comment between two ellipses that names code: `// ... more code here ...`, `/* ... existing styles ... */`.
+    (r"(?im)" + _LAZY_LEAD2 + r"[ \t]*" + _LAZY_ELL + r"[^\n]{0,60}?\b(?:code|implementation|logic|methods?|functions?|imports?|styles?|here)\b"
+     r"[^\n]{0,30}?" + _LAZY_ELL + r"[ \t]*(?:\*/|-->|\"\"\"|''')?[ \t]*$", "Lazy placeholder (// ... code here ...)"),
+    (r"(?i)" + _LAZY_LEAD + r"\s*(?:TODO|FIXME)\b[\s:(]*implement\s+(?:the\s+)?(?:rest|remaining)", "Lazy TODO placeholder (// TODO: implement rest)"),
+    # `# TODO: implement` with nothing, or only filler words, after it (not: `# TODO: implement retry with backoff for 429`)
+    (r"(?im)" + _LAZY_LEAD2 + r"[ \t]*(?:TODO|FIXME|XXX)\b[^\n]{0,12}?\bimplement(?:[ \t]+(?:the|this|rest|later|me|here|logic|function|method|body|it|of))*"
+     r"[ \t.!]*(?:\*/|-->)?[ \t]*$", "Lazy TODO placeholder (// TODO: implement)"),
+    # `// rest of implementation unchanged`, `# the rest of the code is omitted`, `# existing code here`,
+    # `// previous implementation unchanged` (not: `// the rest of the list is sorted`, `// the existing code path is unchanged`)
+    (r"(?i)" + _LAZY_LEAD + r"[ \t]*(?:the[ \t]+)?(?:rest[ \t]+of[ \t]+(?:the[ \t]+)?|remaining[ \t]+|existing[ \t]+|previous[ \t]+)" + _LAZY_NOUN
+     + r"(?:[ \t]+(?:is|are|stays?|remains?))?[ \t]+(?:unchanged|omitted|elided|as[ \t]+before|the[ \t]+same|goes[ \t]+here|here)\b",
+     "Lazy placeholder (// rest of implementation unchanged)"),
+    # The whole comment is the phrase: `// existing code`, `// [existing code]`, `...  # rest of the function`, `// (unchanged)`
+    (r"(?im)" + _LAZY_LEAD2 + r"[ \t]*(?:[(\[<]?[ \t]*(?:existing[ \t]+code|rest[ \t]+of[ \t]+(?:the[ \t]+)?(?:code|file|implementation|function|class|method)"
+     r"|(?:the[ \t]+)?same[ \t]+as[ \t]+before|như[ \t]+cũ)|[(\[<][ \t]*unchanged)" + _LAZY_END, "Lazy placeholder (// existing code)"),
+    # Phrases that mean "code left out" anywhere in a comment: `omitted for brevity`, `your code here`, `add implementation here`,
+    # `implementation omitted`, `code goes here`, `rest unchanged`.
+    (r"(?i)" + _LAZY_LEAD2 + r"[^\n]{0,80}?(?P<ph>\bomitted[ \t]+for[ \t]+brevity\b"
+     r"|\b(?:your|add|insert|put|write)[ \t]+(?:your[ \t]+|the[ \t]+)?(?:code|implementation|logic)[ \t]+(?:goes[ \t]+)?here\b"
+     r"|\b(?<!exit )(?<!status )(?<!error )(?<!return )(?:code|implementation|logic|rest|remaining)[ \t]+(?:(?:is|are|remains?|stays?)[ \t]+)?unchanged\b"
+     r"|\b(?:implementation|code)[ \t]+(?:omitted|elided|goes[ \t]+here)\b)", "Lazy placeholder (// code omitted)"),
+    # Vietnamese: `// giữ nguyên phần còn lại`, `# phần còn lại giữ nguyên`, `// code cũ ở đây`, `// mã hiện có ...`
+    (r"(?i)" + _LAZY_LEAD2 + r"[ \t]*[(\[]?[ \t]*(?:giữ[ \t]+nguyên[ \t]+(?:code|mã|phần[ \t]+còn[ \t]+lại)"
+     r"|phần[ \t]+còn[ \t]+lại[ \t]+(?:giữ[ \t]+nguyên|như[ \t]+cũ|không[ \t]+đổi)|(?:code|mã)[ \t]+cũ[ \t]+(?:ở[ \t]+đây|giữ[ \t]+nguyên)"
+     r"|(?:mã|code)[ \t]+(?:hiện[ \t]+có|cũ)[ \t]*" + _LAZY_ELL + r")", "Lazy placeholder (// giữ nguyên phần còn lại)"),
+    (r"(?im)^[ \t]*(?:pass|\.\.\.|return\b[^\n#/]{0,20}?)[ \t]*(?:#|//)[ \t]*placeholder\b", "Lazy placeholder (pass  # placeholder)"),
 ]
+# Calls that stand for a body nobody wrote, in production code only (a test may stub): (extensions, pattern, label).
+# `raise NotImplementedError` is not one: it is how an abstract method is written.
+LAZY_STUB_PATTERNS = [
+    ((".kt", ".kts"), r"\bTODO\([ \t]*(?:\"[^\"\n]*\")?[ \t]*\)", "Unimplemented stub (TODO())"),
+    ((".rs",), r"\b(?:todo|unimplemented)![ \t]*\(", "Unimplemented stub (todo!() / unimplemented!())"),
+]
+# The four patterns of the scan before 2026-11-14, word for word; with the files it read (lazy_parent_scope): what they
+# reported there is reported, quoted or not, with no exception.
+_LAZY_PARENT_RES = tuple(re.compile(p) for p in (
+    r"(?i)//\s*\.\.\.\s*(existing|rest|remaining)", r"(?i)/\*\s*\.\.\.\s*(existing|rest|remaining)\s*\*/",
+    r"(?i)#\s*\.\.\.\s*(existing|rest|remaining)", r"(?i)//\s*TODO:?\s*implement\s+rest"))
 
 UI_EXTENSIONS = {".kt", ".java", ".tsx", ".jsx", ".dart", ".vue", ".swift", ".xml"}
 CODE_EXTENSIONS = UI_EXTENSIONS | {".py", ".ts", ".js", ".go", ".rs", ".cpp", ".c", ".h", ".cs", ".shader", ".hlsl"}
+# The placeholder scan reads every changed text file (the other code audits keep CODE_EXTENSIONS: their patterns are
+# language-specific) except documents and data, where the patterns are prose or payload: .css, .lua, .tf, .proto,
+# a Dockerfile or a Makefile hold elided code just the same.
+LAZY_SHELL_EXTENSIONS = (".sh", ".bash", ".zsh")
+LAZY_DOC_DATA_EXTENSIONS = (".md", ".markdown", ".mdc", ".txt", ".rst", ".adoc", ".json", ".jsonl", ".lock", ".csv", ".tsv", ".svg",
+                            ".log", ".patch", ".diff")
+_HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<-?[ \t]*(?:\\?([A-Za-z_]\w*)|'([^'\n]+)'|\"([^\"\n]+)\")")
+
+
+def _heredoc_spans(content: str) -> list:
+    """(start, end) offsets of the heredoc bodies of a shell file. Only a body whose closing tag is found counts:
+    an opener with no terminator exempts nothing."""
+    spans, tag, begin, off = [], None, 0, 0
+    for line in content.splitlines(keepends=True):
+        if tag is None:
+            m = _HEREDOC_OPEN_RE.search(line)
+            if m:
+                tag, begin = m.group(1) or m.group(2) or m.group(3), off + len(line)
+        elif line.strip() == tag:
+            spans.append((begin, off))
+            tag = None
+        off += len(line)
+    return spans
+
+
+def _in_string_literal(content: str, start: int, end: int) -> bool:
+    """True when the match sits inside a quoted literal of its own line ('…', "…", `…`): the quote opened before it
+    and closes after it. Such text is data (a test payload, a message), not an elided body."""
+    line_start = content.rfind("\n", 0, start) + 1
+    quote, i = None, line_start
+    while i < start:
+        ch = content[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if quote is None:
+            if ch in "\"'`":
+                quote = ch
+        elif ch == quote:
+            quote = None
+        i += 1
+    if quote is None:
+        return False
+    line_end = content.find("\n", end)
+    return quote in content[end:line_end if line_end != -1 else len(content)]
+
+
+def lazy_scan_applies(rel_file: str) -> bool:
+    """Files the placeholder scan reads: every text file but documents and data, test files and scripts/ included (an
+    elided test body is as lazy as an elided function); not third-party code, and not this gate, whose source spells
+    the patterns out. A binary file is dropped where its content is read (a NUL byte)."""
+    return (not has_dir(rel_file, *THIRD_PARTY_DIRS) and not rel_file.endswith(("post-fix-gate.py", "gate.sh"))
+            and not rel_file.lower().endswith(LAZY_DOC_DATA_EXTENSIONS))
+
+
+def lazy_patterns_for(rel_file: str) -> list:
+    """[(pattern, label)] for this file: the comment patterns, plus the stub calls of its language outside test paths."""
+    if is_test_path(rel_file):
+        return LAZY_CODE_PATTERNS
+    return LAZY_CODE_PATTERNS + [(pat, label) for exts, pat, label in LAZY_STUB_PATTERNS if rel_file.endswith(exts)]
+
+
+def lazy_parent_scope(rel_file: str) -> bool:
+    """Files the placeholder scan read before 2026-11-14: code extensions outside test paths, scripts/ and third-party dirs."""
+    return (not is_test_path(rel_file) and not has_dir(rel_file, "scripts", *THIRD_PARTY_DIRS)
+            and rel_file.endswith(tuple(CODE_EXTENSIONS)))
+
+
+def lazy_match_is_data(rel_file: str, content: str, m, spans=None) -> bool:
+    """A pattern match that is not an elided body: inside a same-line string literal; inside a heredoc body of a shell
+    TEST file (the kit's own tests carry such payloads; a production script's heredoc is code it writes out). A match
+    the scan reported before 2026-11-14 (its patterns, in a file it read) is never data."""
+    if lazy_parent_scope(rel_file) and any(p.match(content, m.start()) for p in _LAZY_PARENT_RES):
+        return False
+    at = m.start("ph") if "ph" in m.re.groupindex else m.start()   # a phrase rule: where the phrase is, not the comment opener
+    if _in_string_literal(content, at, m.end()):
+        return True
+    if rel_file.endswith(LAZY_SHELL_EXTENSIONS) and is_test_path(rel_file):
+        spans = _heredoc_spans(content) if spans is None else spans
+        if any(a <= m.start() < b for a, b in spans):
+            return True
+    return False
+
 
 PERF_ANTIPATTERN_PATTERNS = [
     (r"(?i)\bThread\.sleep\(", ("Chặn luồng đồng bộ (Thread.sleep) trên UI/Main Thread", "Blocking call (Thread.sleep) on the UI/main thread")),
@@ -3257,8 +3562,8 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
             if name.endswith(CONFIG_EXTENSIONS) or re.search(ENV_FILE_PATTERN, clean_rel):
                 patterns.append(CONFIG_SECRET_PATTERN)
             for pat, label, group in patterns:
-                for m in re.finditer(pat, content):
-                    if group is not None and PLACEHOLDER_VALUE.match(m.group(group)):
+                for m in secret_finditer(pat, content):
+                    if group is not None and secret_value_is_placeholder(label, m.group(group)):
                         continue
                     line = content.count("\n", 0, m.start()) + 1
                     # The very same secret text already in the base version was not
@@ -3277,14 +3582,15 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
 def run_anti_laziness_audit(modified_files: list) -> tuple:
     lazy_matches = []
     for rel_file in modified_files:
-        if is_test_path(rel_file) or has_dir(rel_file, "scripts", *THIRD_PARTY_DIRS) or rel_file.endswith(("post-fix-gate.py", "gate.sh")):
-            continue
-        if any(rel_file.endswith(ext) for ext in CODE_EXTENSIONS):
+        if lazy_scan_applies(rel_file):
             content = read_changed_text(rel_file)
-            if content is None:
+            if content is None or "\x00" in content[:8192]:
                 continue
-            for pat, label in LAZY_CODE_PATTERNS:
+            spans = _heredoc_spans(content) if rel_file.endswith(LAZY_SHELL_EXTENSIONS) else []
+            for pat, label in lazy_patterns_for(rel_file):
                 new, old = split_new(rel_file, pat, content)
+                new = [m for m in new if not lazy_match_is_data(rel_file, content, m, spans)]
+                old = [m for m in old if not lazy_match_is_data(rel_file, content, m, spans)]
                 if old and not new:
                     note_preexisting(rel_file, content, old[0], label)
                 if new:
