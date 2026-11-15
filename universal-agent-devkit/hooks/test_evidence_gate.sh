@@ -2461,14 +2461,16 @@ def _flags(*names):
 _NO_RUN_FLAGS = (
     (re.compile(r"\bpytest\b|\bpython\S*\s+-\S*m\s*(?:pytest|unittest)\b"),
      _flags("--collect-only", "--co", "--version", "-V", "--help", "-h", "--fixtures", "--markers", "--setup-plan")),
-    (re.compile(r"(?:^|[\s/])ctest(?=\s|$)"), _flags("-N", "--show-only", "--version", "--help")),
+    (re.compile(r"(?:^|[\s/])ctest(?=\s|$)"), _flags("-N", "--show-only", "--version", "--help", "-h")),
     (re.compile(r"(?:^|[\s/])go\s+test\b"), _flags("-list", "--help", "-h")),
     (re.compile(r"(?:^|[\s/])cargo\s"), _flags("--no-run", "--list", "--version", "--help", "-h")),
     (re.compile(r"\b(?:jest|vitest|mocha)\b"), _flags("--listTests", "--list-tests", "--dry-run", "--version", "--help")),
     (re.compile(r"(?:^|[\s/])gradlew?(?=\s|$)"), _flags("--dry-run", "-m", "--version", "-v", "--help", "-h")),
     (re.compile(r"\b(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?test\b"),
-     _flags("--listTests", "--list-tests", "--collect-only", "--co", "--version", "--help")),
-    (re.compile(r"(?:^|[\s/])mvnw?(?=\s|$)"), _flags("--version", "-v", "--help", "-h")),
+     _flags("--listTests", "--list-tests", "--collect-only", "--co", "--version", "--help", "-h")),
+    # OCR delta a2f1e1d1: -DskipTests / -Dmaven.test.skip (not =false) run no test; "Tests are skipped." still prints BUILD SUCCESS.
+    (re.compile(r"(?:^|[\s/])mvnw?(?=\s|$)"), re.compile(_flags("--version", "-v", "--help", "-h").pattern
+                                                       + r"|(?<![\w-])-D(?:skipTests|maven\.test\.skip)(?!=false\b)(?![\w.-])")),
     (re.compile(r"(?:^|[\s/])dotnet\s+test\b"), _flags("--list-tests", "-t", "--version", "--help", "-h")),
     (re.compile(r"(?:^|[\s/])swift\s+test\b"), _flags("--list-tests", "--help")),
 )

@@ -11,7 +11,7 @@ def _fail_closed(etype, value, tb):
     finally:
         os._exit(2)
 sys.excepthook = _fail_closed
-import json, re, fnmatch, functools, shlex, shutil, subprocess, signal, unicodedata
+import json, re, bisect, fnmatch, functools, shlex, shutil, subprocess, signal, unicodedata
 # Watchdog: the hook limit is 10 s (.claude/settings.json) and a hook killed there is no verdict. A command the parser cannot judge in 7 s
 # (a pattern word[^;&|\n]*rare re-scans the line for every word: 15 s for 60 KB of `dd dd dd …`) is refused with a reason. SIGALRM also
 # interrupts a regex search in the middle (checked on Python 3.9 and 3.14). tests/gates/test_hook_big_command_fast_path.sh
@@ -1859,33 +1859,70 @@ def interp_commands(code):
 # (OCR review 15/11) The inline program of an interpreter command: the word after -c / -e / -p / -E / -r / --eval / --print (alone or
 # ending a flag cluster: -Ic, -lne), a flag word with text glued to it (-c"…" lexes as one word), --eval=…, and the words after a
 # here-string. A script name, a module and its arguments (python3 tools/rm_rf.py, -m pytest -k "rm_rf or tmp") are not a program.
+# (OCR delta 15/11) The word after such a flag is taken but NOT skipped: a flag that ends in one of these letters without a program of its
+# own (python3 -E, perl -p / -i -p, node -c / -p) is followed by the real -c / -e, which is read in its turn. A program that runs text it
+# is given (exec / eval / compile …: python3 -c 'exec(sys.argv[1])' CODE) has every word read, as before the inline rule.
 INLINE_FLAG = re.compile(r"-[A-Za-z]*[ceEpr]|--eval|--print")
+INLINE_RUNS_ARGS = re.compile(r"\b(?:exec|execfile|eval|compile|instance_eval|class_eval|module_eval|instance_exec|runpy|Function)\b")
 
 def inline_programs(rest):
-    out, k = [], 0
-    while k < len(rest):
-        a = rest[k]
+    out = []
+    for k, a in enumerate(rest):
         if INLINE_FLAG.fullmatch(a) and k + 1 < len(rest):
             out.append(rest[k + 1])
-            k += 1
-        elif a.startswith("<<<"):
+        if a.startswith("<<<"):
             out.extend(rest[k:k + 2])
-            k += 1
         elif (a.startswith("-") and not a.startswith("--")) or a.startswith(("--eval=", "--print=")):
             out.append(a)
-        k += 1
+    if any(INLINE_RUNS_ARGS.search(a) for a in out):
+        return list(rest)
     return out
 
-# a call without parentheses is real only as a statement or a method / namespace call: FileUtils.rm_rf '/', include FileUtils; rm_rf '/',
-# File::Path::rmtree '/'. Not a word of a string or a regex (print('never rm_rf anything'), .scan(/rm_rf/)).
-INTERP_BARE_CALL = re.compile(r"(?:^|[;\n{(]|\bdo|\bthen|\belse|[\w)\]](?:\.|::))[ \t]*$")
+# A ruby / perl call without parentheses (FileUtils.rm_rf '/', x = rm_rf "/", true && rm_rf "/") is read unless it is plainly data: a
+# word of a regex (.scan(/rm_rf/), print if /rm_rf \//: a slash right before it) or of a closed '…' / "…" string (puts "FileUtils.rm_rf /",
+# OCR delta 15/11). The strings are trusted only in a program whose text outside them has nothing the scan does not model (a regex, a
+# %-literal, a ?' character, a comment, a heredoc, a backtick, a backslash): x = /'/; rm_rf '/' must not read as one string.
+INTERP_UNMODELED = re.compile(r"[/%?#\x60\\]|<<")
+
+@_memo
+def interp_string_spans(code):
+    """(starts, ends) of the closed '…' and "…" strings of the program code, one pass; empty when they cannot be trusted (above). A "…"
+    that interpolates (#{ }, ${ }, @{ }) runs code: not a string here."""
+    starts, ends, outside, i, last, n = [], [], [], 0, 0, len(code)
+    while i < n:
+        c = code[i]
+        if c in "\x27\x22":
+            j = i + 1
+            while j < n and code[j] != c:
+                j += 2 if code[j] == "\\" else 1
+            if j >= n:
+                return (), ()   # unclosed
+            outside.append(code[last:i])
+            if not (c == "\x22" and re.search(r"[#$@]\{", code[i:j])):
+                starts.append(i)
+                ends.append(j)
+            else:
+                outside.append(code[i:j])
+            i = last = j + 1
+        else:
+            i += 1
+    outside.append(code[last:])
+    return ((), ()) if INTERP_UNMODELED.search("".join(outside)) else (tuple(starts), tuple(ends))
+
+def interp_bare_data(code, pos):
+    """True when the call name at code[pos] (no parentheses) is data: right after a slash, or inside a trusted string (above)."""
+    if code[pos - 1:pos] == "/":
+        return True
+    starts, ends = interp_string_spans(code)
+    k = bisect.bisect_right(starts, pos) - 1
+    return k >= 0 and pos < ends[k]
 
 def interp_rm_problem(code, cwds, env, strict, bare=True):
     """Why a recursive delete in the interpreter program text code is refused, or None (see above). bare: a call without parentheses
     is read too (ruby / perl)."""
     for m in INTERP_RM.finditer(code):
         api, paren = m.group(1), bool(m.group(2))
-        if not paren and not (bare and api.startswith("rm_r") and INTERP_BARE_CALL.search(code[max(0, m.start() - 40):m.start()])):
+        if not paren and not (bare and api.startswith("rm_r") and not interp_bare_data(code, m.start())):
             continue   # only ruby FileUtils.rm_rf / rm_r are called without parentheses
         if api in ("rmSync", "rmdirSync") and "recursive" not in code[m.end():m.end() + 300]:
             continue   # fs.rmSync(file): one file

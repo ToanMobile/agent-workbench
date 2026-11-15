@@ -414,6 +414,15 @@ norun 'gradlew --version'                      './gradlew test --version' 'Gradl
 norun 'npx jest --listTests'                   'npx jest --listTests' '/p/tests/a.test.js'
 norun 'npm test -- --listTests'                'npm test -- --listTests' '/p/tests/a.test.js'
 norun 'pytest --version; pytest --co -q'       'pytest --version; pytest --co -q' $'pytest 8.3.2\ntests/test_foo.py::test_a\n\n1 test collected in 0.01s'
+echo "-- OCR delta a2f1e1d1. a run that skips every test, and the short help flag of ctest / npm test (blocked at 5db81236 or 2193a36a, must block)"
+MVN_SKIP=$'[INFO] Tests are skipped.\n[INFO] BUILD SUCCESS'
+norun 'mvn -DskipTests test'                    'mvn -DskipTests test' "$MVN_SKIP"
+norun './mvnw -DskipTests test'                 './mvnw -DskipTests test' "$MVN_SKIP"
+norun 'mvn -q -Dmaven.test.skip=true verify'    'mvn -q -Dmaven.test.skip=true verify' "$MVN_SKIP"
+norun 'mvn test -DskipTests=true'               'mvn test -DskipTests=true' "$MVN_SKIP"
+norun 'ctest -h'                                'ctest -h' 'Usage: ctest [options]'
+norun 'npm test -- -h'                          'npm test -- -h' 'Usage: jest [options]'
+ran 'mvn -DskipTests=false test (control: tests do run)' 'mvn -DskipTests=false test' "$MVN_OK"
 
 echo "cases: $N"
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }
