@@ -541,6 +541,24 @@ fi
 QA_REPORT_RC=0
 QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"}) \
   || QA_REPORT_RC=$?
+# #1175: [decision] của chủ nằm trên ISSUE thẻ (decision-policy.md, deps.sh đọc ở đó), không chỉ trên PR. Chỉ khi checker từ chối vì
+# lý do không-stale và nhánh mang issue-<N> mới đọc comment issue (đường thường không thêm lời gọi GitHub) rồi chạy lại checker.
+# gh trần như đọc batch-marker bên dưới: đọc lỗi thì giữ kết quả cũ (exit 11), không halt cả board.
+QA_CARD=$(printf '%s\n' "$HEAD_REF" | sed -nE 's#(^|.*/)issue-([0-9]+)([^0-9].*)?$#\2#p')
+if [ "$QA_REPORT_RC" -eq 1 ] && [ -n "$QA_CARD" ] \
+   && printf '%s\n' "$QA_REPORT_OUT" | grep '^qa-report: ' | grep -qv '^qa-report: stale:'; then
+  QA_ISSUE_COMMENTS=$(mktemp)
+  if gh issue view "$QA_CARD" ${REPO:+--repo "$REPO"} --json comments > "$QA_ISSUE_COMMENTS" 2>/dev/null; then
+    QA_RC2=0
+    QA_OUT2=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"} \
+      --issue-comments "$QA_ISSUE_COMMENTS") || QA_RC2=$?
+    # Chỉ nhận lượt chạy lại khi nó quyết định được (0/1); crash ở lượt này giữ kết quả lượt đầu (exit 11), không thành cổng người.
+    case "$QA_RC2" in 0|1) QA_REPORT_RC=$QA_RC2; QA_REPORT_OUT=$QA_OUT2 ;; esac
+  else
+    say "could not read card #${QA_CARD}'s comments for an owner [decision]; judging the QA report on the PR comments alone"
+  fi
+  rm -f "$QA_ISSUE_COMMENTS"
+fi
 if [ "$QA_REPORT_RC" -ne 0 ]; then
   if [ "$QA_REPORT_RC" -eq 1 ] && printf '%s\n' "$QA_REPORT_OUT" | grep -q '^qa-report: '; then
     printf '%s\n' "$QA_REPORT_OUT"

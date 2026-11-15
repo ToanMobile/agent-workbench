@@ -115,10 +115,10 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
    DONE / NOT DONE / AWAITING APPROVAL). Line 2: what the user gets. Line 3: gate exit code, then
    image path and serial, or "ảnh: không cần — <reason>"; then the next step. Stay short.
    Every handover (an XONG, or any turn that runs `git push`) carries the acceptance report
-   (core-rules §2.3), 1–2 lines each: 1. Đã fix gì (lỗi, nguyên nhân gốc, RED→GREEN) · 2. Chặn bug
-   cũ (test hồi quy / immutable_guards chạy lại PASS) · 3. Nguy cơ bug mới (caller, module liên đới
-   đã rà) · 4. An toàn mã nguồn (secret, placeholder, OCR); kèm điểm chất lượng Agent trên thang 100
-   (ngưỡng ≥ 95/100, core-rules §18). `proof_gate.sh` refuses the reply without all four.
+   (core-rules §2.3), 1–2 lines each: 1. Đã làm gì / Đã fix gì · 2. Chặn bug cũ · 3. Nguy cơ bug mới:
+   the old–new comparison you ran, with its numbers · 4. An toàn mã nguồn · 5. Còn hở / chưa kiểm
+   (or "không có"); every number tagged "tự chạy" or "agent báo"; score /100 (≥ 95/100, the
+   standards docked; core-rules §18). `proof_gate.sh` refuses the reply without all four.
    A Markdown or LICENSE-type-only change needs no regression test.
 
 ## Engineering musts (details: `.agents/devkit/rules/core-rules.md` §6, §8–12, §14)
