@@ -7,8 +7,10 @@
 #  (d) không config super-board → exit 0, test đòi file ghi lời gọi gh ($ST/writes) rỗng
 #  (e) status rc 3 → gh project item-add URL ISSUE rồi QA; status rc 69 → exit 69, không move
 #  (f) chạy 2 lần: lần 2 không ghi gì
-#  (g) hook PreToolUse: gh pr create từ fix/x ở repo có board → exit 2 kèm cách sửa; issue-3-x / --draft / repo không board / chữ trong tham số → 0
-#  (h) hook PostToolUse: URL …/pull/<n> trong output → gọi route-pr; lệnh khác → không; route-pr lỗi → exit 0 + additionalContext
+#  (g) hook PreToolUse: gh pr create từ fix/x ở repo có board → exit 2 kèm cách sửa; issue-3-x / --draft / repo không board / chữ trong
+#      tham số / lượt headless (sdk-cli) / subagent (agent_id) → 0; phiên tương tác trên fix/super-qa-iter-x → 2
+#  (h) hook PostToolUse: URL …/pull/<n> trong output → gọi route-pr (cả lượt headless); lệnh khác → không; route-pr lỗi → exit 0 +
+#      additionalContext; route-pr exit 4 (không số thẻ) → chỉ hướng dẫn
 #  (i) wave-plan: PR nhãn merge-queue trên nhánh không issue-* có closingIssuesReferences #N → N vào QUEUED_ISSUES (thẻ bị ẩn khỏi wave)
 # Chạy offline: gh, super-board-card.sh và route-pr (ở (h)) là stub. Tương thích bash 3.2.
 set -u
@@ -24,7 +26,7 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-route-pr.XXXXXX")"
 TMP="$(cd "$TMP" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
 export GIT_CEILING_DIRECTORIES="$TMP"
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE SB_CONFIG
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE SB_CONFIG CLAUDE_CODE_ENTRYPOINT
 mkdir -p "$TMP/bin" "$TMP/path" "$TMP/st"
 [ -f "$ROUTE" ] && cp "$ROUTE" "$TMP/bin/super-board-route-pr.sh"
 printf '{"project":{"owner":"acme","number":7},"repo":{"path":".","remote":"https://github.com/acme/widgets"},"base_branch":"main"}\n' > "$TMP/cfg.json"
@@ -115,6 +117,13 @@ rc=$(pre board 'gh pr create -H acme:issue-3-x --title t'); [ "$rc" = 0 ] && ok 
 rc=$(pre board 'git commit -m "gh pr create from fix/x" && echo "gh pr create"'); [ "$rc" = 0 ] && ok "(g) the words inside arguments do not trigger" || fail "(g) args rc=$rc"
 rc=$(pre board 'gh pr view 3'); [ "$rc" = 0 ] && ok "(g) other gh pr verbs: allowed" || fail "(g) view rc=$rc"
 rc=$(pre plain 'gh pr create --title t'); [ "$rc" = 0 ] && ok "(g) repo without a board: allowed" || fail "(g) plain rc=$rc"
+# lượt headless (`claude -p`, entrypoint sdk-cli) và subagent (agent_id) bỏ qua như session_card.sh: super-qa standalone mở PR từ fix/super-qa-iter-…
+git -C "$TMP/board" checkout -q -b fix/super-qa-iter-x
+rc=$(pre board 'gh pr create --title t'); [ "$rc" = 2 ] && ok "(g) interactive session on fix/super-qa-iter-x: blocked" || fail "(g) interactive super-qa rc=$rc"
+rc=$(CLAUDE_CODE_ENTRYPOINT=sdk-cli pre board 'gh pr create --title t'); [ "$rc" = 0 ] && ok "(g) headless run (sdk-cli) on fix/super-qa-iter-x: allowed" || fail "(g) headless rc=$rc"
+rc=$(jq -nc --arg d "$TMP/board" '{hook_event_name:"PreToolUse",tool_name:"Bash",agent_id:"a1",tool_input:{command:"gh pr create --title t"},cwd:$d}' \
+  | ( cd "$TMP/board" && CLAUDE_PROJECT_DIR="$TMP/board" python3 "$HOOK" >/dev/null 2>&1 ); echo $?)
+[ "$rc" = 0 ] && ok "(g) subagent (agent_id) on fix/super-qa-iter-x: allowed" || fail "(g) subagent rc=$rc"
 git -C "$TMP/board" checkout -q -b issue-3-x
 rc=$(pre board 'gh pr create --title t'); [ "$rc" = 0 ] && ok "(g) on branch issue-3-x: allowed" || fail "(g) issue-3-x rc=$rc $(head -c 200 "$TMP/pre.err")"
 
@@ -136,6 +145,10 @@ rc=$(post 'gh pr view 57' 'https://github.com/acme/widgets/pull/57')
 rc=$(STUB_ROUTE_RC=69 post 'gh pr create --title t' 'https://github.com/acme/widgets/pull/58')
 [ "$rc" = 0 ] && jq -e '.hookSpecificOutput.additionalContext | test("69")' "$TMP/post.out" >/dev/null \
   && ok "(h) route-pr fails: exit 0, the error in additionalContext" || fail "(h) fail rc=$rc out=$(head -c 300 "$TMP/post.out")"
+rm -f "$TMP/route-calls"
+rc=$(STUB_ROUTE_RC=4 CLAUDE_CODE_ENTRYPOINT=sdk-cli post 'gh pr create --title t' 'https://github.com/acme/widgets/pull/59')
+[ "$rc" = 0 ] && grep -qx 59 "$TMP/route-calls" && jq -e '.hookSpecificOutput.additionalContext | test("chưa có thẻ") and (test("CHƯA") | not)' "$TMP/post.out" >/dev/null \
+  && ok "(h) headless PR is routed too; no card number (exit 4): guidance only, not an error" || fail "(h) rc4 rc=$rc out=$(head -c 300 "$TMP/post.out")"
 
 # (i) wave-plan: closingIssuesReferences của PR đã vào hàng
 cat > "$TMP/items.json" <<'J'

@@ -5,7 +5,8 @@ PR mở bằng `gh pr create` ngoài board không vào lane nào, mà phiên tá
 repo; PR trên nhánh không `issue-<N>-` thì lane builder không nhận ra là PR của thẻ (preflight giữ thẻ "already being built elsewhere").
 
 - PreToolUse: `gh pr create|new` thật (theo segment/token, như guard-protected-push.py), không `-d/--draft`, nhánh (`--head`/`-H`,
-  không thì nhánh đang checkout) không khớp `^issue-\\d+-` → exit 2 kèm cách sửa.
+  không thì nhánh đang checkout) không khớp `^issue-\\d+-` → exit 2 kèm cách sửa. Chỉ phiên tương tác: subagent (`agent_id`) và
+  `claude -p` (CLAUDE_CODE_ENTRYPOINT=sdk-cli) bỏ qua, như session_card.sh.
 - PostToolUse: `gh pr create|new` in ra URL `…/pull/<n>` → chạy .claude/bin/super-board-route-pr.sh <n> (thẻ vào QA) và báo qua
   additionalContext. Luôn exit 0.
 Hai sự kiện phân biệt bằng `hook_event_name` trong JSON stdin. Repo không có .claude/super-board/configs/*.json → không làm gì.
@@ -120,6 +121,12 @@ FIX_STEPS = (
 )
 
 
+def unattended(payload):
+    """Lượt không có người chat: subagent (`agent_id`) hoặc `claude -p` (entrypoint sdk-cli) — cùng tín hiệu session_card.sh bỏ qua.
+    Lane/luồng tự động (super-qa standalone mở PR từ fix/super-qa-iter-…) không bị chặn; PostToolUse vẫn đưa PR của nó lên board."""
+    return os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli" or bool(payload.get("agent_id"))
+
+
 def pre(command, cwd, parser):
     creates = pr_creates(command, parser)
     if not creates or not board_root(cwd):
@@ -159,6 +166,8 @@ def post(command, cwd, resp, parser):
             if r.returncode == 0:
                 msg = (f"PR #{nums[-1]} đã vào luồng board: {out}. Lane QA/Review duyệt và merge gate merge — KHÔNG hỏi chủ repo "
                        "duyệt hay merge.")
+            elif r.returncode == 4:   # PR không nêu thẻ: chỉ hướng dẫn, không phải lỗi
+                msg = f"PR #{nums[-1]} chưa có thẻ ở board: {out}"
             else:
                 msg = (f"PR #{nums[-1]} CHƯA vào board: super-board-route-pr.sh exit {r.returncode}: {out}. "
                        f"Sửa theo thông báo rồi chạy `bash .claude/bin/super-board-route-pr.sh {nums[-1]}`.")
@@ -181,7 +190,7 @@ def main():
         if payload.get("hook_event_name") == "PostToolUse":
             post(command, cwd, payload.get("tool_response"), parser)
             return 0
-        return pre(command, cwd, parser)
+        return 0 if unattended(payload) else pre(command, cwd, parser)
     except Exception as e:   # noqa: BLE001 — hook hỏng không được chặn việc khác, nhưng phải nói ra
         sys.stderr.write("route_pr_to_board: skipped (%s: %s)\n" % (type(e).__name__, str(e)[:160]))
         return 0
