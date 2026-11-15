@@ -36,4 +36,20 @@ mk "$TMP/b.json" "$AC_LOCAL" "❌ Not done: Merge gate không còn exit 11 vì A
 mk "$TMP/c.json" "$AC_LOCAL" "❌ Not done: AC1 chưa đạt, xem ToanMobile/GeelyEx2#42; Merge gate không còn exit 11 vì AC đã tách"
 [ "$(run "$TMP/c.json")" = 1 ] && ok "dẫn repo khác không che AC cục bộ nêu cùng mục: vẫn exit 1" || { fail "mục lẫn bị lọt"; cat "$TMP/out"; }
 
+mk "$TMP/d.json" "$AC_LOCAL" "❌ Not done: AC1 chưa đạt; AC2 đã tách sang ToanMobile/GeelyEx2#42"
+[ "$(run "$TMP/d.json")" = 1 ] && ok "nhiều vế (;): AC1 cục bộ không bị che bởi vế AC2 dẫn repo khác" || { fail "mục nhiều vế bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/e.json" "$AC_LOCAL" "❌ Not done:
+- AC1 chưa đạt
+- AC2 đã tách sang ToanMobile/GeelyEx2#42"
+[ "$(run "$TMP/e.json")" = 1 ] && ok "bullet: AC1 cục bộ không bị che bởi bullet AC2 dẫn repo khác" || { fail "mục bullet bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/f.json" "$AC_OTHER" "❌ Not done: Drift 5 repo app đồng bộ về pack mới (repo: GeelyEx2)"
+[ "$(run "$TMP/f.json")" = 1 ] && ok "AC (repo: khác) chưa dẫn issue đã tách: vẫn exit 1" || { fail "AC repo khác không dẫn issue bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/g.json" "$AC_LOCAL" "❌ Not done:
+- AC2 đã tách sang ToanMobile/GeelyEx2#42
+- AC3 thuộc ToanMobile/GeelyEx2#43"
+[ "$(run "$TMP/g.json")" = 0 ] && ok "mọi bullet đều dẫn issue repo khác: qua" || { fail "bullet đã tách vẫn bị chặn"; cat "$TMP/out"; }
+
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAILS=$FAILS"; exit 1; }

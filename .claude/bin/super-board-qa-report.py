@@ -79,17 +79,22 @@ def ac_texts(body):
         m = AC_ITEM.match(line) if in_ac else None
         if m:
             t = m.group(2).rstrip("\\").strip().lower()
-            if len(t) >= MIN_AC_TEXT and not OTHER_REPO_AC.search(t):
+            if len(t) >= MIN_AC_TEXT:
                 texts.append(t)
     return texts
 
 
 def names_ac(text, acs):
-    low = text.lower()
-    if any(a in low for a in acs):
-        return True
-    # #1199: mã AC trần (`AC3`) trong mục dẫn issue repo khác là AC đã tách, không phải AC của repo này.
-    return bool(AC_ID.search(text)) and not CROSS_REPO_REF.search(text)
+    """#1199: kiểm từng vế (tách theo `;`). AC gắn `(repo: khác)` và mã AC trần chỉ được coi là đã tách khi CHÍNH vế đó dẫn `owner/repo#N`."""
+    for clause in re.split(r"[;；]", text):
+        low = clause.lower()
+        split_off = bool(CROSS_REPO_REF.search(clause))
+        for a in acs:
+            if a in low and not (split_off and OTHER_REPO_AC.search(a)):
+                return True
+        if AC_ID.search(clause) and not split_off:
+            return True
+    return False
 
 
 # #516: bộ đọc [decision] dùng chung; tên file có gạch ngang nên nạp bằng importlib.
@@ -246,7 +251,10 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None)
                 break
             parts.append(nxt.strip())
         text = " ".join(p for p in parts if p).strip()
-        if text.strip(" .").lower() not in EMPTY_VALUES and names_ac(text, acs):
+        if text.strip(" .").lower() in EMPTY_VALUES:
+            continue
+        # #1199: mỗi dòng/bullet của mục kiểm riêng, để dòng dẫn issue repo khác không che AC cục bộ ở dòng kia.
+        if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
             # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.
             if not decided or _DEC.is_stop(text):
                 items.append(text)
