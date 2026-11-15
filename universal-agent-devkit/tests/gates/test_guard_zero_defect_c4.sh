@@ -21,7 +21,10 @@ GG="${GG_HOOK:-$DEVKIT_DIR/hooks/block-dangerous-git.sh}"
 . "$DEVKIT_DIR/tests/lib/guard_shell_norm_lib.sh"   # TMP, the scratch repo $P (src/, build/, README.md, branch feat), check
 # a home folder of its own (OCR review: 61 rows were red with HOME=/nonexistent): ~ is a real folder in every run, removed with TMP
 # (TMPDIR moves beside it: a home folder under the temp root would be scratch the gate lets rm -rf remove)
-export HOME="$TMP/home" TMPDIR="$TMP/tmp"
+# (ran under tests/run_impacted.sh, a home folder under $TMP was scratch the gate lets rm -rf remove: 7 rows red in the gate only):
+# keep a real home folder when there is one, make one only when HOME is missing.
+[ -d "${HOME:-}" ] || export HOME="$TMP/home"
+export TMPDIR="$TMP/tmp"
 mkdir -p "$HOME" "$TMPDIR"
 
 # the scratch project of the lib, plus what these cases name: a tag, docs/, the cache folders (git-ignored, with a file in each),
@@ -461,9 +464,12 @@ check 2 hw "node -p -e 'require(\"fs\").rmSync(\"/\",{recursive:true})'"
 check 2 hw "node -c -e 'require(\"fs\").rmSync(\"/\",{recursive:true})'"
 check 2 hw "python3 -c 'exec(sys.argv[1])' 'shutil.rmtree(\"/\")'"
 check 2 hw "ruby -e 'eval ARGV[0]' 'FileUtils.rm_rf \"/\"'"
-echo "── C4n hw: a call name inside a string of the program is data"
-check 0 hw "ruby -e 'puts \"FileUtils.rm_rf /\"'"
-check 0 hw "ruby -e 'puts \"see FileUtils.rm_r ..\"; puts \"rm_rf\"'"
+echo "── C4n hw: a call name inside a string may be code (eval, instance_eval, send :eval …): refused (OCR delta 2; residual: puts of it)"
+check 2 hw "ruby -rfileutils -e 'eval \"FileUtils.rm_rf \\\"/\\\"\"'"
+check 2 hw "ruby -e 'x = \"FileUtils.rm_rf \\\"/\\\"\"; eval x'"
+check 2 hw "ruby -e 'Object.new.instance_eval \"FileUtils.rm_rf Dir.home\"'"
+check 2 hw "ruby -e 'Kernel.send :eval, \"FileUtils.rm_rf Dir.home\"'"
+check 2 hw "ruby -e 'puts \"FileUtils.rm_rf /\"'"
 check 0 hw "perl -ne 'print if /rm_rf \\//' f"
 check 2 hw "ruby -e 'puts \"#{FileUtils.rm_rf \"/\"}\"'"
 check 2 hw "ruby -e \"x = /'/; rm_rf '/'\""

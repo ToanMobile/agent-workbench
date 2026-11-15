@@ -11,7 +11,7 @@ def _fail_closed(etype, value, tb):
     finally:
         os._exit(2)
 sys.excepthook = _fail_closed
-import json, re, bisect, fnmatch, functools, shlex, shutil, subprocess, signal, unicodedata
+import json, re, fnmatch, functools, shlex, shutil, subprocess, signal, unicodedata
 # Watchdog: the hook limit is 10 s (.claude/settings.json) and a hook killed there is no verdict. A command the parser cannot judge in 7 s
 # (a pattern word[^;&|\n]*rare re-scans the line for every word: 15 s for 60 KB of `dd dd dd …`) is refused with a reason. SIGALRM also
 # interrupts a regex search in the middle (checked on Python 3.9 and 3.14). tests/gates/test_hook_big_command_fast_path.sh
@@ -1878,44 +1878,12 @@ def inline_programs(rest):
         return list(rest)
     return out
 
-# A ruby / perl call without parentheses (FileUtils.rm_rf '/', x = rm_rf "/", true && rm_rf "/") is read unless it is plainly data: a
-# word of a regex (.scan(/rm_rf/), print if /rm_rf \//: a slash right before it) or of a closed '…' / "…" string (puts "FileUtils.rm_rf /",
-# OCR delta 15/11). The strings are trusted only in a program whose text outside them has nothing the scan does not model (a regex, a
-# %-literal, a ?' character, a comment, a heredoc, a backtick, a backslash): x = /'/; rm_rf '/' must not read as one string.
-INTERP_UNMODELED = re.compile(r"[/%?#\x60\\]|<<")
-
-@_memo
-def interp_string_spans(code):
-    """(starts, ends) of the closed '…' and "…" strings of the program code, one pass; empty when they cannot be trusted (above). A "…"
-    that interpolates (#{ }, ${ }, @{ }) runs code: not a string here."""
-    starts, ends, outside, i, last, n = [], [], [], 0, 0, len(code)
-    while i < n:
-        c = code[i]
-        if c in "\x27\x22":
-            j = i + 1
-            while j < n and code[j] != c:
-                j += 2 if code[j] == "\\" else 1
-            if j >= n:
-                return (), ()   # unclosed
-            outside.append(code[last:i])
-            if not (c == "\x22" and re.search(r"[#$@]\{", code[i:j])):
-                starts.append(i)
-                ends.append(j)
-            else:
-                outside.append(code[i:j])
-            i = last = j + 1
-        else:
-            i += 1
-    outside.append(code[last:])
-    return ((), ()) if INTERP_UNMODELED.search("".join(outside)) else (tuple(starts), tuple(ends))
-
+# A ruby / perl call without parentheses (FileUtils.rm_rf '/', x = rm_rf "/", true && rm_rf "/") is read unless it is a word of a regex
+# (.scan(/rm_rf/), print if /rm_rf \//: a slash right before it). OCR delta 2 (15/11): a '…' / "…" string is NOT data here: eval,
+# instance_eval, send(:eval), binding.eval and InstructionSequence.compile run it. Declared residual: puts "FileUtils.rm_rf /" is refused.
 def interp_bare_data(code, pos):
-    """True when the call name at code[pos] (no parentheses) is data: right after a slash, or inside a trusted string (above)."""
-    if code[pos - 1:pos] == "/":
-        return True
-    starts, ends = interp_string_spans(code)
-    k = bisect.bisect_right(starts, pos) - 1
-    return k >= 0 and pos < ends[k]
+    """True when the call name at code[pos] (no parentheses) is a word of a regex: right after a slash."""
+    return code[pos - 1:pos] == "/"
 
 def interp_rm_problem(code, cwds, env, strict, bare=True):
     """Why a recursive delete in the interpreter program text code is refused, or None (see above). bare: a call without parentheses

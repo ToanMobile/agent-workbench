@@ -2457,7 +2457,8 @@ _NONRUN_COUNT = re.compile(r"(?i:(?<![\d.,])\d+\s+(?:skipped|deselected)\b|(?<![
 #       tests` and no `running N tests`; Gradle: one or more test task lines (`> Task :app:testDebugUnitTest`), every one NO-SOURCE or
 #       SKIPPED (UP-TO-DATE / FROM-CACHE stay a run: the same inputs passed before; a build with no task line is judged as before).
 def _flags(*names):
-    return re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(n) for n in names) + r")(?![\w-])")
+    # OCR delta 2: a flag word only, never a value (--testNamePattern=-h) or a path piece (src/-h.test.js)
+    return re.compile(r"(?<![\w=/.-])(?:" + "|".join(re.escape(n) for n in names) + r")(?![\w.-])")
 _NO_RUN_FLAGS = (
     (re.compile(r"\bpytest\b|\bpython\S*\s+-\S*m\s*(?:pytest|unittest)\b"),
      _flags("--collect-only", "--co", "--version", "-V", "--help", "-h", "--fixtures", "--markers", "--setup-plan")),
@@ -2470,7 +2471,7 @@ _NO_RUN_FLAGS = (
      _flags("--listTests", "--list-tests", "--collect-only", "--co", "--version", "--help", "-h")),
     # OCR delta a2f1e1d1: -DskipTests / -Dmaven.test.skip (not =false) run no test; "Tests are skipped." still prints BUILD SUCCESS.
     (re.compile(r"(?:^|[\s/])mvnw?(?=\s|$)"), re.compile(_flags("--version", "-v", "--help", "-h").pattern
-                                                       + r"|(?<![\w-])-D(?:skipTests|maven\.test\.skip)(?!=false\b)(?![\w.-])")),
+                                                       + r"|(?<![\w-])-D(?:skipTests|maven\.test\.skip)(?!=(?i:false|0|no)\b)(?![\w.-])")),
     (re.compile(r"(?:^|[\s/])dotnet\s+test\b"), _flags("--list-tests", "-t", "--version", "--help", "-h")),
     (re.compile(r"(?:^|[\s/])swift\s+test\b"), _flags("--list-tests", "--help")),
 )
@@ -2482,8 +2483,10 @@ _CARGO_NONE = re.compile(r"^[^\S\n]*running 0 tests[^\S\n]*$", re.M)
 _CARGO_RAN = re.compile(r"^[^\S\n]*running [1-9]\d* tests?[^\S\n]*$", re.M)
 _GRADLE_TEST_TASK = re.compile(r"^> Task [\w:.-]*:(?:test(?!Classes\b)\w*|\w+Test)(?:[^\S\n]+([A-Z-]+))?[^\S\n]*$", re.M)
 
+_MVN_QUOTED_PROP = re.compile(r"(-D[\w.]+=)(['\"])([^'\"\s]*)\2")
+
 def _no_run_flag(seg):
-    seg = _QUOTED.sub(" ", seg)
+    seg = _QUOTED.sub(" ", _MVN_QUOTED_PROP.sub(r"\1\3", seg))   # -DskipTests='false': the value, not a quoted string
     rows = [flag for who, flag in _NO_RUN_FLAGS if who.search(seg)]
     return any(flag.search(seg) for flag in rows) if rows else bool(_NO_RUN_OTHER.search(seg))
 

@@ -423,6 +423,11 @@ norun 'mvn test -DskipTests=true'               'mvn test -DskipTests=true' "$MV
 norun 'ctest -h'                                'ctest -h' 'Usage: ctest [options]'
 norun 'npm test -- -h'                          'npm test -- -h' 'Usage: jest [options]'
 ran 'mvn -DskipTests=false test (control: tests do run)' 'mvn -DskipTests=false test' "$MVN_OK"
+ran "mvn -DskipTests='false' test (quoted false: tests run)" "mvn -DskipTests='false' test" "$MVN_OK"
+ran 'mvn -Dmaven.test.skip=FALSE verify'        'mvn -Dmaven.test.skip=FALSE verify' "$MVN_OK"
+ran 'npm test -- --testNamePattern=-h (a value, not the help flag)' 'npm test -- --testNamePattern=-h' $'Tests:       5 passed, 5 total'
+norun "mvn -DskipTests='true' test"           "mvn -DskipTests='true' test" "$MVN_SKIP"
+ran 'npm test -- src/-h.test.js'                'npm test -- src/-h.test.js' $'Tests:       5 passed, 5 total'
 
 echo "cases: $N"
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }
