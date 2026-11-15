@@ -101,6 +101,7 @@ ABBREV = {
     "am": ("--no-verify", "--no-quiet"),
     "gc": ("--prune", ""),
     "worktree": ("--force", ""),
+    "tag": ("--delete --force", "--format --file"),
     "update-ref": ("--stdin", ""),
     "symbolic-ref": ("--delete", "--short --quiet --recurse --no-recurse"),
     "remote": ("--delete --no-auto", "--auto --verbose"),
@@ -248,6 +249,22 @@ def danger_in_git(sub, args, lit=False):
             return "push --force/--delete/--mirror ghi đè hoặc xoá trên remote"
         if any(a.startswith("+") or a.startswith(":") for a in pos):
             return "push +refspec / :ref ghi đè hoặc xoá trên remote"
+    if sub == "tag":   # (14/11, C4a) -d / --delete removes a tag, -f / --force moves one: its old commit may be reachable from nothing else
+        k = 0
+        while k < len(args) and args[k] != "--":
+            a = args[k]
+            if a.split("=", 1)[0] in ("--delete", "--force"):
+                return "tag -d/-f xoá hoặc ghi đè tag (commit cũ của tag có thể không còn ref nào giữ)"
+            if a.startswith("-") and not a.startswith("--"):
+                for j, ch in enumerate(a[1:], 1):
+                    if ch in "df":
+                        return "tag -d/-f xoá hoặc ghi đè tag (commit cũ của tag có thể không còn ref nào giữ)"
+                    if ch in "mFu":   # -m MSG / -F FILE / -u KEY: the rest of the word, or the next word, is its value
+                        k += 0 if a[j + 1:] else 1
+                        break
+            elif a in ("--message", "--file", "--local-user", "--sort", "--cleanup"):
+                k += 1
+            k += 1
     if sub == "stash" and pos[:1] and pos[0] in ("drop", "clear"):
         return "stash drop/clear mất stash"
     if sub == "reflog" and pos[:1] and pos[0] in ("expire", "delete"):
@@ -1789,7 +1806,7 @@ def analyse_simple(tokens, depth):
     relocated = any(o.split("=", 1)[0] in ("-C", "--git-dir", "--work-tree") for o in rest[:j])
     if any(o.split("=", 1)[0] in ("--git-dir", "--work-tree") for o in rest[:j]):
         RETARGETED[0] = True
-    if rest[j] == "restore" and not relocated and backup_then_allow_restore(rest[j + 1:]):
+    if rest[j] == "restore" and not relocated and not IN_XARGS[0] and backup_then_allow_restore(rest[j + 1:]):   # xargs: stdin adds files nobody backed up
         return None
     if hooks_off and rest[j] in ("commit", "merge", "am", "cherry-pick", "revert"):
         return "DEVKIT_PRECOMMIT=0 tắt pre-commit hook (kiểm secret/chất lượng)"
@@ -1830,6 +1847,15 @@ def checkout_path_rule(args, gdir):
     if "--pathspec-from-file" in long_:
         return "checkout --pathspec-from-file ghi đè file working tree"
     pos = [a for a in args if not a.startswith("-")]
+    # (14/11 round 2) closed rule, before the one-operand reading and whatever gdir is: the whole tree (:/ and the :(magic) forms, $PWD,
+    # $(pwd)), paths a command prints ($(git diff --name-only), `git ls-files -m`, $(find …): FSUBST) and paths xargs appends from stdin
+    # all overwrite working-tree files like checkout -- <path>. A bare :/text stays a revision (commit message search), $VAR a branch.
+    for a in pos:
+        if a == ":/" or a.startswith(":(") or ROOT_VAR.match(a) or FSUBST in a:
+            shown = a.replace(FSUBST, "$(…)")
+            return f"checkout {shown}: là đường dẫn (gốc cây hoặc danh sách file do lệnh con in ra), ghi đè file working tree (như checkout -- <path>)"
+    if IN_XARGS[0]:
+        return "checkout qua xargs: toán hạng đến từ stdin (danh sách file), ghi đè file working tree (như checkout -- <path>)"
     if len(pos) >= 2:
         return f"checkout {pos[0]} {pos[1]}: <tree-ish> <path> ghi đè file working tree (như checkout -- <path>)"
     if len(pos) == 1 and gdir:
@@ -1838,6 +1864,8 @@ def checkout_path_rule(args, gdir):
         if re.search(r"[*?\[]", pos[0]) or os.path.lexists(os.path.join(gdir, os.path.expanduser(pos[0]))):
             return f"checkout {pos[0]}: là đường dẫn, ghi đè file working tree (như checkout -- <path>)"
     return None
+
+ROOT_VAR = re.compile(r"\$(?:PWD(?![A-Za-z0-9_])|\{PWD\})")   # $PWD, ${PWD}, $PWD/src/a.kt: an absolute path, never a branch
 
 RAW = re.compile(
     r"\bgit\b[^;&|\n]*?\s(reset\s+[^;&|\n]*--(hard|merge|keep)"
@@ -1855,6 +1883,29 @@ RAW = re.compile(
 
 SUBST = "__DEVKIT_SUBST__"
 PSUBST = SUBST + "IN__"   # an unquoted <(…): a file that reads what its command prints (contains SUBST: every SUBST test holds)
+FSUBST = SUBST + "FILES__"   # (14/11 round 2) a $(…) / backtick span whose command prints file names or the directory (contains SUBST too)
+LISTERS = {"find", "ls", "pwd"}
+GIT_LISTERS = {"ls-files", "status"}
+GIT_NAME_FLAGS = ("--name-only", "--name-status")
+
+def lists_files(inner):
+    """True when a stage of the command inside a substitution prints paths: find, ls, pwd, git ls-files, git status, and git diff / show /
+    log / ls-tree … with --name-only or --name-status. git checkout $(…) of such a span overwrites those files (checkout_path_rule)."""
+    for seg in re.split(r"[;&|()\n]+", inner):
+        words = [w.strip("\x22\x27") for w in seg.split()]
+        i = shell_norm.prefix_end(words)
+        if i >= len(words):
+            continue
+        prog, rest = words[i].rsplit("/", 1)[-1].lower(), words[i + 1:]
+        if prog in LISTERS:
+            return True
+        if prog == "git":
+            j = 0
+            while j < len(rest) and rest[j].startswith("-"):
+                j += 2 if (rest[j] in GIT_OPTS_WITH_ARG and "=" not in rest[j]) else 1
+            if rest[j:j + 1] and (rest[j] in GIT_LISTERS or any(a.startswith(GIT_NAME_FLAGS) for a in rest[j + 1:])):
+                return True
+    return False
 
 HEREDOC = re.compile(r"<<-?[ \t]*([\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
@@ -1922,7 +1973,7 @@ def strip_subst(text, inners=None, outs=None):
                 inners.append(text[i + 2:j - 1])
             if outs is not None and c == ">" and not dq:
                 outs.append(text[i + 2:j - 1])
-            out.append(PSUBST if c == "<" and not dq else SUBST)
+            out.append(PSUBST if c == "<" and not dq else FSUBST if c == "$" and lists_files(text[i + 2:j - 1]) else SUBST)
             i = j
         elif c == "`":
             j = text.find("`", i + 1)
@@ -1930,7 +1981,7 @@ def strip_subst(text, inners=None, outs=None):
                 return None
             if inners is not None:
                 inners.append(text[i + 1:j])
-            out.append(SUBST)
+            out.append(FSUBST if lists_files(text[i + 1:j]) else SUBST)
             i = j + 1
         else:
             out.append(text[i])

@@ -217,8 +217,21 @@ binding_scan = re.sub(r"[`\"“”]", "", scan)
 sentences = re.split(r"(?:\n|[!?](?=\s|$)|\.(?=\s|$))", scan)
 binding_sentences = re.split(r"(?:\n|[!?](?=\s|$)|\.(?=\s|$))", binding_scan)
 
+# 2026-11-14 (Zero-Defect C1a / C1c, tests/gates/test_evidence_zero_defect_c1.sh). The first branch (group tp) is the one of 5db81236
+# (it runs over a ":" as it did) and also knows "kiểm thử" and the plainer results "qua hết", "không (còn) lỗi". tc: a ":" right before
+# a result the first branch does not know ("Tests: ✔ 5/5", "Kết quả test: đạt"). np: a bare runner summary "N passed" ("5 passed in
+# 0.03s"). A match of these three groups is no claim only when it is the pass count of a FAILING summary (_honest_fail, a closed rule).
+# Round 3 (2026-11-15): the pass-result words live in three fragments, shared with _OTHER_RESULT (one list, not two). tc holds only
+# the results tp does not know: with "pass / xanh / green" in it, "The test file covers three cases: pass, fail and skip" (a list
+# after a colon, 26 characters from "test", free at 5db81236) was a claim.
+_RES_TP = r"pass|xanh|green|thành công|qua\s+hết|đều\s+qua|không\s+(?:còn\s+|có\s+)?lỗi"
+_RES_TC = r"[✔✓✅]|\bok\b|thành\s+công|đạt"
+_RES_SUCC = r"succe(?:ed(?:s|ed)?|ss(?:ful|fully)?)\b"
 CLAIM = re.compile(
-    r"(test[^.\n]{0,24}(?:pass|xanh|green|thành công)"
+    r"((?P<tp>(?:test|kiểm\s+thử)[^.\n]{0,24}(?:" + _RES_TP + r"))"
+    r"|(?P<tc>(?:test|kiểm\s+thử)[^.\n:]{0,24}:\s*(?:(?:đều|all|đã|tất\s+cả|toàn\s+bộ|[1-9]\d*)\s+)?(?:" + _RES_TC + r"))"
+    r"|\btests?\s+(?:(?!(?:not|never|chưa|không)\b)\w+\s+){0,2}?" + _RES_SUCC +
+    r"|(?P<np>(?<![\w.,/])[1-9]\d*\s+(?:tests?\s+)?(?:passed|passing)\b)"
     r"|(?:pass|xanh|green)[^.\n]{0,24}test"
     r"|\d+\s*/\s*\d+\s+test"
     r"|tests?\s+passed"
@@ -304,7 +317,7 @@ _NEG = r"(?:\b(?:chưa|không|chẳng|never|not|no|none\s+of\s+the|zero|did\s+no
 # "chưa phải đã fix" (2026-10-14) is the negation too. Not "không phải" / "chẳng phải": "Không phải đã fix lỗi X rồi sao?" is a rhetorical
 # question that asserts, and "không phải A mà B" asserts B (OCR + principal-code-reviewer 14/10).
 NEG_BEFORE_RESULT = re.compile(r"(?:\bchưa\s+phải(?:\s+là)?|" + _NEG + r")\s+(?:(?:có|được|hề|all|yet|been|tất\s+cả|the)\s+)*$", re.I)
-NEG_IN_MATCH = re.compile(_NEG + r"\s+(?:(?:có|được|hề|yet|been)\s+)*(?:pass|xanh|green|thành\s+công|đạt)", re.I)
+NEG_IN_MATCH = re.compile(_NEG + r"\s+(?:(?:có|được|hề|yet|been)\s+)*(?:pass|xanh|green|thành\s+công|đạt|qua\s+hết|đều\s+qua)", re.I)
 NEG_RUN = re.compile(
     r"(?:\b(?:chưa|không|chẳng|never|not|did\s+not|have\s+not|has\s+not|cannot|không\s+thể|chưa\s+thể)|n't)"
     r"\s+(?:(?:được|hề|yet|been|thể)\s+)?"
@@ -497,8 +510,51 @@ def is_nonassertive(sentence, match, kind):
         )
     return bool(OUTCOME_GUIDANCE_PREFIX.search(prefix))
 
-claimed = False
-def _claim_matches(sent):
+# C1c (2026-11-14): an honest report of a FAILING run carries the runner's own counts ("Test vẫn fail: 1 failed, 4 passed"). CLOSED rule,
+# local to the summary, never a negation or a failure word somewhere in the sentence: a tp / tc / np match is no claim only when its
+# result word is the pass COUNT of a summary that also counts a failure, the two side by side (_FAIL_SEP: punctuation, "and" / "và",
+# the other counts of a summary line): "1 failed, 4 passed", "4 pass, 1 fail", "2 tests fail, 3 passed", "still failing: 4 passed".
+# _FAIL_FORM is the whole list of failure forms: a non-zero "N failed / failing", "N (tests) fail(s|ed)", "vẫn / still fail… / đỏ".
+# "N lỗi", "N errors", "N bugs", "N failures" are NOT in it: they count what was fixed as often as what failed ("Test sau fix 3 lỗi đều
+# pass", "All tests after fixing 2 errors pass" were read as failing runs and let through, review of bc5b7e3c). So "0 failed, 5 passed",
+# "pytest: 2 errors, 3 passed" (blocked at 5db81236 too), "1 failed trước đó, giờ 5 passed" and "Test A fail, test B pass" stay claims.
+_FAIL_FORM = (r"(?:(?<![\d.,])[1-9]\d*\s+(?:tests?\s+)?(?:failed|failing|fails?)\b|\b(?:vẫn|still)\s+(?:fail\w*|đỏ)(?!\w))")
+_FAIL_SEP = r"(?:[\s,;:()/|]|\b(?:and|và)\b|(?<![\d.,])\d+\s+(?:skipped|deselected|xfailed|xpassed|warnings?|errors?|ignored)\b){0,40}"
+_PASS_COUNT = r"(?<![\d.,])\d+\s+(?:tests?\s+)?pass"
+_HONEST_FAIL = re.compile(_FAIL_FORM + _FAIL_SEP + _PASS_COUNT + "|" + _PASS_COUNT + r"(?:ed|ing|es)?\b" + _FAIL_SEP + _FAIL_FORM, re.I)
+_PASS_WORD = re.compile(r"pass", re.I)
+
+# Another pass result in the sentence voids the exemption: every result word CLAIM knows (the same fragments) and the closing words
+# of a handover. XONG / DONE in capitals only ("tôi chưa sửa xong" is none), and not "CHƯA XONG" / "NOT DONE". A result under a
+# negation is none ("Test chưa pass (1 failed, 4 passed)").
+_RES_CLOSING = r"ready\s+to\s+merge|đạt\s+yêu\s+cầu|đã\s+ổn|(?-i:(?<!CHƯA )(?<!NOT )\b(?:XONG|DONE)\b)"
+_OTHER_RESULT = re.compile(r"(?:" + _RES_TP + r"|" + _RES_TC + r"|" + _RES_SUCC + r"|" + _RES_CLOSING + r")", re.I)
+_CLOSING = re.compile(_RES_CLOSING, re.I)     # anywhere in the reply: "Test: 41 passed, 1 failed (flaky cũ). Thay đổi đạt yêu cầu, XONG."
+# A bare "N passed" (group np, new on 2026-11-14) beside a not-run / yesterday / expected statement, in its sentence or the one next to
+# it, reports no run of this turn: "Lượt chạy hôm qua: 5 passed. Hôm nay chưa chạy.", "Expected output: 5 passed. Not run yet." (free
+# at 5db81236). The bare summary "5 passed in 0.03s" stays a claim; tp / tc are not touched ("Chưa chạy lint. Test: 5 passed.").
+_NP_HEDGE = re.compile(r"\b(?:chưa|không)\s+chạy\b|\bnot\s+(?:yet\s+)?(?:been\s+)?run\b|\bhôm\s+qua\b|\byesterday\b|\bkỳ\s+vọng\b|\bexpected\b", re.I)
+
+def _honest_fail(sent, m):
+    """The result word of CLAIM match m (its last "pass") lies inside a failing summary of the sentence, and the sentence states no
+    other result outside its failing summaries ("Test 1 failed, 4 passed giờ đã xanh", "Test đã xanh: 1 failed, 4 passed" are claims)."""
+    at = None
+    for at in _PASS_WORD.finditer(sent, m.start(), m.end()):
+        pass
+    if at is None or sent[at.end():m.end()].lower() not in ("", "ed", "ing") or len(sent) > 2000:
+        return False             # the match ends on another result word; a sentence that long is no summary line (and stays linear)
+    spans = [h.span() for h in _HONEST_FAIL.finditer(sent)]
+    if not any(a <= at.start() < b for a, b in spans):
+        return False
+    rest, pos = [], 0
+    for a, b in spans:
+        rest.append(sent[pos:a])
+        pos = b
+    rest.append(sent[pos:])
+    rest = " ".join(rest)
+    return all(NEG_BEFORE_RESULT.search(rest[:r.start()]) for r in _OTHER_RESULT.finditer(rest))
+
+def _claim_matches(sent, exempt=True):
     """CLAIM matches; after one that crosses a clause break the scan resumes at the last break inside it, so an exempted
     match cannot hide a claim of its own clause (2026-10-12 fail-open: "Không có test nào fail, 12/12 test pass." - the
     negator exempted the match running from the first test to the last pass). A match with no break inside resumes after
@@ -508,20 +564,34 @@ def _claim_matches(sent):
         m = CLAIM.search(sent, pos)
         if not m:
             return
+        # np / tc are branches 5db81236 did not have: their failing summary is never a claim ("Tests are failing: 1 failed, 4 passed",
+        # free there). tp is the branch it had: its exemption is the one that waits for a failing runner turn (exempt).
+        if (m.group("np") or m.group("tc") or (exempt and m.group("tp"))) and _honest_fail(sent, m):
+            pos = m.start() + 1      # the pass count of a failing summary; another branch may still match inside it
+            continue
         yield m
         cut = None
         for b in CLAUSE_BREAK.finditer(sent, m.start(), m.end()):
             cut = b.end()
         pos = cut if cut is not None and m.start() < cut < m.end() else m.end()
 
-for sent in sentences:
-    for m in _claim_matches(sent):
-        if is_nonassertive(sent, m, "test"):
-            continue
-        claimed = True
-        break
-    if claimed:
-        break
+def _test_claimed(exempt):
+    for i, sent in enumerate(sentences):
+        for m in _claim_matches(sent, exempt):
+            if is_nonassertive(sent, m, "test"):
+                continue
+            if m.group("np") and any(_NP_HEDGE.search(sentences[j]) for j in (i - 1, i, i + 1) if 0 <= j < len(sentences)):
+                continue
+            return True
+    return False
+
+# Round 3 (2026-11-15): the honest-failure exemption holds only when the last real runner turn of the transcript FAILED. With no
+# runner turn, or a green one last, "Test: 41 passed, 1 failed (flaky cũ). Thay đổi đạt yêu cầu, XONG." is judged as at 5db81236
+# (a claim). So the claim is first read WITHOUT the exemption; honest_fail_only marks a reply that is a claim only for lack of it,
+# and is settled after the transcript pass (runner_results).
+claimed = _test_claimed(False)
+honest_fail_only = (claimed and not _test_claimed(True)
+                    and not any(not NEG_BEFORE_RESULT.search(sent[:c.start()]) for sent in sentences for c in _CLOSING.finditer(sent)))
 
 # An outcome claim is separate from a test-pass claim. This must be classified
 # before the cheap early exit below; otherwise plain "đã fix bug" bypasses the
@@ -533,6 +603,14 @@ OUTCOME = re.compile(
     r"|(?:bug|lỗi)[^.\n]{0,32}đã\s+(?:được\s+)?sửa\b"
     r"|đã\s+khắc\s+phục|đã\s+xử\s+lý"
     r"|đã\s+giải\s+quyết(?:\s+xong)?|hết\s+bug"
+    # The passive form (2026-11-14, C1a) only about a defect named before it: "hai điểm lần trước làm bounce đã được xử lý" is a
+    # review report (a real Stop point of a session that edited no code was blocked, replay 2026-11-15).
+    r"|(?:lỗi|bug|crash|sự\s+cố|vấn\s+đề)[^.\n]{0,48}đã\s+được\s+(?:khắc\s+phục|xử\s+lý|giải\s+quyết)"
+    # 2026-11-14 (C1a): plainer outcome wording that named no "fix" ("Lỗi crash đã hết", "This fixes the crash", "no longer reproduces",
+    # "Works now", "works as expected").
+    r"|(?:lỗi|bug|crash)[^.\n]{0,32}đã\s+hết\b(?!\s+(?:hạn|chưa)\b)"
+    r"|\b(?:this|that|it|which|commit|change|patch)\s+fixes\b|\bno\s+longer\s+(?:reproduces?|reproducible|occurs?|happens?|crash(?:es)?)\b"
+    r"|\bworks?\s+now\b|\bnow\s+works?\b|\bworks?\s+as\s+expected\b"
     r"|(?:the\s+)?fix\s+(?:works?|worked|has\s+worked|(?:đã\s+)?có\s+tác\s+dụng)"
     r"|bug\s+đã\s+(?:được\s+)?fix|(?:lỗi|bug)[^.\n]{0,48}không\s+(?:còn\s+)?tái\s+hiện(?:\s+nữa)?"
     r"|(?<!\bwhat\swas\s)\bfixed\b|\bresolved\b|\b(?:bug|issue|crash|error)\s+(?:is|was|has)\s+(?:now\s+)?gone\b)", re.I)
@@ -702,7 +780,7 @@ TEST_RUNNER_RX = re.compile(
     r"\b(npm|yarn|pnpm|bun)\s+(run\s+)?test|\b(npx\s+)?(jest|vitest|mocha)\b|\bpytest\b|"
     # `-mpytest`, `-Bmpytest` (#427 vòng 3): -m dính module, cờ gộp trước nó như _py_head; `-im` / `-cm` thì không (phân biệt hoa thường).
     r"python\S*\s+(?-i:-[bBdEIOPqsSuvRx]*m)\s*(pytest|unittest)|\b(cargo|go|swift|dotnet|flutter|deno)\s+test\b|"
-    r"\bnode\s+--test\b|\bxcodebuild\b.*\btest\b|\bmvn\s+(test|verify)\b|\bmake\s+(test|check)\b|"
+    r"\bnode\s+--test\b|\bxcodebuild\b.*\btest\b|\bmvnw?(?:\s+-[^\s|;&]+)*\s+(test|verify)\b|\bmake\s+(test|check)\b|"
     r"\bctest\b|\brspec\b|\bphpunit\b|\bgradlew?\b[^\n|;&]*\b\w*[tT]est\w*\b|"
     # Unity: the DevKit's unity-batch.sh test modes (not `compile`/`execute`), a
     # project's scripts/unity-test.sh, or the Editor itself with -runTests.
@@ -2355,6 +2433,81 @@ _RUNNER_NAMES = r"(?:pytest|jest|vitest|mocha|npm|npx|yarn|pnpm|bun|deno|node|ca
 _RUNNER_MISSING = re.compile(r"\bNo module named '?(?:pytest|unittest)\b|(?:^|[\s/])" + _RUNNER_NAMES + r": (?:command )?not found\b"
                              r"|command not found: " + _RUNNER_NAMES + r"\b", re.M)
 
+# 2026-11-14 (Zero-Defect C1b, tests/gates/test_evidence_zero_defect_c1.sh): a runner turn that ran NO test is no verdict, neither the
+# green that backs "test pass" nor the RED half of check 7's pair (pytest exit 5 after `-k <typo>`).
+#   _NO_RUN_FLAGS: the runner was asked to list, not to run (`pytest --collect-only`, `--co`, `--version`, `--help`, `cargo test -- --list`).
+#   _zero_tests: the result says no test ran ("no tests ran", "0 passed", "Tests run: 0", "collected 0 items"), or holds only skipped /
+#       deselected / collected counts with no pass summary, or holds nothing at all: only for exit 0, stdout not sent to a file, and
+#       a command that is the one runner alone (`echo x && pytest -q` with an empty result stays as it was: tests/verification/
+#       test_evidence_issue427.sh E4 control. ponytail: a silent run behind another command is still green; bind it when one shows up).
+# A run whose output went to a file (`pytest > log 2>&1; echo "rc=$?"`) and a summary like Gradle's BUILD SUCCESSFUL are judged as before.
+_ZERO_RAN = re.compile(r"(?i:\bno tests ran\b|(?<![\d.,])0 passed\b|\bTests run: 0\b|\bRan 0 tests\b|\bcollected 0 items\b"
+                       r"|(?<![\d.,])0 tests? (?:passed|ran|executed|collected)\b|\bno tests? (?:found|collected|were run)\b"
+                       # A2: the default script of npm, dotnet with no discovered test, vitest with no test file
+                       r"|\bno test specified\b|\bNo test is available\b|\bno test files found\b)")
+_NONRUN_COUNT = re.compile(r"(?i:(?<![\d.,])\d+\s+(?:skipped|deselected)\b|(?<![\d.,])\d+\s+tests?\s+collected\b)")
+# Review of bc5b7e3c (A2): no-run flags that mean something else to another runner (`python3 -m pytest`, `pytest -m slow`), so each is
+# read only in a segment of its own runner; and zero-test results that still carry a pass summary (go prints `ok pkg 0.002s [no tests
+# to run]`, cargo `test result: ok. 0 passed`, Gradle `BUILD SUCCESSFUL` over a test task with NO-SOURCE). Closed lists:
+#   _NO_RUN_FLAGS: one row per runner, each flag read only in a segment of its own runner (OCR review of 2193a36a: one list for every
+#       runner read `ctest -V`, verbose, and `mvn -V test`, show the version THEN run, as no run: a real green run was no evidence).
+#       A runner with no row: only --help / --version. A command line with several runner commands is judged on those that do run
+#       (`pytest -V; pytest -q`); when none does, it is no verdict.
+#   _ran_nothing: go: a `[no test files]` / `[no tests to run]` line and no `ok pkg <time>` line without that mark; cargo: `running 0
+#       tests` and no `running N tests`; Gradle: one or more test task lines (`> Task :app:testDebugUnitTest`), every one NO-SOURCE or
+#       SKIPPED (UP-TO-DATE / FROM-CACHE stay a run: the same inputs passed before; a build with no task line is judged as before).
+def _flags(*names):
+    # OCR delta 2: a flag word only, never a value (--testNamePattern=-h) or a path piece (src/-h.test.js)
+    return re.compile(r"(?<![\w=/.-])(?:" + "|".join(re.escape(n) for n in names) + r")(?![\w.-])")
+_NO_RUN_FLAGS = (
+    (re.compile(r"\bpytest\b|\bpython\S*\s+-\S*m\s*(?:pytest|unittest)\b"),
+     _flags("--collect-only", "--co", "--version", "-V", "--help", "-h", "--fixtures", "--markers", "--setup-plan")),
+    (re.compile(r"(?:^|[\s/])ctest(?=\s|$)"), _flags("-N", "--show-only", "--version", "--help", "-h")),
+    (re.compile(r"(?:^|[\s/])go\s+test\b"), _flags("-list", "--help", "-h")),
+    (re.compile(r"(?:^|[\s/])cargo\s"), _flags("--no-run", "--list", "--version", "--help", "-h")),
+    (re.compile(r"\b(?:jest|vitest|mocha)\b"), _flags("--listTests", "--list-tests", "--dry-run", "--version", "--help")),
+    (re.compile(r"(?:^|[\s/])gradlew?(?=\s|$)"), _flags("--dry-run", "-m", "--version", "-v", "--help", "-h")),
+    (re.compile(r"\b(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?test\b"),
+     _flags("--listTests", "--list-tests", "--collect-only", "--co", "--version", "--help", "-h")),
+    # OCR delta a2f1e1d1: -DskipTests / -Dmaven.test.skip (not =false) run no test; "Tests are skipped." still prints BUILD SUCCESS.
+    (re.compile(r"(?:^|[\s/])mvnw?(?=\s|$)"), re.compile(_flags("--version", "-v", "--help", "-h").pattern
+                                                       + r"|(?<![\w-])-D(?:skipTests|maven\.test\.skip)(?!=(?i:false|0|no)\b)(?![\w.-])")),
+    (re.compile(r"(?:^|[\s/])dotnet\s+test\b"), _flags("--list-tests", "-t", "--version", "--help", "-h")),
+    (re.compile(r"(?:^|[\s/])swift\s+test\b"), _flags("--list-tests", "--help")),
+)
+_NO_RUN_OTHER = _flags("--help", "--version")
+_NPM_PLACEHOLDER = re.compile(r"\bError: no test specified\b")
+_GO_NONE = re.compile(r"\[no test files\]|\[no tests to run\]")
+_GO_RAN = re.compile(r"^ok[^\S\n]+\S+[^\S\n]+(?:[\d.]+s|\(cached\))(?![^\n]*\[no tests to run\])", re.M)
+_CARGO_NONE = re.compile(r"^[^\S\n]*running 0 tests[^\S\n]*$", re.M)
+_CARGO_RAN = re.compile(r"^[^\S\n]*running [1-9]\d* tests?[^\S\n]*$", re.M)
+_GRADLE_TEST_TASK = re.compile(r"^> Task [\w:.-]*:(?:test(?!Classes\b)\w*|\w+Test)(?:[^\S\n]+([A-Z-]+))?[^\S\n]*$", re.M)
+
+_MVN_QUOTED_PROP = re.compile(r"(-D[\w.]+=)(['\"])([^'\"\s]*)\2")
+
+def _no_run_flag(seg):
+    seg = _QUOTED.sub(" ", _MVN_QUOTED_PROP.sub(r"\1\3", seg))   # -DskipTests='false': the value, not a quoted string
+    rows = [flag for who, flag in _NO_RUN_FLAGS if who.search(seg)]
+    return any(flag.search(seg) for flag in rows) if rows else bool(_NO_RUN_OTHER.search(seg))
+
+def _ran_nothing(txt):
+    if _GO_NONE.search(txt) and not _GO_RAN.search(txt):
+        return True
+    if _CARGO_NONE.search(txt) and not _CARGO_RAN.search(txt):
+        return True
+    tasks = _GRADLE_TEST_TASK.findall(txt)
+    return bool(tasks) and all(t in ("NO-SOURCE", "SKIPPED") for t in tasks)
+
+def _zero_tests(is_error, txt, segs, res):
+    if _ran_nothing(txt):
+        return True
+    if (RUNNER_PASS_RX.search(txt) or NODE_PASS_RX.search(txt) or NUNIT_PASS_RX.search(txt) or MVN_PASS_RX.search(txt)
+            or GRADLE_PASS_RX.search(txt) or DEVKIT_SUITE_GREEN.search(txt)):
+        return False
+    if _ZERO_RAN.search(txt) or _NONRUN_COUNT.search(txt):
+        return True
+    return not is_error and not txt.strip() and len(segs) == 1 and bool(res) and not any(_away(segs[i]) for i, _ in res)
+
 def runner_state(is_error, txt, pm_run=False, command=""):
     """"red", "green", "gate-green" (the DevKit gate: a green for checks 2 and 7, not for auto_link), or None (not a verdict) for one runner tool_result."""
     if command and _spoofed(command):
@@ -2489,10 +2642,19 @@ def runner_state(is_error, txt, pm_run=False, command=""):
             return None
         return "green"
     segs, res = _echoed_codes(command, txt, _runs_as_command) if command else ([], [])
+    if command and res:
+        res = [(i, c) for i, c in res if not _no_run_flag(segs[i])]
+        if not res:
+            return None          # C1b: every runner command of the line listed or printed help, none ran a test
     compound = any(_COMPOUND.match(segs[i]) for i, _ in res)
     trapped = bool(command) and _exit_trapped(command)     # #427 E4: mã thoát của tool là của trap, không tin theo chiều nào
     masked = (trapped or any(_hidden(segs, i, txt) for i, _ in res) or (not compound and not _exit_is_the_runs(command, segs, res))
               or any(_compound_masks(segs[i]) for i, _ in res if _COMPOUND.match(segs[i])) or (compound and _loose_simple(segs, res, command)))
+    if command and _NPM_PLACEHOLDER.search(txt):
+        return None              # A2: the placeholder script of `npm init` ran no test; its own text ("exit 1", blank, "Error: …") reads as "1 error"
+    if (command and _zero_tests(is_error, txt, segs, res) and not RUNNER_FAIL_RX.search(txt)
+            and not ((compound or masked) and DEVKIT_SUITE_RED.search(txt))):
+        return None              # C1b: no test ran, so no green and no RED half
     if (is_error and not trapped) or RUNNER_FAIL_RX.search(txt) or ((compound or masked) and DEVKIT_SUITE_RED.search(txt)):
         return "red"
     if is_error:
@@ -2523,7 +2685,8 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         return "green" if (_pass_summary(txt, segs, unbound) or DEVKIT_SUITE_GREEN.search(txt)) else None
     return "green"
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
-           ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm")
+           ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm",
+           ".sh", ".bash", ".zsh")   # 2026-11-14: a shell script is source too (hooks, the kit itself): editing one after a green run aged nothing
 # A file the session wrote in a TEMP dir that is not the project itself (the scratchpad the harness tells every agent to use, /tmp,
 # $TMPDIR) is a helper, not the code a test claim is about: it must not age a green run or ask for its RED-check. Measured 2026-10-10 over
 # 1227 real transcripts: 62 of 171 blocks of this gate came right after the last source file written lay in such a dir. A project that
@@ -2556,8 +2719,11 @@ bugs_touched = set()
 SCRIPT_TEST_RX = re.compile(
     r"(\.(test|spec)\.(m|c)?[jt]sx?$|(^|/)test_[^/]*\.py$|_test\.(py|go|dart)$|Tests?\.swift$|_spec\.rb$)")
 SCRIPT_TEST_DIR_RX = re.compile(r"(^|/)(tests?|__tests__|spec)/[^/]+\.(py|[jt]sx?|mjs|cjs|rb|swift|dart|rs)$")
+# A shell test (tests/…/x.sh, hooks/tests/x.sh): a test file for check 7's marker and auto_link, like the script tests above. Not in
+# SCRIPT_TEST_RX on purpose: the RED-check of an edited script test reads runner output that names the file, kit suites print none.
+SHELL_TEST_RX = re.compile(r"(^|/)(tests?|__tests__|spec)/(?:[^/]+/)*[^/]+\.(sh|bash|zsh)$")
 def is_test_path(fp):
-    return bool(SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)
+    return bool(SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp) or SHELL_TEST_RX.search(fp)
                 or "/src/test/" in fp or "/src/androidTest/" in fp or re.search(r"/Tests?/.*\.cs$|Tests?\.cs$", fp))
 
 # #427 R4: `[\w./-]+\.(test|spec)…` không neo, nên từ MỖI vị trí của một dải `a/a/a/…` 200 KB nó chạy tới cuối dải: bậc hai, hook bị giết
@@ -2574,7 +2740,138 @@ last_scratch_src_idx = -1   # the last source file written in a temp dir: the fa
 # Check 2 vẫn dùng last_src_edit_idx: claim "test pass" vẫn cần một lần chạy sau lần sửa file test cuối.
 last_fix_edit_idx = -1
 last_scratch_fix_idx = -1
-edit_log = []             # (transcript position, file path) of every Edit/Write/NotebookEdit
+edit_log = []             # (transcript position, file path) of every Edit/Write/MultiEdit/NotebookEdit
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")   # 2026-11-14: MultiEdit was no edit, so it aged no green run
+# A Bash command that writes a source file (`sed -i … src/a.py`, `echo … >> src/a.py`, `… | tee src/a.py`, a heredoc `cat > x.sh`) is a
+# source edit as well. Write targets come from hooks/shell_writes.py (the scanner of worktree_guard and proof_gate), not a second parser:
+# its "redirect" and "file" targets that end in SRC_EXT. A target holding $VAR or a backtick is unknown and skipped; so is a command
+# with no write verb in it (the cheap prefilter keeps the scanner off every `git status`). A command that is itself a test run is not
+# read: its position is the run's, so a write in it cannot be placed before or after that run (`pytest -q | tail -3; sed -i … src/a.py`
+# stays evidence: tests/verification/test_evidence_backlog427.sh 12d. ponytail: a write after the run in ONE command ages nothing).
+# ponytail: chmod / touch / rm of a source file next to a real write verb also age the run; split the verbs in shell_writes if that ever blocks.
+_SRC_WRITE_HINT = re.compile(r">|\b(?:tee|sed|perl|cp|mv|dd|install|rsync|patch|truncate)\b")
+_SRC_NAME = re.compile(r"\.(?:" + "|".join(e[1:] for e in SRC_EXT) + r")(?![\w.])")
+_SW = [False]
+def _shell_writes():
+    if _SW[0] is False:
+        _SW[0] = None
+        me = os.environ.get("TE_SELF", "")
+        d_ = os.path.dirname(os.path.realpath(me)) if me else ""
+        if os.path.isabs(d_):
+            try:
+                sys.path.append(d_)          # after the stdlib, never before it
+                sys.dont_write_bytecode = True
+                import shell_writes
+                _SW[0] = shell_writes
+            except Exception as e:
+                logline(f"[{ts}] hooks/shell_writes.py not loaded ({e!r}): Bash writes of source files are not read")
+    return _SW[0]
+
+# Review of bc5b7e3c (A3): commands that rewrite source files and name no write verb or no source file, so the scanner above never
+# saw them: a green run stayed evidence after `git apply fix.patch`, `git stash pop`, `black src`, `python3 -c "open(…, "w")…"`.
+# _SRC_REWRITERS is the CLOSED list of them, read at command position (after `;` `&&` `|` `(`, env assignments and the wrappers of
+# _RW_HEAD), outside quotes and heredoc bodies (`grep "git apply" docs`, `echo "ruff format"` write nothing):
+#   git apply (not --check / --stat / --numstat / --summary), git stash pop, patch (not --dry-run / --version / --help). Not
+#       `git stash apply <sha>`: the way a session puts back the files it set aside itself (a real Stop point, replay 2026-11-15);
+#   git checkout <ref> -- <paths>, git checkout … <source file>, git restore <paths> (not --staged alone): only when a path named
+#       ends in a source extension (`git checkout -- LICENSE`, `git restore docs/x.md`, a directory age nothing: round 3, 2026-11-15);
+#   formatters that write in place: black / isort (not --check, --diff), ruff format (not --check, --diff), ruff check --fix,
+#       prettier --write | -w, eslint --fix (not --fix-dry-run), gofmt -w, go fmt, cargo fmt (not --check), autopep8 -i, ktlint -F | --format;
+#   an interpreter one-liner (python / node / deno / bun / ruby / php with -c / -e / -r) that opens a SOURCE path for writing
+#       (open(p, w | a | x | +)), or calls write_text / write_bytes / writeFile(Sync) / appendFile(Sync) on one.
+# What a command of the first three kinds rewrites is unknown: it counts as a source edit of the project (_RW_UNKNOWN in the cwd).
+# ponytail: any other formatter or codemod (`npm run format`, `dart format`, a script file that rewrites) is not read; add it here.
+_RW_HINT = re.compile(r"\b(?:apply|patch|stash|checkout|restore|black|isort|ruff|prettier|eslint|gofmt|fmt|autopep8|ktlint|open|write_text"
+                      r"|write_bytes|writeFile|writeFileSync|appendFile|appendFileSync)\b")
+_RW_HEAD = (r"(?:^|[;&|(){!\n]|\b(?:then|do|else)\b)[^\S\n]*"
+            r"(?:(?:sudo|env|command(?![^\S\n]+-[vV](?![\w-]))|exec|nice|time|nohup|xargs|npx|bunx|uvx|(?:uv|poetry|pipx|pdm|hatch|pnpm|yarn|npm)[^\S\n]+(?:run|exec|dlx)"
+            r"|python[\d.]*[^\S\n]+-m|timeout[^\S\n]+\S+)[^\S\n]+(?:-[^\s;&|]+[^\S\n]+)*|[A-Za-z_]\w*=[^\s;&|]*[^\S\n]+)*(?:[^\s;&|]*/)?")
+_RW_REST = r"[^\n;&|]*"
+_RW_GIT = r"git(?:[^\S\n]+-[cC][^\S\n]+[^\s;&|]+)*[^\S\n]+"
+_SRC_REWRITERS = re.compile(_RW_HEAD + r"(?:"
+    + _RW_GIT + r"apply\b(?!" + _RW_REST + r"[^\S\n]--(?:check|stat|numstat|summary)(?![\w-]))"
+    r"|" + _RW_GIT + r"stash[^\S\n]+pop\b"
+    r"|patch(?![\w.-])(?!" + _RW_REST + r"[^\S\n](?:--dry-run|--version|--help|-v)(?![\w-]))"
+    r"|(?:black|isort)(?![\w.-])(?!" + _RW_REST + r"[^\S\n](?:--check(?:-only)?|--diff|--version|--help|-c)(?![\w-]))"
+    r"|ruff[^\S\n]+format(?![\w.-])(?!" + _RW_REST + r"[^\S\n]--(?:check|diff|help)(?![\w-]))"
+    r"|ruff[^\S\n]+check(?![\w.-])(?=" + _RW_REST + r"[^\S\n]--fix(?:-only)?(?![\w-]))"
+    r"|prettier(?![\w.-])(?=" + _RW_REST + r"[^\S\n](?:--write|-w)(?![\w-]))"
+    r"|eslint(?![\w.-])(?=" + _RW_REST + r"[^\S\n]--fix(?![\w-]))"
+    r"|gofmt(?![\w.-])(?=" + _RW_REST + r"[^\S\n]-[a-z]*w[a-z]*(?![\w-]))"
+    r"|go[^\S\n]+fmt(?![\w.-])"
+    r"|cargo[^\S\n]+fmt(?![\w.-])(?!" + _RW_REST + r"[^\S\n]--check(?![\w-]))"
+    r"|autopep8(?![\w.-])(?=" + _RW_REST + r"[^\S\n](?:-[a-z]*i[a-z]*|--in-place)(?![\w-]))"
+    r"|ktlint(?![\w.-])(?=" + _RW_REST + r"[^\S\n](?:-F|--format)(?![\w-]))"
+    r")")
+_RW_GIT_PATHS = re.compile(_RW_HEAD + _RW_GIT + r"(checkout|restore)(?![\w-])(" + _RW_REST + r")")
+_RW_ONELINER = re.compile(r"(?:^|[\s;&|(])(?:[^\s;&|]*/)?(?:python[\d.]*|node|deno|bun|ruby|php)[^\S\n]+(?:-[^\s;&|]+[^\S\n]+)*?"
+                          r"(?:-[A-Za-z]*[cer]|--eval|--print)(?![\w-])")
+_RW_Q = r"[\x27\x22]"
+_RW_P = r"([^\x27\x22\n]+)"
+_RW_SCRIPT = (re.compile(r"\bopen\(\s*[rbfRBF]{0,2}" + _RW_Q + _RW_P + _RW_Q + r"\s*,\s*(?:mode\s*=\s*)?[rbRB]{0,2}" + _RW_Q + r"[rbtU]*[wax+]"),
+              re.compile(_RW_Q + _RW_P + _RW_Q + r"\s*\)\s*\.\s*(?:write_text|write_bytes)\b"),
+              re.compile(r"\b(?:writeFileSync|writeFile|appendFileSync|appendFile)\(\s*" + _RW_Q + _RW_P + _RW_Q))
+_RW_UNKNOWN = "bash-rewrite.kt"     # a stand-in source file name: what the command rewrote is not known
+_RW_REDIRECT = re.compile(r"(?<!\S)\d*(?:>>?|<)&?[^\S\n]*[^\s<>]*")
+_RW_VALUE_OPT = ("-s", "--source", "-b", "-B", "--conflict", "--pathspec-from-file")
+
+def _git_path_rewrite(verb, rest):
+    """`git checkout` / `git restore` with the words after the verb: True when it may rewrite a source file of the work tree."""
+    # A redirection is no path (`git checkout -q -- AGENTS.md 2>&1` named only a .md file: a real Stop point blocked, replay 2026-11-15).
+    words, skip = [], False
+    for w_ in _RW_REDIRECT.sub(" ", rest).split():
+        if skip:
+            skip = False
+        elif w_ in _RW_VALUE_OPT:
+            skip = True
+        else:
+            words.append(w_)
+    opts = [w_ for w_ in words if w_.startswith("-") and w_ != "--"]
+    if verb == "restore":
+        if any(o in ("--staged", "-S") for o in opts) and not any(o in ("--worktree", "-W") for o in opts):
+            return False
+        paths = [w_ for w_ in words if not w_.startswith("-")]
+    elif "--" in words:
+        paths = [w_ for w_ in words[words.index("--") + 1:] if not w_.startswith("-")]
+    else:
+        return any(w_.endswith(SRC_EXT) for w_ in words)       # `git checkout main` is a branch switch, not read here
+    return any(w_.endswith(SRC_EXT) for w_ in paths)       # a path with no source extension (LICENSE, Makefile, docs/x.md, a directory) ages nothing
+
+def _src_rewrites(cmd, wd):
+    if not _RW_HINT.search(cmd):
+        return []
+    out = []
+    flat = _QUOTED.sub(" ", _code_text(cmd))
+    if _SRC_REWRITERS.search(flat) or any(_git_path_rewrite(m.group(1), m.group(2)) for m in _RW_GIT_PATHS.finditer(flat)):
+        out.append(os.path.join(wd, _RW_UNKNOWN))
+    if _RW_ONELINER.search(cmd):
+        for rx in _RW_SCRIPT:
+            for m in rx.finditer(cmd):
+                target = m.group(1)
+                if target.endswith(SRC_EXT) and "$" not in target and "`" not in target:
+                    target = os.path.expanduser(target)
+                    out.append(target if os.path.isabs(target) else os.path.join(wd, target))
+    return out
+
+def bash_src_writes(cmd, wd):
+    if is_test_runner(cmd):
+        return []
+    out = _src_rewrites(cmd, wd)
+    if not (_SRC_WRITE_HINT.search(cmd) and _SRC_NAME.search(cmd)):
+        return out
+    sw = _shell_writes()
+    if sw is None:
+        return out
+    try:
+        tg = sw.targets(cmd, wd)
+    except Exception as e:
+        logline(f"[{ts}] shell_writes.targets failed ({e!r}) on a Bash command")
+        return out
+    for kind, target, base in tg or ():
+        if kind in ("redirect", "file") and isinstance(target, str) and target.endswith(SRC_EXT) and "$" not in target and "`" not in target:
+            target = os.path.expanduser(target)
+            out.append(target if os.path.isabs(target) else os.path.join(base or wd, target))
+    return out
 no_id_tool_indices = []
 test_edit_idx = {}       # simple class name -> transcript position of its last edit
 red_idx = {}             # suite name -> transcript position where it was seen RED
@@ -2811,11 +3108,23 @@ if tp and os.path.exists(tp):
                             # Không có id, hoặc input không phải dict: không suy ra lượt chỉ đọc.
                             no_id_tool_indices.append(blk_idx)
                         if not isinstance(binp, dict):
-                            if nm in ("Edit", "Write", "NotebookEdit"):
+                            if nm in EDIT_TOOLS:
                                 # Input hỏng vẫn là sửa nguồn: except phía dưới ghi log và chặn lời khai pass (#649, P3a).
                                 raise TypeError(f"input is {type(binp).__name__}, not a dict")
                             continue
-                        if nm not in ("Edit", "Write", "NotebookEdit"):
+                        if nm == "Bash":
+                            _wd = rec.get("cwd")
+                            for fp in bash_src_writes(str(binp.get("command", "")), _wd if isinstance(_wd, str) and os.path.isabs(_wd) else repo):
+                                if _is_scratch(fp):
+                                    last_scratch_src_idx = blk_idx
+                                    if not is_test_path(fp):
+                                        last_scratch_fix_idx = blk_idx
+                                else:
+                                    last_src_edit_idx = blk_idx
+                                    if not is_test_path(fp):
+                                        last_fix_edit_idx = blk_idx
+                            continue
+                        if nm not in EDIT_TOOLS:
                             continue
                         fp = binp.get("file_path") or ""
                         if isinstance(fp, str) and fp and _is_scratch(fp):
@@ -2896,7 +3205,7 @@ if tp and os.path.exists(tp):
                         # source edit (fail-closed).
                         logline(f"[{ts}] transcript line {lineno} block {blk_idx} skipped ({blk.get('type')} "
                                 f"{blk.get('name') or blk.get('tool_use_id') or ''}): {e!r}")
-                        if blk.get("type") == "tool_use" and blk.get("name") in ("Edit", "Write", "NotebookEdit"):
+                        if blk.get("type") == "tool_use" and blk.get("name") in EDIT_TOOLS:
                             last_src_edit_idx = last_fix_edit_idx = blk_idx
     except Exception as e:
         logline(f"[{ts}] transcript scan fail: {e!r}")
@@ -3153,6 +3462,12 @@ def foreign_xmls():
         if mt >= start and ran_in_my_window(mt, pth):
             out[pth] = mt
     return out
+
+if honest_fail_only and runner_results and max(runner_results, key=lambda r: r[0])[5] == "red":
+    claimed = False              # an honest report of the failing run the transcript shows last
+    logline(f"[{ts}] test counts read as the report of a failing run (last runner turn red): no pass claim")
+    if not outcome_claimed and not new_run:
+        sys.exit(0)
 
 foreign = foreign_xmls() if claimed else {}
 if foreign:

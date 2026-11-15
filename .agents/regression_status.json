@@ -107,10 +107,10 @@
       "stale_since": "2026-11-02 10:25:51",
       "stale_files": [
         "mcp-servers/antigravity-pm-mcp/src/agentapi.js",
+        "mcp-servers/antigravity-pm-mcp/src/config.js",
+        "mcp-servers/antigravity-pm-mcp/src/policy.js",
         "mcp-servers/antigravity-pm-mcp/src/prompt.js",
-        "mcp-servers/antigravity-pm-mcp/src/server.js",
-        "mcp-servers/antigravity-pm-mcp/src/tasks.js",
-        "mcp-servers/antigravity-pm-mcp/src/tools.js"
+        "mcp-servers/antigravity-pm-mcp/src/proof-target.js"
       ]
     },
     "REG-AUTO-PLAY-STORE-MCP-01": {
@@ -215,6 +215,10 @@
         "mcp-servers/play-store-mcp/*.ts",
         "mcp-servers/play-store-mcp/*.tsx",
         "mcp-servers/play-store-mcp/*.vue"
+      ],
+      "stale_since": "2026-11-14 19:26:46",
+      "stale_files": [
+        "mcp-servers/play-store-mcp/tests/test_integration_credentials.py"
       ]
     },
     "REG-DK-GATE-01": {
@@ -549,10 +553,10 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/block_dangerous_git_main.py",
         "universal-agent-devkit/hooks/devkit_harness.py",
         "universal-agent-devkit/hooks/foreign_repo_gate.sh",
-        "universal-agent-devkit/hooks/guard-secrets.py",
-        "universal-agent-devkit/hooks/hardware_safety_gate.sh"
+        "universal-agent-devkit/hooks/guard-protected-push.py"
       ]
     },
     "REG-DK-HEALTH-01": {
@@ -838,7 +842,9 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         ".claude/settings.json",
-        "AGENTS.md"
+        ".mcp.json",
+        "AGENTS.md",
+        "mcp_config.json"
       ]
     },
     "BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh": {
@@ -2118,8 +2124,8 @@
       "red_proof": {
         "at": "2026-10-09 20:29:37",
         "ts": 1791552577.698313,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_hook_log_dir.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2674,8 +2680,8 @@
       "red_proof": {
         "at": "2026-10-12 20:49:43",
         "ts": 1791812983.5859861,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/gates/test_regression_gate_killed_suite.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -5452,11 +5458,11 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
+        "mcp-servers/cc-switcher-mcp/bin/cc-switcher-mcp.js",
+        "mcp-servers/cc-switcher-mcp/package.json",
         "mcp-servers/cc-switcher-mcp/src/daemon.js",
-        "mcp-servers/cc-switcher-mcp/src/profiles.js",
-        "mcp-servers/cc-switcher-mcp/src/telegram.js",
-        "mcp-servers/cc-switcher-mcp/tests/daemon-watchdog.test.js",
-        "mcp-servers/cc-switcher-mcp/tests/super-board-approve-head.test.js"
+        "mcp-servers/cc-switcher-mcp/src/migrate-ids.js",
+        "mcp-servers/cc-switcher-mcp/src/panel.js"
       ]
     },
     "REG-SB-NEEDS-YOU-01": {
@@ -5713,6 +5719,10 @@
         ".claude/bin/super-board-watchdog.sh",
         "tests/super-board/test_watchdog_path_sanitize.sh",
         "tests/super-board/test_watchdog_lock_mtime.sh"
+      ],
+      "stale_since": "2026-11-14 19:26:46",
+      "stale_files": [
+        ".claude/bin/super-board-watchdog.sh"
       ]
     },
     "REG-SB-RUN-STOP-MTIME-01": {
@@ -6120,7 +6130,8 @@
       ],
       "stale_since": "2026-11-02 10:25:51",
       "stale_files": [
-        ".claude/bin/super-board-scratch-config.sh"
+        ".claude/bin/super-board-scratch-config.sh",
+        "tests/super-board/test_scratch_config.sh"
       ]
     },
     "REG-SB-NEEDS-DEVICE-01": {
@@ -6514,6 +6525,7 @@
       "stale_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_claim_loop.sh",
+        "tests/super-board/test_super_board_all_slots.py",
         "universal-agent-devkit/scripts/governance/super_board_all.py"
       ]
     },
@@ -6861,6 +6873,7 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
+        "tests/super-board/test_tests_skip_machine_slots.sh",
         "universal-agent-devkit/bin/heavy_slot.py",
         "universal-agent-devkit/tests/lib/clean_git_env.sh"
       ]
@@ -7472,6 +7485,10 @@
       "watch_files": [
         ".claude/bin/super-board-watchdog.sh",
         "tests/super-board/test_watchdog_lock_atomic.sh"
+      ],
+      "stale_since": "2026-11-14 19:26:46",
+      "stale_files": [
+        ".claude/bin/super-board-watchdog.sh"
       ]
     },
     "REG-DK-SENTINEL-MERGE-ENV-01": {
@@ -7736,7 +7753,8 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
-        ".claude/bin/super-board-merge-gate.sh"
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_merge_call_failed.sh"
       ]
     },
     "BUG-20261022-dung-ai-factory-test-va-sua-luon-loi-kie": {
@@ -7921,7 +7939,8 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
-        ".claude/bin/super-board-merge-gate.sh"
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_dead_holder.sh"
       ]
     },
     "REG-AGENT-OFFICE-01": {
@@ -8011,9 +8030,9 @@
       "stale_files": [
         "mcp-servers/agent-office/install-autostart.sh",
         "mcp-servers/agent-office/server.py",
+        "mcp-servers/agent-office/tests/cc_switcher_retry_test.js",
         "mcp-servers/agent-office/tests/describe_cmd_test.js",
-        "mcp-servers/agent-office/tests/frame_pacing_test.js",
-        "mcp-servers/agent-office/tests/poll_test.js"
+        "mcp-servers/agent-office/tests/frame_pacing_test.js"
       ]
     },
     "BUG-20261022-tuong-nam-hang-doc-sai-roi-tuong-phai-ha": {
@@ -8678,7 +8697,8 @@
       ],
       "stale_since": "2026-10-27 19:04:46",
       "stale_files": [
-        "universal-agent-devkit/scripts/git/githooks.sh"
+        "universal-agent-devkit/scripts/git/githooks.sh",
+        "universal-agent-devkit/scripts/git/matrix_merge_driver.py"
       ]
     },
     "REG-SB-RUNNER-PREFLIGHT-SWEPT-01": {
@@ -9015,6 +9035,7 @@
         ".claude/bin/super-board-merge-gate.sh",
         ".claude/bin/super-board-verify-cmd.sh",
         ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_gate_red_on_base.sh",
         "tests/super-board/test_verify_cmd_same_as_gate.sh"
       ]
     },
@@ -9104,6 +9125,7 @@
         ".claude/bin/super-board-merge-gate.sh",
         ".claude/bin/super-board-verify-cmd.sh",
         ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_gate_red_on_base.sh",
         "tests/super-board/test_verify_cmd_same_as_gate.sh"
       ]
     },
@@ -12955,6 +12977,1727 @@
       "linked_ts": 1793171665.625408,
       "runs_in_suite": [
         "universal-agent-devkit/tests/worktree_git/test_worktree_remove_branch_rename.sh"
+      ]
+    },
+    "REG-DK-MERGE-GATE-STALE-UNREADABLE-01": {
+      "id": "REG-DK-MERGE-GATE-STALE-UNREADABLE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#831: worktree finish từ chối gate exit 4 có suite nhãn STALE (cả khi lẫn suite thiếu thiết bị) và exit 2 có file unreadable (nêu tên, en+vi); exit 4 chỉ thiếu thiết bị và exit 2 no_match vẫn fast-forward",
+      "component": "merge-gate-stale-unreadable-831",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_stale_unreadable.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_stale_unreadable.sh"
+      ]
+    },
+    "REG-DK-GUARD-MQ-LABEL-01": {
+      "id": "REG-DK-GUARD-MQ-LABEL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#536: git guard hỏi .claude/bin/super-board-queue-label.sh --check trước khi cho gắn nhãn merge-queue (gh pr/issue edit --add-label, gh api …/issues/N/labels, interpreter gọi gh); helper từ chối / treo → chặn trong thời hạn, không gợi ý prefix !; gh pr create|new --label merge-queue và mutation graphql gắn nhãn theo id → chặn; nhãn khác / gỡ nhãn / GET / DELETE → qua, không gọi helper; helper của project phiên (checkout chính khi là worktree), không theo cd; project chưa có helper → luật không chạy",
+      "component": "devkit-guard-merge-queue-label-536",
+      "command": "bash universal-agent-devkit/tests/gates/test_guard_merge_queue_label.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        ".claude/bin/super-board-queue-label.sh",
+        "universal-agent-devkit/tests/gates/test_guard_merge_queue_label.sh"
+      ]
+    },
+    "REG-SB-QUEUE-LABEL-01": {
+      "id": "REG-SB-QUEUE-LABEL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#536: super-board-queue-label.sh gắn nhãn merge-queue chỉ khi approved-head hợp lệ (luật chung super-board-approved-head.jq + audit-check) khớp head hiện tại; thiếu / head cũ / không phải OWNER-MEMBER-COLLABORATOR / audit không khớp → exit 3 kèm lý do và bước đúng; đọc/ghi GitHub hỏng → 69; --check không ghi",
+      "component": "super-board-queue-label-536",
+      "command": "bash tests/super-board/test_queue_label.sh",
+      "watch_files": [
+        ".claude/bin/super-board-queue-label.sh",
+        ".claude/bin/super-board-approved-head.jq",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_queue_label.sh",
+        "tests/super-board/test_merge_queue_reject_card_note.sh"
+      ]
+    },
+    "REG-SB-MQ-REJECT-NOTE-01": {
+      "id": "REG-SB-MQ-REJECT-NOTE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#536: hàng đợi merge loại PR vì approved-head thiếu / lệch head thì comment thêm lên thẻ PR đóng (nhánh issue-<K>- hoặc closingIssuesReferences, chỉ khi thẻ trên board, đọc hỏng không để lại file halt); --dry-run không ghi",
+      "component": "super-board-queue-label-536",
+      "command": "bash tests/super-board/test_merge_queue_reject_card_note.sh",
+      "watch_files": [
+        ".claude/bin/super-board-queue-label.sh",
+        ".claude/bin/super-board-approved-head.jq",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_queue_label.sh",
+        "tests/super-board/test_merge_queue_reject_card_note.sh"
+      ]
+    },
+    "REG-DK-HW-EMPTY-SERIAL-01": {
+      "id": "REG-DK-HW-EMPTY-SERIAL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#829: adb -s \"\" / -s '' (adb tự chọn thiết bị, cả khi lệnh shell có ; && | trong nháy), serial bị cấm trong nháy, nháy mở ở segment trước (FOO=\"a;b\" adb …), biến ở chỗ subcommand, lệnh con ở phép gán tiền tố (X=$(pwd) adb …), mở rộng tham số (${S##*}) và biến lệnh tự gán lại, -s/-t mà adb không phân giải được hay không tìm thấy adb, -s lặp lại (-s cuối thắng, cả -s<số>), -t cùng -s (-t thắng) và biến chưa biết hay lệnh con $( ) / ` ` ở tuỳ chọn chọn thiết bị bị chặn khi máy đích nằm trong denylist (--serial được xét như -s); emulator, biến đã biết, -P chưa biết cạnh -s literal, lệnh con trong lệnh shell của serial đã ghi, backtick markdown trong chuỗi nháy đơn, host-only, HARDWARE_OVERRIDE=1 vẫn cho qua; -s làm giá trị tuỳ chọn khác không làm hook lỗi; adb giả chỉ nhận get-serialno",
+      "component": "devkit-hardware-empty-serial",
+      "command": "bash universal-agent-devkit/tests/gates/test_hardware_empty_serial.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/tests/gates/test_hardware_empty_serial.sh"
+      ]
+    },
+    "REG-742-A1-GUARD-PUSH-WRAPPERS-01": {
+      "id": "REG-742-A1-GUARD-PUSH-WRAPPERS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#742 tách A1 (critical scan 31/10, BUG-REV-gpp-*): guard-protected-push chặn force push lên main sau wrapper/keyword (time, nohup, nice, timeout, env -i, sudo -u, if/then, { }, !), trong bash -lc STR, sau --signed / --repo, sau comment có dấu nháy; đọc payload camelCase; config FIFO không treo hook; mỗi ca có đối chứng không force vẫn được phép",
+      "component": "guard-push-742-split-a1",
+      "command": "bash universal-agent-devkit/tests/gates/test_guard_protected_push_wrappers.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/guard-protected-push.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_guard_protected_push_wrappers.sh",
+        "universal-agent-devkit/tests/gates/test_push_gate_devkit_no_matrix.sh"
+      ]
+    },
+    "REG-742-A1-PUSH-GATE-DEVKIT-NO-MATRIX-01": {
+      "id": "REG-742-A1-PUSH-GATE-DEVKIT-NO-MATRIX-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#742 tách A1 (#482, BUG-REV-push-gate-own-check-devkit): push_gate.check() từ chối main checkout đã cài DevKit (.agents/devkit) mà mất ma trận hồi quy; repo chưa cài DevKit không ma trận vẫn qua",
+      "component": "guard-push-742-split-a1",
+      "command": "bash universal-agent-devkit/tests/gates/test_push_gate_devkit_no_matrix.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/guard-protected-push.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_guard_protected_push_wrappers.sh",
+        "universal-agent-devkit/tests/gates/test_push_gate_devkit_no_matrix.sh"
+      ]
+    },
+    "REG-DK-SKILL-DESC-BUDGET-01": {
+      "id": "REG-DK-SKILL-DESC-BUDGET-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "T0211: mọi description skill/command được liệt kê (kit skills, commands, .claude/skills) ≤ 300 byte UTF-8, không rỗng",
+      "component": "devkit-skill-description-budget",
+      "command": "bash universal-agent-devkit/tests/verification/test_skill_description_budget.sh",
+      "watch_files": [
+        ".claude/skills/*/SKILL.md",
+        "universal-agent-devkit/tests/verification/test_skill_description_budget.sh"
+      ]
+    },
+    "REG-DK-GUARD-NESTED-C-QUOTES-01": {
+      "id": "REG-DK-GUARD-NESTED-C-QUOTES-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#844: $\"…\" (locale) và \\$ trước nháy trong nháy kép của script bash -c / sh -c / eval được đọc thêm đã giải mã (không bao giờ thành '…'); corpus tìm kiếm rg/grep -E/git grep/sed vẫn qua",
+      "component": "devkit-guard-nested-c-quotes",
+      "command": "bash universal-agent-devkit/tests/gates/test_guard_nested_c_quotes.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/tests/gates/test_guard_nested_c_quotes.sh"
+      ]
+    },
+    "REG-SB-MERGE-GATE-CONFLICTING-01": {
+      "id": "REG-SB-MERGE-GATE-CONFLICTING-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#881 #883 #885 (02/11): driver gộp chỉ có ở local (merge=union, devkit-matrix) ⇒ scratch sạch nhưng GitHub CONFLICTING; merge gate đọc mergeable trong khoá trước verify: CONFLICTING (cả sau UNKNOWN) ⇒ exit 14, không verify, không gh pr merge, câu báo gộp origin/main + push + --expect-head mới, khoá được thả; MERGEABLE, UNKNOWN rồi MERGEABLE, UNKNOWN mãi (đọc lại có giới hạn) và lỗi đọc ⇒ verify + merge như cũ, không halt",
+      "component": "merge-gate-conflicting-precheck",
+      "command": "bash tests/super-board/test_merge_gate_conflicting_precheck.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_conflicting_precheck.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_merge_queue_gate_exit_14.sh"
+      ]
+    },
+    "REG-SB-MERGE-QUEUE-EXIT14-01": {
+      "id": "REG-SB-MERGE-QUEUE-EXIT14-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "PR #893: train in gate-exit-14 (GitHub CONFLICTING, cả ở --preflight) ⇒ merge queue route như xung đột: thẻ về Ready + loop:rebase, gỡ nhãn merge-queue, comment PR và thẻ ghi GitHub CONFLICTING; không tính lần thử lại, không Blocked",
+      "component": "merge-gate-conflicting-precheck",
+      "command": "bash tests/super-board/test_merge_queue_gate_exit_14.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_conflicting_precheck.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_merge_queue_gate_exit_14.sh"
+      ]
+    },
+    "REG-SB-REVIEW-PLAN-01": {
+      "id": "REG-SB-REVIEW-PLAN-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#858: super-board-review-plan.sh in bậc review S/M/L (review_tier.py) và các bên review theo config review_tiers: PR giả bậc S ⇒ 1 bên (claude), M ⇒ 2, diff 5 dòng merge-gate ⇒ L 4 bên, --deletes-data ⇒ L; config tuỳ biến được đọc; danh sách rỗng / sai kiểu / JSON hỏng ⇒ mặc định luật chủ repo; thiếu review_tier.py ⇒ L kèm cảnh báo; super-review review-flow.md và run.md gọi script",
+      "component": "super-board-review-plan-858",
+      "command": "bash tests/super-board/test_review_plan_tier.sh",
+      "watch_files": [
+        ".claude/bin/super-board-review-plan.sh",
+        "universal-agent-devkit/bin/review_tier.py",
+        ".claude/super-board/configs/agent-workbench.json",
+        ".claude/skills/super-review/references/review-flow.md",
+        ".claude/skills/super-board/references/run.md",
+        "tests/super-board/test_review_plan_tier.sh"
+      ]
+    },
+    "REG-742-A3-MERGE-POLICY-DIFF-PATHS-01": {
+      "id": "REG-742-A3-MERGE-POLICY-DIFF-PATHS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#742 tách A3 (review P0 d1facdea5d, INSTINCT-089): merge-policy đọc đường dẫn file bị xoá từ header diff git: C-quoted (UTF-8, dấu cách, escape bát phân), file rỗng chỉ có diff --git + deleted file mode, tên chứa \" b/\"; header không đọc được → delete-protected (fail-closed, trừ protected_paths []); dòng nội dung hunk giả --- a/ + +++ /dev/null không tính là xoá",
+      "component": "merge-policy-diff-paths-742-split-a3",
+      "command": "bash tests/super-board/test_merge_policy_diff_header_paths.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-policy.py",
+        "tests/super-board/test_merge_policy_diff_header_paths.sh"
+      ]
+    },
+    "REG-DK-SUITE-CACHE-SEL-INPUTS-851-01": {
+      "id": "REG-DK-SUITE-CACHE-SEL-INPUTS-851-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#851: suite run_impacted.sh có dấu devkit-selection-inputs khoá chính xác theo input của tập chọn (đồ thị scoped_gate, symlink kit, dữ liệu code nhắc, công cụ và đích ngoài cây của tập chọn, bỏ DEVKIT_SCOPED_TESTS); test quét cả kit (devkit-selection-tree) trong tập ⇒ chỉ khoá cả cây; merge gate H+main dùng lại shard khi main đổi file ngoài input",
+      "component": "devkit-suite-cache-selection-inputs",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_suite_cache_selection_inputs.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_gate_suite_cache_selection_inputs.sh"
+      ]
+    },
+    "REG-742-R3-WEB-NO-EMPTY-CATCH-01": {
+      "id": "REG-742-R3-WEB-NO-EMPTY-CATCH-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#742 review 409a7296 (fc1b157568, INSTINCT-007), tách từ #742: không trang nào trong agent-office/web có catch rỗng",
+      "component": "agent-office-cc-switcher-page-742-split",
+      "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_web_no_empty_catch",
+      "watch_files": [
+        "mcp-servers/agent-office/web/*.html",
+        "mcp-servers/agent-office/tests/cc_switcher_retry_test.js",
+        "mcp-servers/agent-office/tests/test_cc_switcher_retry.py",
+        "mcp-servers/agent-office/tests/test_cc_switcher_touch_targets.py",
+        "mcp-servers/agent-office/tests/test_web_no_empty_catch.py"
+      ]
+    },
+    "REG-742-R4-CC-RETRY-01": {
+      "id": "REG-742-R4-CC-RETRY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#742 review c27d199d (c39f91d4e7, INSTINCT-002), tách từ #742: nút Thử lại của /cc-switcher disabled + aria-busy ngay khi bấm, khoá >= 1000 ms; load() chỉ một request đang chạy; vùng chạm >= 44px",
+      "component": "agent-office-cc-switcher-page-742-split",
+      "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_cc_switcher_retry tests.test_cc_switcher_touch_targets",
+      "watch_files": [
+        "mcp-servers/agent-office/web/*.html",
+        "mcp-servers/agent-office/tests/cc_switcher_retry_test.js",
+        "mcp-servers/agent-office/tests/test_cc_switcher_retry.py",
+        "mcp-servers/agent-office/tests/test_cc_switcher_touch_targets.py",
+        "mcp-servers/agent-office/tests/test_web_no_empty_catch.py"
+      ]
+    },
+    "REG-742-A4-MERGE-GATE-CI-01": {
+      "id": "REG-742-A4-MERGE-GATE-CI-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#742 tách A4 (F5): merge gate đọc gh pr checks sau verify, trước migration và merge: check đỏ hay bucket lạ/rỗng → exit 11, không merge, migration không chạy, tên check trên stdout và stderr; không đọc được → exit 4; no checks reported → merge như cũ; pending rồi pass → merge, pending quá SB_MERGE_AUTO_WAIT_S → exit 4; --dry-run đọc CI một lần không ngủ; head đổi lúc chờ hay lúc check đỏ → exit 6 không in ci-check; mỗi ca có đối chứng",
+      "component": "merge-gate-ci-742-split-a4",
+      "command": "bash tests/super-board/test_merge_gate_ci_checks.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_ci_checks.sh",
+        "tests/super-board/lib/fake_ci_checks.sh"
+      ]
+    },
+    "REG-DK-SHELL-WRITES-DQ-01": {
+      "id": "REG-DK-SHELL-WRITES-DQ-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "T4 #844: đích ghi dạng $'…' / $\"…\" (đích, động từ, bash -c, cd, heredoc cho shell) được shell_writes đọc thêm đã giải mã - worktree_guard, session_lock (anh em bị giữ, bash_collides, trunk_write) chặn; đích của cách đọc cũ còn nguyên; lệnh tìm kiếm rg/grep -E/git grep/sed vẫn qua",
+      "component": "devkit-shell-writes-dollar-quotes",
+      "command": "bash universal-agent-devkit/tests/gates/test_shell_writes_dollar_quotes.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/shell_writes.py",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/hooks/worktree_guard.sh",
+        "universal-agent-devkit/bin/session_lock.py",
+        "universal-agent-devkit/tests/gates/test_shell_writes_dollar_quotes.sh"
+      ]
+    },
+    "REG-DK-SUITE-ENV-HEAVY-KNOBS-01": {
+      "id": "REG-DK-SUITE-ENV-HEAVY-KNOBS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "PR 1 gate kẹt (P3): suite_env bỏ DEVKIT_SLOT_HEAVY_MAX, DEVKIT_SLOT_HEAVY_WAIT_S, DEVKIT_SLOT_HEAVY_BUDGET_S (núm của một lần gate), vẫn giữ DEVKIT_GATE_SLOT_HELD (T0056)",
+      "component": "suite-env-heavy-slot-knobs-p3",
+      "command": "bash universal-agent-devkit/tests/gates/test_suite_env_heavy_knobs.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_suite_env_heavy_knobs.sh"
+      ]
+    },
+    "REG-DK-SLOT-AGING-01": {
+      "id": "REG-DK-SLOT-AGING-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "hàng đợi vé heavy_slot lão hoá ưu tiên (P2): mỗi DEVKIT_SLOT_PRIO_AGE_S (450 s) đã chờ lên một mức tới merge; interactive chờ 1000 s đứng trước merge mới đến, chờ 10 s vẫn sau; núm 0/rác = mặc định, không chia cho 0",
+      "component": "devkit-slot-prio-aging",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_aging.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_aging.sh"
+      ]
+    },
+    "REG-DK-GATE-POOL-MIXED-01": {
+      "id": "REG-DK-GATE-POOL-MIXED-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "pool gate có vé khác cỡ (P1): vé ghi n = số path; vé đứng sau ghép tham lam (vé trước theo n tăng dần giữ chỗ trống lớn nhất < n), còn dư thì lấy chỗ nhỏ nhất — không còn slot trống mà không ai lấy; chừa đúng slot cho vé nhỏ đứng trước; .held chỉ cho slot giữ",
+      "component": "devkit-gate-pool-mixed-size",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_pool_mixed_size.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_gate_pool_mixed_size.sh"
+      ]
+    },
+    "REG-DK-SCOPED-PER-TEST-CACHE-01": {
+      "id": "REG-DK-SCOPED-PER-TEST-CACHE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "PR 1 gate kẹt (P4): lượt --scoped bật sổ PASS per-test của run_impacted.sh — cùng cây, test đã PASS in ↺ (ptc_reuse > 0), chỉ test đỏ chạy lại; --scoped --no-cache và DEVKIT_GATE_CACHE=0 chỉ ghi (mọi test chạy thật)",
+      "component": "devkit-scoped-per-test-cache-p4",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_scoped_per_test_cache.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/lib/per_test_cache.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_gate_scoped_per_test_cache.sh"
+      ]
+    },
+    "REG-DK-LANE-LOCK-STAGGER-01": {
+      "id": "REG-DK-LANE-LOCK-STAGGER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "P7 (gate kẹt và chậm 02/11): lane_lock chống dồn — 2 lane nặng chờ ở tải 30, tải xuống 9 hay 5 ⇒ lane đầu vào ngay (0 slot giữ không chặn), lane sau chỉ vào khi .owner lane đầu ≥ LANE_LOCK_STAGGER_S; đối chứng tải 5 chưa chờ tải ⇒ vào ngay; tải 8: gate scoped nhỏ #849 không bị chống dồn, việc nặng thứ hai chờ; không file mới trong LANE_LOCK_DIR",
+      "component": "devkit-lane-lock-stagger-p7",
+      "command": "bash universal-agent-devkit/tests/gates/test_lane_lock_stagger.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/lane_lock.py",
+        "universal-agent-devkit/tests/gates/test_lane_lock_stagger.sh"
+      ]
+    },
+    "REG-DK-LANE-LOCK-MG-RELEASE-01": {
+      "id": "REG-DK-LANE-LOCK-MG-RELEASE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "P5 (gate kẹt và chậm 02/11): lane_lock nhả slot lane khi super-board-merge-gate.sh (argv[0] / env … bash <path>) có hậu duệ giữ slot pool gate (.held PID hậu duệ, mtime ≥ lúc tạo con) hoặc chờ vé queue/gate ≥ 5 s; vé queue/heavy, bash -c bọc gate thường, .held của tiến trình lạ ⇒ giữ slot; ps lỗi ⇒ giữ slot, log một lần; không deadlock",
+      "component": "devkit-lane-lock-merge-gate-release-p5",
+      "command": "bash universal-agent-devkit/tests/gates/test_lane_lock_merge_gate_release.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/lane_lock.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_lane_lock_merge_gate_release.sh"
+      ]
+    },
+    "REG-DK-MATRIX-READER-SHARD-P6-01": {
+      "id": "REG-DK-MATRIX-READER-SHARD-P6-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "P6: test đọc ma trận thật — #616 khối shard REG-DK-ALL-* (cùng lệnh REG-DK-ALL-SHARD-RULES-616-01, gate chia kết quả theo lệnh)",
+      "component": "matrix-real-readers-p6",
+      "command": "bash tests/super-board/test_matrix_shard_rules.sh",
+      "watch_files": [
+        ".agents/regression_matrix.active.json",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/tests/gates/test_matrix_real_readers.sh"
+      ]
+    },
+    "REG-DK-MATRIX-READER-QA-EXIT2-P6-01": {
+      "id": "REG-DK-MATRIX-READER-QA-EXIT2-P6-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "P6: test đọc ma trận thật — #643 rule qa-exit2 / spawn-load trong ma trận (cùng lệnh REG-SB-QA-EXIT2-643-01)",
+      "component": "matrix-real-readers-p6",
+      "command": "bash tests/super-board/test_qa_exit2_edited_test.sh",
+      "watch_files": [
+        ".agents/regression_matrix.active.json",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/tests/gates/test_matrix_real_readers.sh"
+      ]
+    },
+    "REG-DK-MATRIX-REAL-READERS-P6-01": {
+      "id": "REG-DK-MATRIX-REAL-READERS-P6-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "P6: test nào mở ma trận thật ở gốc repo (biến dirname $0 + .agents/regression_matrix.active.json) mà không nằm trong rule có ma trận trong watch_files ⇒ ĐỎ (PR nối rule chỉ chạy danh sách đó)",
+      "component": "matrix-real-readers-p6",
+      "command": "bash universal-agent-devkit/tests/gates/test_matrix_real_readers.sh",
+      "watch_files": [
+        ".agents/regression_matrix.active.json",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/tests/gates/test_matrix_real_readers.sh"
+      ]
+    },
+    "REG-DK-SCOPED-MATRIX-APPEND-P6-01": {
+      "id": "REG-DK-SCOPED-MATRIX-APPEND-P6-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "P6: scoped_gate.decide — ma trận chỉ nối rule (so merge-base, và base khi changed do caller chọn) ⇒ không lõi, chỉ test đọc thật; sửa rule cũ / trùng id / trùng component / covered_by / đổi khoá top-level / JSON hỏng ⇒ như cũ",
+      "component": "scoped-gate-matrix-append-p6",
+      "command": "bash universal-agent-devkit/tests/gates/test_scoped_gate_matrix_append.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/tests/gates/test_scoped_gate_matrix_append.sh"
+      ]
+    },
+    "REG-DK-GATE-MATRIX-APPEND-COVERAGE-P6-01": {
+      "id": "REG-DK-GATE-MATRIX-APPEND-COVERAGE-P6-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "P6: PR chỉ nối rule ma trận ở repo không [smoke], không rule theo dõi ma trận — test mới XANH ⇒ exit 0 (không còn no_match exit 2); test mới ĐỎ ⇒ 1; code không test, ma trận không đổi ⇒ vẫn 2",
+      "component": "gate-matrix-append-only-coverage-p6",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_matrix_append_only_coverage.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_matrix_append_only_coverage.sh"
+      ]
+    },
+    "REG-DK-SUITE-TIMEOUT-GATES-01": {
+      "id": "REG-DK-SUITE-TIMEOUT-GATES-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#801 / chủ repo 02/11: shard REG-DK-ALL-GATES-01 được trần gấp đôi --timeout (900 → 1800 s, SUITE_TIMEOUT_FACTOR); suite khác giữ trần cũ; --timeout dưới sàn DEVKIT_GATE_EXTEND_MIN_S (giờ ngắn của test) không nâng",
+      "component": "devkit-suite-timeout-gates-shard",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_suite_timeout_gates_shard.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_suite_timeout_gates_shard.sh"
+      ]
+    },
+    "REG-SB-NEEDS-YOU-GUARD-V2-01": {
+      "id": "REG-SB-NEEDS-YOU-GUARD-V2-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "optimizer đợt 1: cờ needs_you_guard_v2 tắt = nhận mọi lời 🙋 như v1; bật = từ chối 8 lời nhắm thứ agent sở hữu (duyệt test đã sửa, AC/nội dung thẻ #N, đóng thẻ đã có PR, cây dirty, --full + merge gate), vẫn nhận 44 lời còn lại, việc phải hỏi người dù mở đầu bằng quyết định/chọn hướng, và câu human-gate của merge-queue; cờ đọc từ flags.json của checkout chính",
+      "component": "super-board-needs-you-guard-v2",
+      "command": "bash tests/super-board/test_needs_you_guard_v2.sh",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_needs_you_guard_v2.sh"
+      ]
+    },
+    "REG-SB-DEPENDENCY-UNBLOCK-V1-01": {
+      "id": "REG-SB-DEPENDENCY-UNBLOCK-V1-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "P3 cờ dependency_unblock_v1: thẻ Ready còn ## Blocked by mở ở lại Ready (waiting-on), không claim/Building/Blocked/spawn; cờ tắt giữ nguyên writes/log; deps lỗi giao như cũ, file halt riêng",
+      "component": "super-board-dependency-unblock-v1",
+      "command": "bash tests/super-board/test_dependency_unblock_v1.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-waiting-on.py",
+        "tests/super-board/test_dependency_unblock_v1.sh"
+      ]
+    },
+    "REG-DK-SESSION-CARD-01": {
+      "id": "REG-DK-SESSION-CARD-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "03/11 chủ repo: task bắt đầu từ chat có đúng MỘT thẻ board (nhãn session, cột Building) từ lần sửa file đầu; bỏ qua subagent, lane issue-N, repo không board, file ngoài repo; không chặn, thử lại 3 lần",
+      "component": "devkit-session-card-hook",
+      "command": "bash universal-agent-devkit/tests/gates/test_session_card_hook.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/session_card.sh",
+        "universal-agent-devkit/tests/gates/test_session_card_hook.sh"
+      ]
+    },
+    "REG-WB-SESSION-CARD-RECLAIM-01": {
+      "id": "REG-WB-SESSION-CARD-RECLAIM-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "03/11: reclaim_stranded_building không trả thẻ Building nhãn session (task từ chat, phiên đang làm) về Ready; thẻ thường vẫn về Ready",
+      "component": "super-board-runner-session-cards",
+      "command": "bash tests/super-board/test_runner_skips_session_cards.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_skips_session_cards.sh"
+      ]
+    },
+    "REG-SB-MERGE-GATE-AUTOSYNC-DRIVER-01": {
+      "id": "REG-SB-MERGE-GATE-AUTOSYNC-DRIVER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "ngoại lệ hẹp của #570: GitHub báo CONFLICTING mà mọi file hai phía cùng đổi đều có merge driver đặt tên (ma trận merge=devkit-matrix, merge=union) ⇒ gate gộp base ở scratch, đẩy merge commit lên nhánh PR bằng fast-forward (không --force), ghi biên nhận approved-merge-heads, verify và merge theo head mới; file không driver, PR sửa .gitattributes, nhánh remote đã dời, --dry-run: exit 14 không đẩy gì; lượt sau --expect-head cũ nhận head của gate, có commit lạ chồng lên thì exit 6",
+      "component": "super-board-merge-gate-autosync-driver",
+      "command": "bash tests/super-board/test_merge_gate_autosync_driver_conflict.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_autosync_driver_conflict.sh"
+      ]
+    },
+    "REG-SB-MERGE-BASE-SUITE-POOL-914-01": {
+      "id": "REG-SB-MERGE-BASE-SUITE-POOL-914-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#914 mục 1: run_suite_on_base (kiểm đỏ sẵn trên base) xin slot pool gate, trần 900 s nhân SUITE_TIMEOUT_FACTOR của suite, hết giờ chờ slot ra 75 (không phải 1 hay 2), exception không ra exit 1",
+      "component": "super-board-merge-gate-base-suite-pool",
+      "command": "bash tests/super-board/test_merge_gate_base_suite_pool.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_base_suite_pool.sh"
+      ]
+    },
+    "REG-SB-NEEDS-YOU-GUARD-V2-02": {
+      "id": "REG-SB-NEEDS-YOU-GUARD-V2-02",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "OCR review 03/11 sau #924: deploy/production trong đường dẫn hay tên file không miễn câu nhắm việc agent; bước trên GitHub settings/cài đặt không bị chặn nhầm; env SB_NEEDS_YOU_GUARD_V2 thắng flags.json",
+      "component": "super-board-needs-you-guard-v2-exempt",
+      "command": "bash tests/super-board/test_needs_you_guard_v2_exempt.sh",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        "tests/super-board/test_needs_you_guard_v2_exempt.sh"
+      ]
+    },
+    "REG-SB-MERGE-GATE-APPROVE-REQUEST-01": {
+      "id": "REG-SB-MERGE-GATE-APPROVE-REQUEST-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "PR #924: gate tự gửi nút Approve (standalone, --preflight khi queue tắt) thì tự đăng đúng một comment PR chứa dòng approval-request: của head; chạy lại không đăng trùng; train/queue khi queue bật không comment, không nút; đăng lỗi chỉ log, exit 7/8 giữ nguyên; --dry-run không đăng",
+      "component": "super-board-merge-gate-approve-request",
+      "command": "bash tests/super-board/test_merge_gate_approve_button_request.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_approve_button_request.sh"
+      ]
+    },
+    "REG-SB-NEEDS-YOU-GUARD-V2-03": {
+      "id": "REG-SB-NEEDS-YOU-GUARD-V2-03",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Review r1 đợt 2 (03/11): miễn dependabot của needs-you v2 không áp cho tên file (.github/dependabot.yml, test-dependabot-*.sh → 64); chữ Dependabot thường vẫn miễn (bật auto-approve cho Dependabot → 0)",
+      "component": "super-board-needs-you-guard-v2-dependabot-file",
+      "command": "bash tests/super-board/test_needs_you_guard_v2_dependabot_file.sh",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        "tests/super-board/test_needs_you_guard_v2_dependabot_file.sh"
+      ]
+    },
+    "REG-SB-MERGE-GATE-CARD-MERGED-01": {
+      "id": "REG-SB-MERGE-GATE-CARD-MERGED-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "P2 đợt 2 (03/11): gate gọi trực tiếp comment '[reviewer] [report] ✅ merged <sha> · PR #N' lên mọi thẻ PR đóng (closingIssuesReferences), cả nhánh split/… và khi phản hồi merge mất; queue/train, AC chưa đủ (ac-open), PR không Closes: không comment",
+      "component": "super-board-merge-gate-card-merged-comment",
+      "command": "bash tests/super-board/test_merge_gate_card_merged_comment.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_card_merged_comment.sh"
+      ]
+    },
+    "REG-SB-WATCHDOG-RUN-CAPPED-FAST-01": {
+      "id": "REG-SB-WATCHDOG-RUN-CAPPED-FAST-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "03/11 lane 5: run_capped của watchdog chờ tăng dần 0,02 s ⇒ 0,5 s (10 lệnh nhanh < 3 s), timeout vẫn ra 124, mã thoát của lệnh giữ nguyên",
+      "component": "super-board-watchdog-run-capped-fast",
+      "command": "bash tests/super-board/test_watchdog_run_capped_fast.sh",
+      "watch_files": [
+        ".claude/bin/super-board-watchdog.sh",
+        "tests/super-board/test_watchdog_run_capped_fast.sh"
+      ]
+    },
+    "REG-SB-REBUILD-GATE-ONCE-01": {
+      "id": "REG-SB-REBUILD-GATE-ONCE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "03/11 lane 1: mục rebuild sau review của super-build nêu đúng một gate scoped trên cây sau sửa, không gate riêng giữa chừng",
+      "component": "super-build-rebuild-gate-once",
+      "command": "bash tests/super-board/test_rebuild_gate_once.sh",
+      "watch_files": [
+        ".claude/skills/super-build/SKILL.md",
+        "tests/super-board/test_rebuild_gate_once.sh"
+      ]
+    },
+    "REG-SB-MERGE-SCRATCH-LIVE-LOCK-01": {
+      "id": "REG-SB-MERGE-SCRATCH-LIVE-LOCK-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "03/11 (merge gate #940): scratch của merge gate khoá bằng worktree lock khi gate còn sống — lệnh remove trần giữa lúc verify bị từ chối; cleanup/keep mở khoá trước khi gỡ",
+      "component": "super-board-merge-gate-scratch-live-lock",
+      "command": "bash tests/super-board/test_merge_gate_scratch_live_lock.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_scratch_live_lock.sh"
+      ]
+    },
+    "REG-SB-REVIEW-RECEIPT-RERUN-01": {
+      "id": "REG-SB-REVIEW-RECEIPT-RERUN-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Đợt 2 gate mục 5 (04/11): sau khi duyệt test sửa, lane Review chỉ bỏ lần chạy lại gate khi có biên nhận exit 0 đúng head + fingerprint; chưa có thì chạy gate scoped một lần",
+      "component": "super-review-receipt-before-rerun",
+      "command": "bash tests/super-board/test_reviewer_receipt_before_rerun.sh",
+      "watch_files": [
+        ".claude/skills/super-review/SKILL.md",
+        ".claude/bin/super-board-gate-receipt.sh",
+        "tests/super-board/test_reviewer_receipt_before_rerun.sh"
+      ]
+    },
+    "REG-DK-APPROVE-TESTS-CMD-01": {
+      "id": "REG-DK-APPROVE-TESTS-CMD-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Đợt 2 gate mục 2 (04/11): agent-kit approve-tests <task> ghi mục duyệt chéo từ biên bản antigravity-pm (reviewer antigravity hoặc grok, nhãn rõ); tác giả không tự duyệt",
+      "component": "devkit-agent-kit-approve-tests",
+      "command": "bash universal-agent-devkit/tests/gates/test_agent_kit_approve_tests.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-kit",
+        "universal-agent-devkit/scripts/governance/approve_tests.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_agent_kit_approve_tests.sh"
+      ]
+    },
+    "REG-DK-EVIDENCE-GATE-REASON-LOG-01": {
+      "id": "REG-DK-EVIDENCE-GATE-REASON-LOG-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Đợt 2 gate mục 8 (04/11): test_evidence_gate ghi lý do giữ Stop (nhắc nào) vào log để chẩn đoán được",
+      "component": "devkit-evidence-gate-block-reason-log",
+      "command": "bash universal-agent-devkit/tests/gates/test_evidence_gate_block_reason_log.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/test_evidence_gate.sh",
+        "universal-agent-devkit/tests/gates/test_evidence_gate_block_reason_log.sh"
+      ]
+    },
+    "REG-DK-APPROVAL-AFTER-MAIN-MERGE-01": {
+      "id": "REG-DK-APPROVAL-AFTER-MAIN-MERGE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Đợt 2 gate mục 1 (04/11): duyệt test sửa (ledger + trailer Test-approved-by) còn hiệu lực sau khi gộp main vào nhánh PR; reviewer thuộc danh tính phiên bị từ chối; reviewer và auditedHead cùng một biên bản PM",
+      "component": "devkit-gate-approval-after-main-merge",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_approval_after_main_merge.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_approval_after_main_merge.sh"
+      ]
+    },
+    "REG-DK-GATE-POOL-LIVE-HOLDER-01": {
+      "id": "REG-DK-GATE-POOL-LIVE-HOLDER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Đợt 2 gate lane C2 (04/11): Stop run gặp slot hàng đợi gate máy bị gate dự án khác giữ thì trả BUSY sớm theo luật B5 thay vì chờ hết 45 s",
+      "component": "devkit-gate-pool-live-holder-busy",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_pool_live_holder_busy.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_gate_pool_live_holder_busy.sh"
+      ]
+    },
+    "REG-DK-REMINDER-APPROVAL-KEY-01": {
+      "id": "REG-DK-REMINDER-APPROVAL-KEY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Đợt 2 gate mục 3 (04/11): nhắc 'test sửa chờ duyệt' khoá theo cây + digest sổ duyệt, bỏ TTL 300 s; sổ duyệt đổi thì chạy lại",
+      "component": "devkit-regression-gate-reminder-approval-key",
+      "command": "bash universal-agent-devkit/tests/gates/test_regression_gate_reminder_approval_key.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/bin/approval_digest.py",
+        "universal-agent-devkit/tests/gates/test_regression_gate_reminder_approval_key.sh"
+      ]
+    },
+    "REG-DK-REVIEW-GATE-OCR-CONTENT-01": {
+      "id": "REG-DK-REVIEW-GATE-OCR-CONTENT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Đợt 2 gate mục 6 (04/11): review_gate công nhận báo cáo OCR theo hash nội dung file thay vì mtime",
+      "component": "devkit-review-gate-ocr-content",
+      "command": "bash universal-agent-devkit/tests/gates/test_review_gate_ocr_content.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/bin/ocr-review",
+        "universal-agent-devkit/tests/gates/test_review_gate_ocr_content.sh"
+      ]
+    },
+    "REG-DK-TEST-RUN-LOCK-SESSION-01": {
+      "id": "REG-DK-TEST-RUN-LOCK-SESSION-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Đợt 2 gate mục 4 (04/11): khoá test_run.lock do chính phiên giữ thì trả BUSY ngay; holder cùng phiên không đọc được giờ khởi động vẫn BUSY (không thành exit 0 chỉ đọc)",
+      "component": "devkit-test-run-lock-holder-session",
+      "command": "bash universal-agent-devkit/tests/gates/test_test_run_lock_holder_session.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_test_run_lock_holder_session.sh"
+      ]
+    },
+    "REG-DK-WT-MERGE-GATE-REASON-LOG-01": {
+      "id": "REG-DK-WT-MERGE-GATE-REASON-LOG-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Đợt 2 gate mục 8 (04/11): worktree_merge_gate ghi một dòng log cho mỗi lần giữ và nhả Stop; state quá 1 MiB coi như không có",
+      "component": "devkit-worktree-merge-gate-block-reason-log",
+      "command": "bash universal-agent-devkit/tests/gates/test_worktree_merge_gate_block_reason_log.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/worktree_merge_gate.sh",
+        "universal-agent-devkit/tests/gates/test_worktree_merge_gate_block_reason_log.sh"
+      ]
+    },
+    "REG-DK-OCR-REVIEW-CONTENT-01": {
+      "id": "REG-DK-OCR-REVIEW-CONTENT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Đợt 2 gate mục 6 (04/11): ocr-review ghi content_sha256 + content_base của file đã review, hash trước khi review chạy",
+      "component": "devkit-ocr-review-content-map",
+      "command": "bash universal-agent-devkit/tests/installer/test_ocr_review_content.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/ocr-review",
+        "universal-agent-devkit/tests/installer/test_ocr_review_content.sh"
+      ]
+    },
+    "REG-DK-APPROVED-SAME-SECOND-01": {
+      "id": "REG-DK-APPROVED-SAME-SECOND-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#485 + đợt 2 lane A: duyệt test sửa không lệch theo giây; test sửa sau khi duyệt không còn được duyệt; fixture nằm trên nhánh feat như PR thật",
+      "component": "devkit-gate-approved-tests-same-second",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_approved_tests_same_second.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_approved_tests_same_second.sh"
+      ]
+    },
+    "REG-DK-REMINDER-THROTTLE-01": {
+      "id": "REG-DK-REMINDER-THROTTLE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Nhắc 'test sửa chờ duyệt' không chạy lại cả gate mỗi lần Stop khi cây và sổ duyệt không đổi (ca 4 cập nhật đợt 2: khoá theo digest, không TTL)",
+      "component": "devkit-regression-gate-reminder-throttle",
+      "command": "bash universal-agent-devkit/tests/gates/test_regression_gate_reminder_throttle.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/tests/gates/test_regression_gate_reminder_throttle.sh"
+      ]
+    },
+    "REG-SB-QA-HEAD-PIN-01": {
+      "id": "REG-SB-QA-HEAD-PIN-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate từ chối khi report QA mới nhất nêu sha nhánh PR mà head còn commit code sau đó (T0255)",
+      "component": "super-board-qa-head-pin",
+      "command": "bash tests/super-board/test_merge_gate_qa_head_pin.sh",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_qa_head_pin.sh"
+      ]
+    },
+    "REG-DK-JOB-POOL-01": {
+      "id": "REG-DK-JOB-POOL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11 Việc 2: tests/lib/job_pool.py — tối đa <size> việc cùng lúc giữa nhiều tiến trình, --alone không chạy cạnh ai, holder chết nhả slot, không có bể thì chạy ngay, dòng · start chỉ in khi đã giữ slot",
+      "component": "devkit-shard-group-job-pool",
+      "command": "bash universal-agent-devkit/tests/gates/test_job_pool.sh",
+      "watch_files": [
+        "universal-agent-devkit/tests/lib/job_pool.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_job_pool.sh",
+        "universal-agent-devkit/tests/gates/test_run_impacted_shared_pool.sh"
+      ]
+    },
+    "REG-DK-RUNNER-SHARED-POOL-01": {
+      "id": "REG-DK-RUNNER-SHARED-POOL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11 Việc 2: hai run_impacted.sh chung DEVKIT_TEST_POOL_DIR không vượt DEVKIT_TEST_JOBS test cùng lúc, test alone chạy một mình, biến bể/JOBS không rò vào test",
+      "component": "devkit-shard-group-job-pool",
+      "command": "bash universal-agent-devkit/tests/gates/test_run_impacted_shared_pool.sh",
+      "watch_files": [
+        "universal-agent-devkit/tests/lib/job_pool.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_job_pool.sh",
+        "universal-agent-devkit/tests/gates/test_run_impacted_shared_pool.sh"
+      ]
+    },
+    "REG-DK-GATE-SHARD-GROUP-01": {
+      "id": "REG-DK-GATE-SHARD-GROUP-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11 Việc 2: shard REG-DK-ALL-* của runner chạy cạnh nhau một nhóm, chung một bể và JOBS, giữ đúng một slot nặng, shard đỏ không bỏ shard cùng nhóm, DEVKIT_GATE_PARALLEL=0 giữ tuần tự",
+      "component": "devkit-gate-shard-group",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_shard_group.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_shard_group.sh"
+      ]
+    },
+    "REG-DK-HOOK-CACHED-PY-01": {
+      "id": "REG-DK-HOOK-CACHED-PY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11 (#967): python của hardware_safety_gate.sh / block-dangerous-git.sh là module cạnh hook, bytecode chỉ ở thư mục riêng $TMPDIR/devkit-pycache-$UID (thư mục nhóm ghi được / symlink thì không dùng, không bao giờ __pycache__ cạnh hook); thiếu hoặc hỏng module thì chặn rc 2 nêu tên module; phán quyết giữ nguyên",
+      "component": "devkit-hook-cached-python",
+      "command": "bash universal-agent-devkit/tests/gates/test_hook_cached_python.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/hardware_safety_gate_main.py",
+        "universal-agent-devkit/hooks/block_dangerous_git_main.py",
+        "universal-agent-devkit/tests/gates/test_hook_cached_python.sh"
+      ]
+    },
+    "REG-DK-PM-DIRECT-APPROVAL-01": {
+      "id": "REG-DK-PM-DIRECT-APPROVAL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11: test sửa được duyệt bằng biên bản antigravity-pm tra thẳng (không comment / json / trailer); phiên cùng reviewer, audit mới hơn khác blob, pm home lạ, biên bản cũ, head trên main, author tự khai, head chỉ trong history, hai biên bản cùng id đều bị từ chối",
+      "component": "devkit-gate-pm-direct-approval",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_pm_direct_approval.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_pm_direct_approval.sh"
+      ]
+    },
+    "REG-SB-HAS-EDITED-PM-01": {
+      "id": "REG-SB-HAS-EDITED-PM-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11: merge gate / train --has-edited-tests nhận duyệt test sửa từ biên bản PM (audit pass trên base..head) để giữ khoá và không autosync; base hỏng = bi quan",
+      "component": "super-board-has-edited-tests-pm-record",
+      "command": "bash tests/super-board/test_has_edited_tests_pm_record.sh",
+      "watch_files": [
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_has_edited_tests_pm_record.sh",
+        "tests/super-board/test_merge_gate_pm_edited_base_moved.sh"
+      ]
+    },
+    "REG-SB-PM-EDITED-BASE-MOVED-01": {
+      "id": "REG-SB-PM-EDITED-BASE-MOVED-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11: merge gate / train không exit 2 'stale' khi duyệt test sửa đến từ biên bản PM và main tiến không chạm test (verify trong khoá); comment edited-tests vẫn exit 2 như #643",
+      "component": "super-board-has-edited-tests-pm-record",
+      "command": "bash tests/super-board/test_merge_gate_pm_edited_base_moved.sh",
+      "watch_files": [
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_has_edited_tests_pm_record.sh",
+        "tests/super-board/test_merge_gate_pm_edited_base_moved.sh"
+      ]
+    },
+    "REG-E2E-PM-GROK-GATE-01": {
+      "id": "REG-E2E-PM-GROK-GATE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11 đầu-cuối: code PM thật ghi biên bản audit grok, post-fix-gate thật đọc và duyệt test sửa không bước người; sửa sau audit, REVISE, message, phiên grok, người gọi grok đều không duyệt",
+      "component": "pm-grok-gate-approval-e2e",
+      "command": "bash tests/super-board/test_e2e_pm_grok_gate_approval.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/src/prompt.js",
+        "mcp-servers/antigravity-pm-mcp/src/tasks.js",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-audit-check.py",
+        "tests/super-board/test_e2e_pm_grok_gate_approval.sh"
+      ]
+    },
+    "REG-DK-GATE-SCOPED-NO-FAIL-FAST-01": {
+      "id": "REG-DK-GATE-SCOPED-NO-FAIL-FAST-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11: lượt --scoped chạy hết suite và lộ mọi suite đỏ trong một lượt; --fail-fast bật lại; lượt không --scoped giữ fail-fast; lane_lock coi --fail-fast là việc nhẹ",
+      "component": "gate-scoped-no-fail-fast",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_scoped_no_fail_fast.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/lane_lock.py",
+        "universal-agent-devkit/tests/gates/test_gate_scoped_no_fail_fast.sh"
+      ]
+    },
+    "REG-SB-AUTOSYNC-PM-01": {
+      "id": "REG-SB-AUTOSYNC-PM-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11: merge gate tự gộp base (driver ma trận) cho PR có duyệt test sửa từ biên bản PM khi verify chạy post-fix-gate; comment edited-tests và pm không gate vẫn exit 14",
+      "component": "merge-gate-autosync-pm-approval",
+      "command": "bash tests/super-board/test_merge_gate_autosync_pm_approval.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_merge_gate_autosync_pm_approval.sh"
+      ]
+    },
+    "REG-PM-GROK-TIMEOUT-01": {
+      "id": "REG-PM-GROK-TIMEOUT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11: hạn grok audit theo kích thước diff (sàn 20 phút, +1 phút/100 dòng, trần 60), env ghi đè vẫn thắng",
+      "component": "pm-grok-timeout-by-diff",
+      "command": "cd mcp-servers/antigravity-pm-mcp && node --test tests/grok-timeout.test.js",
+      "watch_files": [
+        "mcp-servers/antigravity-pm-mcp/src/agentapi.js",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/tests/grok-timeout.test.js"
+      ]
+    },
+    "REG-DK-REVIEW-GATE-HANDOVER-01": {
+      "id": "REG-DK-REVIEW-GATE-HANDOVER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11: review gate coi gh pr create / agent-kit worktree finish|integrate / merge gate là bàn giao như git push; thông điệp chặn: P0/P1 sửa ngay, P2/P3 thành thẻ Backlog, OCR delegate không cần agent thứ hai, không cắt output bằng tail",
+      "component": "review-gate-handover",
+      "command": "bash universal-agent-devkit/tests/gates/test_review_gate_handover.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/hooks/devkit_harness.py",
+        "universal-agent-devkit/tests/gates/test_review_gate_handover.sh"
+      ]
+    },
+    "REG-DK-GATE-SPEED-MERGE-P90-01": {
+      "id": "REG-DK-GATE-SPEED-MERGE-P90-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "04/11 (#983): gate_speed_report đếm mode=scoped và in p90 merge gate thật (.merge-scratch-*, gồm chờ khoá) + lock_p90, có trong bảng --baseline",
+      "component": "gate-speed-report-merge-p90",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_speed_report_merge_p90.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/gate_speed_report.py",
+        "universal-agent-devkit/scripts/governance/gate_runs_report.py",
+        "universal-agent-devkit/tests/gates/test_gate_speed_report_merge_p90.sh"
+      ]
+    },
+    "REG-DK-SELECTION-INPUTS-ORDER-01": {
+      "id": "REG-DK-SELECTION-INPUTS-ORDER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "05/11: selection_inputs (#851) không phụ thuộc PYTHONHASHSEED; sổ PASS từng test khoá cả cây nên test glob file ngoài đồ thị chạy lại khi file đổi",
+      "component": "selection-inputs-order-and-reject-rerun",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_selection_inputs_order.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_selection_inputs_order.sh",
+        "universal-agent-devkit/tests/gates/test_gate_reject_rerun_cmds.sh"
+      ]
+    },
+    "REG-DK-REJECT-RERUN-CMDS-01": {
+      "id": "REG-DK-REJECT-RERUN-CMDS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "05/11: gate REJECT in lệnh chạy lại riêng từng chỗ đỏ (test đỏ của shard run_impacted.sh, lệnh suite thường) + nhắc merge gate verify một lần",
+      "component": "selection-inputs-order-and-reject-rerun",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_reject_rerun_cmds.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_selection_inputs_order.sh",
+        "universal-agent-devkit/tests/gates/test_gate_reject_rerun_cmds.sh"
+      ]
+    },
+    "REG-DK-GATE-SLOT-HOLDER-984-01": {
+      "id": "REG-DK-GATE-SLOT-HOLDER-984-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "05/11 (#984 a): lượt xin slot pool gate ghi gate_slot vào runs.jsonl (giữ được / hết giờ), gate_speed_report in giây giữ theo loại lượt, repo và lúc merge gate chờ",
+      "component": "gate-slot-holder-log",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_holder_log.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/governance/gate_speed_report.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_holder_log.sh"
+      ]
+    },
+    "REG-DK-ESSENTIALS-PR-NO-LOCAL-GATE-984-01": {
+      "id": "REG-DK-ESSENTIALS-PR-NO-LOCAL-GATE-984-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "05/11 (#984): repo đi PR không chạy gate scoped ở local, push rồi merge gate --dry-run nền; repo push trunk giữ gate local",
+      "component": "essentials-pr-repo-no-local-gate",
+      "command": "bash universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_gate.sh",
+      "watch_files": [
+        "universal-agent-devkit/rules/essentials.md",
+        "universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_gate.sh"
+      ]
+    },
+    "REG-DK-SHARD-KEY-FAILCLOSED-994-01": {
+      "id": "REG-DK-SHARD-KEY-FAILCLOSED-994-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#994: shard run_impacted.sh chỉ khoá cả cây (fail-closed) — file test chỉ glob lúc chạy đổi thì shard chạy lại và ĐỎ, không dùng lại PASS cũ",
+      "component": "shard-key-failclosed-994",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_shard_key_enum_failclosed.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_gate_shard_key_enum_failclosed.sh"
+      ]
+    },
+    "REG-DK-CACHE-TTL-3D-01": {
+      "id": "REG-DK-CACHE-TTL-3D-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "05/11: hạn tuổi mặc định của PASS dùng lại là 3 ngày (khoá nội dung, biên nhận --full, biên nhận scoped): 2 ngày dùng lại, 4 ngày không; DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè",
+      "component": "gate-cache-ttl-3d",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_cache_ttl_3d.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_cache_ttl_3d.sh"
+      ]
+    },
+    "REG-DK-ESSENTIALS-PR-NO-LOCAL-REGATE-997-01": {
+      "id": "REG-DK-ESSENTIALS-PR-NO-LOCAL-REGATE-997-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#997: essentials bước 5 (PR repo: merge receipt), câu Git (not in a PR repo) và core-rules §19 không còn bảo repo đi PR chạy lại gate scoped local; merge gate là gate",
+      "component": "essentials-pr-repo-no-local-regate-997",
+      "command": "bash universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_regate.sh",
+      "watch_files": [
+        "universal-agent-devkit/rules/essentials.md",
+        "universal-agent-devkit/rules/core-rules.md",
+        "universal-agent-devkit/tests/verification/test_essentials_pr_repo_no_local_regate.sh"
+      ]
+    },
+    "REG-DK-REJECT-RERUN-TRUNC-TIMEOUT-992-01": {
+      "id": "REG-DK-REJECT-RERUN-TRUNC-TIMEOUT-992-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#992: khối 'Chạy lại riêng' của REJECT in '… +N' khi cắt 20 lệnh, shard TIMEOUT có lệnh cả shard, vế 'không chạy lại cả gate local' chỉ ở repo đi PR",
+      "component": "gate-reject-rerun-trunc-timeout-992",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_reject_rerun_trunc_timeout.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_reject_rerun_trunc_timeout.sh"
+      ]
+    },
+    "REG-DK-CHECKLIST-OVERLAY-TTL-3D-992-01": {
+      "id": "REG-DK-CHECKLIST-OVERLAY-TTL-3D-992-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#992: regression_checklist._overlay_fresh mặc định 3 ngày như hạn PASS của gate (2 ngày tin, 4 ngày không); DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè",
+      "component": "checklist-overlay-ttl-3d-992",
+      "command": "bash universal-agent-devkit/tests/gates/test_checklist_overlay_ttl_3d.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/regression_checklist.py",
+        "universal-agent-devkit/tests/gates/test_checklist_overlay_ttl_3d.sh"
+      ]
+    },
+    "REG-DK-REVIEW-GATE-MERGE-GATE-FORMS-992-01": {
+      "id": "REG-DK-REVIEW-GATE-MERGE-GATE-FORMS-992-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#992: review_gate — merge gate --dry-run/--preflight không là bàn giao; timeout N bash …merge-gate.sh là bàn giao",
+      "component": "review-gate-handover-merge-gate-forms-992",
+      "command": "bash universal-agent-devkit/tests/gates/test_review_gate_handover_merge_gate_forms.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_handover_merge_gate_forms.sh"
+      ]
+    },
+    "REG-SB-MERGE-LOCK-SHARED-WT-01": {
+      "id": "REG-SB-MERGE-LOCK-SHARED-WT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "02/11 lane rmlock: khoá merge nằm trong git common dir, chung mọi worktree: gate ở worktree B thấy khoá gate ở worktree A đang giữ (exit 4 / chờ tới khi A nhả); khoá common dir của pid đã chết được reap, của pid sống giữ nguyên; REPO_PATH không phải repo git thì giữ đường cũ và nói ra",
+      "component": "merge-gate-lock-shared-worktrees",
+      "command": "bash tests/super-board/test_merge_gate_lock_shared_worktrees.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_lock_shared_worktrees.sh"
+      ]
+    },
+    "REG-SB-1000-VERIFY-RUNS-GATE-01": {
+      "id": "REG-SB-1000-VERIFY-RUNS-GATE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1000 mục 6: sb_verify_runs_gate không nhận echo python3 post-fix-gate.py / not-post-fix-gate.py",
+      "component": "super-board-failopen-1000",
+      "command": "bash tests/super-board/test_verify_runs_gate_boundary.sh",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_verify_runs_gate_boundary.sh",
+        "tests/super-board/test_chain_audit_robust.sh",
+        "tests/super-board/test_qa_report_stale_pin.sh",
+        "tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+        "tests/super-board/test_merge_gate_train_receipt_pm.sh"
+      ]
+    },
+    "REG-SB-1000-CHAIN-AUDIT-01": {
+      "id": "REG-SB-1000-CHAIN-AUDIT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1000 mục 7, 8: --chain-audit đọc script byte không UTF-8; head chỉ trong auditHistory -> pm-unknown",
+      "component": "super-board-failopen-1000",
+      "command": "bash tests/super-board/test_chain_audit_robust.sh",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_verify_runs_gate_boundary.sh",
+        "tests/super-board/test_chain_audit_robust.sh",
+        "tests/super-board/test_qa_report_stale_pin.sh",
+        "tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+        "tests/super-board/test_merge_gate_train_receipt_pm.sh"
+      ]
+    },
+    "REG-SB-1000-QA-STALE-PIN-01": {
+      "id": "REG-SB-1000-QA-STALE-PIN-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1000 mục 1: ghim sha QA — lời khai tiêu đề, merge sửa tay/giải conflict, amend, mọi sha own, lỗi git = exit 2",
+      "component": "super-board-failopen-1000",
+      "command": "bash tests/super-board/test_qa_report_stale_pin.sh",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_verify_runs_gate_boundary.sh",
+        "tests/super-board/test_chain_audit_robust.sh",
+        "tests/super-board/test_qa_report_stale_pin.sh",
+        "tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+        "tests/super-board/test_merge_gate_train_receipt_pm.sh"
+      ]
+    },
+    "REG-SB-1000-QA-PIN-FETCH-01": {
+      "id": "REG-SB-1000-QA-PIN-FETCH-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1000 mục 2: merge gate thử lại fetch rồi exit 1, không bỏ ghim sha QA",
+      "component": "super-board-failopen-1000",
+      "command": "bash tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_verify_runs_gate_boundary.sh",
+        "tests/super-board/test_chain_audit_robust.sh",
+        "tests/super-board/test_qa_report_stale_pin.sh",
+        "tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+        "tests/super-board/test_merge_gate_train_receipt_pm.sh"
+      ]
+    },
+    "REG-SB-1000-TRAIN-RECEIPT-PM-01": {
+      "id": "REG-SB-1000-TRAIN-RECEIPT-PM-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1000 mục 5: biên nhận train không bỏ verify khi duyệt test sửa đến từ biên bản PM (pm / pm-unknown)",
+      "component": "super-board-failopen-1000",
+      "command": "bash tests/super-board/test_merge_gate_train_receipt_pm.sh",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_verify_runs_gate_boundary.sh",
+        "tests/super-board/test_chain_audit_robust.sh",
+        "tests/super-board/test_qa_report_stale_pin.sh",
+        "tests/super-board/test_merge_gate_qa_pin_fetch.sh",
+        "tests/super-board/test_merge_gate_train_receipt_pm.sh"
+      ]
+    },
+    "REG-DK-SAME-TREE-REUSE-01": {
+      "id": "REG-DK-SAME-TREE-REUSE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "D1(a): lượt không cưỡng bức (Stop, task, --scoped) dùng lại PASS thật cùng cây ≤ 1 h; đổi byte chạy lại; --full không dùng; quá hạn chạy lại",
+      "component": "gate-same-tree-reuse-d1a",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_scoped_same_tree_reuse.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/gates/test_gate_scoped_same_tree_reuse.sh"
+      ]
+    },
+    "REG-DK-RERUN-SKIP-TTL-3D-992-01": {
+      "id": "REG-DK-RERUN-SKIP-TTL-3D-992-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#992: rerun_skip.json (#648) dùng hạn mặc định 3 ngày như biên nhận (7 giờ dùng lại, 4 ngày chạy lại); DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè, =0 không dùng lại",
+      "component": "rerun-skip-ttl-3d-992",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_rerun_skip_ttl_3d.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_rerun_skip_ttl_3d.sh"
+      ]
+    },
+    "REG-DK-REVIEW-GATE-GTIMEOUT-FLAG-VALUE-992-01": {
+      "id": "REG-DK-REVIEW-GATE-GTIMEOUT-FLAG-VALUE-992-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#992: review_gate — gtimeout N …merge-gate.sh là bàn giao; --dry-run/--preflight làm giá trị của option khác (--subject --dry-run) không phải dry-run",
+      "component": "review-gate-handover-gtimeout-flag-value-992",
+      "command": "bash universal-agent-devkit/tests/gates/test_review_gate_handover_gtimeout_flag_value.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_handover_gtimeout_flag_value.sh"
+      ]
+    },
+    "REG-DK-REVIEW-GATE-OCR-OUT-LITERAL-992-01": {
+      "id": "REG-DK-REVIEW-GATE-OCR-OUT-LITERAL-992-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#992: review_gate — thông điệp thiếu OCR nhắc --out viết thẳng đường dẫn; --out $S/spec (biến) vẫn không tính, --out viết thẳng tính",
+      "component": "review-gate-ocr-out-literal-hint-992",
+      "command": "bash universal-agent-devkit/tests/gates/test_review_gate_ocr_out_literal_hint.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_ocr_out_literal_hint.sh"
+      ]
+    },
+    "REG-SB-MERGE-OPT-LOAD-CAP-01": {
+      "id": "REG-SB-MERGE-OPT-LOAD-CAP-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "05/11 chủ repo: hạn số merge gate chạy cùng lúc theo tải — tải ≥ số lõi thì verify lạc quan (ngoài khoá) chỉ thấy N−1 slot pool gate, slot cuối để dành cho verify trong khoá; 3 merge gate cùng lúc tối đa 1 verify lạc quan chạy suite; hết SB_MERGE_OPT_SLOT_WAIT_S thì chạy với cả pool; tải thấp và verify trong khoá như cũ",
+      "component": "merge-gate-opt-load-cap",
+      "command": "bash tests/super-board/test_merge_gate_opt_load_cap.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_opt_load_cap.sh"
+      ]
+    },
+    "REG-SB-MERGE-INLOCK-SYNC-1012-01": {
+      "id": "REG-SB-MERGE-INLOCK-SYNC-1012-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1012 (a): GitHub báo CONFLICTING chỉ trong khoá (main dời lúc verify, chỉ file có driver gộp đặt tên) ⇒ gộp base mới, verify lại trong khoá, đẩy merge commit đồng bộ rồi merge, không exit 14; file không driver và --dry-run vẫn exit 14",
+      "component": "merge-gate-no-stale-verify-1012",
+      "command": "bash tests/super-board/test_merge_gate_conflicting_in_lock_sync.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_conflicting_in_lock_sync.sh",
+        "tests/super-board/test_merge_gate_wait_lock_holder.sh"
+      ]
+    },
+    "REG-SB-MERGE-WAIT-HOLDER-1012-01": {
+      "id": "REG-SB-MERGE-WAIT-HOLDER-1012-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1012 (b): khoá merge đang bị gate sống giữ ⇒ gate lạc quan chờ nó thả rồi verify đúng một lần trên base mới; người giữ chết không chờ; hết SB_MERGE_WAIT_HOLDER_S thì verify như cũ",
+      "component": "merge-gate-no-stale-verify-1012",
+      "command": "bash tests/super-board/test_merge_gate_wait_lock_holder.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_conflicting_in_lock_sync.sh",
+        "tests/super-board/test_merge_gate_wait_lock_holder.sh"
+      ]
+    },
+    "REG-DK-ALL-KIT-01": {
+      "id": "REG-DK-ALL-KIT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Gate speed v14 mục 5a: lượt --scoped chạy test kit đã chọn qua một runner run_impacted.sh, thay ba shard",
+      "component": "devkit-all-kit-runner",
+      "command": "bash universal-agent-devkit/tests/run_impacted.sh",
+      "watch_files": [
+        "universal-agent-devkit/tests/run_impacted.sh"
+      ]
+    },
+    "REG-SB-RED-ON-BASE-KIT-TESTS-01": {
+      "id": "REG-SB-RED-ON-BASE-KIT-TESTS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Gate speed v26 mục 5a: runner kit đỏ ⇒ red-on-base chạy riêng từng test ✖ trên base; danh sách thiếu, lạ hay có thể bị cắt ⇒ đỏ",
+      "component": "super-board-red-on-base-kit-tests",
+      "command": "bash tests/super-board/test_merge_gate_red_on_base_kit_tests.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_red_on_base_kit_tests.sh"
+      ]
+    },
+    "REG-DK-GUARD-CHECKLIST-JOURNAL-01": {
+      "id": "REG-DK-GUARD-CHECKLIST-JOURNAL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge-guard: nhật ký checklist không mất dòng (gate speed v26 mục 7)",
+      "component": "merge-guard-checklist-journal",
+      "command": "bash universal-agent-devkit/tests/verification/test_checklist_journal.sh",
+      "watch_files": [
+        "universal-agent-devkit/tests/verification/test_checklist_journal.sh"
+      ]
+    },
+    "REG-DK-GUARD-HARDWARE-RM-01": {
+      "id": "REG-DK-GUARD-HARDWARE-RM-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge-guard: rm trong hardware_safety_gate bị giam đúng phạm vi (gate speed v26 mục 7)",
+      "component": "merge-guard-hardware-rm",
+      "command": "bash universal-agent-devkit/tests/gates/test_hardware_rm_containment.sh",
+      "watch_files": [
+        "universal-agent-devkit/tests/gates/test_hardware_rm_containment.sh"
+      ]
+    },
+    "REG-DK-GUARD-PUSH-GATE-INTEGRITY-01": {
+      "id": "REG-DK-GUARD-PUSH-GATE-INTEGRITY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge-guard: push gate không bị lách (gate speed v26 mục 7)",
+      "component": "merge-guard-push-gate-integrity",
+      "command": "bash universal-agent-devkit/tests/gates/test_push_gate_integrity.sh",
+      "watch_files": [
+        "universal-agent-devkit/tests/gates/test_push_gate_integrity.sh"
+      ]
+    },
+    "REG-SB-GUARD-MERGE-POLICY-SQL-01": {
+      "id": "REG-SB-GUARD-MERGE-POLICY-SQL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge-guard: merge policy bắt mọi dạng SQL phá dữ liệu (gate speed v26 mục 7)",
+      "component": "merge-guard-merge-policy-sql",
+      "command": "bash tests/super-board/test_merge_policy_sql_forms.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_policy_sql_forms.sh"
+      ]
+    },
+    "REG-DK-GUARD-GIT-BYPASS-01": {
+      "id": "REG-DK-GUARD-GIT-BYPASS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge-guard: git guard không bị lách (gate speed v26 mục 7)",
+      "component": "merge-guard-git-guard-bypass",
+      "command": "bash universal-agent-devkit/hooks/tests/test_git_guard_bypass.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/tests/test_git_guard_bypass.sh"
+      ]
+    },
+    "REG-DK-GUARD-GATE-AUDIT-HOLES-01": {
+      "id": "REG-DK-GUARD-GATE-AUDIT-HOLES-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge-guard: lỗ kiểm của post-fix-gate đã vá vẫn kín (gate speed v26 mục 7)",
+      "component": "merge-guard-gate-audit-holes",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_audit_holes.sh",
+      "watch_files": [
+        "universal-agent-devkit/tests/gates/test_gate_audit_holes.sh"
+      ]
+    },
+    "REG-DK-MERGE-GUARD-INJECT-01": {
+      "id": "REG-DK-MERGE-GUARD-INJECT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Gate speed v26 mục 7: [merge-guard] (∪ base) tiêm sau cap chỉ ở điểm gộp, luôn chạy thật, id thiếu trong ma trận ⇒ đỏ",
+      "component": "gate-merge-guard-inject",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_merge_guard_inject.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        ".agents/gate-core.txt",
+        "universal-agent-devkit/tests/gates/test_gate_merge_guard_inject.sh"
+      ]
+    },
+    "REG-SB-MERGE-GUARD-RETRY-01": {
+      "id": "REG-SB-MERGE-GUARD-RETRY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Gate speed v26 mục 7: merge gate chạy lại guard đỏ (theo [merge-guard] của base) đúng một lần, comment PR; guard vẫn đỏ ⇒ exit 11",
+      "component": "super-board-merge-guard-retry",
+      "command": "bash tests/super-board/test_merge_guard_retry.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_guard_retry.sh"
+      ]
+    },
+    "REG-SB-TRAIN-GUARD-RETRY-01": {
+      "id": "REG-SB-TRAIN-GUARD-RETRY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Gate speed v26 mục 7: merge train chạy lại guard đỏ đúng một lần (không áp rows == 1), comment PR khi merge",
+      "component": "super-board-train-guard-retry",
+      "command": "bash tests/super-board/test_merge_train_guard_retry.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_train_guard_retry.sh"
+      ]
+    },
+    "REG-DK-MERGE-WIDTH-SLOTS-01": {
+      "id": "REG-DK-MERGE-WIDTH-SLOTS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Gate speed v26 mục 10: cần gạt độ rộng và sàn slot của điểm gộp mặc định tắt (đo tải 08/11 trượt ngưỡng), bật khi đặt biến; verify lạc quan hạn từ số lõi; guard có hạn giờ chạy sau cùng",
+      "component": "gate-merge-width-slots",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_merge_width_slots.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/tests/gates/test_gate_merge_width_slots.sh"
+      ]
+    },
+    "REG-SB-VERIFY-SINGLE-PFG-01": {
+      "id": "REG-SB-VERIFY-SINGLE-PFG-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Gate speed v26 mục 7: guard chỉ chạy lại khi lệnh verify là một post-fix-gate đơn (từ chối $( ), backtick, tên giả kiểu xpost-fix-gate.py)",
+      "component": "super-board-verify-single-pfg",
+      "command": "bash tests/super-board/test_verify_single_pfg_cmd.sh",
+      "watch_files": [
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_verify_single_pfg_cmd.sh"
+      ]
+    },
+    "REG-AGENT-OFFICE-GATE-FULL-WEEKDAYS-01": {
+      "id": "REG-AGENT-OFFICE-GATE-FULL-WEEKDAYS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Gate speed v26 mục 6: agent-office đọc lịch heavy gate thứ Hai + thứ Năm (dict hoặc list StartCalendarInterval)",
+      "component": "agent-office-gate-full-weekdays",
+      "command": "cd mcp-servers/agent-office && python3 -m unittest discover -s tests -p test_gate_full_runner_weekdays.py",
+      "watch_files": [
+        "mcp-servers/agent-office/gate_full_runner.py",
+        "mcp-servers/agent-office/tests/test_gate_full_runner_weekdays.py"
+      ]
+    },
+    "REG-DK-INIT-PARITY-SYNC-01": {
+      "id": "REG-DK-INIT-PARITY-SYNC-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#774: init đồng bộ super-board (drift exit 0, giữ file chỉ có ở repo), cài lịch gate-full đêm, đăng ký guard-protected-push fail closed",
+      "component": "devkit-init-parity-sync",
+      "command": "bash universal-agent-devkit/tests/installer/test_parity_check.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/parity_check.py",
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/hooks/hooks.json",
+        "universal-agent-devkit/tests/installer/test_parity_check.sh"
+      ]
+    },
+    "REG-DK-SESSION-CARD-TITLE-01": {
+      "id": "REG-DK-SESSION-CARD-TITLE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1140: tiêu đề thẻ phiên lấy từ dòng người dùng viết: bóc khối <system-reminder> (nhiều khối, nhiều dòng) và thẻ bọc <pasted_content>, giữ nội dung dán; prompt chỉ có khối reminder rơi về transcript rồi tiêu đề mặc định theo file sửa đầu tiên",
+      "component": "devkit-session-card-title-envelope",
+      "command": "bash universal-agent-devkit/tests/gates/test_session_card_title_envelope.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/session_card.sh",
+        "universal-agent-devkit/tests/gates/test_session_card_title_envelope.sh"
+      ]
+    },
+    "REG-DK-SESSION-LOCK-GROK-SHELL-01": {
+      "id": "REG-DK-SESSION-LOCK-GROK-SHELL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1146: công cụ shell của Grok (run_terminal_command, run_terminal_cmd, Shell, hoặc tên lạ mang `command`) bị luật trunk mode xét y như Bash: `git checkout --detach` hay redirect vào checkout chính bị chặn (rc 2), lệnh hợp lệ của lane (git fetch, git -C <worktree>, worktree.py add) vẫn qua, công cụ MCP không bị xét",
+      "component": "devkit-session-lock-grok-shell",
+      "command": "bash universal-agent-devkit/tests/context_memory/test_session_lock_grok_shell.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/session_lock.py",
+        "universal-agent-devkit/hooks/session_lock.sh",
+        "universal-agent-devkit/tests/context_memory/test_session_lock_grok_shell.sh"
+      ]
+    },
+    "REG-DK-HEALTH-KIT-HOST-01": {
+      "id": "REG-DK-HEALTH-KIT-HOST-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1146: agent-health in một dòng khi checkout chính của repo chứa kit detached hoặc lệch nhánh trunk, và một dòng khi .git/index.lock của nó cũ hơn 10 phút mà không tiến trình git nào giữ; không tính điểm, không xoá khoá, không đổi nhánh; đúng checkout khi chạy từ worktree liên kết hoặc repo app",
+      "component": "devkit-health-kit-host-checkout",
+      "command": "bash universal-agent-devkit/tests/installer/test_health_kit_host_checkout.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-health.py",
+        "universal-agent-devkit/tests/installer/test_health_kit_host_checkout.sh"
+      ]
+    },
+    "REG-DK-HOOK-ALT-PATHS-01": {
+      "id": "REG-DK-HOOK-ALT-PATHS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1153: lệnh hook thử nguồn kit rồi tới link .claude/hooks (`[ -f \"$p\" ] && exec …; [ -f \"$f\" ] && exec …`, hooks.json từ #1108) không bị agent-kit health và post-fix-gate báo thiếu file ở repo ngoài agent-workbench khi một đường dẫn tồn tại; cả hai thiếu vẫn bị chặn, và mọi dạng không có exec (chuỗi &&, phép thử trong echo, nháy đơn, chạy không canh) vẫn bắt buộc",
+      "component": "devkit-hook-alternative-paths",
+      "command": "bash universal-agent-devkit/tests/gates/test_hook_alternative_paths.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-health.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/hooks/hooks.json",
+        "universal-agent-devkit/tests/gates/test_hook_alternative_paths.sh"
+      ]
+    },
+    "REG-DK-MATRIX-UNITTEST-01": {
+      "id": "REG-DK-MATRIX-UNITTEST-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1153: matrix_detect chọn `python3 -m unittest discover -s <thư mục>` khi dự án không khai báo pytest, python3 không import được pytest và file test dùng unittest; dự án khai báo pytest, máy có pytest hoặc test kiểu pytest vẫn giữ `python3 -m pytest -q`; lệnh unittest sinh ra chạy thật được test của dự án",
+      "component": "devkit-matrix-detect-unittest-fallback",
+      "command": "bash universal-agent-devkit/tests/verification/test_matrix_detect_unittest_fallback.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/matrix_detect.py",
+        "universal-agent-devkit/tests/verification/test_matrix_detect_unittest_fallback.sh"
+      ]
+    },
+    "REG-DK-COPY-PROFILE-01": {
+      "id": "REG-DK-COPY-PROFILE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#1153: `agent-kit init -m copy` ghi link .agents/active-profile (trỏ về kit của máy cài) vào .git/info/exclude như chế độ symlink: `git add -A` không commit link, bản clone không có symlink treo, health không cảnh báo link DevKit chưa loại khỏi git, cài lại không nhân đôi dòng và không đụng .gitignore đã commit",
+      "component": "devkit-active-profile-link-not-committed",
+      "command": "bash universal-agent-devkit/tests/installer/test_active_profile_link_not_committed.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/bin/agent-config.py",
+        "universal-agent-devkit/tests/installer/test_active_profile_link_not_committed.sh"
+      ]
+    },
+    "REG-PM-AUDIT-SCOPE-01": {
+      "id": "REG-PM-AUDIT-SCOPE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "13/11 (chủ repo bỏ Grok): pm_dispatch agent=grok bị từ chối; audit Antigravity ghi phạm vi PR (auditedHead, auditBase, edited) vào lượt giao, pm_verdict ghi verdict vào lượt đó",
+      "component": "pm-audit-scope-antigravity",
+      "command": "cd mcp-servers/antigravity-pm-mcp && node --test tests/audit-scope.test.js",
+      "watch_files": [
+        "mcp-servers/antigravity-pm-mcp/src/tools.js",
+        "mcp-servers/antigravity-pm-mcp/src/prompt.js",
+        "mcp-servers/antigravity-pm-mcp/tests/audit-scope.test.js"
+      ]
+    },
+    "BUG-20261114-stop-gate-accepts-unverified-test-result": {
+      "id": "BUG-20261114-stop-gate-accepts-unverified-test-result",
+      "kind": "bug",
+      "title": "stop gate accepts unverified test-result wording and zero-test runner runs",
+      "cause": null,
+      "component": "hooks",
+      "created_at": "2026-11-14 19:26:46",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "high",
+      "linked_at": "2026-11-14 19:26:46",
+      "linked_ts": 1794659206.020684,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_evidence_zero_defect_c1.sh"
+      ]
+    },
+    "BUG-20261114-gate-misses-placeholder-variants-unscann": {
+      "id": "BUG-20261114-gate-misses-placeholder-variants-unscann",
+      "kind": "bug",
+      "title": "gate misses placeholder variants, unscanned file types and secret forms",
+      "cause": null,
+      "component": "gate",
+      "created_at": "2026-11-14 19:26:47",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "high",
+      "linked_at": "2026-11-14 19:26:47",
+      "linked_ts": 1794659207.356469,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_gate_placeholder_secret_zero_defect.sh"
+      ]
+    },
+    "BUG-20261114-guard-secrets-allows-reading-secret-file": {
+      "id": "BUG-20261114-guard-secrets-allows-reading-secret-file",
+      "kind": "bug",
+      "title": "guard-secrets allows reading secret files the gate forbids to commit",
+      "cause": null,
+      "component": "hooks",
+      "created_at": "2026-11-14 19:26:48",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "high",
+      "linked_at": "2026-11-14 19:26:48",
+      "linked_ts": 1794659208.652599,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_secrets_zero_defect.sh"
+      ]
+    },
+    "BUG-20261114-command-guards-allow-tag-deletion-stdin": {
+      "id": "BUG-20261114-command-guards-allow-tag-deletion-stdin",
+      "kind": "bug",
+      "title": "command guards allow tag deletion, stdin-fed shells and interpreter deletes",
+      "cause": null,
+      "component": "hooks",
+      "created_at": "2026-11-14 19:26:49",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "high",
+      "linked_at": "2026-11-14 19:26:49",
+      "linked_ts": 1794659209.9313002,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_zero_defect_c4.sh"
       ]
     }
   },
