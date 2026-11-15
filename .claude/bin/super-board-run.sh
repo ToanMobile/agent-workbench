@@ -319,6 +319,7 @@ WAITING_ON_JQ='def waiting_on: [((.labels // []) + (.content.labels // []))[] | 
   | any(test("^waiting-on:#[0-9]+$"));
 def file_wait: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("⏳ chờ thẻ khác") != null;'
 # #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
+session_sweep_helper() { printf '%s' "${SB_SESSION_SWEEP:-$(dirname "$SB_GITHUB_READ")/super-board-session-sweep.py}"; }
 waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
 # P3: cờ dependency_unblock_v1 (mặc định tắt). Env SB_DEPENDENCY_UNBLOCK_V1=0|1 thắng; không thì `dependency_unblock_v1` trong
 # <checkout chính>/.agents/local/flags.json (git common dir, như guard_v2 của super-board-needs-you.py). Thiếu/hỏng = tắt.
@@ -3150,6 +3151,29 @@ EOF2
   [ "$moved" -eq 1 ]
 }
 
+# #1193: thẻ `session` (hooks/session_card.sh) của phiên chat đã chết, không PR mở `Closes #N`, kẹt Building mãi vì
+# sweep_closed_cards chỉ chuyển thẻ có issue đã ĐÓNG. Helper đóng issue đó (phiên không tiến trình, im > SB_SESSION_DEAD_HOURS);
+# đóng được ít nhất một thẻ thì đặt lại nhịp sweep_closed_cards để thẻ về Done ngay tick này. Nhịp SB_SESSION_SWEEP_EVERY (300 s),
+# chỉ chạy khi board có thẻ session chưa Done. Helper lỗi: log, tick sau thử lại, không bao giờ exit runner. Trả 0 khi đã đóng thẻ.
+sweep_dead_sessions() {
+  local now items out rc=0 closed
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -e 'any(.items[]?; .status != "Done" and .content.type == "Issue" and
+    ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("session")))' >/dev/null 2>&1 || return 1
+  now=$(date +%s)
+  [ "$now" -lt "${SESSION_SWEEP_NEXT:-0}" ] && return 1
+  items=$(mktemp "${TMPDIR:-/tmp}/sb-session-items.XXXXXX") || { log "⚠ session sweep: mktemp failed — retrying next tick"; return 1; }
+  printf '%s' "$PROJECT_ITEMS_JSON" > "$items"
+  out=$(python3 "$(session_sweep_helper)" sweep --config "$CONFIG_PATH" --items "$items" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -f "$items"
+  if [ "$rc" -ne 0 ]; then log "⚠ session sweep failed (exit ${rc}) — retrying next tick"; fi
+  SESSION_SWEEP_NEXT=$((now + ${SB_SESSION_SWEEP_EVERY:-300}))
+  closed=$(printf '%s' "$out" | jq -r '[(.closed // [])[] | "#\(.)"] | join(" ")' 2>/dev/null) || closed=""
+  [ -n "$closed" ] || return 1
+  log "session sweep: ended session card(s) closed ${closed} — closed-card sweep follows"
+  SWEEP_CLOSED_NEXT=0
+  return 0
+}
+
 # #601: gỡ nhãn `waiting-on:#N` khi #N đã CLOSED/MERGED (helper `sweep` tự gọi gh). Chỉ chạy khi board có thẻ mang nhãn đó; nhịp
 # SB_WAITING_SWEEP_EVERY (300 s) hoặc ngay khi tập Done đổi. Helper lỗi: log, không dời mốc (tick sau thử lại), không bao giờ exit
 # runner. Trả 0 khi đã gỡ ít nhất một nhãn (caller đọc lại board), 1 khi không.
@@ -3915,6 +3939,7 @@ while true; do
   ACTIVE_WORKERS=$(( BUILD_COUNT + QA_COUNT + REVIEW_COUNT ))   # một trần chung cho cả 3 lane
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
+  sweep_dead_sessions || true                              # #1193 (đặt lại nhịp của sweep_closed_cards ngay dưới)
   if sweep_closed_cards; then tick_fetch || continue; fi   # #558
   if sweep_waiting_on; then tick_fetch || continue; fi     # #601
   if sweep_file_wait; then tick_fetch || continue; fi      # #556
