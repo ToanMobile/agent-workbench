@@ -263,6 +263,7 @@
 1 tests/gates/test_evidence_gate_linear.sh
 1 tests/context_memory/test_session_lock_worktree_hint.sh
 1 tests/context_memory/test_profile_split.sh
+1 tests/context_memory/test_report_template_five_items.sh
 0 tests/installer/test_legacy_script_paths.sh
 0 tests/gates/test_gate_redpatch_no_test.sh
 0 tests/context_memory/test_session_lock_readonly.sh
