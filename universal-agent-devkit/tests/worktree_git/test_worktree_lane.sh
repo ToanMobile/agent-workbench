@@ -144,10 +144,41 @@ add python3 "$WT" add "$D2" --lane=review --base=main --no-init; rc=$?
 
 # 4b2: the Tester behind a Builder's leftover worktree: refused with the way out named, nothing made. The way out is the KIT's remove
 #      (21/10: a plain `git worktree remove` refuses the DevKit set-up every lane worktree carries — 11 cards Blocked on 20/10)
+G "$P" worktree lock --reason "a person's lock" "$B"   # #1198: an idle clean holder is detached now; a locked one is a person's, kept
 add python3 "$WT" add "$P/.claude/worktrees/issue-5-qa" issue-5-fix --lane=qa --no-init; rc=$?
 [ "$rc" = 1 ] && [ ! -e "$P/.claude/worktrees/issue-5-qa" ] && grep -q "agent-kit worktree remove [^\`]*/issue-5-build\`" "$TMP/out" \
   && ! grep -qE "(^|[^-])git worktree remove" "$TMP/out" \
   && ok "a branch another lane worktree holds: exit 1 naming the worktree to remove" || fail "held branch: rc $rc: $(tail -2 "$TMP/out")"
+G "$P" worktree unlock "$B"
+# 4b3 (#1198): the branch a lane needs is held by a worktree nobody works in -> detached (files kept), the lane goes on; a live session's is not touched
+sleep 300 & SLEEPER=$!
+mkdir -p "$P/.claude/worktrees"
+G "$P" worktree add -q -b issue-21-x "$P/.claude/worktrees/issue-21-build" main
+G "$P/.claude/worktrees/issue-21-build" commit -q --allow-empty -m "idle work"; echo keep > "$P/.claude/worktrees/issue-21-build/untracked-ignored.txt"; rm "$P/.claude/worktrees/issue-21-build/untracked-ignored.txt"
+add python3 "$WT" add "$P/.claude/worktrees/issue-21-qa" issue-21-x --lane=qa --no-init; rc=$?
+if [ "$rc" = 0 ] && [ -z "$(G "$P/.claude/worktrees/issue-21-build" symbolic-ref -q --short HEAD)" ] \
+    && [ "$(G "$P/.claude/worktrees/issue-21-qa" symbolic-ref --short HEAD)" = issue-21-x ]; then
+  ok "an idle clean worktree holding the PR branch is detached and the lane gets the branch (#1198)"
+else
+  fail "idle holder: rc $rc: $(tail -3 "$TMP/out")"
+fi
+G "$P" worktree add -q -b issue-22-x "$P/.claude/worktrees/issue-22-build" main
+G "$P" worktree lock --reason "devkit-kept session=other pid=$SLEEPER" "$P/.claude/worktrees/issue-22-build"
+add python3 "$WT" add "$P/.claude/worktrees/issue-22-qa" issue-22-x --lane=qa --no-init; rc=$?
+[ "$rc" = 1 ] && [ "$(G "$P/.claude/worktrees/issue-22-build" symbolic-ref --short HEAD)" = issue-22-x ] \
+  && ok "a holder of a LIVE session is not touched: refused as before (exit 1)" || fail "live holder: rc $rc: $(tail -2 "$TMP/out")"
+G "$P" worktree unlock "$P/.claude/worktrees/issue-22-build"
+echo dirty > "$P/.claude/worktrees/issue-22-build/dirty.txt"
+add python3 "$WT" add "$P/.claude/worktrees/issue-22-qa" issue-22-x --lane=qa --no-init; rc=$?
+[ "$rc" = 1 ] && [ -f "$P/.claude/worktrees/issue-22-build/dirty.txt" ] && [ "$(G "$P/.claude/worktrees/issue-22-build" symbolic-ref --short HEAD)" = issue-22-x ] \
+  && ok "an idle holder with uncommitted work is not touched either" || fail "dirty holder: rc $rc: $(tail -2 "$TMP/out")"
+G "$P" worktree add -q -b issue-23-x "$P/.claude/worktrees/issue-23-build" main
+G "$P/.claude/worktrees/issue-23-build" commit -q --allow-empty -m "only in reflog"; lost=$(G "$P/.claude/worktrees/issue-23-build" rev-parse HEAD)
+G "$P/.claude/worktrees/issue-23-build" reset -q --hard HEAD~1
+add python3 "$WT" add "$P/.claude/worktrees/issue-23-qa" issue-23-x --lane=qa --no-init; rc=$?
+[ "$rc" = 0 ] && [ "$(G "$P" rev-parse "keep/23-${lost:0:7}^{commit}" 2>/dev/null)" = "$lost" ] \
+  && ok "a commit only the reflog names is kept by the tag keep/<issue>-<sha7>" || fail "reflog-only commit: rc $rc: $(tail -3 "$TMP/out"); tags $(G "$P" tag -l 'keep/*' | tr '\n' ' ')"
+kill $SLEEPER 2>/dev/null
 # 4c (review 19/10): a board lane worktree never reaches main by itself — not detached, not on an issue branch not yet pushed
 mainhead=$(G "$P" rev-parse main)
 for w in "$R" "$B"; do
