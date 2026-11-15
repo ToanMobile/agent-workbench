@@ -336,6 +336,8 @@ Did: <what this lane did, one line>
 Next: <owner>
 ```
 
+An AC measurable only in another repo is split into an issue there (`gh issue create -R <owner/repo>`) and replaced by the reference. In the card/PR AC list mark it `(repo: <other>)`; in `❌ Not done:` cite `<owner/repo>#N`. The merge-gate `qa-report` check (#1199) then does not count it as an open AC of this repo.
+
 | Field | Values |
 |---|---|
 | role (who writes it) | `builder` · `qa` · `reviewer` · `collect` · `orchestrator` |
