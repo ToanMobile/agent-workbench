@@ -14,9 +14,9 @@
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 AUDIT="$DEVKIT_DIR/libexec/verdict-seal-audit"
-# The gate runs tests without TMPDIR: tempfile.gettempdir() then falls to the shared /tmp, where the fake agy rightly refuses
+# The gate runs tests with no TMPDIR or one under the shared /tmp: tempfile.gettempdir() then lands in /tmp, where the fake agy rightly refuses
 # to run. Use the per-user private temp dir (macOS) so the test passes with or without the caller's TMPDIR.
-[ -n "${TMPDIR:-}" ] || TMPDIR="$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)"
+case "${TMPDIR:-}" in ""|/tmp|/tmp/*|/private/tmp|/private/tmp/*) TMPDIR="$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)";; esac
 [ -n "$TMPDIR" ] || TMPDIR=/tmp
 export TMPDIR="${TMPDIR%/}"
 TMP="$(mktemp -d "$TMPDIR/seal-audit.XXXXXX")" || exit 1
