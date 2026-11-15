@@ -4,7 +4,7 @@
 # hiện tại và post-fix-gate audit_covers tự kiểm main không đổi file test kể từ audit, nên base dời không làm hỏng duyệt:
 #  G1 merge gate: PR sửa tests/t.sh, audit PM tại head PR, main tiến không chạm test -> verify trong khoá, merge (code cũ: exit 2).
 #  G2 merge train: như G1 -> không gate-exit-2 trước chuỗi, merge (code cũ: exit 2).
-#  G3 đối chứng: duyệt bằng comment edited-tests (đường cũ) + main tiến -> vẫn exit 2 stale như #643.
+#  G3 (bỏ, #1200): chuyển sang test_edited_approval_survives_base_move.sh H3/H4.
 #  G4 duyệt từ biên bản PM nhưng verify_commands không chạy post-fix-gate -> vẫn exit 2 (không ai kiểm lại trên base mới).
 #  G5 như G4 qua train.  G6 duyệt từ biên bản PM: biên nhận cây không bỏ verify (lượt grok sau có thể REVISE).
 #  G7 verify có gate = post-fix-gate.py ở vị trí chạy.  G8 không kiểm được biên bản (pm-unknown) + verify không gate: exit 2 như pm
@@ -128,12 +128,8 @@ rc=$?
 if [ "$rc" -eq 0 ] && [ "$(merged)" = "2 " ] && ! grep -q "gate-exit-2" "$TMP/g2.log"; then ok "G2: train, biên bản PM, main tiến -> merge"
 else fail "G2: exit $rc merged='$(merged)': $(grep -E 'train-|stale' "$TMP/g2.log" | tail -4 | tr '\n' ' ')"; fi
 
-# G3. đối chứng: duyệt bằng comment edited-tests (đường #643) + main tiến -> vẫn exit 2 stale
-card 3 1; advance_main; reset_run
-( cd "$W/review" && bash "$GATE" --config "$TMP/cfg.json" --pr 3 --expect-head "$(cat "$TMP/pr3.head")" --subject card --lock-timeout 20 ) >"$TMP/g3.log" 2>&1
-rc=$?
-if [ "$rc" -eq 2 ] && grep -q "edited-test review is stale before fast-forward" "$TMP/g3.log"; then ok "G3: comment edited-tests + main tiến -> exit 2 như cũ"
-else fail "G3: exit $rc: $(tail -6 "$TMP/g3.log" | tr '\n' ' ')"; fi
+# G3 (comment edited-tests + main tiến) chuyển sang test_edited_approval_survives_base_move.sh (#1200): main tiến file KHÁC không làm
+# comment duyệt cũ; main đổi chính file test thì vẫn exit 2 (H3/H4).
 
 # G4. biên bản PM, main tiến, nhưng verify KHÔNG chạy post-fix-gate (không ai kiểm lại duyệt trên base mới) -> exit 2 như comment
 card 4 0; advance_main; reset_run

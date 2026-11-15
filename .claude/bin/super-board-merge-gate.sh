@@ -1036,6 +1036,10 @@ edited_query() {
     EDITED=0
   fi
 }
+# edited_unchanged (#1200): 0 khi mọi file test trong comment edited-tests thắng giống hệt ở base hiện tại và ở merge-base với head.
+edited_unchanged() {
+  bash "$HERE/super-board-install-edited-test-approval.sh" --edited-unchanged "$META" "$REVIEWED_HEAD" --top "$REPO_PATH" --base "$BASE_SHA"
+}
 # #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA.
 REVIEWED_HEAD=$HEAD_SHA
 # prove_tree: mọi thứ phụ thuộc base, tính lại cho cây scratch HIỆN TẠI (BASE_SHA của vòng này): biên nhận train / cây (#226), exit 12
@@ -1089,7 +1093,8 @@ prove_tree() {
     # 04/11: duyệt tra thẳng biên bản PM (EDITED_SRC=pm) không cũ khi base dời NẾU verify chạy post-fix-gate (trong khoá, trên base hiện
     # tại, audit_covers kiểm main không đổi file test — Grok review). Comment #643 (true), và pm khi verify không có gate: base phải là tổ
     # tiên head. #1000 mục 3: pm-unknown (không kiểm được biên bản) không được lỏng hơn pm — cùng luật với pm.
-    if [ "$EDITED" -eq 1 ] && { [ "$EDITED_SRC" = true ] \
+    # #1200: comment edited-tests (true) cũng không cũ khi verify chạy gate và main không đổi file test nào đã sửa (edited_unchanged).
+    if [ "$EDITED" -eq 1 ] && { { [ "$EDITED_SRC" = true ] && ! { verify_runs_gate && edited_unchanged; }; } \
           || { { [ "$EDITED_SRC" = pm ] || [ "$EDITED_SRC" = pm-unknown ]; } && ! verify_runs_gate; }; } \
         && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
       say "edited-test review is stale before fast-forward (origin/${BASE} is not an ancestor of ${REVIEWED_HEAD})"

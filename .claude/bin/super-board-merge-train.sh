@@ -264,16 +264,25 @@ head_of() { local i; for i in "${!LIST[@]}"; do [ "${LIST[$i]}" = "$1" ] && { ec
 # edited_review_stale <PR>: #643 — PR có test sửa đã duyệt mà origin/<base> (BASE_SHA hiện tại) không còn là tổ tiên head ⇒ duyệt cũ: 0.
 # 1 = còn đúng (hoặc không có test sửa). Lỗi khác của bộ kiểm: thoát train với mã đó (như trước #676).
 edited_review_stale() {
-  local emeta et_rc=0 src
+  local emeta et_rc=0 src res=0
   emeta=$(mktemp)
   gh pr view "$1" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
   src=$(bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$emeta" "$(head_of "$1")" \
     --top "$REPO_PATH" --base "$BASE_SHA") || et_rc=$?   # stderr (lý do không kiểm được biên bản) vào log của train
-  rm -f "$emeta"
-  case "$et_rc" in 0) ;; 1) return 1 ;; *) exit "$et_rc" ;; esac
+  case "$et_rc" in 0) ;; 1) rm -f "$emeta"; return 1 ;; *) rm -f "$emeta"; exit "$et_rc" ;; esac
   # 04/11: duyệt tra thẳng biên bản PM không cũ khi base dời, nếu verify chạy post-fix-gate (audit_covers kiểm file test trên main).
   # #1000 mục 3: pm-unknown (không kiểm được biên bản) không được lỏng hơn pm — cùng luật với pm.
-  case "$src" in true) ;; pm|pm-unknown) ! sb_verify_runs_gate "${VERIFY[@]}" || return 1 ;; *) return 1 ;; esac
+  # #1200: duyệt bằng comment edited-tests (true) cũng không cũ khi main không đổi file test nào đã sửa (blob base == blob ở merge-base)
+  # và verify chạy post-fix-gate trên cây gộp; đổi bất kỳ file nào → vẫn cũ như #643.
+  case "$src" in
+    true) if sb_verify_runs_gate "${VERIFY[@]}" \
+              && bash "$HERE/super-board-install-edited-test-approval.sh" --edited-unchanged "$emeta" "$(head_of "$1")" \
+                   --top "$REPO_PATH" --base "$BASE_SHA"; then res=1; fi ;;
+    pm|pm-unknown) ! sb_verify_runs_gate "${VERIFY[@]}" || res=1 ;;
+    *) res=1 ;;
+  esac
+  rm -f "$emeta"
+  [ "$res" -eq 0 ] || return 1
   ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$(head_of "$1")"
 }
 # #643: duyệt test sửa mà base đã đi trước head thì rời đợt trước khi dựng scratch. Không làm đỏ cả chuỗi.

@@ -11,6 +11,7 @@ JQ_FILTER="$HERE/super-board-approved-head.jq"
 AUDIT="$HERE/super-board-audit-check.py"
 
 has_mode=0
+unchanged_mode=0
 SCRATCH="" SHA="" META="" PR="" TOP="" BASE_REF=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -20,6 +21,7 @@ while [ $# -gt 0 ]; do
       SHA="${3:-}"
       shift $(( $# < 3 ? $# : 3 ))
       ;;
+    --edited-unchanged) unchanged_mode=1; META="${2:-}"; SHA="${3:-}"; shift $(( $# < 3 ? $# : 3 )) ;;
     --base) BASE_REF="${2:-}"; shift 2 ;;
     --scratch) SCRATCH="${2:-}"; shift 2 ;;
     --sha) SHA="${2:-}"; shift 2 ;;
@@ -55,6 +57,48 @@ pm_chain() {
   [ "$rc" -ne 1 ] || return 1
   [ "$rc" -eq 0 ] || PM_WORD=pm-unknown
 }
+
+# --edited-unchanged <meta.json> <sha40> --top DIR --base REF (#1200): thoát 0 khi comment edited-tests THẮNG (đúng head sha) còn hiệu lực
+# dù base đã tiến: với MỌI path trong mảng, file có ở head và blob ở base == blob ở merge-base(base, head) (main không đổi file đó kể từ
+# lúc head fork; cùng khoá so sánh với post-fix-gate audit_covers). Mảng rỗng/không đọc được, thiếu file ở head, lỗi git → thoát 1 (fail closed).
+if [ "$unchanged_mode" -eq 1 ]; then
+  winning || exit 1
+  [ -n "$TOP" ] && [ -n "$BASE_REF" ] || exit 1
+  QA_INS_META="$META" python3 -I -c "$(cat <<'PY'
+import json, os, re, subprocess, sys
+top, sha, base = sys.argv[1:4]
+pat = re.compile(r"(?m)^approved-head:([0-9a-f]{40})[ \t\r]*$")
+et = re.compile(r"(?m)^edited-tests:[ \t]*(.*)$")
+def git(*a):
+    r = subprocess.run(["git", "-C", top, *a], capture_output=True, text=True, timeout=30)
+    return r.returncode, r.stdout.strip()
+try:
+    data = json.load(open(os.environ["QA_INS_META"], encoding="utf-8"))
+    last = None
+    for c in data.get("comments") or []:
+        if isinstance(c, dict) and c.get("authorAssociation") in ("OWNER", "MEMBER", "COLLABORATOR") and pat.search(c.get("body") or ""):
+            last = c["body"]
+    arr = json.loads(et.search(last).group(1).strip())
+    paths = [i["path"].strip() for i in arr]
+except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
+    sys.exit(1)
+if not paths or any((not p) or p.startswith("/") or ".." in p.split("/") for p in paths):
+    sys.exit(1)
+rc, mb = git("merge-base", base, sha)
+if rc != 0 or not mb:
+    sys.exit(1)
+for p in paths:
+    if git("cat-file", "-e", f"{sha}:{p}")[0] != 0:
+        sys.exit(1)
+    rc_a, at_base = git("ls-tree", base, "--", p)
+    rc_b, at_fork = git("ls-tree", mb, "--", p)
+    if rc_a != 0 or rc_b != 0 or at_base != at_fork:
+        sys.exit(1)
+sys.exit(0)
+PY
+)" "$TOP" "$SHA" "$BASE_REF" 2>/dev/null
+  exit $?
+fi
 
 if [ "$has_mode" -eq 1 ]; then
   if ! winning; then
