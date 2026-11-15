@@ -178,15 +178,15 @@ printf '=== dispatch lane=build issue=#74 ===\n{"type":"result","subtype":"succe
 # ── 4e (#1121, AC2): a worker that died on a 402 / balance-exhausted limit has its account paused by note_worker_limit, so the
 #    reaper must not also log it as an "early end" crash (kitbug09c38fc46c3c) nor cool the card down. Real note_worker_limit here
 #    (the file stubs it out above), real log text from #838 (docs/super-board/runs/2026-11-11-agent-workbench-workers).
-# A subshell: re-sourcing the runner replaces the stubs the checks below rely on.
+# A subshell loads ONLY the real note_worker_limit from the runner: the other stubs stay, and no stub is defined twice in
+# this file (a second `name()` line makes the gate count the file as an edited test, not an appended case: merge train #1169 red).
 mkdir -p "$TMP/state"
 printf 'PID=%s\nLANE=review\nSTARTED=%s\n' "$DEAD" "$(iso "$st")" > "$INFLIGHT_DIR/75"
 printf '=== dispatch lane=review issue=#75 ===\naccount_pool: engine=grok account=grok config_dir=\nInternal error: {\n  "message": "API error (status 402 Payment Required): Grok Build usage balance exhausted",\n  "http_status": 402\n}\n\nworker_exit: exit=1 signal=none elapsed=4s\n' > "$TMP/repo/wl/worker-review-75.log"
 printf 'PID=%s\nLANE=review\nSTARTED=%s\n' "$DEAD" "$(iso "$st")" > "$INFLIGHT_DIR/76"
 printf '=== dispatch lane=review issue=#76 ===\nboom\nworker_exit: exit=1 signal=none elapsed=4s\n' > "$TMP/repo/wl/worker-review-76.log"
 : > "$TMP/log"
-( export SB_STATE_DIR="$TMP/state"; SB_LIB_ONLY=1 . "$RUNNER"; set +e; cd "$TMP/repo"; WORKER_LOG_DIR=wl; INFLIGHT_DIR="$TMP/repo/.claude/super-board/inflight"; REPO_ROOT="$TMP/repo"; PROJECT_ITEMS_JSON="{\"items\":[]}"; BOT_LOGIN=bot; gh_write_once() { :; }; gh_checkpoint() { :; }; log() { echo "$*" >> "$TMP/log"; }
-  issue_is_open() { return 0; }; SB_GITHUB_READ="$TMP/bin/super-board-github-read.py"; TICK_SECONDS=120; reap_finished_locks )
+( eval "$(sed -n '/^note_worker_limit() {$/,/^}$/p' "$RUNNER")"; SB_ACCOUNT_STATE_DIR="$TMP/state"; TICK_SECONDS=120; reap_finished_locks )
 [ -f "$TMP/state/usage-grok.json" ] && [ ! -s "$INFLIGHT_DIR/early-deaths/75" ] && ! grep -q "#75.*early end" "$TMP/log" \
   && ok "402 balance-exhausted death pauses the account and logs no 'early end' (#1121)" \
   || fail "402 death still logged as early end or account not paused (#1121): $(grep -m1 '#75' "$TMP/log")"
