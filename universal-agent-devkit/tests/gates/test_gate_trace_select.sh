@@ -22,8 +22,8 @@ cat > "$R/matrix.json" <<'JSON'
 ]}
 JSON
 git -C "$R" add -A && git -C "$R" commit -qm init
-ran() {  # $1 = flag value ("" = unset), $2 = label
-  ( cd "$R" && env ${1:+DEVKIT_TRACE_MAP_SELECT=$1} FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --run-tests --no-checklist --no-cache --task "$2" >"$TMP/out.$2" 2>&1 ); echo "rc=$?" >"$TMP/rc.$2"
+ran() {  # $1 = flag value ("" = unset), $2 = label, $3 = extra gate flag (e.g. --scoped)
+  ( cd "$R" && env ${1:+DEVKIT_TRACE_MAP_SELECT=$1} FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --run-tests --no-checklist --no-cache ${3:-} --task "$2" >"$TMP/out.$2" 2>&1 ); echo "rc=$?" >"$TMP/rc.$2"
   python3 -I -c "import json,sys;r=json.loads(open(sys.argv[1]).read().splitlines()[-1]);print(','.join(sorted(r.get('ran_suites') or [])))" "$R/.git/postfix-gate/runs.jsonl"
 }
 chk() { if [ "$2" = "$3" ]; then echo "✔ $1 ($2)"; else echo "✖ $1: got '$2' want '$3'"; FAILS=$((FAILS+1)); fi; }
@@ -36,4 +36,15 @@ chk "3. flag on, src/a.py changed: REG-A runs, REG-B skipped" "$(ran 1 T3)" "REG
 echo 'x = 3' > "$R/src/a.py"
 chk "4. flag on, failing REG-A still runs and fails the gate" "$(ran 1 T4)" "REG-A"
 chk "4b. gate not green" "$([ "$(cat "$TMP/rc.T4")" != "rc=0" ] && echo notgreen)" "notgreen"
+# R1 (review #1194): a --scoped receipt lists scoped_tests as covered, so the map may not drop suites there.
+git -C "$R" checkout -q -- src; echo 'x = 4' > "$R/src/a.py"; echo 'y = 4' > "$R/src/b.py"
+chk "5. flag on + --scoped: nothing skipped (receipt would claim unrun tests)" "$(ran 1 T5 --scoped)" "REG-A,REG-B"
+# R2: a deleted file is not in the current-tree map, so a dependent suite must not be skipped.
+git -C "$R" checkout -q -- src; rm "$R/src/a.py"
+W6="$(ran "" T6off)"; echo "(flag-off baseline for delete: $W6)"
+chk "6. flag on, src/a.py deleted: same suites as flag off (no map skip)" "$(ran 1 T6)" "$W6"
+# R2: a renamed file's old path is not in the map either.
+git -C "$R" checkout -q -- src; git -C "$R" mv src/a.py src/a2.py
+W7="$(ran "" T7off)"; echo "(flag-off baseline for rename: $W7)"
+chk "7. flag on, src/a.py renamed: same suites as flag off (no map skip)" "$(ran 1 T7)" "$W7"
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }

@@ -7696,7 +7696,10 @@ def main():
     # #667 AC2: cờ DEVKIT_TRACE_MAP_SELECT=1 — lượt impacted (không --full) bỏ suite mà map test→nguồn (cùng map với shadow #476) chứng minh
     # không đụng file đổi. Map không biết đủ ⇒ suite vẫn chạy (shadow_select). impacted_tests đã chụp trước nên kết luận "có test" không đổi.
     # ponytail: opt-in, mặc định tắt; bật mặc định khi trung vị impacted đo thật giảm (luật 20) mà shadow_miss vẫn rỗng.
-    if _TRACE_SELECT and run_tests and not force_reason and sc is not None and regression_tests:
+    # Review #1194: không bỏ ở lượt --scoped (biên nhận scoped_tests nói "đã phủ"), cũng không khi có file xoá/đổi tên (map dựng từ cây hiện tại,
+    # không chứa đường dẫn cũ).
+    if (_TRACE_SELECT and run_tests and not force_reason and sc is not None and regression_tests
+            and not getattr(args, "scoped_run", False) and not DELETED_FILES and not RENAME_SOURCES):
         try:
             _sel = [t for t in regression_tests if not (t.get("matrix_added") or t.get("stale_rerun") or t.get("keyed_full"))]
             _run_ids, _skip_ids = sc.shadow_select(_sel, [str(f) for f in modified_files])
@@ -7704,6 +7707,8 @@ def main():
                 _drop = set(_skip_ids)
                 regression_tests[:] = [t for t in regression_tests if t.get("id") not in _drop]
                 print(f"  • {CYAN}{tr('Map test→nguồn: bỏ', 'Trace map: skipped')} {len(_drop)} suite: {', '.join(sorted(i[:40] for i in _drop)[:10])}{RESET}")
+                if not regression_tests:
+                    print(f"  • {YELLOW}{tr('Map test→nguồn bỏ MỌI suite: không test nào chạy ở lượt này', 'Trace map skipped EVERY suite: no test ran in this run')}{RESET}")
         except Exception as e:  # noqa: BLE001 — không dựng được map: giữ cách chọn cũ
             log_warn(f"trace select: {e!r}")
 
