@@ -40,6 +40,8 @@ sudo -u _devkitseal -H /usr/local/libexec/devkit/agy
 Checks:
 
 ```bash
+# Every dir above the key and the programs must be root-owned and not group/other writable (else the agent could swap them)
+stat -f '%N %Su %Sp' / /usr /usr/local /usr/local/etc /usr/local/etc/devkit /usr/local/libexec /usr/local/libexec/devkit
 python3 "$KIT/bin/verdict_seal.py" status                       # seal mode: on
 sudo -u _devkitseal -H /usr/local/libexec/devkit/verdict-signer --pubkey | diff - /usr/local/etc/devkit/verdict-seal.pub
 /usr/local/libexec/devkit/verdict-signer --pubkey; echo "exit $? (must fail: your uid has no key)"
@@ -51,3 +53,11 @@ Daily use (agents): after an Antigravity audit pass on a PR head, run
 `~/.antigravity-pm/seals/<head>.json`. Gates read it from there.
 
 Emergency off switch: `sudo rm /usr/local/etc/devkit/verdict-seal.pub`. No environment variable can turn seal mode off.
+
+Known limits:
+- The seal binds content (head, tree, signed base and edited), not a PM task id. Task ids are only pointers to a record, and a
+  seal for the right content approves under any task id. A seal for other content never does.
+- agy runs as `_devkitseal`, the same uid as the signer. A prompt injection in the audited diff can therefore get a pass signed.
+  It cannot get anything else signed, because the payload is built by the helper. This is the same exposure as an unsigned
+  audit today.
+- A local post-fix-gate trusts local trunk refs. The merge gate uses origin/main fetched from GitHub.

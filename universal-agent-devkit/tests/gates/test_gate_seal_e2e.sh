@@ -4,7 +4,8 @@
 #  E1 hand-written record (verdict pass, reviewer antigravity, auditedHead = PR head), no seal -> exit 2;
 #  E2 the same record + a valid seal of the PR head -> exit 0 (duyệt chéo bởi antigravity);
 #  E3 seal signed by another key -> exit 2;  E4 valid seal for another head only -> exit 2;
-#  E5 valid seal whose signed base is the weakening commit (helper pointed at a fake trunk) -> exit 2.
+#  E5 valid seal whose signed base is the weakening commit (helper pointed at a fake trunk) -> exit 2;
+#  E6 valid seal, then a later REVISE (fail) audit run on the same head -> exit 2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 unset DEVKIT_AUTO_APPROVE_TESTS DEVKIT_TRANSCRIPTS_DIR TARGET_DIR DEVKIT_AGENT_ID CLAUDE_CODE_SESSION_ID DEVKIT_SESSION_ID CLAUDE_SESSION_ID
@@ -78,4 +79,14 @@ rm -rf "$TMP/pm/seals"; seal "$WEAK" 5 "$MB"; run_gate
 [ "$RC" = 2 ] && ok "E4 seal for another head only -> exit 2" || bad "E4 rc=$RC"
 rm -rf "$TMP/pm/seals"; seal "$HEAD_SHA" 5 "$WEAK"; run_gate
 [ "$RC" = 2 ] && ok "E5 signed base = weakening commit -> exit 2" || bad "E5 rc=$RC"
+rm -rf "$TMP/pm/seals"; seal "$HEAD_SHA" 5 "$MB"
+python3 - "$TMP/pm/projects/p/tasks/T0001-e2e/task.json" "$HEAD_SHA" <<'PY'
+import json, sys
+t = json.load(open(sys.argv[1]))
+t["dispatches"].append({"kind": "audit", "agent": "antigravity", "at": "2026-11-15T02:00:00Z", "finishedAt": "2026-11-15T02:10:00Z",
+                        "auditedHead": sys.argv[2], "verdict": "fail"})
+json.dump(t, open(sys.argv[1], "w"))
+PY
+run_gate
+[ "$RC" = 2 ] && ok "E6 PASS then REVISE on the same head -> exit 2" || bad "E6 rc=$RC"
 [ "$FAILS" -eq 0 ] && echo "ALL OK" || { echo "FAILS=$FAILS"; exit 1; }

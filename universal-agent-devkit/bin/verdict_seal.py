@@ -179,12 +179,28 @@ def _read_pub(path):
     return raw if len(raw) == 32 else None
 
 
+def fixture_repo(top):
+    """True when repo `top` and its git common dir both sit under a system temp dir (a test's throw-away repo)."""
+    try:
+        r = subprocess.run(["git", "-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    common = r.stdout.strip() if r.returncode == 0 else ""
+    return bool(common) and _under_tmp(top) and _under_tmp(common)
+
+
 def trusted_pubkey(test_fixture=False):
     """(mode_on, pubkey bytes|None). mode_on False → seal mode off (key not installed): callers keep today's behaviour.
-    mode_on True with None → installed but unreadable/corrupt: callers must refuse every audit (fail closed)."""
-    override = os.environ.get("DEVKIT_VERDICT_SEAL_PUB")
-    if override and test_fixture and _under_tmp(override):
-        return True, _read_pub(override)
+    mode_on True with None → installed but unreadable/corrupt: callers must refuse every audit (fail closed).
+    test_fixture (the caller checked: pm home fixture AND the repo itself under a temp dir, push_gate._seal_fixture): the mode is
+    decided by DEVKIT_VERDICT_SEAL_PUB alone (a key under a temp dir → on; unset → off), so the kit's old fixture tests keep their
+    meaning after the owner installs the real key. A real repo never gets this branch."""
+    if test_fixture:
+        override = os.environ.get("DEVKIT_VERDICT_SEAL_PUB")
+        if override and _under_tmp(override):
+            return True, _read_pub(override)
+        return False, None
     if not os.path.lexists(PUBKEY_PATH):
         return False, None
     if not _root_owned_chain(PUBKEY_PATH):
@@ -258,7 +274,7 @@ def request(repo, head):
     if not os.path.isfile(AUDIT_ENTRY):
         print(f"verdict-seal: {AUDIT_ENTRY} not installed (owner one-time setup: docs/verdict-seal-setup.md)", file=sys.stderr)
         return 3
-    r = subprocess.run(["sudo", "-n", "-u", SEAL_USER, AUDIT_ENTRY, "--repo", os.path.realpath(repo), "--head", head],
+    r = subprocess.run(["sudo", "-n", "-H", "-u", SEAL_USER, AUDIT_ENTRY, "--repo", os.path.realpath(repo), "--head", head],
                        capture_output=True, text=True, timeout=1800)
     if r.returncode != 0:
         print(f"verdict-seal: audit run failed (exit {r.returncode}): {r.stderr.strip()[-2000:]}", file=sys.stderr)

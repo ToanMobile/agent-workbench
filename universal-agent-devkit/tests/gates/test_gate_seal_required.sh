@@ -84,6 +84,21 @@ seal(base, ["tests/test_a.sh"])
 check("signed scope used, task.json scope ignored", pg.audit_scope(repo, tid) == (base, ["tests/test_a.sh"]))
 seal(base, ["tests/test_a.sh"], verdict="fail")
 check("sealed fail: audited_head None", pg.audited_head(repo, tid) is None)
+# Advisor/plan review v1 finding 5: the test switches never reach a real repository. The kit's own checkout is not under a
+# temp dir: with DEVKIT_PM_HOME_TEST=1, a temp pm home and DEVKIT_VERDICT_SEAL_PUB all set, it is no fixture.
+real = os.path.dirname(os.path.dirname(sys.argv[1]))
+check("real repo: env switches give no seal fixture", pg._seal_fixture(real) is False)
+# Simulated owner install (root-owned key present): a real repo is in seal mode whatever the env says; a fixture repo with no
+# test key stays off, so the kit's old fixture tests (hand-written PM records) keep their meaning after the install.
+vs_lib = pg._seal_lib()
+saved = (vs_lib.PUBKEY_PATH, vs_lib._root_owned_chain)
+inst = os.path.join(tmp, "installed.pub")
+open(inst, "w").write(base64.b64encode(vs.public_key(b"\x08" * 32)).decode())
+vs_lib.PUBKEY_PATH, vs_lib._root_owned_chain = inst, (lambda p: True)
+check("installed key: real repo in seal mode despite fixture env", pg.seal_mode(real) is True)
+os.environ.pop("DEVKIT_VERDICT_SEAL_PUB")
+check("installed key: fixture repo without test key stays off", pg.seal_mode(repo) is False)
+vs_lib.PUBKEY_PATH, vs_lib._root_owned_chain = saved
 print("ALL OK" if not fails else f"FAILS={len(fails)}")
 sys.exit(1 if fails else 0)
 PY

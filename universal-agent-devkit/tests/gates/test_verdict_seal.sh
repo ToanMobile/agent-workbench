@@ -66,9 +66,11 @@ check("payload edited after signing -> None", vs.verify(repo, head, test_fixture
 
 # override outside tmp roots is ignored; with no root-owned key installed seal mode is off
 os.environ["DEVKIT_VERDICT_SEAL_PUB"] = os.path.join(os.environ["HOME"].replace(tmp, "/Users/nobody-x"), "seal.pub")
-check("override outside tmp ignored", vs.trusted_pubkey(test_fixture=True)[0] == os.path.lexists(vs.PUBKEY_PATH))
+check("override outside tmp ignored (fixture: mode off)", vs.trusted_pubkey(test_fixture=True) == (False, None))
 del os.environ["DEVKIT_VERDICT_SEAL_PUB"]
 check("no override: mode follows root-owned key file", vs.seal_mode() == os.path.lexists(vs.PUBKEY_PATH))
+check("fixture_repo: tmp repo yes", vs.fixture_repo(repo))
+check("fixture_repo: the kit's own repo no", not vs.fixture_repo(os.path.dirname(os.path.dirname(sys.argv[1]))))
 print("ALL OK" if not fails else f"FAILS={len(fails)}")
 sys.exit(1 if fails else 0)
 PY

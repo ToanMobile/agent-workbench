@@ -489,13 +489,20 @@ def _seal_lib():
 _SEAL_MOD = None
 
 
-def seal_mode():
-    """True when the owner installed the trusted verdict-seal pubkey (#632 B): then an audit pass counts only with a valid seal.
-    A kit with verdict_seal.py missing while the key file exists → True (fail closed: every audit refused)."""
+def _seal_fixture(top):
+    """Test fixture for the seal: pm home fixture (pm_home_test_fixture) AND repo `top` + its git common dir under a temp dir.
+    A real repository never counts, whatever the environment says (plan review v1 finding 5)."""
+    lib = _seal_lib()
+    return bool(lib) and pm_home_test_fixture() and lib.fixture_repo(top)
+
+
+def seal_mode(top):
+    """True when the owner installed the trusted verdict-seal pubkey (#632 B): then an audit pass of repo `top` counts only with a
+    valid seal. A kit with verdict_seal.py missing while the key file exists → True (fail closed: every audit refused)."""
     lib = _seal_lib()
     if lib is None:
         return os.path.lexists("/usr/local/etc/devkit/verdict-seal.pub")
-    return lib.seal_mode(pm_home_test_fixture())
+    return lib.seal_mode(_seal_fixture(top))
 
 
 TRUNK_REFS = ("refs/remotes/origin/main", "refs/remotes/origin/master", "refs/remotes/origin/trunk",
@@ -521,7 +528,7 @@ def sealed_scope(top, sha):
     commit of the PR that is not on trunk lies inside base..sha, the diff the auditor saw. In the merge gate trunk is origin/main
     fetched from GitHub (the agent cannot move it); a local gate trusts local refs as it does today."""
     lib = _seal_lib()
-    payload = lib.sealed_pass(top, sha, pm_home_test_fixture()) if lib else None
+    payload = lib.sealed_pass(top, sha, _seal_fixture(top)) if lib else None
     trunk = _trunk_ref(top) if payload else None
     if not trunk:
         return None
@@ -542,7 +549,7 @@ def _audit_head_of(top, audit, cache=None, require_seal=True):
     của audited_head(s), audit_reviewer, audit_scope nên mọi người đọc biên bản PM (approved, post-fix-gate, approve-tests,
     super-board-audit-check) cùng bị ràng. require_seal=False chỉ để chain_audit thấy head chưa niêm phong (trả "không kiểm được")."""
     sha = _audit_head_unsealed(top, audit, cache)
-    if sha and require_seal and seal_mode() and not sealed_scope(top, sha):
+    if sha and require_seal and seal_mode(top) and not sealed_scope(top, sha):
         return None
     return sha
 
@@ -687,7 +694,7 @@ def audit_scope(top, task_id):
         head = _audit_head_of(top, audit)
         if not head:
             continue
-        if seal_mode():
+        if seal_mode(top):
             # #632 B: phạm vi lấy từ seal đã ký (helper tự tính base và edited, base đã kiểm ⊑ merge-base(trunk, head) ở sealed_scope),
             # không từ task.json; không đòi lượt dispatch có auditBase (pm_verdict chỉ ghi verdict vào lượt có auditBase).
             signed = sealed_scope(top, head)
@@ -715,7 +722,7 @@ def scoped_audit_runs(top):
     không thì giờ giao (review vòng 6: hai lượt chạy chồng nhau xếp theo lúc xong). Cùng điều kiện pm home với audited_heads."""
     if pm_home_overridden() and not pm_home_test_fixture():
         return []
-    out, mode = [], seal_mode()
+    out, mode = [], seal_mode(top)
     # OCR vòng 8: mọi task của pm home, không lọc theo project (lượt REVISE chạy từ worktree anh em ../<repo>-x vẫn phải chặn); người gọi
     # chỉ giữ lượt có auditedHead trên chuỗi PR của mình — đó mới là bằng chứng lượt đó audit PR này.
     for task in _repo_tasks(top, any_project=True):

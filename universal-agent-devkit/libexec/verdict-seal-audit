@@ -15,14 +15,22 @@ trusted key is only readable by the signer running as _devkitseal (an agent runn
 import datetime
 import json
 import os
+import pwd
 import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
 
-AGY = os.environ.get("SEAL_TEST_AGY") or "/usr/local/libexec/devkit/agy"
-SIGNER = os.environ.get("SEAL_TEST_SIGNER") or "/usr/local/libexec/devkit/verdict-signer"
+INSTALLED = os.path.realpath(__file__).startswith("/usr/local/libexec/devkit/")
+# The installed copy never honours the test overrides (not only sudo's env_reset).
+_TEST = {} if INSTALLED else {k: v for k, v in os.environ.items() if k in ("SEAL_TEST_AGY", "SEAL_TEST_SIGNER") and v}
+AGY = _TEST.get("SEAL_TEST_AGY") or "/usr/local/libexec/devkit/agy"
+SIGNER = _TEST.get("SEAL_TEST_SIGNER") or "/usr/local/libexec/devkit/verdict-signer"
+# HOME of the euid from the user database, never from the caller's environment (macOS sudo keeps HOME without -H).
+SEAL_HOME = pwd.getpwuid(os.geteuid()).pw_dir
+CHILD_ENV = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": SEAL_HOME, "USER": pwd.getpwuid(os.geteuid()).pw_name,
+             "LANG": "en_US.UTF-8", "TMPDIR": tempfile.gettempdir()}
 CODESIGN_REQ = 'anchor apple generic and certificate leaf[subject.OU] = "EQHXZ8M8AV"'
 GIT = "/usr/bin/git"
 AGY_TIMEOUT = 1200
@@ -90,7 +98,7 @@ def main(argv):
     repo, head = os.path.realpath(argv[1]), argv[3]
     if len(head) != 40 or any(c not in "0123456789abcdef" for c in head):
         die("--head must be a sha40", 2)
-    if not os.environ.get("SEAL_TEST_AGY"):
+    if "SEAL_TEST_AGY" not in _TEST:
         cs = subprocess.run(["/usr/bin/codesign", "-v", f"-R={CODESIGN_REQ}", AGY], capture_output=True, text=True, timeout=60)
         if cs.returncode != 0:
             die(f"agy at {AGY} failed the codesign check: {cs.stderr.strip()[-300:]}")
@@ -144,10 +152,11 @@ def main(argv):
             f.write(git(clone, "diff", "-M", base, head))
         # agy needs _devkitseal's login keychain unlocked (empty password, setup doc); no GUI session under sudo.
         subprocess.run(["/usr/bin/security", "unlock-keychain", "-p", "",
-                        os.path.expanduser("~/Library/Keychains/login.keychain-db")], capture_output=True, timeout=30)
+                        os.path.join(SEAL_HOME, "Library/Keychains/login.keychain-db")], capture_output=True, timeout=30,
+                       env=CHILD_ENV)
         run = subprocess.run([AGY, "--print", PROMPT.replace("<base>", base), "--output-format", "json", "--json-schema",
                               json.dumps(SCHEMA), "--disable-slash-commands", "--sandbox"],
-                             cwd=clone, capture_output=True, text=True, timeout=AGY_TIMEOUT)
+                             cwd=clone, capture_output=True, text=True, timeout=AGY_TIMEOUT, env=CHILD_ENV)
         if run.returncode != 0:
             die(f"agy exit {run.returncode}: {run.stderr.strip()[-500:]}")
         result = parse_verdict(run.stdout)
@@ -157,7 +166,7 @@ def main(argv):
                               "verdict": result["verdict"], "findings": result["findings"][:50],
                               "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                               "nonce": secrets.token_hex(16)}, sort_keys=True, separators=(",", ":"))
-        sig = subprocess.run([SIGNER], input=payload, capture_output=True, text=True, timeout=60)
+        sig = subprocess.run([SIGNER], input=payload, capture_output=True, text=True, timeout=60, env=CHILD_ENV)
         if sig.returncode != 0 or not sig.stdout.strip():
             die(f"signer exit {sig.returncode}: {sig.stderr.strip()[-300:]}")
         print(json.dumps({"payload": payload, "sig": sig.stdout.strip()}))

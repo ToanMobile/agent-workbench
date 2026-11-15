@@ -220,7 +220,7 @@ def chain_audit(sha, base, top=None):
         # #632 B: seal mode on and the PR range has audit passes with no valid seal -> cannot check (never False: False opens the
         # tree-receipt path).
         try:
-            raw = gate.audited_heads(top, sealed=False) if callable(getattr(gate, "seal_mode", None)) and gate.seal_mode() else []
+            raw = gate.audited_heads(top, sealed=False) if callable(getattr(gate, "seal_mode", None)) and gate.seal_mode(top) else []
         except Exception as error:   # noqa: BLE001 - unreadable records: cannot check
             print(f"audit-check: cannot read the audit records: {error.__class__.__name__}", file=sys.stderr)
             return None
