@@ -2348,11 +2348,12 @@ if reason and reason.startswith(SELF_APPROVE_MSG):
     print(f"BLOCKED: {cmd!r} — {reason}. Luật #605: `approved-head:<sha>` trơn (không kèm dòng `approved-by:`) và `done` chỉ người "
           "chủ repo gõ tay — agent đăng bằng chung tài khoản OWNER nên đăng chúng là tự duyệt. Lane reviewer: đăng `approved-head:<sha>` "
           "kèm dòng `approved-by: {\"reviewer\",\"builder\",\"task_id\",\"gate_receipt\"}` (reviewer khác builder), hoặc "
-          "`cross-review-approved: {...}`.", file=sys.stderr)
+          "`cross-review-approved: {...}`. PR chưa qua board: chạy .claude/bin/super-board-route-pr.sh <pr> (thẻ vào lane QA, lane duyệt).", file=sys.stderr)
     sys.exit(2)
 if reason and reason.startswith(MQ_MSG):
     print(f"BLOCKED: {cmd!r} — {reason}. Luật #536: nhãn merge-queue chỉ gắn cho PR đã được lane Review duyệt đúng head "
-          "(approved-head:<sha40> + approved-by, audit Antigravity pass) — gắn qua .claude/bin/super-board-queue-label.sh <pr> sau khi duyệt.",
+          "(approved-head:<sha40> + approved-by, audit Antigravity pass) — gắn qua .claude/bin/super-board-queue-label.sh <pr> sau khi duyệt. "
+          "PR chưa qua board: chạy .claude/bin/super-board-route-pr.sh <pr>.",
           file=sys.stderr)
     sys.exit(2)
 if reason and reason.startswith(PM_STATE_MSG):
