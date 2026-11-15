@@ -216,6 +216,17 @@ def chain_audit(sha, base, top=None):
     except Exception as error:   # noqa: BLE001 - biên bản / git hỏng: không kiểm được
         print(f"audit-check: cannot read the audit records: {error.__class__.__name__}", file=sys.stderr)
         return None
+    if not hits:
+        # #632 B: seal mode on and the PR range has audit passes with no valid seal -> cannot check (never False: False opens the
+        # tree-receipt path).
+        try:
+            raw = gate.audited_heads(top, sealed=False) if callable(getattr(gate, "seal_mode", None)) and gate.seal_mode() else []
+        except Exception as error:   # noqa: BLE001 - unreadable records: cannot check
+            print(f"audit-check: cannot read the audit records: {error.__class__.__name__}", file=sys.stderr)
+            return None
+        if any(h in pr_commits for _, h in raw):
+            print("audit-check: --chain-audit cannot check (audit pass in the PR range has no valid verdict seal)", file=sys.stderr)
+            return None
     if hits:
         print("audit-check: --chain-audit cannot check (the PR range matches only auditHistory heads; the current audit verdict is "
               "not a pass on this PR)", file=sys.stderr)

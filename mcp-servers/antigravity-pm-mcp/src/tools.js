@@ -985,8 +985,8 @@ export const TOOLS = [
           selfAudit = `CANH BAO: reviewer "${rep.reviewer}" (lan giao audit: ${viaAgent || '?'}) trung builder (${builders.join(', ')}) — khong phai duyet cheo, khong ghi auditedHead.`;
           auditedHead = undefined;
         }
-        // ponytail: bao cao nam trong thu muc project, agent cung user OS ghi tay duoc, va builder la chuoi tu khai (task audit-only rieng
-        // cho PR Antigravity da build van qua) — cung gioi han da chap nhan o push_gate.approved (#605); sua that o #632.
+        // #632 B: bao cao nay agent cung user OS ghi tay duoc; khi chu repo da cai /usr/local/etc/devkit/verdict-seal.pub, gate DevKit
+        // chi tin auditedHead co seal ky bang khoa Keychain cua _devkitseal (verdict_seal.py), khong tin ban ghi nay.
       }
       const notesOut = selfAudit ? notesIn.replace(new RegExp(AUDITED_HEAD.source, 'g'), 'auditedHead-bo-qua') : notesIn;
       if (args.kind === 'plan' && args.verdict === 'pass') {
@@ -1054,6 +1054,13 @@ export const TOOLS = [
       }
       if (args.kind === 'audit' && args.verdict === 'pass') {
         L.push(auditedHead ? `auditedHead = ${auditedHead}.` : (selfAudit || 'CANH BAO: audit pass khong co auditedHead — gate DevKit se khong duyet test sua dua vao audit nay.'));
+        // #632 B: seal mode bat (co pubkey root) thi gate chi duyet head co seal; nhac lenh xin seal khi chua co.
+        if (auditedHead && fs.existsSync('/usr/local/etc/devkit/verdict-seal.pub')) {
+          const home = process.env.ANTIGRAVITY_PM_STATE_HOME || path.join(process.env.HOME || '', '.antigravity-pm');
+          L.push(fs.existsSync(path.join(home, 'seals', `${auditedHead}.json`))
+            ? `seal: co (${auditedHead.slice(0, 12)}).`
+            : `seal: CHUA CO — gate se khong duyet test sua. Chay: python3 universal-agent-devkit/bin/verdict_seal.py request --repo <repo> --head ${auditedHead}`);
+        }
       }
       L.push(`Da ghi ket luan ${args.kind} = ${args.verdict} cho ${task.id} (vong ${task.round}).`);
       if (args.verdict === 'pass') {

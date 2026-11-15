@@ -470,9 +470,84 @@ def audited_head(top, task_id):
     return None
 
 
-def _audit_head_of(top, audit, cache=None):
+def _seal_lib():
+    """verdict_seal.py next to this file (#632 B), or None when the kit copy predates it (seal mode then stays off)."""
+    global _SEAL_MOD
+    if _SEAL_MOD is None:
+        try:
+            import importlib.util  # noqa: PLC0415
+            path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "verdict_seal.py")
+            spec = importlib.util.spec_from_file_location("devkit_verdict_seal", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _SEAL_MOD = mod
+        except (OSError, ImportError, AttributeError, SyntaxError):
+            _SEAL_MOD = False
+    return _SEAL_MOD or None
+
+
+_SEAL_MOD = None
+
+
+def seal_mode():
+    """True when the owner installed the trusted verdict-seal pubkey (#632 B): then an audit pass counts only with a valid seal.
+    A kit with verdict_seal.py missing while the key file exists → True (fail closed: every audit refused)."""
+    lib = _seal_lib()
+    if lib is None:
+        return os.path.lexists("/usr/local/etc/devkit/verdict-seal.pub")
+    return lib.seal_mode(pm_home_test_fixture())
+
+
+TRUNK_REFS = ("refs/remotes/origin/main", "refs/remotes/origin/master", "refs/remotes/origin/trunk",
+              "refs/heads/main", "refs/heads/master", "refs/heads/trunk")
+
+
+def _trunk_ref(top):
+    """First trunk ref that exists in `top` (origin/main first, as antigravity-pm auditRange); None when none / git error."""
+    for ref in TRUNK_REFS:
+        try:
+            rc, _ = git(top, "rev-parse", "--verify", "-q", ref + "^{commit}")
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if rc == 0:
+            return ref
+    return None
+
+
+def sealed_scope(top, sha):
+    """Signed payload of a valid PASS seal of `sha` (dict: base, edited, ...) whose SIGNED base is an ancestor of (or equal to)
+    merge-base(trunk of `top`, sha); None otherwise. #632 B plan review v2: the seal helper can be pointed at a fake repo whose
+    trunk is a weakening commit; the base check here, at the root every reader goes through, makes such a seal worthless: every
+    commit of the PR that is not on trunk lies inside base..sha, the diff the auditor saw. In the merge gate trunk is origin/main
+    fetched from GitHub (the agent cannot move it); a local gate trusts local refs as it does today."""
+    lib = _seal_lib()
+    payload = lib.sealed_pass(top, sha, pm_home_test_fixture()) if lib else None
+    trunk = _trunk_ref(top) if payload else None
+    if not trunk:
+        return None
+    try:
+        rc, mb = git(top, "merge-base", trunk, sha)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    mb = mb.strip()
+    if rc != 0 or not SHA40.fullmatch(mb) or not head_after(top, payload["base"], mb):
+        return None
+    return payload
+
+
+def _audit_head_of(top, audit, cache=None, require_seal=True):
     """sha40 auditedHead của MỘT verdicts.audit pass (trường cấu trúc trước, rồi notes) khi sha đó là commit của repo `top`; None khác.
-    cache (dict sha → bool, tuỳ chọn): kết quả rev-parse đã có trong cùng một lượt gọi (audited_heads, H6: history lặp lại head)."""
+    cache (dict sha → bool, tuỳ chọn): kết quả rev-parse đã có trong cùng một lượt gọi (audited_heads, H6: history lặp lại head).
+    #632 B: seal mode on (seal_mode()) → sha chỉ tính khi có seal PASS hợp lệ của đúng sha đó (verdict_seal.verify); đây là gốc chung
+    của audited_head(s), audit_reviewer, audit_scope nên mọi người đọc biên bản PM (approved, post-fix-gate, approve-tests,
+    super-board-audit-check) cùng bị ràng. require_seal=False chỉ để chain_audit thấy head chưa niêm phong (trả "không kiểm được")."""
+    sha = _audit_head_unsealed(top, audit, cache)
+    if sha and require_seal and seal_mode() and not sealed_scope(top, sha):
+        return None
+    return sha
+
+
+def _audit_head_unsealed(top, audit, cache=None):
     if not isinstance(audit, dict) or audit.get("verdict") != "pass":
         return None
     # Audit T0066 vòng 2: trường cấu trúc verdicts.audit.auditedHead (pm_verdict ghi) trước, rồi `auditedHead: <sha>` trong notes.
@@ -496,7 +571,7 @@ def _audit_head_of(top, audit, cache=None):
     return None
 
 
-def audited_heads(top):
+def audited_heads(top, sealed=True):
     """[(task_id, auditedHead)] của MỌI task antigravity-pm của repo này có audit pass kèm auditedHead. Đợt 2 lane A: post-fix-gate chỉ
     dùng audit mới nhất trên chuỗi first-parent của PR, audit cũ hơn có nội dung khác thì không duyệt (chặn replay về bản yếu).
     Cùng điều kiện pm home với audited_head (pm home lạ không phải fixture test → [])."""
@@ -515,7 +590,7 @@ def audited_heads(top):
                 audits.append({"verdict": "pass", "auditedHead": h.get("auditedHead")})
         seen = set()
         for audit in audits:
-            sha = _audit_head_of(top, audit, checked)
+            sha = _audit_head_of(top, audit, checked, require_seal=sealed)
             if sha and sha not in seen:
                 seen.add(sha)
                 out.append((task["id"], sha))
@@ -612,6 +687,11 @@ def audit_scope(top, task_id):
         head = _audit_head_of(top, audit)
         if not head:
             continue
+        if seal_mode():
+            # #632 B: phạm vi lấy từ seal đã ký (helper tự tính base và edited, base đã kiểm ⊑ merge-base(trunk, head) ở sealed_scope),
+            # không từ task.json; không đòi lượt dispatch có auditBase (pm_verdict chỉ ghi verdict vào lượt có auditBase).
+            signed = sealed_scope(top, head)
+            return (signed["base"], list(signed["edited"])) if signed else None
         dispatches = task.get("dispatches") if isinstance(task.get("dispatches"), list) else []
         audits = [d for d in dispatches if isinstance(d, dict) and d.get("kind") == "audit"]
         last = max(enumerate(audits), key=lambda iv: (str(iv[1].get("at") or ""), iv[0]))[1] if audits else None
@@ -635,7 +715,7 @@ def scoped_audit_runs(top):
     không thì giờ giao (review vòng 6: hai lượt chạy chồng nhau xếp theo lúc xong). Cùng điều kiện pm home với audited_heads."""
     if pm_home_overridden() and not pm_home_test_fixture():
         return []
-    out = []
+    out, mode = [], seal_mode()
     # OCR vòng 8: mọi task của pm home, không lọc theo project (lượt REVISE chạy từ worktree anh em ../<repo>-x vẫn phải chặn); người gọi
     # chỉ giữ lượt có auditedHead trên chuỗi PR của mình — đó mới là bằng chứng lượt đó audit PR này.
     for task in _repo_tasks(top, any_project=True):
@@ -646,7 +726,14 @@ def scoped_audit_runs(top):
                 base = d.get("auditBase") if isinstance(d.get("auditBase"), str) and SHA40.fullmatch(d["auditBase"]) else None
                 ed = d.get("edited") if isinstance(d.get("edited"), list) and base else None
                 at = d.get("finishedAt") if isinstance(d.get("finishedAt"), str) and d["finishedAt"] else d.get("at")
-                out.append((task["id"], d["auditedHead"], str(d.get("verdict") or ""), str(at or ""), ed, base))
+                verdict = str(d.get("verdict") or "")
+                if verdict == "pass" and mode:
+                    # #632 B: lượt pass chỉ tính khi head có seal PASS; phạm vi lấy từ seal. Lượt fail giữ nguyên (chỉ làm luật chặt hơn).
+                    signed = sealed_scope(top, d["auditedHead"])
+                    if not signed:
+                        continue
+                    base, ed = signed["base"], list(signed["edited"])
+                out.append((task["id"], d["auditedHead"], verdict, str(at or ""), ed, base))
     return out
 
 
@@ -752,8 +839,8 @@ def approved(top, rng):
     auditedHead (audited_head) has the same tree as that commit and as the tip of rng (audit T0066, #605: no replay);
     (False, why) when a Test-approved-by line is there but does not count; (False, None) when there is none.
     Audit 2026-10-09: the old check was `"Test-approved-by:" in git log`, so "fix; Test-approved-by: whatever" passed.
-    ponytail: the task record lives in a directory of the same user — an agent that writes ~/.antigravity-pm by hand still
-    passes; upgrade to a record signed by the PM server if that is ever seen."""
+    #632 B: once the owner installs the verdict-seal pubkey, audited_head counts only heads with a Keychain-signed seal, so a
+    hand-written ~/.antigravity-pm record no longer passes. ponytail: before that install it still does (seal mode off)."""
     rc, out = git(top, "log", "--format=%H%x01%(trailers:key=Test-approved-by,valueonly,unfold)%x00", rng)
     if rc != 0:
         return False, None
