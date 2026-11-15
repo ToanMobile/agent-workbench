@@ -14,7 +14,12 @@
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 AUDIT="$DEVKIT_DIR/libexec/verdict-seal-audit"
-TMP="$(mktemp -d)" || exit 1
+# The gate runs tests without TMPDIR: tempfile.gettempdir() then falls to the shared /tmp, where the fake agy rightly refuses
+# to run. Use the per-user private temp dir (macOS) so the test passes with or without the caller's TMPDIR.
+[ -n "${TMPDIR:-}" ] || TMPDIR="$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)"
+[ -n "$TMPDIR" ] || TMPDIR=/tmp
+export TMPDIR="${TMPDIR%/}"
+TMP="$(mktemp -d "$TMPDIR/seal-audit.XXXXXX")" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"; mkdir -p "$HOME"
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
