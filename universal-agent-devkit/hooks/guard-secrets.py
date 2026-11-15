@@ -269,7 +269,12 @@ def _segments(s):
             end_word(i)
             i += 1
             continue
-        if c == "<" and s.startswith("<<", i) and not s.startswith("<<<", i):
+        if c == "<" and s.startswith("<<<", i):   # here-string: the operator is a word of its own, its text the next word
+            end_word(i)
+            words.append((i, i + 3))
+            i += 3
+            continue
+        if c == "<" and s.startswith("<<", i):
             m = _heredoc_at(s, i)
             if m:
                 pending.append(m[:3])
@@ -663,10 +668,9 @@ SSH_VALUE_OPTS = set("-" + c for c in "BbcDEeFIiJLlmOopQRSWw")
 
 def _data_words(cmd, words, raw, k, name):
     """Indexes of the words of one simple command (command word raw[k], basename `name`) that cannot make it read a file."""
-    rest = cmd[words[-1][1]:].lstrip(" \t")
     # What a command prints can become a read further down a pipe (`ls X | cat`-style consumers, echo "cat X" | python3).
     # `&> file` saves it: the & ends the simple command, so the redirection is not among its words.
-    piped = (rest.startswith("|") and not rest.startswith("||")) or rest.startswith("&>") or raw[-1][-1] in "<>"
+    piped = _piped_on(cmd, words) or raw[-1][-1] in "<>"
     args, outs = _split_redirects(raw, k + 1)
     # ... and so can a list of names saved to a file (`ls X > names; cat $(cat names)`).
     kept = piped or any(target != "/dev/null" for _idx, target in outs)
@@ -745,9 +749,39 @@ def _data_words(cmd, words, raw, k, name):
     return []
 
 
+COMPOUND_END = {"fi", "done", "esac"}
+
+
+def _piped_on(cmd, words):
+    """True when what follows the last word of a simple command pipes or saves its output (`| x`, `&> f`)."""
+    rest = cmd[words[-1][1]:].lstrip(" \t")
+    return (rest.startswith("|") and not rest.startswith("||")) or rest.startswith("&>")
+
+
+def _has_group(cmd):
+    """True when a ( or ) stands at shell level (not $( ), not quoted): a subshell, an array, a case pattern. What a command
+    inside prints then leaves through the group, where the per-command checks of _data_words cannot see it."""
+    i, n = 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if c == "\\":
+            i += 2
+        elif c in "'\"":
+            i = _skip_quoted(cmd, i, c)
+        elif c == "`":
+            i = _skip_backtick(cmd, i)
+        elif c == "$" and cmd[i + 1:i + 2] == "(":
+            i = _skip_paren(cmd, i + 1)
+        elif c in "()":
+            return True
+        else:
+            i += 1
+    return False
+
+
 def scrub_data_words(cmd):
     """cmd with the words that only name a file blanked. Raises _Whole / ValueError when the command must be judged whole."""
-    if "<(" in cmd or ">(" in cmd or DOLLAR_UNDERSCORE.search(cmd) or FUNC_DEF.search(cmd):
+    if "<(" in cmd or ">(" in cmd or DOLLAR_UNDERSCORE.search(cmd) or FUNC_DEF.search(cmd) or _has_group(cmd):
         raise _Whole
     out = list(cmd)
 
@@ -758,6 +792,10 @@ def scrub_data_words(cmd):
 
     for words, bodies, risky in _segments(cmd):
         raw = [cmd[a:b] for a, b in words]
+        if "{" in raw or "}" in raw:
+            raise _Whole   # { ...; } group: its output can be piped / saved as one
+        if raw and raw[0] in COMPOUND_END and (len(raw) > 1 or _piped_on(cmd, words)):
+            raise _Whole   # fi | sh, done > file: the output of every command inside goes there
         k = _head(raw)
         if k >= len(raw):
             continue
@@ -781,16 +819,25 @@ def scrub_data_words(cmd):
 # The closed list of read verbs. A tier 2 name is refused only as an operand of one of them (or as the target of `< file`).
 # Adding a verb here needs a deny + an allow case in tests/gates/test_guard_secrets_zero_defect.sh (group RV).
 PLAIN_READERS = {"cat", "head", "tail", "less", "more", "bat", "nl", "tac", "source", ".", "cut", "sort", "uniq", "strings",
-                 "xxd", "hexdump", "od", "base64"}   # every word after the verb is a file it reads
+                 "xxd", "hexdump", "od", "base64", "plutil", "diff", "cmp"}   # every word after the verb is a file it reads
 PATTERN_READERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}    # not the pattern word, not an exclusion
-SCRIPT_READERS = {"sed", "awk", "gawk"}                            # not the script (the first word, or the -e values)
+SCRIPT_READERS = {"sed", "awk", "gawk", "jq", "yq"}                # not the script (the first word, or the -e values)
 # A local copy / archive (cp, mv, install, ln, tar, zip, scp / rsync between local paths) prints nothing and is NOT a read:
 # agents copy google-services.json and keystores into a worktree every day. Tier 1 names keep the old verdict (`cp .env x`).
 REMOTE_COPIERS = {"scp", "rsync"}                                  # the sources, only when the destination is a remote host
 REMOTE_TARGET = re.compile(r"(?:[A-Za-z0-9_.-]+@)?[A-Za-z0-9_.-]+:(?!\\)|[a-z]+://", re.I)
 UPLOAD_READERS = {"curl", "wget"}                                  # only @file and the upload options
 KEY_READERS = {"openssl"}                                          # not the file after -out / -keyout
-INLINE_READERS = {"python", "python3", "node", "ruby"}             # only a -c / -e script that opens a file
+# An interpreter: a -c / -e script, or one fed by a here-string / heredoc, whose quoted STRING LITERALS name the file it
+# opens (`d.key`, `obj.key` are attributes, not files); and `python3 -m json.tool FILE`.
+INLINE_READERS = {"python", "python3", "node", "ruby"}
+STRING_LITERAL = re.compile(r"'([^'\n]*)'|\"([^\"\n]*)\"")
+TRIPLE_QUOTED = re.compile(r"'''.*?'''|\"\"\".*?\"\"\"", re.S)
+PATH_LITERAL = re.compile(r"[A-Za-z0-9_./~$@{}+-]+\Z")
+# git prints file content with show / diff / log -p; a summary (--stat, --name-only) does not.
+GIT_PRINTS = {"show", "diff"}
+GIT_PATCH = {"-p", "-u", "--patch"}
+GIT_SUMMARY = {"--stat", "--shortstat", "--numstat", "--summary", "--name-only", "--name-status", "--quiet", "-q"}
 READ_VERBS = (PLAIN_READERS | PATTERN_READERS | SCRIPT_READERS | REMOTE_COPIERS | UPLOAD_READERS | KEY_READERS
               | INLINE_READERS)
 INLINE_SCRIPT_OPTS = {"-c", "-e", "-p", "--eval", "--print"}
@@ -914,9 +961,33 @@ def _read_operands(raw, k, name):
     if name in KEY_READERS:
         return [raw[i] for pos, i in enumerate(args) if not (pos and raw[args[pos - 1]] in OPENSSL_OUT)]
     if name in INLINE_READERS:
-        return [raw[i] for pos, i in enumerate(args)
-                if pos and raw[args[pos - 1]] in INLINE_SCRIPT_OPTS and READ_CALL.search(raw[i])]
+        return []   # judged by _reads_secret: scripts and `-m json.tool`
     return [raw[i] for i in args]
+
+
+def _fed_scripts(cmd, words, raw):
+    """Scripts a command gets on stdin: the text of a here-string and the body of a heredoc opened on its line."""
+    out = [_unquote(raw[i + 1]) for i in range(len(raw) - 1) if raw[i] == "<<<"]
+    start = cmd.rfind("\n", 0, words[0][0]) + 1
+    end = cmd.find("\n", words[-1][1])
+    p = cmd.find("<<", start, end) if end >= 0 else -1
+    while p >= 0:
+        m = None if cmd.startswith("<<<", p) else _heredoc_at(cmd, p)
+        if m:
+            out.append(cmd[end + 1:_skip_heredoc_bodies(cmd, end + 1, [m[:3]])])
+            break
+        p = cmd.find("<<", p + 3, end)
+    return out
+
+
+def _script_reads(script):
+    """True when an interpreter script opens something and one of its quoted string literals is a tier 2 file name."""
+    if not READ_CALL.search(script):
+        return False
+    # Text the script only carries (a ''' block, a literal with spaces or code in it) is not a file it opens: a literal
+    # counts when the whole of it is one path.
+    literals = (a or b for a, b in STRING_LITERAL.findall(TRIPLE_QUOTED.sub(" ", script)))
+    return any(PATH_LITERAL.match(lit) and _hits_secret(lit, True) for lit in literals)
 
 
 def _reads_secret(cmd, depth=0):
@@ -945,6 +1016,24 @@ def _reads_secret(cmd, depth=0):
                     if READ_VERB_WORD.search(script) and _hits_secret(" ".join(raw[i + 2:]), True):
                         return True
                     break
+            if any(_reads_secret(script, depth + 1) for script in _fed_scripts(cmd, words, raw)):
+                return True   # bash <<'EOF' ... EOF
+        elif name in INLINE_READERS:
+            args = raw[k + 1:]
+            scripts = [_unquote(args[p + 1]) for p in range(len(args) - 1) if args[p] in INLINE_SCRIPT_OPTS]
+            if any(_script_reads(script) for script in scripts + _fed_scripts(cmd, words, raw)):
+                return True
+            if any(args[p:p + 2] == ["-m", "json.tool"] and _hits_secret(" ".join(args[p + 2:]), True)
+                   for p in range(len(args))):
+                return True
+        elif name == "git":
+            j = k + 1
+            while j < len(raw) and raw[j].startswith("-"):
+                j += 2 if raw[j] in GIT_VALUE_OPTS else 1
+            sub, rest = (raw[j] if j < len(raw) else ""), raw[j + 1:]
+            if ((sub in GIT_PRINTS or (sub == "log" and any(w in GIT_PATCH for w in rest)))
+                    and not any(w in GIT_SUMMARY for w in rest) and _hits_secret(" ".join(rest), True)):
+                return True
         elif name == "eval":
             if _reads_secret(" ".join(_unquote(w) for w in raw[k + 1:]), depth + 1):
                 return True

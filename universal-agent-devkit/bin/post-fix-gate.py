@@ -280,7 +280,7 @@ LAZY_CODE_PATTERNS = [
     # `// ... existing code ...`, `/* ... existing code here ... */`, `/** … */`, `{/* … */}`, `<!-- ... existing code ... -->`,
     # `// … existing code …`, `// ... (existing code) ...`, `// ...rest`, `// ... the rest ...`, `// ... keep existing code ...`.
     # No word boundary after the keyword and \s* around the ellipsis, as before 2026-11-14: nothing the old patterns
-    # reported may pass (the one approved pass, a rest element named on the line that spreads it: lazy_match_is_data).
+    # reported may pass (no exception: a comment naming a rest element, `// ...rest of the code`, is reported too).
     (r"(?i)" + _LAZY_LEAD + r"\s*" + _LAZY_ELL + r"\s*[(\[]?\s*(?:(?:and\s+)?the\s+|keep\s+)?(?:existing|rest|remaining)",
      "Lazy placeholder (// ... existing code ...)"),
     # A comment opening with an ellipsis and saying the code was left out: `// ... other methods unchanged ...`,
@@ -320,10 +320,8 @@ LAZY_STUB_PATTERNS = [
     ((".kt", ".kts"), r"\bTODO\([ \t]*(?:\"[^\"\n]*\")?[ \t]*\)", "Unimplemented stub (TODO())"),
     ((".rs",), r"\b(?:todo|unimplemented)![ \t]*\(", "Unimplemented stub (todo!() / unimplemented!())"),
 ]
-# `// ...remaining holds the others`: the dots glued to an identifier, then more words.
-_LAZY_REST_REF_RE = re.compile(r"(?://|#|/\*)[ \t]*\.\.\.([A-Za-z_$][\w$]*)[ \t]+\S")
 # The four patterns of the scan before 2026-11-14, word for word; with the files it read (lazy_parent_scope): what they
-# reported there is reported, quoted or not. The one approved pass is the same-line rest element (_lazy_rest_ref_same_line).
+# reported there is reported, quoted or not, with no exception.
 _LAZY_PARENT_RES = tuple(re.compile(p) for p in (
     r"(?i)//\s*\.\.\.\s*(existing|rest|remaining)", r"(?i)/\*\s*\.\.\.\s*(existing|rest|remaining)\s*\*/",
     r"(?i)#\s*\.\.\.\s*(existing|rest|remaining)", r"(?i)//\s*TODO:?\s*implement\s+rest"))
@@ -398,26 +396,10 @@ def lazy_parent_scope(rel_file: str) -> bool:
             and rel_file.endswith(tuple(CODE_EXTENSIONS)))
 
 
-def _lazy_rest_ref_same_line(content: str, start: int) -> bool:
-    """The comment at `start` names (dots glued to the identifier, words after it: _LAZY_REST_REF_RE) a rest element
-    that the CODE of the same line spreads before the comment, as in `const {a, ...remaining} = props;`. Closed:
-    a comment on its own line is never one, whatever the file spreads elsewhere; nor is a spread that sits inside a
-    string or an earlier comment of that line (no quote and no comment opener before it)."""
-    ref = _LAZY_REST_REF_RE.match(content, start)
-    if not ref:
-        return False
-    code = content[content.rfind("\n", 0, start) + 1:start]
-    spread = re.search(r"[{\[(,][ \t]*\.\.\." + re.escape(ref.group(1)) + r"(?![\w$])", code)
-    return bool(spread and not re.search(r"[\"'`#]|//|/\*", code[:spread.start()]))
-
-
 def lazy_match_is_data(rel_file: str, content: str, m, spans=None) -> bool:
-    """A pattern match that is not an elided body: a comment naming a rest element spread on its own line
-    (_lazy_rest_ref_same_line); inside a same-line string literal; inside a heredoc body of a shell TEST file (the
-    kit's own tests carry such payloads; a production script's heredoc is code it writes out). A match the scan
-    reported before 2026-11-14 (its patterns, in a file it read) is data only by the first rule."""
-    if _lazy_rest_ref_same_line(content, m.start()):
-        return True
+    """A pattern match that is not an elided body: inside a same-line string literal; inside a heredoc body of a shell
+    TEST file (the kit's own tests carry such payloads; a production script's heredoc is code it writes out). A match
+    the scan reported before 2026-11-14 (its patterns, in a file it read) is never data."""
     if lazy_parent_scope(rel_file) and any(p.match(content, m.start()) for p in _LAZY_PARENT_RES):
         return False
     at = m.start("ph") if "ph" in m.re.groupindex else m.start()   # a phrase rule: where the phrase is, not the comment opener

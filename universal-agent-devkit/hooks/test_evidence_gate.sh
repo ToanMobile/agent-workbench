@@ -221,10 +221,16 @@ binding_sentences = re.split(r"(?:\n|[!?](?=\s|$)|\.(?=\s|$))", binding_scan)
 # (it runs over a ":" as it did) and also knows "kiểm thử" and the plainer results "qua hết", "không (còn) lỗi". tc: a ":" right before
 # a result the first branch does not know ("Tests: ✔ 5/5", "Kết quả test: đạt"). np: a bare runner summary "N passed" ("5 passed in
 # 0.03s"). A match of these three groups is no claim only when it is the pass count of a FAILING summary (_honest_fail, a closed rule).
+# Round 3 (2026-11-15): the pass-result words live in three fragments, shared with _OTHER_RESULT (one list, not two). tc holds only
+# the results tp does not know: with "pass / xanh / green" in it, "The test file covers three cases: pass, fail and skip" (a list
+# after a colon, 26 characters from "test", free at 5db81236) was a claim.
+_RES_TP = r"pass|xanh|green|thành công|qua\s+hết|đều\s+qua|không\s+(?:còn\s+|có\s+)?lỗi"
+_RES_TC = r"[✔✓✅]|\bok\b|thành\s+công|đạt"
+_RES_SUCC = r"succe(?:ed(?:s|ed)?|ss(?:ful|fully)?)\b"
 CLAIM = re.compile(
-    r"((?P<tp>(?:test|kiểm\s+thử)[^.\n]{0,24}(?:pass|xanh|green|thành công|qua\s+hết|đều\s+qua|không\s+(?:còn\s+|có\s+)?lỗi))"
-    r"|(?P<tc>(?:test|kiểm\s+thử)[^.\n:]{0,24}:\s*(?:[✔✓✅]|(?:(?:đều|all|đã|tất\s+cả|toàn\s+bộ|[1-9]\d*)\s+)?(?:pass|xanh|green|ok\b|thành\s+công|đạt)))"
-    r"|\btests?\s+(?:(?!(?:not|never|chưa|không)\b)\w+\s+){0,2}?succe(?:ed(?:s|ed)?|ss(?:ful|fully)?)\b"
+    r"((?P<tp>(?:test|kiểm\s+thử)[^.\n]{0,24}(?:" + _RES_TP + r"))"
+    r"|(?P<tc>(?:test|kiểm\s+thử)[^.\n:]{0,24}:\s*(?:(?:đều|all|đã|tất\s+cả|toàn\s+bộ|[1-9]\d*)\s+)?(?:" + _RES_TC + r"))"
+    r"|\btests?\s+(?:(?!(?:not|never|chưa|không)\b)\w+\s+){0,2}?" + _RES_SUCC +
     r"|(?P<np>(?<![\w.,/])[1-9]\d*\s+(?:tests?\s+)?(?:passed|passing)\b)"
     r"|(?:pass|xanh|green)[^.\n]{0,24}test"
     r"|\d+\s*/\s*\d+\s+test"
@@ -518,7 +524,16 @@ _PASS_COUNT = r"(?<![\d.,])\d+\s+(?:tests?\s+)?pass"
 _HONEST_FAIL = re.compile(_FAIL_FORM + _FAIL_SEP + _PASS_COUNT + "|" + _PASS_COUNT + r"(?:ed|ing|es)?\b" + _FAIL_SEP + _FAIL_FORM, re.I)
 _PASS_WORD = re.compile(r"pass", re.I)
 
-_OTHER_RESULT = re.compile(r"pass|xanh|green|thành\s+công|qua\s+hết|đều\s+qua", re.I)
+# Another pass result in the sentence voids the exemption: every result word CLAIM knows (the same fragments) and the closing words
+# of a handover. XONG / DONE in capitals only ("tôi chưa sửa xong" is none), and not "CHƯA XONG" / "NOT DONE". A result under a
+# negation is none ("Test chưa pass (1 failed, 4 passed)").
+_RES_CLOSING = r"ready\s+to\s+merge|đạt\s+yêu\s+cầu|đã\s+ổn|(?-i:(?<!CHƯA )(?<!NOT )\b(?:XONG|DONE)\b)"
+_OTHER_RESULT = re.compile(r"(?:" + _RES_TP + r"|" + _RES_TC + r"|" + _RES_SUCC + r"|" + _RES_CLOSING + r")", re.I)
+_CLOSING = re.compile(_RES_CLOSING, re.I)     # anywhere in the reply: "Test: 41 passed, 1 failed (flaky cũ). Thay đổi đạt yêu cầu, XONG."
+# A bare "N passed" (group np, new on 2026-11-14) beside a not-run / yesterday / expected statement, in its sentence or the one next to
+# it, reports no run of this turn: "Lượt chạy hôm qua: 5 passed. Hôm nay chưa chạy.", "Expected output: 5 passed. Not run yet." (free
+# at 5db81236). The bare summary "5 passed in 0.03s" stays a claim; tp / tc are not touched ("Chưa chạy lint. Test: 5 passed.").
+_NP_HEDGE = re.compile(r"\b(?:chưa|không)\s+chạy\b|\bnot\s+(?:yet\s+)?(?:been\s+)?run\b|\bhôm\s+qua\b|\byesterday\b|\bkỳ\s+vọng\b|\bexpected\b", re.I)
 
 def _honest_fail(sent, m):
     """The result word of CLAIM match m (its last "pass") lies inside a failing summary of the sentence, and the sentence states no
@@ -536,10 +551,10 @@ def _honest_fail(sent, m):
         rest.append(sent[pos:a])
         pos = b
     rest.append(sent[pos:])
-    return not _OTHER_RESULT.search(" ".join(rest))
+    rest = " ".join(rest)
+    return all(NEG_BEFORE_RESULT.search(rest[:r.start()]) for r in _OTHER_RESULT.finditer(rest))
 
-claimed = False
-def _claim_matches(sent):
+def _claim_matches(sent, exempt=True):
     """CLAIM matches; after one that crosses a clause break the scan resumes at the last break inside it, so an exempted
     match cannot hide a claim of its own clause (2026-10-12 fail-open: "Không có test nào fail, 12/12 test pass." - the
     negator exempted the match running from the first test to the last pass). A match with no break inside resumes after
@@ -549,7 +564,9 @@ def _claim_matches(sent):
         m = CLAIM.search(sent, pos)
         if not m:
             return
-        if (m.group("tp") or m.group("np") or m.group("tc")) and _honest_fail(sent, m):
+        # np / tc are branches 5db81236 did not have: their failing summary is never a claim ("Tests are failing: 1 failed, 4 passed",
+        # free there). tp is the branch it had: its exemption is the one that waits for a failing runner turn (exempt).
+        if (m.group("np") or m.group("tc") or (exempt and m.group("tp"))) and _honest_fail(sent, m):
             pos = m.start() + 1      # the pass count of a failing summary; another branch may still match inside it
             continue
         yield m
@@ -558,14 +575,23 @@ def _claim_matches(sent):
             cut = b.end()
         pos = cut if cut is not None and m.start() < cut < m.end() else m.end()
 
-for sent in sentences:
-    for m in _claim_matches(sent):
-        if is_nonassertive(sent, m, "test"):
-            continue
-        claimed = True
-        break
-    if claimed:
-        break
+def _test_claimed(exempt):
+    for i, sent in enumerate(sentences):
+        for m in _claim_matches(sent, exempt):
+            if is_nonassertive(sent, m, "test"):
+                continue
+            if m.group("np") and any(_NP_HEDGE.search(sentences[j]) for j in (i - 1, i, i + 1) if 0 <= j < len(sentences)):
+                continue
+            return True
+    return False
+
+# Round 3 (2026-11-15): the honest-failure exemption holds only when the last real runner turn of the transcript FAILED. With no
+# runner turn, or a green one last, "Test: 41 passed, 1 failed (flaky cũ). Thay đổi đạt yêu cầu, XONG." is judged as at 5db81236
+# (a claim). So the claim is first read WITHOUT the exemption; honest_fail_only marks a reply that is a claim only for lack of it,
+# and is settled after the transcript pass (runner_results).
+claimed = _test_claimed(False)
+honest_fail_only = (claimed and not _test_claimed(True)
+                    and not any(not NEG_BEFORE_RESULT.search(sent[:c.start()]) for sent in sentences for c in _CLOSING.finditer(sent)))
 
 # An outcome claim is separate from a test-pass claim. This must be classified
 # before the cheap early exit below; otherwise plain "đã fix bug" bypasses the
@@ -2722,9 +2748,10 @@ def _shell_writes():
 # saw them: a green run stayed evidence after `git apply fix.patch`, `git stash pop`, `black src`, `python3 -c "open(…, "w")…"`.
 # _SRC_REWRITERS is the CLOSED list of them, read at command position (after `;` `&&` `|` `(`, env assignments and the wrappers of
 # _RW_HEAD), outside quotes and heredoc bodies (`grep "git apply" docs`, `echo "ruff format"` write nothing):
-#   git apply (not --check / --stat / --numstat / --summary), git stash pop | apply, patch (not --dry-run);
-#   git checkout <ref> -- <paths>, git checkout … <source file>, git restore <paths> (not --staged alone): unless every path named
-#       has an extension that is no source extension (`git checkout HEAD~1 -- notes.md`);
+#   git apply (not --check / --stat / --numstat / --summary), git stash pop, patch (not --dry-run / --version / --help). Not
+#       `git stash apply <sha>`: the way a session puts back the files it set aside itself (a real Stop point, replay 2026-11-15);
+#   git checkout <ref> -- <paths>, git checkout … <source file>, git restore <paths> (not --staged alone): only when a path named
+#       ends in a source extension (`git checkout -- LICENSE`, `git restore docs/x.md`, a directory age nothing: round 3, 2026-11-15);
 #   formatters that write in place: black / isort (not --check, --diff), ruff format (not --check, --diff), ruff check --fix,
 #       prettier --write | -w, eslint --fix (not --fix-dry-run), gofmt -w, go fmt, cargo fmt (not --check), autopep8 -i, ktlint -F | --format;
 #   an interpreter one-liner (python / node / deno / bun / ruby / php with -c / -e / -r) that opens a SOURCE path for writing
@@ -2734,14 +2761,14 @@ def _shell_writes():
 _RW_HINT = re.compile(r"\b(?:apply|patch|stash|checkout|restore|black|isort|ruff|prettier|eslint|gofmt|fmt|autopep8|ktlint|open|write_text"
                       r"|write_bytes|writeFile|writeFileSync|appendFile|appendFileSync)\b")
 _RW_HEAD = (r"(?:^|[;&|(){!\n]|\b(?:then|do|else)\b)[^\S\n]*"
-            r"(?:(?:sudo|env|command|exec|nice|time|nohup|xargs|npx|bunx|uvx|(?:uv|poetry|pipx|pdm|hatch|pnpm|yarn|npm)[^\S\n]+(?:run|exec|dlx)"
+            r"(?:(?:sudo|env|command(?![^\S\n]+-[vV](?![\w-]))|exec|nice|time|nohup|xargs|npx|bunx|uvx|(?:uv|poetry|pipx|pdm|hatch|pnpm|yarn|npm)[^\S\n]+(?:run|exec|dlx)"
             r"|python[\d.]*[^\S\n]+-m|timeout[^\S\n]+\S+)[^\S\n]+(?:-[^\s;&|]+[^\S\n]+)*|[A-Za-z_]\w*=[^\s;&|]*[^\S\n]+)*(?:[^\s;&|]*/)?")
 _RW_REST = r"[^\n;&|]*"
 _RW_GIT = r"git(?:[^\S\n]+-[cC][^\S\n]+[^\s;&|]+)*[^\S\n]+"
 _SRC_REWRITERS = re.compile(_RW_HEAD + r"(?:"
     + _RW_GIT + r"apply\b(?!" + _RW_REST + r"[^\S\n]--(?:check|stat|numstat|summary)(?![\w-]))"
-    r"|" + _RW_GIT + r"stash[^\S\n]+(?:pop|apply)\b"
-    r"|patch(?![\w.-])(?!" + _RW_REST + r"[^\S\n]--dry-run(?![\w-]))"
+    r"|" + _RW_GIT + r"stash[^\S\n]+pop\b"
+    r"|patch(?![\w.-])(?!" + _RW_REST + r"[^\S\n](?:--dry-run|--version|--help|-v)(?![\w-]))"
     r"|(?:black|isort)(?![\w.-])(?!" + _RW_REST + r"[^\S\n](?:--check(?:-only)?|--diff|--version|--help|-c)(?![\w-]))"
     r"|ruff[^\S\n]+format(?![\w.-])(?!" + _RW_REST + r"[^\S\n]--(?:check|diff|help)(?![\w-]))"
     r"|ruff[^\S\n]+check(?![\w.-])(?=" + _RW_REST + r"[^\S\n]--fix(?:-only)?(?![\w-]))"
@@ -2785,7 +2812,7 @@ def _git_path_rewrite(verb, rest):
         paths = [w_ for w_ in words[words.index("--") + 1:] if not w_.startswith("-")]
     else:
         return any(w_.endswith(SRC_EXT) for w_ in words)       # `git checkout main` is a branch switch, not read here
-    return bool(paths) and not all(os.path.splitext(w_)[1] and not w_.endswith(SRC_EXT) for w_ in paths)
+    return any(w_.endswith(SRC_EXT) for w_ in paths)       # a path with no source extension (LICENSE, Makefile, docs/x.md, a directory) ages nothing
 
 def _src_rewrites(cmd, wd):
     if not _RW_HINT.search(cmd):
@@ -3412,6 +3439,12 @@ def foreign_xmls():
         if mt >= start and ran_in_my_window(mt, pth):
             out[pth] = mt
     return out
+
+if honest_fail_only and runner_results and max(runner_results, key=lambda r: r[0])[5] == "red":
+    claimed = False              # an honest report of the failing run the transcript shows last
+    logline(f"[{ts}] test counts read as the report of a failing run (last runner turn red): no pass claim")
+    if not outcome_claimed and not new_run:
+        sys.exit(0)
 
 foreign = foreign_xmls() if claimed else {}
 if foreign:

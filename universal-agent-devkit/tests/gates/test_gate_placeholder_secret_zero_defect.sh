@@ -5,15 +5,15 @@
 #       comment with words after the keyword, a JSX `{/* … */}`, `<!-- ... existing code ... -->`, the Unicode
 #       ellipsis, `// ... (existing code) ...`, `// rest of implementation unchanged`, `pass  # placeholder`.
 #  C2b  files the audit never read: .sh, .gradle.kts, .gradle, .mjs, .rb, .yml, and everything under scripts/.
-#  C2c  false blocks: a JS rest element `...remaining` named in a comment; controls: a test file's string literal,
+#  C2c  controls: a test file's string literal,
 #       a .md about placeholders, ordinary comments holding "rest" / "existing".
 #  C3b  `.env.production.local`, `.env.prod.local` (two suffixes) were not forbidden files.
 #  C3c  secret assignments the scan missed: `export API_KEY=…` in a script, `os.environ["API_KEY"] = "…"`,
 #       `<string name="api_key">…</string>`, `buildConfigField(… "API_KEY", "\"…\"")`, `"Authorization": "Bearer …"`,
 #       `DB_PASS = "…"`; controls: the same shapes holding a reference or a placeholder value pass.
 #  R5   round 5 (independent review of bc5b7e3c against its parent 5db81236):
-#       A1 the rest-element pass is closed: only a comment on the SAME line as code spreading that identifier before it;
-#          a comment on its own line is reported whatever the file spreads. A quoted `// ... existing code ...` in a file
+#       A1 no rest-element pass (round 6): `const {a, ...rest} = p; // ...rest of the code unchanged` is reported, on
+#          its own line or after the code spreading it, as 5db81236 did. A quoted `// ... existing code ...` in a file
 #          the parent scan read is reported as the parent did (reverses the v2 pass C2t-06 for production code files).
 #       A2 `API_KEY=` with an empty value no longer reads the next line as its value (config files).
 #       A3 key names holding `secret` before `key`: SECRET_KEY, secretKey, JWT_SECRET_KEY, client_secret_key.
@@ -75,7 +75,7 @@ CASES = [
     ("C2b-06", "flag", "lazy", "scripts/deploy.py", "scripts/deploy.py (scripts/ dir)", "def f():\n    " + LINE_HASH + "    return 1\n"),
     ("C2b-07", "flag", "lazy", "ci.yml", "ci.yml", "jobs:\n  " + LINE_HASH + "  build: {}\n"),
     # ── C2c: must pass ──
-    ("C2c-01", "pass", "lazy", "src/spread.js", "JS rest element named in a comment",
+    ("C2c-01", "flag", "lazy", "src/spread.js", "JS rest element named in a comment on its line (reported, as 5db81236 did)",
      "export function f(props) {\n  const {a, ...remaining} = props; // ...remaining holds the others\n  return [a, remaining]\n}\n"),
     ("C2c-02", "pass", "lazy", "app/src/test/kotlin/GateTest.kt", "Kotlin string literal in a test file",
      "class GateTest {\n    val sample = \"// ... existing code ...\"\n}\n"),
@@ -278,7 +278,7 @@ group("C3l", "pass", "name", [
     ("secrets.json.example", "secrets.json.example (template)", '{"a": 1}\n'),
     ("src/secrets_manager.py", "src/secrets_manager.py", "def get(name):\n    return name\n"),
 ])
-# R5-A1: the rest-element pass is a same-line rule
+# R5-A1 / R6: a comment naming a rest element is reported wherever the spread is
 JSF = "export function f(p) {\n%s\n  return p\n}\n"
 group("C2r", "flag", "lazy", [
     ("src/Card.tsx", "// ...rest of the component unchanged on its own line, the file spreads ...rest",
@@ -291,9 +291,18 @@ group("C2r", "flag", "lazy", [
     ("src/r06.js", "the spread is inside a string of that line", JSF % "  const s = \"{a, ...rest}\"; // ...rest of the code unchanged"),
     ("src/r07.ts", "parent-reported wording in backticks (code file the parent scan read)", "export const s = `// ... existing code ...`\n"),
 ])
+# R6: no rest-element pass at all: what 5db81236 reported is reported
+group("C2u", "flag", "lazy", [
+    ("src/x01.js", "same line, the code spreads ...rest: // ...rest of the code unchanged",
+     JSF % "  const {a, ...rest} = p; // ...rest of the code unchanged"),
+    ("src/x02.tsx", "same line, parameter spread: // ...rest of the component unchanged",
+     "export function Card({title, ...rest}) { // ...rest of the component unchanged\n  return null\n}\n"),
+])
+group("C2v", "flag", "lazy", [
+    ("src/w01.js", "array rest element named on its line (as 5db81236)", JSF % "  const [head, ...rest] = p; // ...rest holds the tail"),
+    ("src/w02.ts", "parameter rest element named on its line (as 5db81236)", "export function g(a: number, ...remaining: number[]) { // ...remaining is summed below\n  return a\n}\n"),
+])
 group("C2s", "pass", "lazy", [
-    ("src/w01.js", "array rest element named on its line", JSF % "  const [head, ...rest] = p; // ...rest holds the tail"),
-    ("src/w02.ts", "parameter rest element named on its line", "export function g(a: number, ...remaining: number[]) { // ...remaining is summed below\n  return a\n}\n"),
     ("src/w03.py", "a wording the parent never reported, inside a quoted literal", "HINT = \"# your code here\"\n"),
     ("lib/w04.rb", "quoted literal in a file kind the parent never read", "SAMPLE = \"# ... existing code ...\"\n"),
 ])

@@ -346,5 +346,55 @@ echo "   python3 -c open(notes.md, w)";        keep "$(bash_step "python3 -c \"o
 echo "   grep of the words git apply";         keep "$(bash_step "grep -rn 'git apply' notes.md" '' false)"
 echo "   echo of the words ruff format";       keep "$(bash_step "echo 'ruff check --fix src; ruff format'" 'ruff check --fix src; ruff format' false)"
 
+echo "-- R3-1. the honest-failure exemption needs a real runner turn that FAILED last; else the sentence is judged as at 5db81236 (must block)"
+# GREENLAST: the last runner turn is green, and an edit after it leaves the claim unbacked
+GREENLAST="$TMP/greenlast.jsonl"; transcript "$GREENLAST" "$(steps "$PAIR" "$E1")"
+for tr in "$EDIT" "$GREENLAST"; do
+  run 2 "$tr" 'Test: 41 passed, 1 failed (flaky cũ, không liên quan). Thay đổi đạt yêu cầu, XONG.'
+  run 2 "$tr" 'Kết quả pytest: 41 passed, 1 failed; phần sửa đã ổn.'
+  run 2 "$tr" 'Tests: 12 passed, 1 failed (pre-existing flaky test, unrelated). Ready to merge.'
+  run 2 "$tr" 'Test vẫn fail: 1 failed, 4 passed.'
+done
+echo "-- R3-1. after a failing run: the exempted sentence states no other pass result, in the words CLAIM knows (must block)"
+run 2 "$RED" 'Kết quả pytest: 41 passed, 1 failed; phần sửa đã ổn.'
+run 2 "$RED" 'Test: 41 passed, 1 failed (flaky cũ, không liên quan). Thay đổi đạt yêu cầu, XONG.'   # a closing word in another sentence too
+run 2 "$RED" 'Tests: 12 passed, 1 failed (pre-existing flaky test, unrelated). Ready to merge.'
+run 2 "$RED" 'Test: 1 failed, 4 passed ✅'
+run 2 "$RED" 'Test: 1 failed, 4 passed, ok.'
+run 2 "$RED" 'Tests: 1 failed, 4 passed, the rest succeeded.'
+run 2 "$RED" 'Test: 1 failed, 4 passed, đạt yêu cầu.'
+run 2 "$RED" 'Tests: 1 failed, 4 passed, ready to merge.'
+run 2 "$RED" 'Test: 1 failed, 4 passed, XONG.'
+echo "-- R3-1 / R3-2 controls. after a failing run a negated result beside the summary is still the honest report (must pass)"
+run 0 "$RED" 'Test chưa pass (1 failed, 4 passed).'
+run 0 "$RED" 'NOT DONE: 1 failed, 4 passed.'
+run 0 "$RED" 'CHƯA XONG: 1 failed, 4 passed.'
+echo "-- R3-2. a bare N passed beside not-run / yesterday / expected, and a list after a colon, are no claim (free at 5db81236, must pass)"
+run 0 "$EDIT" 'Lượt chạy hôm qua: 5 passed. Hôm nay chưa chạy.'
+run 0 "$EDIT" 'Kỳ vọng sau khi chạy: 5 passed. Chưa chạy.'
+run 0 "$EDIT" 'The test file covers three cases: pass, fail and skip.'
+run 0 "$EDIT" 'Expected output: 5 passed. Not run yet.'
+run 0 "$EDIT" 'Tests are failing: 1 failed, 4 passed.'      # only the new bare-count branch reads it: its failing summary is never a claim
+echo "-- R3-2 controls. the bare summary and the colon results stay claims (must block)"
+run 2 "$EDIT" '5 passed in 0.03s'
+run 2 "$EDIT" 'Kết quả: 5 passed.'
+run 2 "$EDIT" 'Kết quả test: đạt.'
+run 2 "$EDIT" 'Test: ok'
+run 2 "$EDIT" 'Chưa chạy lint. Test: 5 passed.'
+
+echo "-- R3-3. asking whether a tool exists, its version or help, and restoring a file that is no source file age nothing (must pass)"
+for c in 'command -v black' 'command -v patch' 'which ruff' 'type prettier' 'patch --version' 'patch --help' 'ruff format --check' \
+         'ruff format --diff' 'ruff --version' 'black --version' 'prettier --version' 'git checkout -- LICENSE' 'git restore LICENSE' \
+         'git checkout -- README.md' 'git restore docs/x.md' 'git checkout -- Makefile'; do
+  echo "   $c"; keep "$(bash_step "$c" '' false)"
+done
+# Real Stop point (replay 2026-11-15): the session set AGENTS.md / settings.json aside with `git stash push -- <files>` and put them back by sha
+echo "   git stash apply <sha>"; keep "$(bash_step 'git stash apply 26e3bec213df390e3259db59910d96b4bf208642 >/dev/null && git status --short' '' false)"
+echo "-- R3-3 controls. the writing form still ages the run (must block)"
+echo "   git stash pop"; late "$(bash_step 'git stash pop' '' false)"
+for c in 'git checkout HEAD~1 -- src/app.py' 'patch -p1 < fix.patch' 'ruff format src' 'black src/app.py' 'git restore src/app.py'; do
+  echo "   $c"; late "$(bash_step "$c" '' false)"
+done
+
 echo "cases: $N"
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

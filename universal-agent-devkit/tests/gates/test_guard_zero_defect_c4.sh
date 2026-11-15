@@ -354,4 +354,52 @@ check 2 hw "python3 -c \"import shutil,os; shutil.rmtree(os.path.join(os.environ
 check 2 hw "ruby -e \"require 'fileutils'; require 'tmpdir'; FileUtils.rm_rf(Dir.tmpdir)\""
 check 2 hw "ruby -e \"require 'fileutils'; require 'tmpdir'; FileUtils.rm_rf(File.join(Dir.tmpdir,'..'))\""
 
+echo "── C4i hw (round 3): text that reaches a shell through a group or several pipe stages is a command"
+check 2 hw "{ echo 'rm -rf ~'; } | sh"
+check 2 hw '{ echo "rm -rf ~"; } > x.sh'
+check 2 hw "echo 'rm -rf ~' | cat | bash"
+check 2 hw "echo 'rm -rf ~' | tee /dev/stderr | sh"
+check 2 hw 'echo "rm -rf $HOME" | bash'
+check 2 hw "(echo 'rm -rf ~') | bash"
+check 2 hw "( echo ok; echo 'rm -rf ~' ) | cat | sudo sh"
+check 2 hw "{ printf 'rm -rf ~\\n'; } | bash -s"
+check 2 hw "echo 'rm -rf ~' 2>&1 | cat | sh"
+check 2 hw "echo 'rm -rf ~' | cat | xargs -I{} sh -c {}"
+check 2 hw "(echo 'rm -rf ~') > x.sh"
+check 2 hw "{ echo 'npm publish'; } | sh"
+check 2 hw '{ echo "npm publish"; } > x.sh'
+check 2 hw "{ echo 'firebase deploy'; } | cat | bash"
+check 2 hw "{ echo 'never \`rm -rf ~\`'; } | sh"
+check 2 hw "{ echo 'never \`rm -rf ~\`'; }"   # a group: no data exemption, the old reading stays
+echo "── C4i hw: controls, text that reaches no shell"
+check 0 hw "echo 'rm -rf ~' | cat"
+check 0 hw 'echo "rm -rf ~" | tee notes.txt'
+check 0 hw '{ echo a; echo b; } > out.txt'
+check 0 hw 'echo "never rm -rf ~" >> docs/x.md'
+check 0 hw '{ echo a; echo b; } | sh'
+check 0 hw "echo 'ls -la' | cat | bash"
+check 0 hw "echo 'rm -rf build' | cat | bash"
+check 0 hw '{ echo "rm -rf ~"; }'
+check 0 hw "echo 'rm -rf ~'; echo ok | sh"
+check 0 hw "echo 'rm -rf ~' && ls | cat | sh"
+check 0 hw "echo 'rm -rf ~' | cat; echo 'ls' | sh"
+
+echo "── C4j hw (round 3): del / delete that does not touch the temp folder variable changes nothing"
+check 0 hw "python3 -c \"d={'a':1}; del d['a']; print(d)\""
+check 0 hw "node -e \"const o={a:1}; delete o.a; console.log(o)\""
+check 0 hw "python3 -c \"import requests; requests.delete(url)\""
+check 0 hw "python3 -c \"import shutil,tempfile,os; d={'a':1}; del d['a']; shutil.rmtree(os.path.join(tempfile.gettempdir(),'probe-1'))\""
+check 0 hw "node -e \"${N}const o={a:1};delete o.a;fs.rmSync(p.join(os.tmpdir(),'probe-1'),{recursive:true,force:true})\""
+check 0 hw "python3 -c \"import shutil,tempfile,os; os.environ['LANG']='C'; shutil.rmtree(os.path.join(tempfile.gettempdir(),'probe-1'))\""
+check 0 hw "node -e \"${N}process.env.FOO='1';fs.rmSync(p.join(os.tmpdir(),'probe-1'),{recursive:true,force:true})\""
+echo "── C4j hw: controls, the program sets or drops the temp folder variable"
+check 2 hw "python3 -c \"import os,shutil,tempfile; os.environ['TMPDIR']='/'; shutil.rmtree(os.path.join(tempfile.gettempdir(),'usr'))\""
+check 2 hw "python3 -c \"import os,shutil,tempfile; del os.environ['TMPDIR']; os.environ['TEMP']='/'; shutil.rmtree(os.path.join(tempfile.gettempdir(),'usr'))\""
+check 2 hw "python3 -c \"import os,shutil,tempfile; os.environ.pop('TMPDIR'); shutil.rmtree(os.path.join(tempfile.gettempdir(),'usr'))\""
+check 2 hw "python3 -c \"import os,shutil,tempfile; os.environ.update({'TMPDIR':'/'}); shutil.rmtree(os.path.join(tempfile.gettempdir(),'usr'))\""
+check 2 hw "node -e \"${N}delete process.env.TMPDIR;fs.rmSync(p.join(os.tmpdir(),'usr'),{recursive:true,force:true})\""
+check 2 hw "node -e \"${N}process.env={TMPDIR:'/'};fs.rmSync(p.join(os.tmpdir(),'usr'),{recursive:true,force:true})\""
+check 2 hw "unset TMPDIR; TMP=/ python3 -c \"import shutil,tempfile,os; shutil.rmtree(os.path.join(tempfile.gettempdir(),'usr'))\""
+check 2 hw "ruby -e \"require 'fileutils'; require 'tmpdir'; ENV['TMPDIR']='/'; FileUtils.rm_rf(File.join(Dir.tmpdir,'usr'))\""
+
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

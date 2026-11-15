@@ -342,8 +342,8 @@ def data_backticks(text):
             seg = []
         else:
             seg.append(tk)
-    if any(w in ("function", "alias") for s in segs for w in s[:shell_norm.prefix_end(s) + 1]):
-        return set()   # function echo { eval "$1"; } / alias echo=eval: the data command may be something else
+    if any(w in ("function", "alias", "{", "}") for s in segs for w in s[:shell_norm.prefix_end(s) + 1]):
+        return set()   # function echo { eval "$1"; } / alias echo=eval: the data command may be something else; { …; } | sh: a group (round 3)
     for n, s in enumerate(segs):
         if not any(DATA_MARK in w for w in s):
             continue
@@ -394,6 +394,10 @@ def data_stripped(text):
             seg = []
         else:
             seg.append(tk)
+    # (round 3) a { …; } group like a ( ) one: what its commands print goes where the GROUP is piped or redirected ({ echo "npm
+    # publish"; } | sh passed), so nothing is taken out, as before the data exemption existed
+    if any(w in ("{", "}") for s in segs for w in s[:shell_norm.prefix_end(s) + 1]):
+        return None
     full, cut, removed = [], [], False
     for n, s in enumerate(segs):
         i = shell_norm.prefix_end(s)
@@ -1589,8 +1593,11 @@ def interp_temp_var(code, name):
 INTERP_TMPROOT = re.compile(r"(?:require\([\x27\x22]os[\x27\x22]\)\.|\bos\.)tmpdir\(\)|\b(?:tempfile\.)?gettempdir\(\)|\bDir\.tmpdir\b"
                             r"|\bprocess\.env\.TMPDIR\b|\bos\.environ\[[\x27\x22]TMPDIR[\x27\x22]\]|\bos\.environ\.get\([\x27\x22]TMPDIR[\x27\x22]\)"
                             r"|\bos\.getenv\([\x27\x22]TMPDIR[\x27\x22]\)|\bENV\[[\x27\x22]TMPDIR[\x27\x22]\]")
-INTERP_TMP_SET = re.compile(r"(?:\b(?:TMPDIR|TEMP|TMP|environ|ENV)\b|\.(?:env|tempdir|tmpdir|gettempdir|mkdtemp\w*|mkstemp|TemporaryDirectory|mktmpdir)\b)"
-                            r"[\x27\x22]?\]?[ \t]*=(?![=>~])|\b(?:setenv|putenv|unsetenv)\b|\bdelete\b|\bdel\b")
+# (round 3) only what names the temp folder variable: a bare del / delete (del d["a"], requests.delete(url)) refused every program
+INTERP_TMP_SET = re.compile(r"(?:\b(?:TMPDIR|TEMP|TMP)\b[\x27\x22]?\]?|\.(?:env|environ|tempdir|tmpdir|gettempdir|mkdtemp\w*|mkstemp|TemporaryDirectory|mktmpdir)\b)"
+                            r"[ \t]*=(?![=>~])"
+                            r"|\b(?:del|delete|unset|setenv|putenv|unsetenv|pop|setdefault|update|store|assign)\b[^;\n]*\b(?:TMPDIR|TEMP|TMP)\b"
+                            r"|\b(?:environ|ENV|env)\.(?:clear|replace)\b")
 INTERP_LISTING = re.compile(r"\b(?:readdirSync|listdir|children)\(")
 INTERP_ASSIGN = r"[ \t]*(?:[-+*/%|&^:]|\|\||&&|\?\?|\*\*|<<|>>)?=(?![=>~])"
 
@@ -2643,6 +2650,61 @@ def late_traps(traps, level, depth):
                 return why + " (thân trap chạy lúc thoát, ở thư mục hiện tại lúc đó)"
     return None
 
+def fed_scripts(toks):
+    """(round 3) The texts echo / printf write that a shell then runs, beyond the one case rm_command_problem reads (a literal echo right
+    before the shell): through any number of pipe stages (echo … | cat | bash, | tee /dev/stderr | sh), out of a group ({ echo …; } | sh,
+    (echo …) | bash), with a variable in the text (echo "rm -rf $HOME" | bash), into xargs sh -c; and the text of a group whose output goes
+    to a file ({ echo …; } > x.sh). Each is judged like the script of bash -c. Only adds verdicts: every other rule still runs.
+    ponytail: one flat pass, a text is kept until the pipeline (or the group) it was written in ends; a filter between (grep, sed) is
+    read as passing the text on."""
+    out, acc, seg, groups, closed = [], [], [], [], False
+    def flush(tk):
+        nonlocal acc, closed
+        words = list(seg)
+        while words and words[0] in ("{", "}", "!", "then", "do", "else"):
+            if words[0] == "{":
+                groups.append("grp")
+            elif words[0] == "}" and groups:
+                groups.pop()
+                closed = True
+            words = words[1:]
+        piped_in = flush.prev_pipe
+        i = shell_norm.prefix_end(words)
+        prog, rest = (os.path.basename(words[i]), words[i + 1:]) if i < len(words) else ("", [])
+        if closed and acc and writes_file(words):   # { echo …; } > x.sh, ( echo … ) > x.sh
+            out.extend(acc)
+        if prog in ("echo", "printf"):
+            args = [a for k, a in enumerate(rest) if not shell_norm.REDIRECT.match(a)
+                    and not (k and shell_norm.REDIRECT_ALONE.fullmatch(rest[k - 1]))]
+            while prog == "echo" and args and re.fullmatch(r"-[neE]+", args[0]):
+                args = args[1:]
+            acc.extend(t for t in (shell_norm.literal_feed(words[i:]) or [" ".join(args)]) if t.strip())
+        elif piped_in and acc and ((prog in shell_norm.SHELLS and shell_norm.reads_stdin_script(rest))
+                                   or (prog == "xargs" and any(os.path.basename(a) in shell_norm.SHELLS for a in rest))):
+            out.extend(acc)
+        pipe = "|" in tk and "||" not in tk
+        closed = False
+        for ch in tk:
+            if ch == "(":
+                groups.append("sub" if seg and seg[-1].endswith("$") else "grp")
+            elif ch == ")" and groups:
+                closed = groups.pop() == "grp"
+        flush.prev_pipe = pipe
+        if not pipe and not groups and not closed:
+            acc = []   # the pipeline ended outside every group: its text reached no shell
+    flush.prev_pipe, glue = False, False
+    for tk in toks + [";"]:
+        if tk == "&" and seg and re.fullmatch(r"\d*(?:>>?|<)", seg[-1]):   # N>&M: the lexer cuts the & and the descriptor off the operator
+            seg[-1], glue = seg[-1] + "&", True
+        elif glue:
+            seg[-1], glue = seg[-1] + tk, False
+        elif set(tk) <= SEP_CHARS:
+            flush(tk)
+            seg = []
+        else:
+            seg.append(tk)
+    return list(dict.fromkeys(out))
+
 def rm_walk(text, cwds, depth, remote, env):
     """rm_problem of one reading of the text (comments already cut, continuations already decided)."""
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
@@ -2661,6 +2723,11 @@ def rm_walk(text, cwds, depth, remote, env):
         toks = literal_dollar_words(text, shell_norm.lex_words(text))   # (#1159) "$"rm: a literal $, not a variable
     except ValueError:   # a quote left open: split at blanks, a newline is a separator of its own (it is no blank here)
         toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text.replace("\n", " ; ")) if x and x.strip()]
+    if depth < 5:   # (round 3) text of echo / printf that reaches a shell through a group or several pipe stages: a script
+        for s in fed_scripts(toks):
+            why = rm_problem(s, cwds, depth + 1, remote)
+            if why:
+                return why
     stack, seg, pending, feed = [], [], None, None
     regions, nseg, open_loops = loop_regions(toks), -1, []   # review vòng 2 (thêm): tên gán trong vùng lặp — loop_regions
     # Review vòng 2 (thêm, P0 có từ trước): phép gán không chắc chạy, hay chạy ở shell con, từng đặt biến cho các lệnh sau như phép gán chắc

@@ -454,6 +454,74 @@ C	allow	Bash	timeout 5 cat README.md
 EOF
 
 # ---------------------------------------------------------------------------------------------------------------------
+# R3 (review round 3, 2026-11-15):
+#  G   an exempt command inside a ( ) subshell, a { } group or a compound whose output is piped / saved escaped the
+#      "piped on" check of its own simple command: a command line with a group gets NO exemption (old verdict);
+#  H   a script fed to an interpreter by a here-string / heredoc that opens a tier 2 file is a read;
+#  I   in an inline script only the quoted string literals are file names: `d.key`, `obj.key` are attributes;
+#  V   more read verbs: jq, yq, plutil, diff, cmp, python -m json.tool, git show / diff / log -p.
+run_cases <<'EOF'
+G	deny	Bash	(echo "print(open('.env').read(999))") | python3
+G	deny	Bash	{ echo "print(open('.env').read(999))"; } | python3
+G	deny	Bash	(echo "console.log(fs.readFileSync('.env','utf8'))") | node
+G	deny	Bash	(echo "cat .env") > x.sh; ./x.sh
+G	deny	Bash	{ echo "cat .env"; } > x.sh; ./x.sh
+G	deny	Bash	(ls .env) > names.txt
+G	deny	Bash	{ ls .env; } > names.txt
+G	deny	Bash	(test -f .env && echo present)
+G	deny	Bash	if true; then echo "print(open('.env').read())"; fi | python3
+G	deny	Bash	for f in a; do echo "print(open('.env').read())"; done > x.py; python3 x.py
+G	deny	Bash	while true; do echo "cat .env"; break; done | tee x.sh
+G	allow	Bash	if [ -f .env ]; then echo yes; fi
+G	allow	Bash	test -f .env && echo present
+G	allow	Bash	(cd sub && ls) ; echo done
+H	deny	Bash	python3 <<< "print(open('keystore.properties').read())"
+H	deny	Bash	python3 - <<EOF<NL>print(open('keystore.properties').read())<NL>EOF
+H	deny	Bash	python3 - <<'PY'<NL>import json<NL>print(json.load(open("app/google-services.json")))<NL>PY
+H	deny	Bash	python3 - <<'PY' | head -5<NL>print(open("release.jks", "rb").read())<NL>PY
+H	deny	Bash	node <<< "console.log(require('fs').readFileSync('release.jks'))"
+H	deny	Bash	bash <<'EOF'<NL>cat keystore.properties<NL>EOF
+H	allow	Bash	python3 - <<'PY'<NL>print("keystore.properties")<NL>PY
+H	allow	Bash	python3 - <<'PY'<NL>import json<NL>d = json.load(open("package.json"))<NL>print(d.key)<NL>PY
+H	allow	Bash	python3 <<< "print(open('package.json').read())"
+H	deny	Bash	python3 - <<'PY'<NL>p = 'app/google-services.json'<NL>print(open(p).read())<NL>PY
+H	allow	Bash	python3 - <<'PY'<NL>p = 'tests/a.sh'<NL>s = open(p).read()<NL>s = s.replace('grep -qx "a" "$TMP/pool.env" && ok', 'x')<NL>open(p, 'w').write(s)<NL>PY
+H	allow	Bash	python3 - <<'PY'<NL>p = "ui.html"<NL>s = open(p).read()<NL>new = """<b onclick="copy(\'' + esc(lic.key) + '\')">x</b><NL>S="$HOME/.config/app/review.key"<NL>"""<NL>open(p, "w").write(s + new)<NL>PY
+H	allow	Bash	python3 - <<'PY'<NL>s = open("gate.py").read()<NL>s = s.replace('if fresh.key(t) == KEYS[id(t)]:', 'if ok:')<NL>PY
+I	allow	Bash	python3 -c "import json; d=json.load(open('package.json')); print(d.key)"
+I	allow	Bash	node -e "const o=require('./package.json'); console.log(o.key)"
+I	allow	Bash	python3 -c "import json; data = json.load(open('a.json')); k = item.key"
+I	allow	Bash	node -e "const fs = require('fs'); const k = obj.key;"
+I	deny	Bash	python3 -c "print(open('server.key').read())"
+I	deny	Bash	node -e "require('fs').readFileSync('release.jks')"
+I	deny	Bash	python3 -c 'print(open("secrets.json").read())'
+V	deny	Bash	jq . app/google-services.json
+V	deny	Bash	jq -r '.client[0]' app/google-services.json
+V	allow	Bash	jq .scripts package.json
+V	allow	Bash	jq '.key' package.json
+V	allow	Bash	jq '.["secrets.json"]' manifest.json
+V	deny	Bash	yq . secrets.yaml
+V	allow	Bash	yq . config.yaml
+V	deny	Bash	plutil -p ios/GoogleService-Info.plist
+V	allow	Bash	plutil -p Info.plist
+V	deny	Bash	diff keystore.properties /tmp/k.txt
+V	allow	Bash	diff a.txt b.txt
+V	deny	Bash	cmp server.key other.bin
+V	allow	Bash	cmp a.bin b.bin
+V	deny	Bash	python3 -m json.tool app/google-services.json
+V	allow	Bash	python3 -m json.tool package.json
+V	deny	Bash	git show HEAD:app/google-services.json
+V	deny	Bash	git -C sub show HEAD~1:secrets.json
+V	allow	Bash	git show HEAD:README.md
+V	deny	Bash	git diff -- keystore.properties
+V	allow	Bash	git diff -- README.md
+V	allow	Bash	git diff --stat -- keystore.properties
+V	deny	Bash	git log -p -- keystore.properties
+V	allow	Bash	git log --oneline -- keystore.properties
+V	allow	Bash	git add app/google-services.json keystore.properties
+EOF
+
+# ---------------------------------------------------------------------------------------------------------------------
 # C3d / C3t: the limits of every exemption, and text that only mentions a name.
 run_cases <<'EOF'
 C3d	allow	Bash	if [ -f .env ]; then echo yes; fi
