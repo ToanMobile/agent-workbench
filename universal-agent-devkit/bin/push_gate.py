@@ -835,6 +835,21 @@ def _repo_tasks(top, task_id=None, any_project=False):
         main_root = os.path.dirname(common)
         if not _inside(main_root, top):
             roots.append(main_root)
+    same_repo = {}   # project -> bool, one git call per distinct project
+
+    def _sibling_worktree(project):
+        """A linked worktree of THIS repository outside the roots (`agent-kit worktree add ../<name>`): same git-common-dir.
+        Fail closed: missing dir, not a git tree, git error/timeout or a different common dir -> False."""
+        if not common or not isinstance(project, str) or not os.path.isdir(project):
+            return False
+        if project not in same_repo:
+            try:
+                prc, pcommon = git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
+                same_repo[project] = prc == 0 and bool(pcommon.strip()) and os.path.samefile(pcommon.strip(), common)
+            except (OSError, subprocess.SubprocessError):
+                same_repo[project] = False
+        return same_repo[project]
+
     for path in sorted(glob.glob(_task_pattern(task_id or "*"))):
         try:
             if not stat.S_ISREG(os.stat(path).st_mode) or os.path.getsize(path) > 8_000_000:
@@ -844,7 +859,7 @@ def _repo_tasks(top, task_id=None, any_project=False):
         except (OSError, ValueError, RecursionError):
             continue
         if not isinstance(task, dict) or not isinstance(task.get("id"), str) or (task_id is not None and task["id"] != task_id) \
-                or not (any_project or any(_inside(task.get("project"), r) for r in roots)):
+                or not (any_project or any(_inside(task.get("project"), r) for r in roots) or _sibling_worktree(task.get("project"))):
             continue
         yield task
 
