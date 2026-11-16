@@ -1894,6 +1894,9 @@ dispatch_lane() {
   fi
   if ! worktree_disk_room "$REPO_ROOT/.claude/worktrees/issue-${issue}-${lane}"; then
     log "skip dispatch lane=${lane} issue=#${issue} — disk under the DevKit worktree floor (WORKTREE_DISK_MIN_GIB): free space first"
+    # 16/11: same as the load brake (#530): a disk with no room and no worker is silence, not a runaway (the fuse fired at 10:23 and
+    # 13:37 while the board only waited for free space). dispatch_lane runs in the runner shell, so the flag reaches record_cycle_progress.
+    LOAD_HELD_TICK=1
     return 0
   fi
   # Chọn account TRƯỚC khi nhận thẻ: hết cả 6 account thì không nhận, không giao (trước đây rơi về `claude` mặc định
@@ -2250,7 +2253,8 @@ runaway_summary() {
   # Loud, actionable halt line: what the run spent, and on what.
   log "   dispatches=${DISPATCH_COUNT} reaps=${REAP_COUNT} cards-landed-this-run=${LANDED_COUNT}"
   local top
-  top=$(printf '%s' "$DISPATCH_LOG" | grep -c . 2>/dev/null || echo 0)
+  # grep -c prints 0 AND exits 1 on no match: `|| echo 0` made it "0\n0" and broke the -gt test below (log 10:23, 16/11).
+  top=$(printf '%s' "$DISPATCH_LOG" | grep -c . 2>/dev/null) || :
   if [ "${top:-0}" -gt 0 ]; then
     log "   most re-dispatched issues (count issue):"
     printf '%s' "$DISPATCH_LOG" | grep . | sort | uniq -c | sort -rn | head -5 | while read -r line; do
