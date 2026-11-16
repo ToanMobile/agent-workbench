@@ -85,8 +85,9 @@
 # tested (its `headRefOid` when review passed). The gate pins everything to one
 # commit: it verifies that commit, and merges with `--match-head-commit`, so a
 # push that lands after review — or during verification — cannot ride in on
-# evidence gathered for a different commit. Without the flag the gate pins the
-# head it reads on entry and warns.
+# evidence gathered for a different commit. Without the flag (#981) a real run
+# needs a valid `approved-head:<sha40>` PR comment equal to the head it reads (the
+# same rule as the queue); none, or another sha, exits 6. --dry-run only warns.
 #
 # `--subject` / `--body-file` set the squash commit message (writing-standard.md
 # § 1): subject = the PR title (`🐛 [fix] receipts: …`), body = the commit bullets
@@ -521,6 +522,19 @@ META=$(mktemp); DIFF=$(mktemp)
 # cây (bin/tree_fp.py), nên post-fix-gate không mượn được biên nhận --full của worktree đã PASS đúng nội dung đó và chạy lại mọi suite.
 VERIFY_LOG=$(mktemp)
 python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body,comments,author > "$META"
+# #981: không --expect-head thì head đang đọc không do ai review độc lập ghim; lời "đã review" trong thân PR là của chính tác giả. Lượt thật
+# chỉ đi tiếp khi có comment approved-head:<sha40> hợp lệ (cùng luật super-board-approved-head.jq với queue/train) và đúng bằng head; còn lại
+# exit 6 (như head moved). --dry-run không merge nên chỉ cảnh báo như cũ.
+if [ -z "$EXPECT_HEAD" ] && [ "$DRY" -eq 0 ]; then
+  APPROVED_LINE=$(jq -r -f "$HERE/super-board-approved-head.jq" "$META" 2>/dev/null || true)
+  APPROVED_SHA=$(printf '%s\n' "$APPROVED_LINE" | awk -F '\t' 'NR==1 && $1 == "ok" { print $2 }')
+  if [ "$APPROVED_SHA" != "$HEAD_SHA" ]; then
+    say "no --expect-head and no valid approved-head:${HEAD_SHA} comment on the PR (${APPROVED_LINE:-none}); a PR no independent reviewer pinned is not merged"
+    say "post the review as an approved-head comment from another agent, or run the gate with --expect-head <reviewed head>"
+    exit 6
+  fi
+  say "no --expect-head; the approved-head comment pins ${HEAD_SHA}"
+fi
 # #364: report QA mới nhất của người đáng tin còn "❌ Not done" nêu tên một AC, hay AC [x] không có dòng bằng chứng ↳: không merge,
 # thẻ về Build (exit 11). Checker thoát 2 (metadata không đọc được), crash, hay thoát 1 mà không in dòng "qa-report:" nào là
 # KHÔNG quyết định được: cùng đường với policy không đọc được (exit 7, người duyệt), không phải lỗi build của thẻ.
@@ -1905,20 +1919,30 @@ python3 "$GITHUB_READ" --check
 # báo xanh sai); nâng cấp khi một repo bật merge queue / ruleset required checks.
 AUTO_WAIT_S=${SB_MERGE_AUTO_WAIT_S:-2700}; AUTO_POLL_S=${SB_MERGE_AUTO_POLL_S:-20}
 case "$AUTO_WAIT_S" in ''|*[!0-9]*) AUTO_WAIT_S=2700;; esac
+# #890: tối đa 6 chữ số, so sánh thập phân (08/09 không là bát phân), và không chờ lâu hơn LOCK_TIMEOUT/2: chờ 2700 s > LOCK_TIMEOUT 1800 s làm
+# train nhiều PR có CI pending xếp hàng nối tiếp, gate sau thoát 4 vì khoá (wait_for_load cũng giới hạn LOCK_TIMEOUT/2 vì lý do đó).
+[ "${#AUTO_WAIT_S}" -le 6 ] || AUTO_WAIT_S=2700
+AUTO_WAIT_S=$((10#$AUTO_WAIT_S))
+case "$LOCK_TIMEOUT" in ''|*[!0-9]*) AUTO_WAIT_CAP=900;; *) AUTO_WAIT_CAP=$((10#$LOCK_TIMEOUT / 2));; esac
+[ "$AUTO_WAIT_S" -le "$AUTO_WAIT_CAP" ] || AUTO_WAIT_S=$AUTO_WAIT_CAP
 case "$AUTO_POLL_S" in ''|*[!0-9]*|0) AUTO_POLL_S=20;; esac
 CI_JSON='[]'
 # ci_read: CI_JSON = [{name,state,bucket}] của head PR; "no checks reported" = []. Exit 1: không đọc được.
+# #890: lỗi tạm (5xx, mạng) thử lại 3 lần, nghỉ SB_GITHUB_RETRY_DELAY (mặc định 2 s) nhân số lần; lỗi quyền vĩnh viễn vẫn thoát 4 sau 3 lần.
+# ponytail: không qua GITHUB_READ vì `gh pr checks` thoát 1 khi có check đỏ và 8 khi pending (không phải lỗi); nâng cấp khi kind `checks` có mặt.
 ci_read() {
-  local out err
+  local out err try
   err=$(mktemp)
-  out=$(cd "$REPO_ABS" && gh pr checks "$PR" ${REPO:+--repo "$REPO"} --json name,state,bucket 2>"$err") || true
-  if printf '%s' "$out" | jq -e 'type == "array" and all(.[]; type == "object")' >/dev/null 2>&1; then CI_JSON=$out
-  elif grep -qi 'no checks reported' "$err"; then CI_JSON='[]'
-  else rm -f "$err"; return 1; fi
-  rm -f "$err"
+  for try in 1 2 3; do
+    out=$(cd "$REPO_ABS" && gh pr checks "$PR" ${REPO:+--repo "$REPO"} --json name,state,bucket 2>"$err") || true
+    if printf '%s' "$out" | jq -e 'type == "array" and all(.[]; type == "object")' >/dev/null 2>&1; then CI_JSON=$out; rm -f "$err"; return 0
+    elif grep -qi 'no checks reported' "$err"; then CI_JSON='[]'; rm -f "$err"; return 0; fi
+    [ "$try" -eq 3 ] || sleep $(( ${SB_GITHUB_RETRY_DELAY:-2} * try ))
+  done
+  rm -f "$err"; return 1
 }
 # Đỏ = mọi bucket ngoài pass / skipping / pending (fail, cancel, rỗng, lạ): fail-closed.
-ci_failed() { printf '%s' "$CI_JSON" | jq -r '.[] | select((.bucket // "") as $b | ["pass", "skipping", "pending"] | index($b) | not) | "ci-check: \(.name // "?") — \(.state // .bucket // "unknown")"'; }
+ci_failed() { printf '%s' "$CI_JSON" | jq -r '.[] | select((.bucket // "") as $b | ["pass", "skipping", "pending"] | index($b) | not) | "ci-check: \(.name // "?") — \((.state // "") as $s | if $s != "" then $s elif (.bucket // "") != "" then .bucket else "unknown" end)"'; }
 ci_pending() { printf '%s' "$CI_JSON" | jq '[.[] | select(.bucket == "pending")] | length'; }
 # ci_pr_recheck: đọc lại PR như khối sau merge lỗi ở cuối file: MERGED → 0, không còn OPEN → 3, head đổi (push mới lúc chờ) → 6.
 ci_pr_recheck() {
@@ -1942,6 +1966,7 @@ ci_precheck() {
     say "failing CI check(s) on ${HEAD_SHA:0:12}: never merged with a red check — back to Build"
     exit 11
   fi
+  ci_pr_recheck   # #890: push rơi giữa lần đọc PR và lần đọc checks (gh pr checks theo số PR, không ghim sha) ⇒ xanh của head cũ; đọc PR lại SAU checks
 }
 # wait_ci_settled: lượt thật chờ hết pending; đang giữ khoá thì own_lock_or_stop làm mới mốc mỗi vòng (ngoài khoá — PR3 — không đụng
 # khoá). Mỗi vòng đọc lại PR TRƯỚC khi đọc CI: push mới trong lúc ngủ → exit 6, không rơi xuống migration.
@@ -1951,7 +1976,7 @@ wait_ci_settled() {
   while :; do
     ci_pr_recheck
     ci_precheck
-    [ "$(ci_pending)" -gt 0 ] || return 0
+    [ "$(ci_pending)" != 0 ] || return 0   # không phải số nguyên cũng là "chưa xong": chờ tới hạn rồi thoát 4, không coi là xanh
     if [ $(( $(date +%s) - start )) -ge "$AUTO_WAIT_S" ]; then
       say "CI checks still pending after ${AUTO_WAIT_S}s; not merging — the next wave retries"
       exit 4
@@ -1964,7 +1989,7 @@ wait_ci_settled() {
 # PR3: chờ CI NGOÀI khoá (CI gắn với HEAD_SHA, base dời không đổi nó); PR có test bị sửa đang giữ khoá thì chờ trong khoá như trước.
 if [ "$DRY" -eq 1 ]; then
   ci_precheck
-  [ "$(ci_pending)" -eq 0 ] || say "dry run: $(ci_pending) CI check(s) still pending; a real run waits for them before migrating or merging"
+  [ "$(ci_pending)" = 0 ] || say "dry run: $(ci_pending) CI check(s) still pending; a real run waits for them before migrating or merging"
 else wait_ci_settled; fi
 
 # ---- khoá ngắn trước merge (PR3) ------------------------------------------------------------------------------------------------------
@@ -2041,7 +2066,7 @@ while :; do
   # CI một lần trong khoá (--dry-run: đã đọc trước khoá, không merge nên không đọc lại). Còn pending (check chạy lại): nhả khoá, chờ
   # ngoài khoá, quay lại đầu khối (đọc lại head/base); chế độ bi quan / test bị sửa chờ trong khoá như trước.
   [ "$DRY" -eq 1 ] || ci_precheck
-  if [ "$DRY" -ne 1 ] && [ "$(ci_pending)" -gt 0 ]; then
+  if [ "$DRY" -ne 1 ] && [ "$(ci_pending)" != 0 ]; then
     if [ "$CI_LEFT" -gt 0 ] && [ "$PESSIMISTIC" -eq 0 ]; then
       CI_LEFT=$((CI_LEFT - 1))
       drop_lock

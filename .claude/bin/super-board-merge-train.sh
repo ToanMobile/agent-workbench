@@ -102,7 +102,7 @@ run_gate() {
   if [ "$to" = 1 ]; then cat "$GATE_OUT"; else cat "$GATE_OUT" >&2; fi
   while IFS= read -r line; do
     case "$line" in
-      approval-request:*|human-gate:*|needs-you:*|ac-check:*|qa-report:*|verification-readiness:*) echo "train-detail: $p $line" ;;
+      approval-request:*|human-gate:*|needs-you:*|ac-check:*|qa-report:*|ci-check:*|verification-readiness:*) echo "train-detail: $p $line" ;;
     esac
   done < <(cat "$GATE_OUT" "$GATE_ERR")
   return 0
