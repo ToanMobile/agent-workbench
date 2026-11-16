@@ -591,7 +591,7 @@ at once, default 3; the queue lock is never held while a verify waits for a slot
           → **rebase pass** (see below)
      11 + every printed reason is `qa-report: stale: …` (#979: QA is behind the head, nothing else wrong)
           → card Review → QA, no `loop:rebuild-N`, no Build round; QA re-runs on the head and writes `@ <sha>` on the first line
-     11 → verify failed on a branch NOT behind the base: a rebase changes nothing.
+     11 → verify failed, a CI check is red (`ci-check: <name> — <state>` lines, #882/#890) or the QA report/AC is not clean (`qa-report:` lines), on a branch NOT behind the base: a rebase changes nothing.
           Open a `[builder]` thread quoting the gate's "verify failed (exit N: …)" line
           and the log tail, move the card Review → Ready with `loop:rebuild-N` (NOT
           `loop:rebase`, NOT Blocked); the Builder fixes the failing verify
