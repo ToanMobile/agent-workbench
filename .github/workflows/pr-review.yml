@@ -1,4 +1,4 @@
-# Cổng máy cho mọi PR: chạy cả bộ test DevKit (run_impacted.sh --all) trên macOS.
+# Cổng máy cho mọi PR: chạy các test DevKit liên quan tới diff (run_impacted.sh, không --all) trên macOS.
 # 35 file test viết cho macOS (sed -i '', launchctl, cp -c, xcrun, stat -f) đỏ trên ubuntu (run 41209128293), nên job chạy trên
 # macos-latest (phương án (a) của #781). Phút macOS đắt ~10x ubuntu: chỉ một job, có timeout (90 phút: bộ test chạy 50-58 phút, run 42803485149 bị cắt ở mốc 60).
 # Các lớp quét khác (semgrep, gitleaks, OCR) sẽ vào workflow này bằng thẻ riêng; thẻ này không dựng lại theo trí nhớ.
@@ -38,5 +38,6 @@ jobs:
           go-version: "1.26"
           cache: false
 
-      - name: DevKit tests (whole suite)
-        run: bash universal-agent-devkit/tests/run_impacted.sh --all
+      # 16/11 (chủ repo): gate chỉ chạy test liên quan tới diff, không cả bộ (50-58 phút, dính test flaky ngoài diff). Cả bộ chạy theo lịch (gate-full).
+      - name: DevKit tests (impacted by the diff)
+        run: bash universal-agent-devkit/tests/run_impacted.sh
