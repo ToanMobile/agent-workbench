@@ -79,6 +79,19 @@ fi
 
 case "$COL" in
   ""|Backlog|Ready|Building)
+    # #1197: preflight giữ thẻ "unclear: no ## Acceptance Criteria" nếu issue ngoài khuôn; bổ sung AC trước khi vào QA.
+    # Issue đã có mục AC thì không sửa. Không đọc được thân issue thì bỏ qua bước này (không chặn route).
+    IBODY=$(gh issue view "$N" --repo "$REPO" --json body --jq '.body // ""' 2>/dev/null) && {
+      if ! printf '%s\n' "$IBODY" | grep -qiE '^##[[:space:]]+(acceptance criteria|ac)[[:space:]]*$'; then
+        PRAC=$(printf '%s\n' "$BODY" | awk '{l=tolower($0)} l ~ /^##[ \t]+(acceptance criteria|ac)([ \t+].*)?$/{f=1;next} l ~ /^##[ \t]/{f=0} f')
+        printf '%s' "$PRAC" | grep -q '[^[:space:]]' || PRAC='- [ ] Kiểm thử của PR đạt'
+        tmp=$(mktemp "${TMPDIR:-/tmp}/sb-route-ac.XXXXXX")
+        printf '%s\n\n## Acceptance Criteria\n%s\n' "$IBODY" "$PRAC" > "$tmp"
+        rc=0; gh issue edit "$N" --repo "$REPO" --body-file "$tmp" >/dev/null || rc=$?
+        rm -f "$tmp"
+        [ "$rc" = 0 ] || { echo "route-pr: could not add Acceptance Criteria to issue #$N (gh exit $rc)" >&2; exit "$rc"; }
+      fi
+    }
     rc=0; bash "$CARD" --config "$CONFIG" move "$N" QA >/dev/null || rc=$?
     [ "$rc" = 0 ] || { echo "route-pr: could not move #$N to QA (super-board-card.sh exit $rc)" >&2; exit "$rc"; }
     RESULT="${COL:-no column} → QA" ;;
