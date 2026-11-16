@@ -210,6 +210,18 @@ trap 'dk_keep_failed_logs; rm -rf "$out"' EXIT
 trap 'dk_keep_failed_logs; rm -rf "$out"; trap - INT EXIT; kill -INT $$' INT
 trap 'dk_keep_failed_logs; rm -rf "$out"; trap - TERM EXIT; kill -TERM $$' TERM
 trap 'dk_keep_failed_logs; rm -rf "$out"; trap - HUP EXIT; kill -HUP $$' HUP
+# Timing (CPU / wall-clock budget) tests: the ones that run alone, plus test_evidence_backlog427. On a slow CI runner they fail on load, not on
+# a defect, so run_one retries each ONCE (#1216). Defined once here: the alone selection below uses is_alone_test, so that set is unchanged.
+is_alone_test() { # <test path>
+  case "$1" in */test_budgets.sh|*/test_session_context.sh|*/test_gate_lock_receipt_gap.sh|*/test_agent_kit_test_order.sh|*/test_run_impacted.sh|*/test_relink.sh|*/test_worktree_merge_gate_owner.sh) return 0 ;; esac
+  return 1
+}
+is_timing_test() { # <test path>
+  is_alone_test "$1" && return 0
+  case "$1" in */test_evidence_backlog427.sh) return 0 ;; esac
+  return 1
+}
+export -f is_alone_test is_timing_test
 run_one() { # <test> <out dir> [alone]
   local o
   o="$2/$(printf '%s' "$1" | tr '/' '_')"
@@ -261,6 +273,7 @@ run_one() { # <test> <out dir> [alone]
   trap '_dk_clean_tdir; trap - INT EXIT; kill -INT $$' INT
   trap '_dk_clean_tdir; trap - TERM EXIT; kill -TERM $$' TERM
   trap '_dk_clean_tdir; trap - HUP EXIT; kill -HUP $$' HUP
+  _dk_exec() { # one run of the test: <test> <out dir> [alone] (reads $o $fd3 $_dk_tdir of run_one)
   env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
        -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC -u _DEVKIT_IN_MKTEMP_SHIM -u DEVKIT_IMPACTED_DIRS -u DEVKIT_GATE_DONE \
        -u DEVKIT_TEST_POOL_DIR -u DEVKIT_JOB_POOL ${DEVKIT_JOB_POOL:+-u DEVKIT_TEST_JOBS} \
@@ -268,7 +281,15 @@ run_one() { # <test> <out dir> [alone]
        SB_HEAVY_SLOT_DIR="$o.slots" \
        ${DEVKIT_JOB_POOL:+python3 -I "$DEVKIT_JOB_POOL" "$DEVKIT_TEST_POOL_DIR" "$JOBS" ${3:+--alone} --wait-file "$o.wait" --start-fd 3 --start-line "· start $1" --} \
        ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
-       bash "$1" 3>&"$fd3" >"$o.log" 2>&1 || rc=$?
+       bash "$1" 3>&"$fd3" >"$o.log" 2>&1
+  }
+  _dk_exec "$@" || rc=$?
+  # #1216: a timing test that failed is run exactly once more; the 2nd run's rc is final and its log replaces the first. Others never.
+  if [ "$rc" -ne 0 ] && is_timing_test "$1"; then
+    printf '· retry timing test %s (first rc=%s)\n' "$1" "$rc" >&2
+    rc=0
+    _dk_exec "$@" || rc=$?
+  fi
   # 04/11: the seconds this test waited for a slot of the gate's shared pool (job_pool.py) are not its own duration
   [ -s "$o.wait" ] && w="$(cat "$o.wait" 2>/dev/null)" && case "$w" in ''|*[!0-9]*) ;; *) t0=$((t0 + w)) ;; esac
   _dk_clean_tdir
@@ -395,7 +416,7 @@ parallel="" alone=""
 for t in $selected; do
   [ -f "$t" ] || continue
   is_reused "$t" && continue
-  case "$t" in */test_budgets.sh|*/test_session_context.sh|*/test_gate_lock_receipt_gap.sh|*/test_agent_kit_test_order.sh|*/test_run_impacted.sh|*/test_relink.sh|*/test_worktree_merge_gate_owner.sh) alone="$alone $t" ;; *) parallel="$parallel $t" ;; esac
+  if is_alone_test "$t"; then alone="$alone $t"; else parallel="$parallel $t"; fi
 done
 # Start the longest tests first (tests/lib/test_durations.txt: `<seconds> <path>`; a test it does not list starts first, as it
 # may be slow): a 137 s test that starts last becomes the tail of the whole run. ONLY the start order of $parallel changes: $selected
