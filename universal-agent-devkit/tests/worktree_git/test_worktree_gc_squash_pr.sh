@@ -61,4 +61,10 @@ LOSTC=$(G "$H/refl" rev-parse HEAD); G "$H/refl" checkout -q --detach "$RF"
 [ -f "$H/genmix/work.txt" ] && has_branch feat-genmix && ok "8 worktree with a real uncommitted file besides the generated one is kept" || fail "8 genmix removed"
 [ ! -e "$H/refl" ] && [ -n "$(G "$R" for-each-ref --contains "$LOSTC" refs/devkit/discarded)" ] || { fail "9 reflog-only commit worktree not removed with a backup"; cat "$TMP/o3"; }
 [ ! -e "$H/refl" ] && ok "9 merged worktree holding a commit only its reflog names: removed, commit kept in refs/devkit/discarded"
+# --- #1201 audit: the squash is already in the local trunk (main pulled) and the PR merged at the tip: still deleted, local + origin ---
+mk sqin feat-sqin; SQI=$(G "$R" rev-parse feat-sqin)
+echo "[$(row 11 "$SQ"),$(row 17 "$SQI")]" > "$TMP/merged.json"
+G "$R" cherry-pick feat-sqin >/dev/null 2>&1 || G "$R" cherry-pick --abort >/dev/null 2>&1
+(cd "$R" && python3 "$WT" gc --merged >"$TMP/o4" 2>&1)
+[ ! -e "$H/sqin" ] && ! has_branch feat-sqin && ! has_remote feat-sqin && ok "10 squash already in the local trunk and PR merged at the tip: removed, local + origin branch deleted" || { fail "10 content-in-trunk branch kept"; cat "$TMP/o4"; }
 echo "FAILS=$FAILS"; [ "$FAILS" -eq 0 ]

@@ -5048,7 +5048,7 @@ def _reap_merged(main, here, dry, log, logged):
         if _remote_ref(main, b):
             # #1201: a published branch goes only when a PR MERGED at its exact tip (prune-branch --remote re-checks both sides)
             tip = git(main, "rev-parse", "-q", "--verify", ref + "^{commit}", check=False).stdout.strip()
-            if not tip or _content_in_trunk(main, ref) or not _merged_pr_at(main, b, tip):
+            if not tip or not _merged_pr_at(main, b, tip):   # content already in the trunk is no reason to keep it: the squash was pulled and the PR still merged at this tip
                 continue
             if dry:
                 print("• gc (dry-run): " + tr("sẽ xoá nhánh ", "would delete branch ") + b + tr(" (PR đã MERGED đúng tip)", " (PR merged at its tip)"))
