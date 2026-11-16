@@ -212,9 +212,10 @@ trap 'dk_keep_failed_logs; rm -rf "$out"; trap - TERM EXIT; kill -TERM $$' TERM
 trap 'dk_keep_failed_logs; rm -rf "$out"; trap - HUP EXIT; kill -HUP $$' HUP
 # Timing (CPU / wall-clock budget) tests: the ones that run alone, plus test_evidence_backlog427. On a slow CI runner they fail on load, not on
 # a defect, so run_one retries each ONCE (#1216). Defined once here: the alone selection below uses is_alone_test, so that set is unchanged.
-is_alone_test() { # <test path>
-  case "$1" in */test_budgets.sh|*/test_session_context.sh|*/test_gate_lock_receipt_gap.sh|*/test_agent_kit_test_order.sh|*/test_run_impacted.sh|*/test_relink.sh|*/test_worktree_merge_gate_owner.sh) return 0 ;; esac
-  return 1
+is_alone_test() { # <test path>; the `case "$t" in ... alone=` line shape is asserted by test_run_impacted.sh (#430)
+  local t="$1" alone=
+  case "$t" in */test_budgets.sh|*/test_session_context.sh|*/test_gate_lock_receipt_gap.sh|*/test_agent_kit_test_order.sh|*/test_run_impacted.sh|*/test_relink.sh|*/test_worktree_merge_gate_owner.sh) alone=1 ;; esac
+  [ -n "$alone" ]
 }
 is_timing_test() { # <test path>
   is_alone_test "$1" && return 0
