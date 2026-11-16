@@ -222,10 +222,22 @@ is_timing_test() { # <test path>
   case "$1" in */test_evidence_backlog427.sh) return 0 ;; esac
   return 1
 }
-export -f is_alone_test is_timing_test
+# CPU-budget tests: they measure the owner's local hardware budgets (ms of CPU) and go red on a slower CI runner, not on a defect. With
+# DEVKIT_SKIP_CPU_BUDGET_TESTS=1 (the CI job) run_one skips them; they still run in gate-full and the local gate. Behaviour tests (the
+# rest of the alone list) are never skipped.
+is_cpu_budget_test() { # <test path>
+  case "$1" in */test_budgets.sh|*/test_evidence_backlog427.sh|*/test_prompt_hook_gate_env.sh|*/test_context_midlane.sh) return 0 ;; esac
+  return 1
+}
+export -f is_alone_test is_timing_test is_cpu_budget_test
 run_one() { # <test> <out dir> [alone]
   local o
   o="$2/$(printf '%s' "$1" | tr '/' '_')"
+  if [ "${DEVKIT_SKIP_CPU_BUDGET_TESTS:-}" = 1 ] && is_cpu_budget_test "$1"; then
+    printf '· skip CPU-budget test %s (DEVKIT_SKIP_CPU_BUDGET_TESTS=1)\n' "$1" >&2
+    echo 0 >"$o.rc"; : >"$o.log"
+    return 0
+  fi
   # #473: `· start` before the test runs, `· done` after: the gate names a hung suite's RUNNING tests (started, not done), not the last one
   # that ended. Same line rules as `· done` below. A reader that is already gone: SIGPIPE here, the test is not started (nobody wants it).
   # 04/11: in a shared pool (job_pool.py) the line is printed by job_pool.py once the test holds its slot (fd 3 = this stderr): a test that
