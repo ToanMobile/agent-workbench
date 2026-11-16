@@ -254,7 +254,7 @@ try:
             if name in EVIDENCE_TOOLS or any(s in name for s in EVIDENCE_SUBSTR):
                 done = True              # new evidence → the run starts after it
                 break
-            if name in ("Edit", "Write", "NotebookEdit"):
+            if name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):   # MultiEdit: 2026-11-14, it was no edit and never warned
                 if blk.get("id") in error_ids:
                     continue             # blocked/failed → nothing landed
                 binp = blk.get("input") or {}

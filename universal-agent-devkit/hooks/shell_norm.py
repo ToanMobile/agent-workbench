@@ -260,7 +260,81 @@ def adb_shell(rest):
     return j < len(rest) and re.match(r"(?:shell|exec-out)(?![\w-])", rest[j]) is not None
 
 
-BRACE = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
+# ── Text a shell reads on its stdin (14/11, C4b; tests/gates/test_guard_zero_defect_c4.sh) ────────────────────────────────────────
+# `echo STR | bash`, `printf FMT | sh`, `bash <<< STR`: the shell runs STR like a -c script. The hardware gate reads it with these three
+# (block_dangerous_git_main.py has had its own reader since 2026-10-09: feed_texts / reads_script, left as it is).
+_FEED_ESC = re.compile(r"\\(x[0-9A-Fa-f]{1,2}|0?[0-7]{1,3}|[ntr\\])")
+_FEED_CHR = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
+
+
+def _feed_unescape(s):
+    def one(m):
+        e = m.group(1)
+        if e in _FEED_CHR:
+            return _FEED_CHR[e]
+        return chr(int(e[1:], 16)) if e[0] == "x" else chr(int(e, 8) & 0xFF)
+    return _FEED_ESC.sub(one, s)
+
+
+def reads_stdin_script(rest):
+    """True when a shell with the words rest runs what arrives on its stdin: no -c, no script operand (or -s / a lone -), and its stdin is
+    not redirected (< FILE, a heredoc, a here-string: here_string_words reads that one)."""
+    j, s_flag = 0, False
+    while j < len(rest):
+        a = rest[j]
+        if a.startswith("<"):
+            return False
+        if REDIRECT.match(a):
+            j += 2 if REDIRECT_ALONE.fullmatch(a) else 1
+            continue
+        if a == "--":
+            j += 1
+            break
+        if len(a) > 1 and a[0] in "-+":
+            short = a[0] == "-" and not a.startswith("--")
+            if short and "c" in a[1:]:
+                return False
+            s_flag = s_flag or (short and "s" in a[1:])
+            j += 2 if a in SHELL_OPTS_WITH_ARG else 1
+            continue
+        break
+    return s_flag or j >= len(rest) or rest[j] == "-"
+
+
+def here_string_words(rest):
+    """The words a command gets as here-strings: `<<< WORD` and `<<<WORD`."""
+    out = []
+    for k, a in enumerate(rest):
+        if a == "<<<":
+            out += rest[k + 1:k + 2]
+        elif a.startswith("<<<"):
+            out.append(a[3:])
+    return out
+
+
+def literal_feed(seg):
+    """Readings of what the simple command seg writes to a pipe when it is a literal echo / printf (as typed, and with its backslash
+    escapes read); None when it is another command or a word of it is filled in at run time ($VAR, a substitution)."""
+    i = prefix_end(seg)
+    if i >= len(seg):
+        return None
+    prog, args = seg[i].rsplit("/", 1)[-1], [a for a in seg[i + 1:] if not REDIRECT.match(a)]
+    if prog not in ("echo", "printf") or any("$" in a or "`" in a for a in args):
+        return None
+    if prog == "echo":
+        while args and re.fullmatch(r"-[neE]+", args[0]):
+            args = args[1:]
+        text = " ".join(args)
+        return [text, _feed_unescape(text)]
+    args = args[1:] if args[:1] == ["--"] else args
+    if not args:
+        return [""]
+    vals = iter(args[1:])
+    filled = re.sub(r"%(?:%|[-+ #0]*\d*(?:\.\d+)?[a-zA-Z])", lambda m: "%" if m.group(0) == "%%" else next(vals, ""), args[0])
+    return [_feed_unescape(filled), "\n".join(_feed_unescape(a) for a in args)]
+
+
+BRACE =re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
 
 
 BRACE_BOMB = "/"   # what a brace expansion past the cap is judged as: the worst target there is
@@ -677,6 +751,49 @@ def dq_nested_quote(text):
             dq = not dq if c == "\x22" else dq
             i += 1
     return False
+
+
+def sq_backticks(text):
+    """The positions of the backticks that are DATA: inside a closed '…' at the top level of text, where no shell expands anything (git commit -m
+    'fix: `rm -rf ~` is refused' was refused by the hardware gate, 14/11 round 2). Fail closed: a span counts only when this scan AND the lexer
+    (_lexer_quotes) both read it as single-quoted, and the scan stops (what it found so far stays) at the first thing that changes how quotes
+    are read after it: a comment, a top-level backtick, $( ${ $' anywhere outside single quotes, an unclosed quote. Nothing at all in a text
+    with a heredoc or a here-string (a body is not quote-scoped) or with a double quote inside "$( )" (dq_nested_quote). The quoted text is
+    data only to THIS shell: a caller that hands it to another shell (bash -c, eval, ssh) reads it again there, as a text of its own.
+    ponytail: a '…' after a $( … ) or inside one keeps the old reading (its backticks count as a substitution); upgrade with a context stack."""
+    if "`" not in text or "\x27" not in text or "<<" in text or dq_nested_quote(text):
+        return set()
+    lexer = {(a, b) for a, b in _lexer_quotes(text)[1] if text[a] == "\x27"}
+    out, i, n, wstart = set(), 0, len(text), True
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            wstart = False
+        elif c == "\x27":
+            j = text.find("\x27", i + 1)
+            if j < 0:
+                break
+            if (i, j) in lexer:
+                out.update(k for k in range(i + 1, j) if text[k] == "`")
+            i = j + 1
+            wstart = False
+        elif c == "\x22":
+            j = i + 1
+            while j < n and text[j] != "\x22":
+                if text[j] == "`" or (text[j] == "$" and text[j + 1:j + 2] in ("(", "{")):
+                    return out
+                j += 2 if text[j] == "\\" else 1
+            if j >= n:
+                break
+            i = j + 1
+            wstart = False
+        elif c == "`" or (c == "$" and text[i + 1:i + 2] in ("(", "{", "\x27")) or (c == "#" and wstart):
+            break
+        else:
+            wstart = c in " \t\n;&|("
+            i += 1
+    return out
 
 
 _CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")

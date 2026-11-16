@@ -216,7 +216,19 @@ if not citations and not pa_claims:
 # ── Build the "valid source" evidence from the transcript ──
 tp = d.get("transcript_path")
 corpus_parts = []          # tool_result contents + user message texts
-accessed_basenames = set() # files opened via Read/Edit/Write/NotebookEdit
+accessed_basenames = set() # files opened via Read/Edit/Write/MultiEdit/NotebookEdit
+# A Bash call that names a test runner backs "đã chạy test" only when the runner started (2026-11-14, tests/gates/
+# test_claim_multiedit_zero_defect.sh: `pytest -q` answered by "exit 127, command not found" backed the claim). Its result decides:
+# exit 126 / 127, or an error result with no sign that a test ran (command not found, no such file, no pytest module, a call a hook or
+# the permission system refused), is no run. A failing run DID run; a call with no result in the transcript stands as before.
+test_calls = {}            # tool_use id of a runner call -> False once its result says it never started
+def _tid(v):
+    """A tool id as a dict key. One that is no string (a list or an object is unhashable: TypeError, the hook left with rc 0 and every
+    claim passed, OCR review of 2193a36a) is keyed by its JSON text, so a call and its result still pair."""
+    return v if isinstance(v, str) else json.dumps(v, sort_keys=True, default=str)
+TEST_NOT_STARTED = re.compile(r"^\s*Exit code 12[67]\b|\A\s*PreToolUse:\S+ hook error", re.M)
+TEST_RAN = re.compile(r"\b\d+\s+(?:tests?\s+)?(?:passed|passing|failed|failing|failures?|errors?)\b|\bFAIL(?:ED|URE)?\b|\bTests run:"
+                      r"|^not ok\b|[✖✘❌]|\btest result:|\bTests?:\s+\d", re.M)
 evidence = set()           # tool actions actually performed (build/test/grep/…)
 
 if tp and os.path.exists(tp):
@@ -243,6 +255,10 @@ if tp and os.path.exists(tp):
                 bt = blk.get("type")
                 if bt == "tool_result":
                     c = blk.get("content")
+                    if _tid(blk.get("tool_use_id")) in test_calls:
+                        t = c if isinstance(c, str) else json.dumps(c, ensure_ascii=False)
+                        test_calls[_tid(blk.get("tool_use_id"))] = not (
+                            TEST_NOT_STARTED.search(t) or (blk.get("is_error") is True and not TEST_RAN.search(t)))
                     corpus_parts.append(
                         c if isinstance(c, str)
                         else json.dumps(c, ensure_ascii=False)
@@ -252,7 +268,7 @@ if tp and os.path.exists(tp):
                 elif bt == "tool_use":
                     name = blk.get("name", "")
                     inp = blk.get("input") or {}
-                    if name in ("Read", "Edit", "Write", "NotebookEdit"):
+                    if name in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit"):
                         fp = inp.get("file_path") or inp.get("notebook_path")
                         if isinstance(fp, str) and fp:
                             accessed_basenames.add(os.path.basename(fp))
@@ -277,7 +293,7 @@ if tp and os.path.exists(tp):
                                      r"\b(cargo|go|swift|dotnet|flutter|deno)\s+test\b|\bxcodebuild\b.*\btest\b|"
                                      r"\bmvn\s+(test|verify)\b|\bmake\s+(test|check)\b|\bctest\b|\brspec\b|\bphpunit\b|"
                                      r"\bbash\s+\S*test\S*\.sh\b", cmd):
-                            evidence.add("test")
+                            test_calls[_tid(blk.get("id"))] = True   # stands unless its result says it never started (below)
                         if re.search(r"\b(?:grep|rg)\b", cmd):
                             evidence.add("grep")
                         if "logcat" in cmd:
@@ -287,6 +303,8 @@ if tp and os.path.exists(tp):
 else:
     logline(f"[{ts}] transcript unreadable ({tp!r}) — fail-open")
     sys.exit(0)
+if any(test_calls.values()):
+    evidence.add("test")
 
 corpus = "\n".join(corpus_parts)
 

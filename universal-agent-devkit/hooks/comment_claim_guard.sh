@@ -128,6 +128,9 @@ hash_lang = path.endswith(hash_exts) and not path.endswith(exts)
 written = inp.get("new_string")
 if not isinstance(written, str):
     written = inp.get("content")
+if not isinstance(written, str) and isinstance(inp.get("edits"), list):
+    # MultiEdit (2026-11-14, tests/gates/test_claim_multiedit_zero_defect.sh): the text is in edits[].new_string, which was never read.
+    written = "\n".join(e["new_string"] for e in inp["edits"] if isinstance(e, dict) and isinstance(e.get("new_string"), str))
 if not isinstance(written, str) or not written.strip():
     sys.exit(0)
 
