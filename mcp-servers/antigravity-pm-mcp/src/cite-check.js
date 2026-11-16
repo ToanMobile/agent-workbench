@@ -11,6 +11,7 @@
 //   file-missing  — file khong ton tai
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 export const CUA_SO = 3;
 const CITE_RE = /(?:^|[\s(`'"\[])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z0-9]{1,8}):(\d{1,6})(?=[\s)`'",\]:;.]|$)/g;
@@ -26,18 +27,44 @@ function chuanHoa(s) {
   return String(s || '').replace(/\s+/g, ' ').trim();
 }
 
-/** Kiem MOT trich dan. */
-export function kiemTrichDan(projectRoot, { file, line, snippet }) {
+const SHA40 = /^[0-9a-f]{40}$/;
+
+/** Noi dung `file` tai commit `ref` (blob git), hoac null: ref khong phai sha40 / file khong co o ref / git loi. Khong qua shell. */
+function docTaiRef(projectRoot, rel, ref) {
+  if (!ref || !SHA40.test(ref) || path.isAbsolute(rel) || rel.split('/').includes('..')) return null;
+  try {
+    return execFileSync('git', ['show', `${ref}:${rel}`], { cwd: projectRoot, encoding: 'utf8', maxBuffer: 4_000_000, timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Kiem MOT trich dan. `ref` (sha40 cua commit da audit, tuy chon): trich dan lech cay hien tai (main da di tiep, dong da doi cho)
+ * van hop le neu co that o blob tai ref (16/11: audit PR #1204 bi pm_verdict tu choi vi 2 dong co that o head PR, khong co o main).
+ */
+export function kiemTrichDan(projectRoot, { file, line, snippet }, ref = null) {
   const rel = String(file || '').replace(/^\.\//, '');
   const abs = path.isAbsolute(rel) ? rel : path.resolve(projectRoot, rel);
-  let text;
+  let text = null;
+  let missing = null;
   try {
     const st = fs.statSync(abs);
-    if (!st.isFile() || st.size > 4_000_000) return { file: rel, line, status: 'file-missing', note: st.isFile() ? 'file qua lon' : 'khong phai file' };
-    text = fs.readFileSync(abs, 'utf8');
+    if (!st.isFile() || st.size > 4_000_000) missing = { file: rel, line, status: 'file-missing', note: st.isFile() ? 'file qua lon' : 'khong phai file' };
+    else text = fs.readFileSync(abs, 'utf8');
   } catch {
-    return { file: rel, line, status: 'file-missing' };
+    missing = { file: rel, line, status: 'file-missing' };
   }
+  if (text !== null) {
+    const kq = kiemText(text, rel, line, snippet);
+    if (kq.status !== 'not-found') return kq;
+  }
+  const atRef = docTaiRef(projectRoot, rel, ref);
+  if (atRef !== null) return kiemText(atRef, rel, line, snippet);
+  return text === null ? missing : kiemText(text, rel, line, snippet);
+}
+
+function kiemText(text, rel, line, snippet) {
   const lines = text.split('\n');
   const sn = chuanHoa(snippet);
   if (!sn) {
@@ -79,7 +106,8 @@ export function trichDanTuBaoCao(report) {
  * + file-missing (co the la chinh finding "file khong ton tai" => nguoi goi chi canh bao).
  */
 export function kiemBaoCao(projectRoot, report) {
-  const items = trichDanTuBaoCao(report).map((c) => ({ ...kiemTrichDan(projectRoot, c), snippet: c.snippet }));
+  const ref = report && typeof report === 'object' && typeof report.auditedHead === 'string' ? report.auditedHead : null;
+  const items = trichDanTuBaoCao(report).map((c) => ({ ...kiemTrichDan(projectRoot, c, ref), snippet: c.snippet }));
   const counts = {};
   for (const it of items) counts[it.status] = (counts[it.status] || 0) + 1;
   const bia = items.filter((it) => it.status === 'not-found' || it.status === 'file-missing');
