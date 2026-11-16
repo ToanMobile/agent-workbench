@@ -123,6 +123,16 @@ DURATIONS_HINT = "tests/lib/test_durations.txt"
 DURATIONS_HINT_PATHS = (DURATIONS_HINT, "universal-agent-devkit/" + DURATIONS_HINT, ".agents/devkit/" + DURATIONS_HINT)
 
 
+# #1201: files the kit / host regenerate (settings synced from the kit, PM task logs, build caches): a worktree holding only these is not
+# holding work; the removal keeps a fallback copy in refs/devkit/discarded first. A CLOSED list: any other path still counts.
+GENERATED_DIRTY = (".claude/settings.json",)
+GENERATED_DIRTY_PREFIX = (".antigravity-pm/tasks/",)
+
+
+def _is_generated(p):
+    return p in GENERATED_DIRTY or p.startswith(GENERATED_DIRTY_PREFIX) or "/__pycache__/" in "/" + p
+
+
 def _is_durations_hint(p):
     return p in DURATIONS_HINT_PATHS
 MEMORY_REL = os.path.join(".agents", "local", "memory", "claude-auto")   # scripts/governance/claude_memory.py REL
@@ -2159,6 +2169,7 @@ def _iter_blockers(cwd, wt, shown, budget, rows=None):
     # card went to Blocked); cmd_remove keeps a fallback copy first. A row a person made, or an edit git hides, still counts.
     if any(p in BOOKKEEPING and p not in (hidden or ()) for p in lost) and _bookkeeping_regenerated(wt, main):
         lost = [p for p in lost if p not in BOOKKEEPING or p in (hidden or ())]
+    lost = [p for p in lost if p in (hidden or ()) or not _is_generated(p)]   # #1201: regenerated files are no work (backup kept by _remove_after_checks)
     if lost or hidden is None:
         detail = [f"    {p}" + ("   (git hides it: skip-worktree / assume-unchanged)" if p in (hidden or ()) else "") for p in lost[:20]]
         if hidden is None:
@@ -2350,6 +2361,10 @@ def cmd_remove(cwd, args):
         waive = bool(head) and lost is not None and rows[0]["unreachable"] and _chain_in_trunk(main, head) \
             and all(_chain_in_trunk(main, c) for c in lost) \
             and git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip() == head   # HEAD unchanged since the first read
+        # #1201: --merged already proved HEAD integrated (trunk content, the merged head, or a PR MERGED at it): the commits only the reflog
+        # names are kept in refs/devkit/discarded (30 days, _remove_after_checks waived) instead of holding the worktree forever
+        waive = waive or (merged is not None and bool(head) and lost is not None and rows[0]["unreachable"]
+                          and git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip() == head)
         waived = False
         for code, kind, text, detail in _iter_blockers(cwd, wt, rest[0], None, rows=rows):   # a person is waiting: a git call is still bounded (_timeout)
             if kind == "unreachable" and waive:
@@ -2395,7 +2410,7 @@ def _remove_after_checks(cwd, wt, waived=False):
     except Exception:  # noqa: BLE001 - a warning only: never in the way of the removal
         notes = []
     # Regenerated bookkeeping _iter_blockers let through: a fallback copy first (a git error there: SystemExit, nothing removed).
-    dropped = [p for p in changes_since(wt, state) if p in BOOKKEEPING and not _same_in_main(wt, main, p)]
+    dropped = [p for p in changes_since(wt, state) if (p in BOOKKEEPING or _is_generated(p)) and not _same_in_main(wt, main, p)]
     if dropped or waived:   # a waived UNREACHABLE: the same fallback copy as discard (refs/devkit/discarded/*), reflog-only commits as parents
         kept = _discard_backup(main, wt)
     if waived:
@@ -2638,10 +2653,11 @@ def _merged_pr_at(main, branch, tip):
     if not trunk:
         return None
     try:
+        # #1201: branch None (a detached worktree): only the second query below, which needs no branch name
         r = subprocess.run(["gh", "pr", "list", "--head", branch, "--base", trunk, "--state", "merged",
                             "--json", "number,headRefOid,baseRefName,isCrossRepository", "--limit", "20"],
-                           cwd=main, capture_output=True, text=True, timeout=15)
-        rows = json.loads(r.stdout or "[]") if r.returncode == 0 else []
+                           cwd=main, capture_output=True, text=True, timeout=15) if branch else None
+        rows = json.loads(r.stdout or "[]") if r is not None and r.returncode == 0 else []
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     for row in rows if isinstance(rows, list) else []:
@@ -2996,6 +3012,9 @@ def _integrated(main, wt, merged=None):
     if merged and (head == merged or _is_ancestor(main, head, merged)):
         return ""
     if _content_in_trunk(main, head):
+        return ""
+    # #1201: the repo squash-merges, so the trunk never holds the branch's commits: a PR MERGED at exactly this head is the same proof `prune-branch` takes
+    if _merged_pr_at(main, git(wt, "symbolic-ref", "-q", "--short", "HEAD", check=False).stdout.strip() or None, head):
         return ""
     return tr(f"HEAD {head[:12]} mang commit trunk ({_trunk_branch(main) or '?'}) chưa có", f"HEAD {head[:12]} holds commits the trunk ({_trunk_branch(main) or '?'}) lacks") \
         + (tr(f", không phải head đã merge {merged[:12]} hay tổ tiên của nó", f", and is neither the merged head {merged[:12]} nor behind it") if merged else "")
@@ -5024,7 +5043,23 @@ def _reap_merged(main, here, dry, log, logged):
         if b in out and out[b][1] != "checkout":
             print("• gc: " + tr(f"giữ nhánh {b}: đang {out[b][1]} ở {out[b][0]}", f"kept branch {b}: a {out[b][1]} of it is in progress in {out[b][0]}"))
             continue
-        if b == trunk or b in out or PROTECTED_BRANCH_RE.fullmatch(b) or BOARD_BRANCH_RE.fullmatch(b) or _remote_ref(main, b):
+        if b == trunk or b in out or PROTECTED_BRANCH_RE.fullmatch(b) or BOARD_BRANCH_RE.fullmatch(b):
+            continue
+        if _remote_ref(main, b):
+            # #1201: a published branch goes only when a PR MERGED at its exact tip (prune-branch --remote re-checks both sides)
+            tip = git(main, "rev-parse", "-q", "--verify", ref + "^{commit}", check=False).stdout.strip()
+            if not tip or _content_in_trunk(main, ref) or not _merged_pr_at(main, b, tip):
+                continue
+            if dry:
+                print("• gc (dry-run): " + tr("sẽ xoá nhánh ", "would delete branch ") + b + tr(" (PR đã MERGED đúng tip)", " (PR merged at its tip)"))
+                acted += 1
+                continue
+            try:
+                if cmd_prune_branch(main, ["--remote", b]) == 0:
+                    record("✔ gc: " + tr("đã xoá nhánh ", "deleted branch ") + b + tr(" (PR đã MERGED đúng tip)", " (PR merged at its tip)"))
+                    acted += 1
+            except (Exception, SystemExit) as ex:  # noqa: BLE001 - kept, said
+                print("• gc: " + tr(f"giữ nhánh {b}: ", f"kept branch {b}: ") + str(getattr(ex, "code", ex)))
             continue
         if dry:
             if _content_in_trunk(main, ref):
