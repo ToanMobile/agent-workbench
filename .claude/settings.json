@@ -93,6 +93,11 @@
           {
             "type": "command",
             "command": "p=\"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-protected-push.py; f=\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-protected-push.py; [ -f \"$p\" ] && exec python3 \"$p\"; [ -f \"$f\" ] && exec python3 \"$f\"; echo \"⛔ DevKit: guard-protected-push.py is missing ($p and $f): tool call blocked (fail closed). Reinstall: agent-kit init\" >&2; exit 2"
+          },
+          {
+            "type": "command",
+            "command": "p=\"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/route_pr_to_board.py; f=\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/route_pr_to_board.py; [ -f \"$p\" ] && exec python3 \"$p\"; [ -f \"$f\" ] && exec python3 \"$f\"; echo \"⚠ DevKit: route_pr_to_board.py is missing ($p and $f): PR not routed to the board. Reinstall: agent-kit init\" >&2; exit 0",
+            "timeout": 100
           }
         ]
       },
@@ -173,6 +178,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bash_write_ledger.sh\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "p=\"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/route_pr_to_board.py; f=\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/route_pr_to_board.py; [ -f \"$p\" ] && exec python3 \"$p\"; [ -f \"$f\" ] && exec python3 \"$f\"; echo \"⚠ DevKit: route_pr_to_board.py is missing ($p and $f): PR not routed to the board. Reinstall: agent-kit init\" >&2; exit 0",
+            "timeout": 100
           }
         ]
       },
