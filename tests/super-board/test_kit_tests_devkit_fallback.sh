@@ -18,6 +18,12 @@ for f in "$ROOT"/tests/super-board/*.sh; do
     bad="$bad $(basename "$f")"
   fi
 done
+# python kit tests: a hard-coded universal-agent-devkit script path needs the .agents/devkit fallback too
+for f in "$ROOT"/tests/super-board/*.py; do
+  if grep -q '"universal-agent-devkit"' "$f" && ! grep -q '"\.agents" */ *"devkit"' "$f"; then
+    bad="$bad $(basename "$f")"
+  fi
+done
 [ -z "$bad" ] && ok "every kit test that sources clean_git_env.sh / super_board_all.py has a .agents/devkit fallback" \
   || fail "no .agents/devkit fallback in:$bad"
 

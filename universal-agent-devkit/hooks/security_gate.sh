@@ -502,11 +502,15 @@ if tp and os.path.exists(tp):
                     inp = blk.get("input") or {}
                     if not isinstance(inp, dict):
                         continue
-                    if name in ("Edit", "Write", "NotebookEdit"):
+                    if name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
                         fp = inp.get("file_path") or inp.get("notebook_path") or ""
                         if not isinstance(fp, str) or not fp or excluded(in_tree(fp)) or _scratch(fp):
                             continue
                         text = inp.get("new_string") or inp.get("content") or ""
+                        if name == "MultiEdit":      # its text is in edits[].new_string (2026-11-15: a MultiEdit was no edit here)
+                            eds = inp.get("edits")
+                            text = "\n".join(e["new_string"] for e in (eds if isinstance(eds, list) else [])
+                                             if isinstance(e, dict) and isinstance(e.get("new_string"), str))
                         if not isinstance(text, str):
                             text = ""
                         hits = triggers_for(in_tree(fp), text)
