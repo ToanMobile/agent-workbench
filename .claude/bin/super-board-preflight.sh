@@ -270,7 +270,10 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
         | ($own_files - ($own_files - $pf)) as $hit
         | select(($hit | length) > 0)
         | { pr: $p.number, files: $hit,
-            issues: ($p | closed_refs | if $hasinf then map(select(. as $k | $active | index($k))) else . end) } ] as $overlap
+            issues: ($p | closed_refs | if $hasinf then map(select(. as $k | $active | index($k))) else . end) }
+        # 16/11 (#1201 sat in Ready 15 h behind #1191/#1196): with --inflight a PR that closes no running card has nobody
+        # to wait for, so it cannot hold the card (the merge gate rebases). Without --inflight keep the old behaviour.
+        | select(($hasinf | not) or ((.issues | length) > 0)) ] as $overlap
 
     | ( [ $merged[] | { ref: "#\(.number)", kind: "merged-pr", title, sim: sim(.title; $i.title) } ]
         + [ $others[] | { ref: "#\(.number)", kind: "open-pr", title, sim: sim(.title; $i.title) } ]
