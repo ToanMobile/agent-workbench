@@ -40,4 +40,6 @@ jobs:
 
       # 16/11 (chủ repo): gate chỉ chạy test liên quan tới diff, không cả bộ (50-58 phút, dính test flaky ngoài diff). Cả bộ chạy theo lịch (gate-full).
       - name: DevKit tests (impacted by the diff)
+        env:
+          DEVKIT_SKIP_CPU_BUDGET_TESTS: "1"
         run: bash universal-agent-devkit/tests/run_impacted.sh
