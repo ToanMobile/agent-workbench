@@ -50,4 +50,12 @@ run_kit "$K" DEVKIT_SKIP_CPU_BUDGET_TESTS=1
 [ "$RC" -ne 0 ] && ok "C: a failing non-budget test stays red with the variable set (rc=$RC)" || fail "C: rc=0, want non-zero"
 [ -e "$M" ] && ok "C: the non-budget test ran" || fail "C: the non-budget test did not run"
 
+# D: the variable is for THIS runner only: a test it runs must not inherit it (a test of run_impacted.sh itself, or any nested runner, would
+#    skip its own fixtures; PR #1219 broke 6 such tests on CI before this was unset)
+K="$TMP/d"; mk_kit "$K"; M="$TMP/d.mark"
+printf '%s\n' "printf '%s' \"\${DEVKIT_SKIP_CPU_BUDGET_TESTS-unset}\" > '$M'; exit 0" > "$K/tests/verification/test_env_probe.sh"
+run_kit "$K" DEVKIT_SKIP_CPU_BUDGET_TESTS=1
+[ "$RC" -eq 0 ] && ok "D: probe test ran (rc=0)" || { fail "D: rc=$RC"; echo "$OUT" | tail -n 10; }
+[ "$(cat "$M" 2>/dev/null)" = "unset" ] && ok "D: the child test sees the variable unset" || fail "D: the child saw '$(cat "$M" 2>/dev/null)'"
+
 [ "$FAILS" -eq 0 ] && { echo "all checks passed"; exit 0; } || { echo "$FAILS check(s) failed"; exit 1; }

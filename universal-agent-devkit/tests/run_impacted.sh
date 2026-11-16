@@ -287,7 +287,7 @@ run_one() { # <test> <out dir> [alone]
   trap '_dk_clean_tdir; trap - TERM EXIT; kill -TERM $$' TERM
   trap '_dk_clean_tdir; trap - HUP EXIT; kill -HUP $$' HUP
   _dk_exec() { # one run of the test: <test> <out dir> [alone] (reads $o $fd3 $_dk_tdir of run_one)
-  env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
+  env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID -u DEVKIT_SKIP_CPU_BUDGET_TESTS \
        -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC -u _DEVKIT_IN_MKTEMP_SHIM -u DEVKIT_IMPACTED_DIRS -u DEVKIT_GATE_DONE \
        -u DEVKIT_TEST_POOL_DIR -u DEVKIT_JOB_POOL ${DEVKIT_JOB_POOL:+-u DEVKIT_TEST_JOBS} \
        ${_dk_tdir:+TMPDIR="$_dk_tdir" PYTHONPYCACHEPREFIX="$_dk_tdir/pyc" PATH="$2/mkbin:$PATH"} \
