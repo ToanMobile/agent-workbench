@@ -94,7 +94,9 @@ def names_ac(text, acs):
             if a in low and not (split_off and OTHER_REPO_AC.search(a)):
                 return True
         # Mã AC trần chỉ là "đã tách" khi chính đoạn nhỏ (ngăn bởi , hay ngoặc) vừa nói đã tách/thuộc vừa dẫn `owner/repo#N`.
-        for sub in re.split(r"[,，()（）]", clause):
+        # 16/11 (#1170): `AC3 (mô tả) tách sang owner/repo#N` — bỏ cụm ngoặc cân bằng trước khi tách, kẻo mã AC đứng một mình trước ngoặc,
+        # tách khỏi cụm "tách sang owner/repo#N" ngay sau nó và bị coi là AC cục bộ chưa xong.
+        for sub in re.split(r"[,，()（）]", re.sub(r"[(（][^()（）]*[)）]", " ", clause)):
             if AC_ID.search(sub) and not (CROSS_REPO_REF.search(sub) and SPLIT_WORD.search(sub)):
                 return True
     return False
