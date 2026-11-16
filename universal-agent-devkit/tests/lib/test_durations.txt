@@ -538,3 +538,4 @@
 2 tests/gates/test_gate_seal_required.sh
 2 tests/gates/test_verdict_seal_audit.sh
 7 tests/gates/test_gate_seal_e2e.sh
+6 tests/verification/test_run_impacted_timing_retry.sh
