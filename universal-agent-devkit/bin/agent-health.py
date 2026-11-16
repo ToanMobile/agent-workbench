@@ -285,6 +285,9 @@ def registered_hook_groups(settings) -> list:
             for h in m.get("hooks", []):
                 cmd = h.get("command") if isinstance(h, dict) else None
                 cmd = cmd if isinstance(cmd, str) else ""
+                # `bash -c '<script>'` (hooks.json since the F4 contract: every command is run by bash) runs the same script: judge the inner text.
+                wrapped = re.fullmatch(r"\s*bash\s+-c\s+'([^']*)'\s*", cmd)
+                cmd = wrapped.group(1) if wrapped else cmd
                 shape = _HOOK_ALT_CMD_RX.match(cmd)
                 alt_vars = {c.group("v") for c in _HOOK_ALT_CLAUSE_RX.finditer(shape.group("clauses"))} if shape else set()
                 found = []
