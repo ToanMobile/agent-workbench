@@ -2284,6 +2284,7 @@ runaway_action() {
   fi
   log "🛑 halt — RUNAWAY: no card reached Done in ${NO_PROGRESS_CYCLES} dispatch cycles"
   runaway_summary
+  RUNNER_END=halted; RUNNER_CAUSE=runaway   # #1221: bản ghi nói rõ halt RUNAWAY để watchdog dựng lại ở chế độ daemon
   return 1
 }
 
@@ -3540,6 +3541,8 @@ runner_state_write() {
     printf 'DISPATCHES=%s\nNO_PROGRESS=%s\nPAUSE_UNTIL=%s\n' \
       "${DISPATCH_COUNT:-0}" "${NO_PROGRESS_CYCLE_COUNT:-0}" "${RUNAWAY_PAUSE_UNTIL:-0}"
     for k in $RUNNER_ENV_KEYS; do printf 'ENV_%s=%s\n' "$k" "${!k:-}"; done
+    [ -z "${RUNNER_WARN:-}" ] || printf 'WARN=%s\n' "$RUNNER_WARN"
+    [ -z "${RUNNER_CAUSE:-}" ] || printf 'CAUSE=%s\n' "$RUNNER_CAUSE"
     [ -z "${2:-}" ] || printf 'RC=%s\nENDED=%s\n' "$2" "$(date +%s)"
   } > "$tmp" && mv -f "$tmp" "$RUNNER_STATE"; } 2>/dev/null; then
     STATE_WRITE_WARNED=""
@@ -3775,6 +3778,11 @@ if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
   DISPATCH_COUNT=$(state_num DISPATCHES)
   NO_PROGRESS_CYCLE_COUNT=$(state_num NO_PROGRESS)   # gán thẳng: bản ghi đầu tiên đã mang giá trị này
   RUNAWAY_PAUSE_UNTIL=$(state_num PAUSE_UNTIL)
+fi
+if [ "${SB_DAEMON:-0}" != "1" ]; then
+  # #1221: chạy tay không SB_DAEMON=1 thì RUNAWAY halt runner và watchdog không dựng lại: cảnh báo to, ghi WARN= vào bản ghi.
+  RUNNER_WARN=non-daemon
+  [ "${SB_WATCHDOG_START:-0}" = "1" ] || log "⚠ started WITHOUT SB_DAEMON=1: a RUNAWAY will HALT this runner and the watchdog will NOT restart it; start boards with super_board_all.py start"
 fi
 runner_state_write running
 if [ "${SB_WATCHDOG_START:-0}" != "1" ]; then
