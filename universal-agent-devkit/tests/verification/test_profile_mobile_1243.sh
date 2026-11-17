@@ -77,4 +77,25 @@ done
 [ -f "$P/instincts.md" ] || fail "instincts.md missing"
 grep -q 'INSTINCT-IOS-05' "$P/instincts.md" || fail "ios instincts lost"
 ok "new sections present in RULES and DESIGN"
+
+# section 22: situation -> kit tool map; every `skill:x` / `agent:x` / `council:x` must exist in the kit
+grep -qE '^## 22\. Bộ công cụ theo tình huống' "$R" || fail "rules missing '## 22. Bộ công cụ theo tình huống'"
+python3 -I - "$R" <<'PY' || exit 1
+import os, re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+sec = t.split("## 22. Bộ công cụ theo tình huống", 1)[1]
+refs = re.findall(r"`(skill|agent|council):([A-Za-z0-9_-]+)`", sec)
+assert refs, "section 22 names no skill/agent/council"
+path = {"skill": "skills/%s/SKILL.md", "agent": "agents/%s.md", "council": "agents/councils/%s.md"}
+for k, n in refs:
+    assert os.path.isfile(path[k] % n), "section 22 names %s:%s which is not in the kit" % (k, n)
+names = {n for _, n in refs}
+for n in ("compose-recomp-audit", "android-real-device-qa", "qa-visual", "tdd-workflow", "qc",
+          "verification-before-completion", "real-device-ui-auditor", "test-architect-seti",
+          "mobile-release-auditor", "principal-code-reviewer", "07-performance-anr"):
+    assert n in names, "section 22 does not mention " + n
+assert "Instruments" in sec and "MetricKit" in sec, "iOS equivalent of the Android-only tools not stated"
+PY
+ok "section 22 present, every named skill/agent/council exists"
+grep -qE 'Bộ công cụ theo tình huống' "$P/DESIGN.md" || fail "DESIGN.md has no pointer to rules section 22"
 echo "PASS"

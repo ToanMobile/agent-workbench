@@ -366,3 +366,28 @@ Quy chuẩn kỹ thuật bắt buộc dành cho AI Agent khi phát triển, tố
 - **Material 3 (Android) và Apple HIG (iOS)**: dùng thành phần/hành vi chuẩn nền tảng trước khi tự vẽ; khác biệt có chủ đích giữa hai nền tảng (điều hướng, sheet, back) giữ đúng thói quen nền tảng.
 - **Zero-Slop**: không `Card` lồng `Card`, không icon tile đặt trên heading, không `Color.Gray`/`#808080` trần, không gradient tím–xanh mặc định (neutral pha 3–5% tông chủ đạo), nhịp spacing 4–8 / 12–16 / 24–32 (không 16 cho mọi thứ), không câu chào sáo rỗng (§15, §17.5). Skill `taste-mobile-app`, `ui-ux-pro-max`, `impeccable`.
 - **Bằng chứng**: ảnh chụp từ máy thật ở chế độ sáng và tối, font scale lớn, và một lượt TalkBack/VoiceOver cho màn hình mới; với thay đổi chỉ trong tooling/docs không cần ảnh.
+
+## 22. Bộ công cụ theo tình huống
+
+> Gọi đúng công cụ của kit đúng lúc; tên viết dạng `skill:`, `agent:`, `council:` đều có thật trong kit. Mục Android-only không áp cho iOS: tương đương iOS là Instruments (Time Profiler, Allocations, Leaks), MetricKit và `xcodebuild test`.
+
+| Nhóm | Tình huống | Công cụ | Cho ra |
+|---|---|---|---|
+| UI/UX | Dựng màn hình/luồng mobile mới hoặc làm lại giao diện rập khuôn | `skill:taste-mobile-app` | Hướng thiết kế mobile (Compose, SwiftUI, Flutter, RN) tránh template mặc định |
+| UI/UX | Chọn bảng màu, font, style nút, micro-interaction, haptic | `skill:ui-ux-pro-max` | Quyết định thẩm mỹ và juice cho UI Mobile/Game |
+| UI/UX | Thiết kế mới, critique, audit, polish giao diện native iOS/Android | `skill:impeccable` | Phê bình/audit/polish và trích `DESIGN.md` |
+| UI/UX | Có `qa.config.json`, cần chụp màn route × viewport, soi lệch layout (phần web/WebView) | `skill:qa-visual` | Ảnh các màn và danh sách lỗi bố cục đo trên DOM, đính vào PR |
+| UI/UX | Kiểm giao diện trên máy thật: vùng chạm ≥ 48 dp, tràn khung, ảnh nghiệm thu màn thành công | `agent:real-device-ui-auditor` | Báo cáo accessibility tree, touch target, layout overflow, xác thực ảnh proof |
+| Hiệu năng | Sửa Compose, State, ViewModel, LazyColumn/LazyRow hoặc thấy UI giật (Android-only) | `skill:compose-recomp-audit` | Soát recomposition thừa trong Compose |
+| Hiệu năng | Đo FPS jank, chẩn ANR/crash logcat, audit UI hierarchy, quét DEX 64K trên máy Android thật/emulator (Android-only) | `skill:android-real-device-qa` | Số đo FPS, log ANR/crash, hierarchy qua adb |
+| Hiệu năng | Main thread > 16 ms, ANR, nóng máy/pin, OOM bitmap, giới hạn Binder 1 MB (iOS dùng Instruments/MetricKit) | `council:07-performance-anr` | Phán quyết hiệu năng/ANR/thermal theo ngân sách §19 |
+| Hiệu năng | Thêm hoặc audit log, metric, trace, Crashlytics/Firebase Performance | `skill:observability-instrumentation` | Điểm đo đủ để chẩn đoán lỗi production |
+| Chất lượng | Thêm/sửa logic testable, viết regression test | `skill:tdd-workflow` | Chu trình RED rồi GREEN an toàn |
+| Chất lượng | Thiết kế/review test, chẩn flake, chọn bằng chứng tất định cho hành vi Android rủi ro | `agent:test-architect-seti` | Kiến trúc test và bằng chứng tất định |
+| Chất lượng | Chạy lint, unit test, QA gate | `skill:qc` | Tự nhận build tool (Gradle, xcodebuild, npm...) rồi chạy lint + test |
+| Chất lượng | Sắp tuyên bố xong/fixed/PASS, trước commit/PR, hoặc kiểm kết quả agent khác | `skill:verification-before-completion` | Bằng chứng chạy thật trước khi nhận xong |
+| Chất lượng | Diff không tầm thường: crash, file, auth, navigation, lifecycle, nhiều file (Kotlin/Java) | `agent:principal-code-reviewer` | Phát hiện có bằng chứng, không tự sửa |
+| Chất lượng | Review diff tự động trước commit/PR | `skill:open-code-review` | Nhận xét theo hunk bằng OpenCodeReview |
+| Chất lượng | Đổi ranh giới module, DI, API công khai, điều hướng, hoặc lifecycle/concurrency sâu (Android) | `agent:android-principal-architect` | Đánh giá kiến trúc và rủi ro migration |
+| Phát hành/An toàn | Build release, ký keystore, ProGuard/R8, đồng bộ version đa nền tảng, tuân thủ store | `agent:mobile-release-auditor` | Kiểm gói phát hành, chữ ký, R8, version, store compliance |
+| Phát hành/An toàn | Đổi Intent/URI/file, exported component, permission, WebView, auth, network security, trước release | `skill:security-checklist` | Danh mục kiểm bảo mật theo hạng mục |

@@ -143,6 +143,8 @@ Tuân thủ hệ số bội của $4\text{px} / 4\text{dp}$:
 
 ## 13. Nguyên Tắc UI/UX: Material 3 (Android) & Apple HIG (iOS)
 
+> Khi nào gọi skill/agent UI/UX, hiệu năng, chất lượng: xem `rules/mobile-rules.md` mục "22. Bộ công cụ theo tình huống".
+
 - Android theo Material 3: `MaterialTheme` (colorScheme, typography, shapes), thành phần M3 chuẩn trước khi tự vẽ; điều hướng dưới cho 3–5 đích chính, back theo hệ thống (predictive back).
 - iOS theo Apple Human Interface Guidelines: `NavigationStack`/`TabView`, sheet với `.presentationDetents`, nút/chữ hệ thống; vuốt back mép trái không bị cản.
 - Hai nền tảng dùng **chung token ngữ nghĩa** (mục 1) và nhịp spacing (mục 3), nhưng giữ hành vi điều hướng/sheet/menu đúng thói quen từng nền tảng; không dựng lại thành phần hệ thống bằng tay trừ khi có lý do ghi trong PR.
