@@ -11,7 +11,11 @@
   3. Nguy cơ bug mới: Phép so cũ–mới đã chạy (lệnh, số đầu vào, số ca đổi kết quả) hoặc `chưa so — <lý do>`.
   4. An toàn mã nguồn: Quét secret, placeholder; OCR chỉ ghi khi đã chạy, không thì `OCR: không chạy — <lý do>`.
   5. Còn hở / chưa kiểm: Liệt kê, hoặc `không có`.
-- **Văn phong (mọi text DevKit tạo ra: báo cáo, comment, PR, ticket)**: ngắn gọn, đơn giản, tự nhiên như người nói với đồng đội; câu ngắn, từ thông dụng, một ý một dòng, kết quả trước lý do sau, ai đọc cũng hiểu. Không dán log (trích tối đa 3 dòng), không dòng nghi thức rỗng. Báo cáo 5 mục vẫn đủ 5 mục (hook đọc) nhưng mỗi mục một câu.
+- **Văn phong (mọi text DevKit tạo ra: báo cáo, comment, PR, ticket)**: ngắn gọn, đơn giản, tự nhiên như người nói với đồng đội; câu ngắn, từ thông dụng, một ý một dòng, kết quả trước lý do sau, ai đọc cũng hiểu. Ngắn nhưng phải rõ nghĩa: cắt chữ thừa, không cắt ý; người đọc không có ngữ cảnh vẫn biết đã xảy ra gì, vì sao và ai làm gì tiếp (không viết cụt kiểu "xong, đạt"). Không dán log (trích tối đa 3 dòng), không dòng nghi thức rỗng. Báo cáo 5 mục vẫn đủ 5 mục (hook đọc) nhưng mỗi mục một câu.
+- **Bằng chứng trước/sau trong báo cáo** (chọn đúng một trường hợp, gửi bằng chứng thật của lượt này, không dùng lại cái cũ):
+  - Bug có giao diện: gửi ảnh cũ đang lỗi (`reports/before-*.png`) và ảnh mới vừa fix xong (`reports/proof-*.png`).
+  - Task mới có giao diện: gửi ảnh nghiệm thu mới.
+  - Task không có ảnh (backend, tooling, docs): viết hai câu, cũ bị gì và mới đã sửa gì, kèm một kết quả chạy thật (vd test ĐỎ rồi XANH).
 - **Trạng thái mở đầu**: Sử dụng `XONG` / `CHƯA XONG` / `CHỜ DUYỆT`.
 
 ## 3. Git Commit & Pull Request
