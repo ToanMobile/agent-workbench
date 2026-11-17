@@ -2483,7 +2483,7 @@ block_noop_workers() {
   # Expensive tick, after fetch_project_items: judge the workers queued by note_worker_end. Sets NOOP_MOVED=1 when a card was moved.
   local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
   local entry issue lane from c0 col count f now n item_id title wlog last tag human_line
-  local wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait
+  local wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait stall_why
   NOOP_CHECK=""
   for entry in $pending; do
     wlog=""
@@ -2499,13 +2499,37 @@ EOF
     [ -n "$col" ] || continue
     count=$(issue_comment_count "$issue")
     [ -n "$count" ] || continue   # GitHub cannot say: conclude nothing
+    stall_why=""
     if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
       rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # it moved the card or wrote something: progress
-      continue
+      [ "$col" = "$from" ] || rm -f "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true   # the card moved: stall ledger starts over
+      if [ "$lane" = review ] && [ "$col" = Review ] && [ "$col" = "$from" ] && worker_ended_clean "$wlog" \
+         && ! { merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; }; then
+        # #1221 AC3: a review turn that exits 0 and comments but leaves the card in Review is a no-op in effect when it repeats (e.g. a
+        # condition only a person can meet): SB_REVIEW_STALL_MAX (3) such turns inside SB_NOOP_WINDOW_S park the card in Blocked instead of
+        # a fourth dispatch that ends in RUNAWAY. A turn waiting on a named condition (`blocked-by: <X>`) has its own cap (SB_REVIEW_WAIT_MAX).
+        wait_val=$(issue_last_comment "$issue" "$count" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
+        wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+        if [ -n "$wait_what" ] && [ "$wait_what" != "-" ]; then continue; fi
+        wlimit="${SB_REVIEW_STALL_MAX:-3}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=3 ;; esac
+        [ "$wlimit" -le 19 ] || wlimit=19
+        now=$(date +%s)
+        mkdir -p "$INFLIGHT_DIR/review-stall" 2>/dev/null || true
+        wfile="$INFLIGHT_DIR/review-stall/$issue"
+        wn=0
+        if { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } 2>/dev/null > "$wfile.tmp" \
+          && mv "$wfile.tmp" "$wfile" 2>/dev/null; then
+          wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ' || true)
+        fi
+        { [ "${wn:-0}" -ge "$wlimit" ] && stall_why="$wn"; } || continue
+        eff_max=1
+      else
+        continue
+      fi
     fi
     # Pha 2 (M4): a reviewer that queued the PR (merge-queue label + approved-head at the head) rightly leaves the card in Review:
     # the queue merges it later, so this is no no-op. Checked only here, on the would-be no-op path, so a queue-off board reads nothing more.
-    if [ "$lane" = review ] && [ "$col" = Review ] && merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; then
+    if [ -z "$stall_why" ] && [ "$lane" = review ] && [ "$col" = Review ] && merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; then
       rm -f "$f" 2>/dev/null || true
       continue
     fi
@@ -2514,7 +2538,7 @@ EOF
     # Chỉ comment của [reviewer] mới tính (dòng đầu sau marker `<!-- -->` là `[reviewer]`, dòng cuối là `blocked-by:`).
     # Miễn có trần: thẻ nghỉ SB_REVIEW_WAIT_S (900) giữa hai lượt (review_wait_cooldown) và chỉ được miễn SB_REVIEW_WAIT_MAX (8) lượt trong
     # SB_NOOP_WINDOW_S (24 giờ), quá thì Blocked "chờ <X> quá lâu". `blocked-by: -` là chờ người: không miễn, Blocked ngay.
-    if [ "$lane" = review ] && worker_ended_clean "$wlog"; then
+    if [ -z "$stall_why" ] && [ "$lane" = review ] && worker_ended_clean "$wlog"; then
       wait_val=$(issue_last_comment "$issue" "$count" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
       wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
       if [ -n "$wait_val" ] && [ "$wait_what" = "-" ]; then
@@ -2556,10 +2580,11 @@ EOF
     human_line="blocked-by:  agent"; [ "$tag" = "📱" ] && human_line="blocked-by:  -"
     why_line="the ${lane} worker for #${issue} exited ${n} times in a row with the card still in ${col} and no new comment"
     [ -z "$human_wait" ] || { human_line="blocked-by:  -"; why_line="the reviewer for #${issue} ended its turn waiting on a person (blocked-by: -); dispatching another review turn cannot change that"; }
+    [ -z "$stall_why" ] || { human_line="blocked-by:  -"; why_line="the reviewer for #${issue} ended ${stall_why} review turns in a row (exit 0, with a comment) and the card is still in Review: a condition no review turn can meet is unmet (e.g. a test edit awaiting cross-approval, a red CI, an audit the gate does not accept); another turn would repeat it until RUNAWAY"; }
     [ -z "$over_wait" ] || why_line="the ${lane} worker for #${issue} has waited on ${over_wait} for more than ${wlimit} review turns in the last $((window / 3600)) hours with no new comment (chờ ${over_wait} quá lâu)"
     if [ -n "$item_id" ] && set_card_status "$item_id" "Blocked"; then
       NOOP_MOVED=1
-      rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # thẻ sang Blocked: cả hai sổ bắt đầu lại khi người kéo về
+      rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true   # thẻ sang Blocked: cả hai sổ bắt đầu lại khi người kéo về
       [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
       gh_checkpoint
       gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tag} ${lane} worker exited ${n} times without moving the card or commenting
