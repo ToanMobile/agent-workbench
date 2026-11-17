@@ -4508,6 +4508,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-install-no-grok",
+      "watch_files": [
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/tests/installer/test_install_no_grok.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-INSTALL-NO-GROK-01",
+          "name": "17/11 chủ repo gỡ Grok: install.sh không còn agent grok/xai (help, menu, all); đường chỉ ghi AGENTS.md là agents-md và re-init giữ đúng đường đó",
+          "command": "bash universal-agent-devkit/tests/installer/test_install_no_grok.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

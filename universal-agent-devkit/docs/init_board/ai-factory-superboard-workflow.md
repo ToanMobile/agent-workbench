@@ -1,5 +1,7 @@
 # 🏭 AI Factory: quy trình nhà máy tự hành cho 6 repo
 
+> 17/11: chủ repo gỡ Grok khỏi DevKit. Mọi đoạn Grok trong các script tham khảo bên dưới (`grok`, `GROK_BIN`, `SB_FALLBACK_GROK`) là bản cũ, không còn chạy: cc-switcher không còn profile 6, runner ép `SB_FALLBACK_GROK` rỗng.
+
 Máy Mac ở nhà chạy 24/7. Bạn giao việc bằng thẻ trên GitHub Project, các runner super-board tự nhận thẻ, viết code, chạy gate của DevKit rồi merge. Agent Office là văn phòng 3D để xem và điều khiển cả 6 board, mở được trên Mac lẫn điện thoại.
 
 ## 1. Chạy nhanh
@@ -171,19 +173,18 @@ Không để SSH hỏi mật khẩu giữa đêm: `ssh-add --apple-use-keychain 
 | `max` | toan.huynh@finos.asia (Personal Max) | `sonnet`, advisor `opus` | `~/.claude-max` |
 | `antigravity` | phathuy.vetgo@gmail.com (Google AI Ultra) | `gemini-4-argon-high` | `~/.gemini/antigravity-cli/` |
 | `antigravity_pro` | alex.1993.dev@gmail.com (Google AI Pro) | `gemini-4-argon-high` | `~/.gemini/antigravity-cli/` |
-| `grok` | Grok CLI | `grok-4.7` | `~/.grok/config.toml` |
 
 - CC Switch để chế độ `Direct`: không proxy, không chèn token tĩnh. `claude` nói chuyện thẳng với Anthropic bằng Keychain.
 - Máy này có dữ liệu CC Switch (`~/.cc-switch/`) nhưng chưa có `CC Switch.app` trong `/Applications`, nên mục 7 của `--verify` báo FAIL (đo ngày 22/10). `ccswitch` dòng lệnh vẫn chạy.
 - Ba thư mục `~/.claude-{finos,finos_team,max}` dùng symlink về `~/.claude/`, nên đổi tài khoản vẫn giữ lịch sử `claude --resume`.
-- Khi cả 3 tài khoản Claude chạm 95 %, chỉ chuyển sang Antigravity hoặc Grok nếu bật `SB_FALLBACK_ANTIGRAVITY=1` (hoặc `=pro`) và `SB_FALLBACK_GROK=1`. Không bật thì runner tạm dừng tới khi hạn mức hồi.
+- Khi cả 3 tài khoản Claude chạm 95 %, chỉ chuyển sang Antigravity nếu bật `SB_FALLBACK_ANTIGRAVITY=1` (hoặc `=pro`); Grok đã gỡ 17/11. Không bật thì runner tạm dừng tới khi hạn mức hồi.
 
 Lệnh hay dùng:
 
 | Việc | Lệnh |
 | :--- | :--- |
 | Xem hạn mức các tài khoản | `ccswitch list` |
-| Đổi tài khoản đang dùng | `ccswitch switch finos` (hoặc `finos_team`, `max`, `antigravity`, `antigravity_pro`, `grok`) |
+| Đổi tài khoản đang dùng | `ccswitch switch finos` (hoặc `finos_team`, `max`, `antigravity`, `antigravity_pro`) |
 | Đổi tài khoản mặc định cho một repo | `~/.claude/bin/super-board-account-pool.sh switch <đường-dẫn-repo> max` |
 
 ## 11. Bảng lệnh
