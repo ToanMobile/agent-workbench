@@ -151,5 +151,8 @@ test('17/11 go Grok: settings CC Switch con currentProviderClaude grok cung khon
     // id da go o ca hai nguon: van ve mac dinh
     saveSwitcherState(t.stateDir, { activeProfileId: 'grok' });
     assert.equal(loadSwitcherState(t.stateDir).activeProfileId, 'finos_toan');
+    // state da luu la id da go, settings giu id cu hop le: roi xuong settings va van chuan hoa bi danh (max -> finos_toan_max)
+    fs.writeFileSync(path.join(t.stateDir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'max' }));
+    assert.equal(loadSwitcherState(t.stateDir).activeProfileId, 'finos_toan_max');
   } finally { t.cleanup(); }
 });
