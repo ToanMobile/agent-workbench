@@ -611,7 +611,7 @@ cmd_exec() {
     agy_email="$(echo "$resolved" | jq -r '.email // "phathuy.vetgo@gmail.com"')"
     set_antigravity_google_account "$acct"
     echo "⚡ [Multi-Account Pool] Using Antigravity CLI (gemini-4-argon-high • xhigh — $agy_email)" >&2
-    exec "$AGY_BIN" --model gemini-4-argon-high --effort xhigh "$@"
+    exec "$AGY_BIN" --model gemini-4-argon-high "$@"
   fi
   if [ "$engine" = "grok" ]; then
     echo "⚡ [Multi-Account Pool] Using Grok CLI (grok-4.7 • xhigh)" >&2
@@ -684,7 +684,7 @@ for run_sh in [
     fi
   fi
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
-    nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ "$pool_engine" = "grok" ] && [ -x "$HOME/.grok/bin/grok" ]; then
     nohup "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
