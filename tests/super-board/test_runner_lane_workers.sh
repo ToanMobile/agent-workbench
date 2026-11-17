@@ -69,8 +69,10 @@ grep -c "dispatch lane=qa" "$TMP/log" | grep -q '^3$' && ok "  … three dispatc
 reset; REVIEW_WORKERS=2; load 2; cards Review 5 6 7
 tick_review; tick_review; tick_review; r=$(review_count)
 [ "$r" = 2 ] && ok "review_workers=2, 3 Review cards: 2 reviewers, the 3rd card waits" || fail "review workers: $r (want 2)"
-grep -q 'LOCK_DIR="${REPO_PATH}/.claude/super-board/inflight/merge.lock"' "$ROOT/.claude/bin/super-board-merge-gate.sh" \
-  && ok "  … the merge gate still serialises behind its merge.lock (reviewers may overlap, merges do not)" || fail "merge gate lost its merge.lock"
+# The real lock lives in the git common dir (#915); the per-checkout LOCK_DIR line is only the fallback, so grepping it proves nothing.
+grep -q 'LOCK_GD=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir' "$ROOT/.claude/bin/super-board-merge-gate.sh" \
+  && grep -q 'then LOCK_DIR="$LOCK_GD/super-board/merge.lock"' "$ROOT/.claude/bin/super-board-merge-gate.sh" \
+  && ok "  … the merge gate serialises behind its merge.lock in the git common dir (reviewers may overlap, merges do not)" || fail "merge gate lost its common-dir merge.lock"
 
 # ── 3. thẻ bị kéo khỏi cột → worker thêm bị giết như zombie, worker còn thẻ ở cột thì sống
 reset; QA_WORKERS=3; load 2; cards QA 1 2 3; tick_qa; tick_qa; tick_qa
