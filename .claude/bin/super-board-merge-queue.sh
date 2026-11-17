@@ -262,6 +262,22 @@ detail_lines() {
 # CARD_RETRY: như RETRY nhưng cho comment trên thẻ; 0 khi lượt trước chưa đọc được thẻ (pending cột 4 = r, CARD_UNREAD=1): thẻ chưa có
 # comment nào, nên lượt route lại vẫn comment trên thẻ (comment trên PR thì không lặp).
 RETRY=0; LABEL_DONE=0; CARD_RETRY=0; CARD_UNREAD=0; CARD_UNKNOWN=0
+# #1235: unverified_edited_first <PR> <head> <detail>: 0 khi detail mang đúng dòng KẾT LUẬN của post-fix-gate "CHƯA XÁC MINH — N file test đã có
+# bị sửa/xoá" (EN: "UNVERIFIED — N existing test files were edited") VÀ đây là lần đầu cho head này. Sổ merge-queue.unverified: "<PR> <head> <n>";
+# head mới đếm lại từ 1; route lại (RETRY=1) không đếm thêm; lần thứ hai cùng head (RETRY=0) trả 1 để đi đường cũ.
+UNVERIFIED_F="$QDIR/merge-queue.unverified"
+unverified_edited_first() {
+  grep -Eq 'CHƯA XÁC MINH — [0-9]+ file test đã có bị sửa|UNVERIFIED — [0-9]+ existing test files? (was|were) edited' <<<"$3" || return 1
+  local n
+  n=$(awk -v p="$1" -v h="$2" '$1 == p && $2 == h {print $3; exit}' "$UNVERIFIED_F" 2>/dev/null || true)
+  if [ "${n:-0}" -ge 1 ]; then
+    [ "$RETRY" -eq 1 ] && [ "$n" -eq 1 ] && return 0
+    [ "$n" -ge 2 ] || { { awk -v p="$1" '$1 != p' "$UNVERIFIED_F" 2>/dev/null || true; echo "$1 $2 2"; } > "$UNVERIFIED_F.tmp" && mv -f "$UNVERIFIED_F.tmp" "$UNVERIFIED_F"; }
+    return 1
+  fi
+  { awk -v p="$1" '$1 != p' "$UNVERIFIED_F" 2>/dev/null || true; echo "$1 $2 1"; } > "$UNVERIFIED_F.tmp" && mv -f "$UNVERIFIED_F.tmp" "$UNVERIFIED_F"
+  return 0
+}
 rebuild_or_rebase() {
   local p="$1" k="$2" kind="$3" why="$4" tag="${5:-red}" did="${6:-verified the merge-queue batch with super-board-merge-train.sh}" ij labs cur rm=() l det
   det=$(detail_lines "$p")
@@ -418,7 +434,18 @@ Did: merged through the merge queue (one verify for the batch)
             det=$(detail_lines "$p")
             # #979: gate-exit-11 mà MỌI lý do là `qa-report: stale` (QA chưa chạy lại trên code cuối, hay report không ghi sha) thì việc cần
             # là QA chạy lại, không phải Build: thẻ Review → QA, không nhãn loop:rebuild-N, không tính vòng rebuild.
-            if [ "$res" = gate-exit-11 ] && grep -q '^qa-report: stale' <<<"$det" && ! grep -E '^(qa-report|ac-check):' <<<"$det" | grep -qv '^qa-report: stale'; then
+            # #1235: verify đỏ chỉ vì CHƯA XÁC MINH (test đã có bị sửa, chưa có audit có phạm vi) không phải đỏ thật: lần đầu cho một head, thẻ về
+            # Review kèm chỉ dẫn audit đúng cách, KHÔNG tăng loop:rebuild-N, KHÔNG Blocked. Lần hai cùng head: đường cũ (rebuild_cap / Blocked).
+            if [ -n "$k" ] && unverified_edited_first "$p" "$head" "$det"; then
+              [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ⏳ unverified · PR #${p} back to Review, no rebuild counted
+Did: the verify found an existing test edited without a cross-review (UNVERIFIED, not red)
+❌ Not done: no scoped Antigravity audit is recorded for head ${head:0:7}
+Next: pm_task_create with project = the review worktree .claude/worktrees/issue-${k}-review (at the PR head), pm_dispatch kind=audit WITHOUT message
+Next: the output must show a Pham vi: line (not Khong ghi pham vi), then pm_verdict kind=audit verdict=pass auditedHead=<sha40>, then the ${LABEL} label again
+blocked-by: agent" || true
+              card_move "$k" Review || ok=1
+              continue_route=0
+            elif [ "$res" = gate-exit-11 ] && grep -q '^qa-report: stale' <<<"$det" && ! grep -E '^(qa-report|ac-check):' <<<"$det" | grep -qv '^qa-report: stale'; then
               [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ stale QA · ${res}
 Did: the merge gate preflight found the newest QA report is not for this head (stale or no sha); no verify ran
 ${det}
