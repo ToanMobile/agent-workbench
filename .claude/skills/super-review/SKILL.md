@@ -109,6 +109,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    - **Code-side new finding** → new `[builder]`-prefixed thread, move card Review → Ready (`loop:rebuild-N`).
    - **Test-side new finding** → new `[qa]`-prefixed thread, move card Review → QA (`loop:rebuild-N`).
    - **Blocker finding (destructive schema, contract, money, auth, live-DB migration) or rebuild cap hit** → full §4 Block template, move card Review → Blocked; a block a person must clear also runs `super-board-needs-you.py mark` (block-template.md → "A person must act"). A *clean* PR that merely touches money, auth or schema is not a finding: run the merge protocol, and the gate's `merge_policy` hands it to a human (exit 7 → 🙋 Blocked).
+   PR size (#1255): a PR over about 400 changed lines (lockfiles, generated files, large fixtures not counted) with no one-line reason for not splitting is a Scope drift / Over-engineering finding (Should fix); it never blocks a merge.
 8. Write the Reviewer report (marker `<!-- super-review:report -->`, ids on every finding) — edit the existing report comment in place, post a new one only on the first review. It is the next re-review's `prior_report`.
 9. Clean up worktree.
 
