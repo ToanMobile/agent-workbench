@@ -211,11 +211,12 @@ lệnh và số dòng vào PROGRESS và file duyệt.
   **M**: 51–400 dòng, HOẶC đường dẫn sản phẩm khớp `universal-agent-devkit/hooks/|universal-agent-devkit/bin/|post-fix-gate|\.claude/bin/`.
   Còn lại **S**.
 - **S**: 1 bên, Claude bối cảnh sạch (Claude lỗi/limit thì OCR thay); không `plan_review`.
-- **M**: 2 bên, Claude bối cảnh sạch + Antigravity `audit` (auditedHead = head); không `plan_review`. Một bên lỗi công cụ thì đi tiếp 1 bên.
-- **L**: Antigravity `plan_review` trước code, rồi 3 bên song song trên head cuối: Claude bối cảnh sạch, Antigravity `audit`
-  (auditedHead = head), OCR (`ocr-review -b … --out …`; endpoint hỏng thì delegate). Grok không còn là bên review (chủ repo
-  ngừng dùng 13/11). Bên dính limit/429/quota/lỗi công cụ (không
-  phải FAIL nội dung): thử lại 1 lần, còn lỗi thì bỏ bên đó và đi tiếp 3→2→1, không dừng task, không ghi BLOCKED vì thiếu
+- **M**: 2 bên, Claude bối cảnh sạch + OCR; không `plan_review`. Một bên lỗi công cụ thì đi tiếp 1 bên.
+- **L**: Antigravity `plan_review` trước code, rồi 2 bên song song trên head cuối: Claude bối cảnh sạch, OCR.
+- **OCR** = `ocr-review -b … --out …`; máy không có endpoint LLM (17/11: LLM hết credit, chủ repo cho chạy delegate toàn bộ) thì
+  helper tự ra spec delegation, đưa spec cho một subagent ngữ cảnh mới, phát hiện của nó là lượt OCR. Từ 17/11 Antigravity
+  không còn là bên review nội dung ở M/L (chủ repo); Grok không còn là bên review (13/11). Bên dính limit/429/quota/lỗi công cụ (không
+  phải FAIL nội dung): thử lại 1 lần, còn lỗi thì bỏ bên đó và đi tiếp 2→1, không dừng task, không ghi BLOCKED vì thiếu
   reviewer; tối thiểu 1 bên PASS thật; ghi bên bị bỏ, lý do và log lỗi.
 - **Leo bậc, không hạ**: reviewer bậc S/M ra P0/P1 ⇒ sửa xong review lại ở bậc kế (S→M→L); không bao giờ hạ bậc giữa chừng.
 - **Mọi bậc giữ nguyên**: test cặp ĐỎ→XANH, gate exit 0, P0/P1 trong code PR đưa vào vẫn chặn (bên FAIL nội dung là finding, không

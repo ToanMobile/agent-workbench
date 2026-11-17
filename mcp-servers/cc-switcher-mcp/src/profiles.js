@@ -62,7 +62,7 @@ export const DEFAULT_PROFILES = [
     index: 4,
     id: 'antigravity_ultra',
     shortLabel: '4. AGY Ultra',
-    name: '4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Argon High)',
+    name: '4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Hydrogen High)',
     vendor: 'google',
     appType: 'gemini',
     // agy chi tach tai khoan qua HOME (khong co bien CONFIG_DIR): ham agy() trong ~/.zshrc dat HOME=homeDir.
@@ -76,7 +76,7 @@ export const DEFAULT_PROFILES = [
     index: 5,
     id: 'antigravity_pro',
     shortLabel: '5. AGY Pro',
-    name: '5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Argon High)',
+    name: '5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Hydrogen High)',
     vendor: 'google',
     appType: 'gemini',
     homeDir: path.join(os.homedir(), '.agy-antigravity_pro'),
@@ -85,18 +85,7 @@ export const DEFAULT_PROFILES = [
     settingsValue: 'antigravity_pro',
   },
   {
-    index: 6,
-    id: 'grok',
-    shortLabel: '6. Grok 4.7',
-    name: '6. Grok CLI — grok-4.7 (xhigh)',
-    vendor: 'xai',
-    appType: 'grokbuild',
-    configDir: path.join(os.homedir(), '.config', 'grok'),
-    settingsKey: 'currentProviderGrokbuild',
-    settingsValue: 'grokbuild-official',
-  },
-  {
-    // Tai khoan Claude them sau cung: giu nguyen so thu tu 1..6 va thu tu xoay vong cua cac tai khoan cu.
+    // Tai khoan Claude them sau cung: giu nguyen so thu tu cua cac tai khoan cu. So 6 (Grok CLI) bo trong tu 17/11 (chu repo go Grok).
     index: 7,
     id: 'finos_lua',
     shortLabel: '7. FinOS Lua',
@@ -110,13 +99,23 @@ export const DEFAULT_PROFILES = [
   },
 ];
 
-/** Id cu -> id moi cua 4 tai khoan da doi ten. Id cu van duoc nhan khi doc (state, ghim account, CLI/API); ghi ra luon la id moi. */
+/** Thu tu du phong khac hang khi tai khoan Claude cham 429 (khong nhay cheo Claude). 17/11 chu repo go Grok: chi con AGY. */
+export const CROSS_VENDOR_ORDER = ['antigravity_ultra', 'antigravity_pro'];
+
+/** Id cu cua 4 tai khoan da doi ten. Id cu van duoc nhan khi doc (state, ghim account, CLI/API); ghi ra luon la id moi. */
 export const LEGACY_ID_ALIASES = {
   finos: 'finos_toan',
   finos_team: 'finos_linh',
   max: 'finos_toan_max',
   antigravity: 'antigravity_ultra',
 };
+
+/** Profile da go (17/11 chu repo go Grok): khoa cua no trong state cu bi bo khi doc, active tro toi no thi ve mac dinh. */
+export const REMOVED_PROFILE_IDS = new Set(['grok']);
+
+function dropRemoved(obj) {
+  return Object.fromEntries(Object.entries(obj).filter(([k]) => !REMOVED_PROFILE_IDS.has(k)));
+}
 
 export function canonicalProfileId(id) {
   return typeof id === 'string' && Object.hasOwn(LEGACY_ID_ALIASES, id) ? LEGACY_ID_ALIASES[id] : id;
@@ -142,7 +141,7 @@ const DEFAULT_POLICY = {
   claudeSwitchCooldownSec: 900,
   // Thoi gian dong bang tai khoan vua dinh Rate Limit 429 (mac dinh 18000s = 5 tieng theo cua so truot cua Claude)
   rateLimitFreezeSec: 18000,
-  // Tu dong uu tien nhay sang provider khac (Antigravity/Grok) neu Claude dang trong vung cooldown
+  // Tu dong uu tien nhay sang provider khac (Antigravity) neu Claude dang trong vung cooldown
   preferCrossVendorOnCooldown: false,
 };
 
@@ -165,16 +164,18 @@ export function loadSwitcherState(stateDir) {
   const dir = resolveStateDir(stateDir);
   const existing = readJsonSafe(stateFilePath(dir), null);
   const ccSettings = readJsonSafe(ccSwitchSettingsPath(dir), {});
-  const initialActive = canonicalProfileId(existing?.activeProfileId || ccSettings?.currentProviderClaude || 'finos_toan');
+  // ca hai nguon (state da luu, settings CC Switch) deu loc profile da go
+  const live = (id) => (REMOVED_PROFILE_IDS.has(id) ? '' : id);
+  const initialActive = canonicalProfileId(live(existing?.activeProfileId) || live(ccSettings?.currentProviderClaude) || 'finos_toan');
 
   return {
     activeProfileId: initialActive,
     lastClaudeSwitchAtMs: existing?.lastClaudeSwitchAtMs || 0,
     lastClaudeRateLimitAtMs: existing?.lastClaudeRateLimitAtMs || 0,
-    frozenUntil: canonicalKeys(existing?.frozenUntil),
-    quotaCache: canonicalKeys(existing?.quotaCache),
+    frozenUntil: dropRemoved(canonicalKeys(existing?.frozenUntil)),
+    quotaCache: dropRemoved(canonicalKeys(existing?.quotaCache)),
     quotaFetchedAtMs: existing?.quotaFetchedAtMs || 0,
-    quotaIssues: canonicalKeys(existing?.quotaIssues), // ly do lan lay quota gan nhat that bai, theo profile
+    quotaIssues: dropRemoved(canonicalKeys(existing?.quotaIssues)), // ly do lan lay quota gan nhat that bai, theo profile
     switchHistory: Array.isArray(existing?.switchHistory) ? existing.switchHistory.slice(-50) : [],
     policy: {
       ...DEFAULT_POLICY,
@@ -242,7 +243,7 @@ export function resolveProfile(target) {
   if (!found) {
     throw new AppError(
       'PROFILE_NOT_FOUND',
-      `Khong tim thay profile "${target}". Chi chap nhan so 1..${DEFAULT_PROFILES.length} hoac id: ${DEFAULT_PROFILES.map((p) => p.id).join(', ')}`,
+      `Khong tim thay profile "${target}". Chi chap nhan so ${DEFAULT_PROFILES.map((p) => p.index).join(', ')} hoac id: ${DEFAULT_PROFILES.map((p) => p.id).join(', ')}`,
     );
   }
   return found;
@@ -385,7 +386,7 @@ export function switchProfile(opts = {}) {
       throw new AppError(
         'CLAUDE_COOLDOWN_ACTIVE',
         `COOLDOWN_ACTIVE: Can nghi an toan them ${remainSec}s (${Math.ceil(remainSec / 60)} phut) truoc khi chuyen sang tai khoan Claude "${profile.name}" de tranh bi Anthropic quet ban.`,
-        { hint: 'Co the chuyen ngay sang Antigravity (4, 5) hoac Grok (6) ma khong can doi.' },
+        { hint: 'Co the chuyen ngay sang Antigravity (4, 5) ma khong can doi.' },
       );
     }
   }
@@ -419,7 +420,7 @@ export function switchProfile(opts = {}) {
 }
 
 /**
- * Xoay vong sang profile kha dung tiep theo theo thu tu 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 1.
+ * Xoay vong sang profile kha dung tiep theo theo thu tu 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 1 (so 6 Grok go 17/11).
  */
 export function rotateNextProfile(opts = {}) {
   const {
@@ -451,11 +452,10 @@ export function rotateNextProfile(opts = {}) {
   const isClaudeInCooldown = prevClaudeEvent > 0 && nowMs - prevClaudeEvent < claudeCooldownMs;
 
   // Tim ung vien khong bi dong bang: neu dang trong Cooldown cua Claude va bat che do uu tien khac hang,
-  // xoay theo dung thu tu chong ban: Grok CLI (6) -> AGY Ultra (4) -> AGY Pro (5)
-  const crossVendorOrder = ['grok', 'antigravity_ultra', 'antigravity_pro'];
+  // xoay theo dung thu tu chong ban: AGY Ultra (4) -> AGY Pro (5)
   let chosen = null;
   if (freshState.policy.preferCrossVendorOnCooldown && isClaudeInCooldown) {
-    for (const candId of crossVendorOrder) {
+    for (const candId of CROSS_VENDOR_ORDER) {
       const candidate = DEFAULT_PROFILES.find((p) => p.id === candId);
       if (!candidate) continue;
       const frozenUntilMs = freshState.frozenUntil[candidate.id] || 0;
@@ -505,7 +505,7 @@ export function rotateNextProfile(opts = {}) {
 
 /**
  * Bao cao tai khoan hien tai cham Rate Limit (429 / Quota Exhausted):
- * Dong bang 5h va de xuat tai khoan du phong khac hang theo thu tu Grok CLI -> AGY Ultra -> AGY Pro (khong nhay cheo Claude).
+ * Dong bang 5h va de xuat tai khoan du phong khac hang theo thu tu AGY Ultra -> AGY Pro (khong nhay cheo Claude).
  */
 export function reportRateLimit(opts = {}) {
   const { stateDir, profileId, nowMs = Date.now(), reason = '429_rate_limit' } = opts;
@@ -520,11 +520,11 @@ export function reportRateLimit(opts = {}) {
   }
   saveSwitcherState(stateDir, state);
 
-  // Neu tai khoan vua cham limit la Claude, uu tien chuyen thang sang Khac Hang (Grok CLI -> AGY Ultra -> AGY Pro)
+  // Neu tai khoan vua cham limit la Claude, uu tien chuyen thang sang Khac Hang (AGY Ultra -> AGY Pro)
   // de tuyet doi khong nhay cheo giua cac tai khoan Claude tren cung Repo.
   let nextCandidate = null;
   if (limitedProfile.vendor === 'anthropic') {
-    for (const candId of ['grok', 'antigravity_ultra', 'antigravity_pro']) {
+    for (const candId of CROSS_VENDOR_ORDER) {
       const cand = DEFAULT_PROFILES.find((p) => p.id === candId);
       if (cand && (state.frozenUntil[cand.id] || 0) <= nowMs) {
         nextCandidate = cand;

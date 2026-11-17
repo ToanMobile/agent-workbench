@@ -28,7 +28,7 @@ function setup() {
 const pin = (p) => JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.local.json'), 'utf8'));
 
 test('id moi, id cu la bi danh, thu muc dang nhap giu nguyen', () => {
-  assert.deepEqual(DEFAULT_PROFILES.map((p) => p.id), ['finos_toan', 'finos_linh', 'finos_toan_max', 'antigravity_ultra', 'antigravity_pro', 'grok', 'finos_lua']);
+  assert.deepEqual(DEFAULT_PROFILES.map((p) => p.id), ['finos_toan', 'finos_linh', 'finos_toan_max', 'antigravity_ultra', 'antigravity_pro', 'finos_lua']);
   assert.deepEqual(LEGACY_ID_ALIASES, RENAMES);
   for (const [old, neu] of Object.entries(RENAMES)) {
     assert.equal(canonicalProfileId(old), neu);
@@ -50,7 +50,7 @@ test('state cu (id cu o activeProfileId, frozenUntil, quotaCache) duoc doc ra ba
     saveSwitcherState(t.stateDir, { activeProfileId: 'finos_team', frozenUntil: { max: 123, grok: 456 }, quotaCache: { finos: { remainingPct: 40 } } });
     const st = loadSwitcherState(t.stateDir);
     assert.equal(st.activeProfileId, 'finos_linh');
-    assert.deepEqual(st.frozenUntil, { finos_toan_max: 123, grok: 456 });
+    assert.deepEqual(st.frozenUntil, { finos_toan_max: 123 }); // 17/11: khoa cua profile da go (grok) bi bo
     assert.deepEqual(Object.keys(st.quotaCache), ['finos_toan']);
   } finally { t.cleanup(); }
 });
@@ -124,5 +124,35 @@ test('migrateIds: settings.local.json hong thi bo qua va bao, khong ghi de', () 
     const res = migrateIds({ stateDir: t.stateDir, repos: [{ name: 'broken', path: p }] });
     assert.equal(res.skipped.length, 1);
     assert.equal(fs.readFileSync(path.join(p, '.claude', 'settings.local.json'), 'utf8'), '{"hooks": {');
+  } finally { t.cleanup(); }
+});
+
+test('17/11 go Grok: state cu con activeProfileId/frozenUntil grok van doc duoc, so 6 va id grok bi tu choi', () => {
+  const t = setup();
+  try {
+    saveSwitcherState(t.stateDir, { activeProfileId: 'grok', frozenUntil: { grok: 456, finos_linh: 9 }, quotaCache: { grok: { remainingPct: 1 } } });
+    const st = loadSwitcherState(t.stateDir);
+    // active la profile da go: khong roi ve DEFAULT_PROFILES[0] mot cach ngam (dong bang nham Claude), ma ve mac dinh tu settings CC Switch
+    assert.equal(st.activeProfileId, 'finos_toan');
+    assert.deepEqual(st.frozenUntil, { finos_linh: 9 });
+    assert.deepEqual(st.quotaCache, {});
+    assert.throws(() => resolveProfile('grok'), (e) => e.code === 'PROFILE_NOT_FOUND');
+    assert.throws(() => resolveProfile(6), (e) => e.code === 'PROFILE_NOT_FOUND' && /1, 2, 3, 4, 5, 7/.test(e.message));
+    assert.equal(resolveProfile(7).id, 'finos_lua');
+  } finally { t.cleanup(); }
+});
+
+test('17/11 go Grok: settings CC Switch con currentProviderClaude grok cung khong thanh active (audit hydrogen 119770ed)', () => {
+  const t = setup();
+  try {
+    fs.mkdirSync(t.stateDir, { recursive: true });
+    fs.writeFileSync(path.join(t.stateDir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'grok' }));
+    assert.equal(loadSwitcherState(t.stateDir).activeProfileId, 'finos_toan');
+    // id da go o ca hai nguon: van ve mac dinh
+    saveSwitcherState(t.stateDir, { activeProfileId: 'grok' });
+    assert.equal(loadSwitcherState(t.stateDir).activeProfileId, 'finos_toan');
+    // state da luu la id da go, settings giu id cu hop le: roi xuong settings va van chuan hoa bi danh (max -> finos_toan_max)
+    fs.writeFileSync(path.join(t.stateDir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'max' }));
+    assert.equal(loadSwitcherState(t.stateDir).activeProfileId, 'finos_toan_max');
   } finally { t.cleanup(); }
 });

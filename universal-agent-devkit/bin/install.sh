@@ -34,8 +34,7 @@ show_help() {
   cat << HELP_EOF
 Universal Multi-Agent & Multi-Model DevKit Installer
 
-Supports Claude Code, OpenAI Codex, Gemini CLI, Cursor and Grok from one toolkit.
-Grok reads the same AGENTS.md. It does not get its own files or directory.
+Supports Claude Code, OpenAI Codex, Gemini CLI and Cursor from one toolkit.
 
 Tool configs the installer can write (only where that tool itself requires a path):
   - Claude Code (Anthropic)
@@ -53,7 +52,7 @@ Options:
                           (default: ask; with -y: detected from the domain)
   -a, --agents <list>     Comma-separated agents or 'all'
                           Supported: claude, codex, gemini, cursor, all
-                          (\`grok\` writes nothing of its own — same AGENTS.md)
+                          (\`agents-md\`: AGENTS.md only, no tool directory)
   -m, --mode <mode>       Install mode: symlink | copy (default: symlink)
                           symlink = absolute links into this DevKit checkout (single machine);
                           copy    = real files (use this if the project is committed for a team/CI)
@@ -169,7 +168,7 @@ if [ "$can_ask" = 0 ]; then
     { grep -q "agent_bridge" "$TARGET_DIR/.cursor/hooks.json" 2>/dev/null || [ -f "$TARGET_DIR/.cursor/rules/universal-agent-devkit.mdc" ]; } && kept="$kept,cursor"
     # AGENTS.md alone (no per-tool directory) must not grow into every tool on re-init.
     if [ -z "$kept" ] && grep -q "universal-agent-devkit" "$TARGET_DIR/AGENTS.md" 2>/dev/null; then
-      kept="grok"
+      kept="agents-md"
     fi
     [ -n "$kept" ] && AGENTS="${kept#,}" && echo "  - Re-init: keeping the agents already set up: $AGENTS (-a to change)"
   fi
@@ -204,8 +203,7 @@ if [ "$AGENTS" = "ask" ]; then
   echo "  [2] 🧠 OpenAI Codex         (AGENTS.md SSOT)"
   echo "  [3] ✨ Google Gemini / AGY  (AGENTS.md, .agents/skills, mcp_config.json)"
   echo "  [4] ⚡ Cursor IDE           (AGENTS.md SSOT)"
-  echo "  [A] 🌟 All Agents           ($(L "Cấu hình toàn bộ, kể cả Grok" "configure every tool, Grok included"))"
-  echo "      Grok dùng chung AGENTS.md — không có thư mục riêng, và nằm trong mục A."
+  echo "  [A] 🌟 All Agents           ($(L "Cấu hình toàn bộ" "configure every tool"))"
   echo "-----------------------------------------------------------------"
   user_choice="A"
   if [ -t 0 ]; then
@@ -228,7 +226,7 @@ if [ "$AGENTS" = "ask" ]; then
         2|codex|chatgpt|openai) selected_agents+=("codex") ;;
         3|gemini|antigravity) selected_agents+=("gemini") ;;
         4|cursor) selected_agents+=("cursor") ;;
-        grok|xai) selected_agents+=("grok") ;;
+        agents-md) selected_agents+=("agents-md") ;;
       esac
     done
     if [ ${#selected_agents[@]} -eq 0 ]; then
@@ -489,9 +487,9 @@ configure_agent() {
       echo "  ⚡ [Cursor IDE]"
       bash "$DEVKIT_ROOT/adapters/setup_cursor.sh" "$TARGET_DIR" "$MODE" "$LANGUAGE" "$DOMAIN"
       ;;
-    grok|xai)
-      # Same instruction file as every other agent. No .grok/ directory.
-      echo "  🪐 [Grok] $(L "dùng chung AGENTS.md — không ghi file hay thư mục riêng" "shares AGENTS.md — no files or directory of its own")"
+    agents-md)
+      # Chỉ AGENTS.md (17/11 chủ repo gỡ Grok; trước đây đường này mang tên grok). Không thư mục riêng của công cụ nào.
+      echo "  📄 [AGENTS.md] $(L "chỉ ghi AGENTS.md — không thư mục riêng" "AGENTS.md only — no tool directory")"
       if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
         devkit_install_agents_md "$TARGET_DIR" "$MODE" CLAUDE.md GEMINI.md Agent.md
       fi
@@ -501,7 +499,6 @@ configure_agent() {
       configure_agent "codex"
       configure_agent "gemini"
       configure_agent "cursor"
-      configure_agent "grok"
       ;;
     *)
       echo "  ⚠️ Unknown agent: $ag (skipping)"
@@ -628,7 +625,7 @@ fi
 #     Cursor): hooks/agent_bridge.sh + the bridged hooks go to .agents/hooks/, and
 #     scripts/context/agent_hooks.py registers them in .codex/hooks.json, .gemini/settings.json
 #     and .cursor/hooks.json (only DevKit-owned entries are ever touched).
-#     Grok is not here: it reads AGENTS.md and has no directory of its own.
+#     agents-md is not here: AGENTS.md only, no directory of its own.
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   bridge_platforms=""
   for agent_item in "${AGENT_LIST[@]}"; do
