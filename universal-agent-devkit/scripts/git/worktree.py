@@ -25,7 +25,7 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py list
   worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
 
-add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (15) free (no count of worktrees, #607); under
+add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (5) free (no count of worktrees, #607); under
 WORKTREE_DISK_WARN_GIB (25) it runs gc first and warns, under WORKTREE_CACHE_PRUNE_GIB (25) it deletes rebuildable build caches (0 turns each off). Then `git worktree add` on <branch> when one is named (created from --base or HEAD when it
 does not exist); with none, a DETACHED worktree at --base or HEAD — the project keeps one
 branch, and the work comes back with `diff | git apply --3way`. `--lane=build|qa|review` (a super-board lane, agent-workbench#93; only
@@ -789,7 +789,7 @@ def _env_limit(name, default):
 # W1 R5c (docs/workflow-improvements.md I.0): `add` runs `gc` and warns under the warning line and creates nothing under the floor.
 # 0 turns each off. SessionStart (hooks/session_context.sh) reads the same numbers. #607: no count of worktrees any more.
 DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 25.0)
-DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 15.0)
+DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 5.0)
 # 10/11 (chủ repo): dưới CACHE_PRUNE_GIB, `add` xoá cache build dựng lại được của máy trước khi tạo worktree (Gradle build-cache 20-30 GB
 # làm đĩa còn < 5 GB, runner nghẽn). Chỉ cache mà công cụ tự dựng lại khi thiếu; không đụng dependency đã tải (~/.gradle/caches/modules-2),
 # không đụng /private/tmp (scratchpad của phiên Claude đang chạy nằm ở đó), không đụng ~/.cache/uv (môi trường chạy của MCP server `uvx`
