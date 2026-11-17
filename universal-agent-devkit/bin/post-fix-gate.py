@@ -8478,9 +8478,25 @@ def main():
         """D1(a): CHỈ lượt có suite FAIL / TIMEOUT (chỗ hổng: budget_pass.json bị bỏ khi có FAIL; lượt không đỏ đã có budget record, biên nhận,
         rerun_skip, khoá #645). Ghi PASS chạy THẬT (không chập chờn, không VACUOUS, không hạ tầng, không PASS dùng lại) dưới khoá cùng cây, chỉ
         khi cả cây không đổi trong lúc chạy và input của khoá còn y nguyên (record_run), rồi đánh dấu cây cho lượt sau. FAIL / TIMEOUT không
-        ghi ở đây (void và F1 của record_keyed lo như cũ)."""
+        ghi ở đây (F1 của record_keyed lo như cũ; void: record_keyed khi có sổ khoá sc, còn lượt Stop sc=None thì ngay dưới, #1008)."""
         st = SAME_ST[0]
         mod = suite_cache_mod()
+        if st is not None:
+            # #1008: lượt kiểu Stop (sc=None) không qua void_due của record_keyed khi suite PASS chập chờn (status PASS nên không có "bad", không dựng sổ
+            # khoá), và FAIL ngoài mode full chỉ ghi khoá chính xác: PASS cùng cây cũ của suite đó vẫn HIT ở lượt cùng cây khác khoá (HEAD / --since / file)
+            # và che lỗi tới 1 h. Suite chạy THẬT mà TIMEOUT / hạ tầng / chập chờn, hoặc FAIL mà khoá cả cây của nó không giữ: void PASS cũ của id.
+            for x in regression_tests:
+                if id(x) not in really_ran:
+                    continue
+                stx = x.get("status")
+                same_tree_key_of(st, x)   # SAME_TREES[id(x)] (khoá cả cây) cho blocked() dưới
+                held = stx == "FAIL" and not x.get("flaky") and x.get("label") != "VACUOUS" and bool(
+                    SAME_TREES.get(id(x)) and st.blocked(SAME_TREES[id(x)], x.get("id")))
+                if (stx in ("FAIL", "TIMEOUT") or x.get("infra") or x.get("infra_retry") or x.get("flaky")) and not held:
+                    try:
+                        st.void(x.get("id"))
+                    except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu
+                        log_warn(f"suite_cache same-tree void {x.get('id')}: {e!r}")
         if st is None or mod is None or not any(x.get("status") in ("FAIL", "TIMEOUT") and id(x) in really_ran for x in regression_tests):
             return
         todo = [t for t in regression_tests if id(t) in really_ran and id(t) not in SAME_HIT
