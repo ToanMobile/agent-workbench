@@ -11,6 +11,7 @@
   3. Nguy cơ bug mới: Phép so cũ–mới đã chạy (lệnh, số đầu vào, số ca đổi kết quả) hoặc `chưa so — <lý do>`.
   4. An toàn mã nguồn: Quét secret, placeholder; OCR chỉ ghi khi đã chạy, không thì `OCR: không chạy — <lý do>`.
   5. Còn hở / chưa kiểm: Liệt kê, hoặc `không có`.
+- **Văn phong (mọi text DevKit tạo ra: báo cáo, comment, PR, ticket)**: ngắn gọn, đơn giản, tự nhiên như người nói với đồng đội; câu ngắn, từ thông dụng, một ý một dòng, kết quả trước lý do sau, ai đọc cũng hiểu. Không dán log (trích tối đa 3 dòng), không dòng nghi thức rỗng. Báo cáo 5 mục vẫn đủ 5 mục (hook đọc) nhưng mỗi mục một câu.
 - **Trạng thái mở đầu**: Sử dụng `XONG` / `CHƯA XONG` / `CHỜ DUYỆT`.
 
 ## 3. Git Commit & Pull Request
