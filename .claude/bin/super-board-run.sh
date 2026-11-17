@@ -1505,6 +1505,12 @@ merge_queue_due() {
   return 0
 }
 
+issue_pr_head() {
+  # #1226: head sha of the open PR for issue $1 (branch issue-<N>-…); empty when unreadable or absent (callers then keep the old behaviour).
+  python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid" 2>/dev/null \
+    | jq -r --arg p "issue-$1-" '[.[] | select(.headRefName | startswith($p))][0].headRefOid // empty' 2>/dev/null || true
+}
+
 review_approved_head() {
   # $1 = issue. Thẻ Review đã được duyệt đúng head PR hiện tại (#227): in "<PR> <sha>" và trả 0, để lượt này chỉ chạy lại merge gate
   # (exit 4/conflict/not mergeable không phải lỗi code, review lại tốn 15-30 phút). Duyệt = comment `approved-head:<sha>` của người
@@ -2486,7 +2492,7 @@ block_noop_workers() {
   # Expensive tick, after fetch_project_items: judge the workers queued by note_worker_end. Sets NOOP_MOVED=1 when a card was moved.
   local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
   local entry issue lane from c0 col count f now n item_id title wlog last tag human_line
-  local wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait stall_why
+  local whead wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait stall_why
   NOOP_CHECK=""
   for entry in $pending; do
     wlog=""
@@ -2519,8 +2525,12 @@ EOF
         now=$(date +%s)
         mkdir -p "$INFLIGHT_DIR/review-stall" 2>/dev/null || true
         wfile="$INFLIGHT_DIR/review-stall/$issue"
+        # #1226: a new PR head since the latest counted turn is progress: that card's stall ledger starts over. Unreadable head: no reset.
+        whead=$(issue_pr_head "$issue" 2>/dev/null || true)
+        if [ -n "$whead" ] && [ -s "$wfile" ] && [ "$(tail -n 1 "$wfile" | awk '{print $2}')" != "$whead" ] \
+           && [ -n "$(tail -n 1 "$wfile" | awk '{print $2}')" ]; then rm -f "$wfile" 2>/dev/null || true; fi
         wn=0
-        if { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } 2>/dev/null > "$wfile.tmp" \
+        if { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now${whead:+ $whead}"; } 2>/dev/null > "$wfile.tmp" \
           && mv "$wfile.tmp" "$wfile" 2>/dev/null; then
           wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ' || true)
         fi
