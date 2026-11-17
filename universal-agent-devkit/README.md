@@ -629,7 +629,7 @@ Run them in this order — **plan-tests → review-code → check → done**:
 
 ## 🌐 Universal Multi-Agent Matrix
 
-The DevKit natively synchronizes with the 5 core AI coding ecosystems using `AGENTS.md` as the universal single source of truth:
+The DevKit natively synchronizes with the 4 core AI coding ecosystems using `AGENTS.md` as the universal single source of truth:
 
 | Platform / IDE | Configuration & Integration | Activated Capabilities | Status |
 |---|---|---|:---:|

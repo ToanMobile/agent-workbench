@@ -628,7 +628,7 @@ Chạy theo thứ tự — **plan-tests → review-code → check → done**:
 
 ## 🌐 Universal Multi-Agent Matrix
 
-DevKit tự động đồng bộ cấu hình tương thích cho 5 hệ sinh thái agent cốt lõi với `AGENTS.md` làm Single Source of Truth:
+DevKit tự động đồng bộ cấu hình tương thích cho 4 hệ sinh thái agent cốt lõi với `AGENTS.md` làm Single Source of Truth:
 
 | Nền tảng / IDE | Cấu Hình & Tích Hợp | Tính Năng Được Kích Hoạt | Trạng Thái |
 |---|---|---|:---:|
