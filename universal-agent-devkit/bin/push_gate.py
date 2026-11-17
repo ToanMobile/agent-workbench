@@ -71,7 +71,8 @@ INTEGRATE = ("push lên trunk / release/* chỉ qua `agent-kit integrate` (đi�
              "Repo đi PR: push nhánh PR bằng tên (`git push origin <nhánh>`), merge gate lo phần còn lại")
 APPROVED = "Test-approved-by:"
 # 13/11 (chủ repo bỏ Grok): chỉ reviewer antigravity duyệt test sửa; chữ trong trailer phải khớp audit_reviewer().
-APPROVED_VALUE = re.compile(r"(antigravity)\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
+# #1258: `ocr-delegate <task-id>` = an OpenCodeReview delegation-mode review sealed by verdict-seal-audit (the id only points at the seal).
+APPROVED_VALUE = re.compile(r"(antigravity|ocr-delegate)\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
 HEX_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
@@ -864,6 +865,26 @@ def _repo_tasks(top, task_id=None, any_project=False):
         yield task
 
 
+def approval_head(top, word, ident):
+    """The reviewed commit a `Test-approved-by: <word> <ident>` trailer points at, or None. antigravity: the PM record's auditedHead.
+    ocr-delegate (#1258, kill switch DEVKIT_OCR_CROSS_REVIEW=0): the head of the one valid ocr-delegate seal signed for task `ident`
+    (verdict_seal.ocr_delegate_head: Ed25519 signature of the owner's key, so seal mode must be on; an agent that edits the report
+    or the seal file gets nothing) whose SIGNED base equals merge-base(trunk, head), as sealed_scope demands for the other seal.
+    Threat model: the seal proves a report passed the machine checks (verdict-seal-audit verify_ocr_report: head, every edited file
+    reviewed, verbatim citations at that head, no blocker/major, not older than the head commit) and was not hand-edited; it does
+    NOT prove the reviewer was independent of the author. That is process trust (a fresh reviewer session; the sealing command
+    refuses the author's own session label), and the residual risk is an author who writes a truthful-looking report itself."""
+    if word != "ocr-delegate":
+        return audited_head(top, ident)
+    lib = _seal_lib()
+    payload = lib.ocr_delegate_head(top, ident, _seal_fixture(top)) if lib and os.environ.get("DEVKIT_OCR_CROSS_REVIEW") != "0" else None
+    trunk = _trunk_ref(top) if payload else None
+    if not trunk:
+        return None
+    rc, mb = git(top, "merge-base", trunk, payload["head"])
+    return payload["head"] if rc == 0 and mb.strip() == payload["base"] else None
+
+
 def approved(top, rng):
     """(True, note) when a commit of rng ends with the trailer `Test-approved-by: antigravity <task-id>` (git's own trailer
     parsing: the last paragraph, line-anchored) and antigravity-pm recorded an audit pass for that task (audit_record) whose
@@ -888,30 +909,36 @@ def approved(top, rng):
             whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task`)")
             continue
         word, task_id = m.group(1), m.group(2)
-        # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
-        # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
-        if pm_home_overridden() and not pm_home_test_fixture():
-            whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
-            continue
-        ok, why = audit_record(top, task_id)
-        if not ok:
-            whys.append(why)
-            continue
-        # Đợt 2 lane A: chữ reviewer của trailer phải đúng reviewer PM đã ghi (audit_reviewer).
-        reviewer = audit_reviewer(top, task_id, legacy=True)
-        if reviewer != word:
-            whys.append(f"{APPROVED} {word} {task_id}: biên bản PM ghi reviewer {reviewer or 'không xác định'}, khác `{word}`")
-            continue
-        # Review cuối F-1: luật H4 cho mọi đường gọi (fallback push, _covered, since_test_weakened), không chỉ _trailer_cross_review.
-        if reviewer in session_agents():
-            whys.append(f"{APPROVED} {word} {task_id}: reviewer {reviewer} thuộc danh tính phiên (tự duyệt)")
-            continue
-        # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
-        # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
-        # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.
-        # ponytail: merge main vào nhánh sau audit đổi cây đầu range → push cần audit lại; merge gate (scratch) không bị ảnh hưởng
-        # vì nó duyệt theo blob từng file ở auditedHead (post-fix-gate _trailer_cross_review). Nới khi việc audit lại thành phiền.
-        head = audited_head(top, task_id)
+        if word == "ocr-delegate":   # #1258: head from the sealed report (approval_head); the tree rule below is the same
+            head = approval_head(top, word, task_id)
+            if not head:
+                whys.append(f"{APPROVED} {word} {task_id}: no valid sealed ocr-delegate record for this task (seal mode off, tampered, base moved or kill switch)")
+                continue
+        else:
+            # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
+            # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
+            if pm_home_overridden() and not pm_home_test_fixture():
+                whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
+                continue
+            ok, why = audit_record(top, task_id)
+            if not ok:
+                whys.append(why)
+                continue
+            # Đợt 2 lane A: chữ reviewer của trailer phải đúng reviewer PM đã ghi (audit_reviewer).
+            reviewer = audit_reviewer(top, task_id, legacy=True)
+            if reviewer != word:
+                whys.append(f"{APPROVED} {word} {task_id}: biên bản PM ghi reviewer {reviewer or 'không xác định'}, khác `{word}`")
+                continue
+            # Review cuối F-1: luật H4 cho mọi đường gọi (fallback push, _covered, since_test_weakened), không chỉ _trailer_cross_review.
+            if reviewer in session_agents():
+                whys.append(f"{APPROVED} {word} {task_id}: reviewer {reviewer} thuộc danh tính phiên (tự duyệt)")
+                continue
+            # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
+            # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
+            # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.
+            # ponytail: merge main vào nhánh sau audit đổi cây đầu range → push cần audit lại; merge gate (scratch) không bị ảnh hưởng
+            # vì nó duyệt theo blob từng file ở auditedHead (post-fix-gate _trailer_cross_review). Nới khi việc audit lại thành phiền.
+            head = audited_head(top, task_id)
         if tip is None:
             rc_tip, tip_out = git(top, "rev-list", "-1", rng)
             tip = tip_out.strip() if rc_tip == 0 else ""
@@ -921,7 +948,7 @@ def approved(top, rng):
         lows = range_lower_bounds(top, rng) if head else None
         after = bool(lows) and all(head_after(top, low, head) for low in lows)
         if len(got) == 3 and len(set(got)) == 1 and after:
-            return True, f"{APPROVED} {word} {task_id} (antigravity-pm audit pass)"
+            return True, f"{APPROVED} {word} {task_id} ({'sealed ocr-delegate review' if word == 'ocr-delegate' else 'antigravity-pm audit pass'})"
         whys.append(f"{APPROVED} {word} {task_id}: " + (
             "biên bản audit không ghi `auditedHead: <sha>` (hoặc sha không có trong repo)" if not head else
             f"auditedHead {head[:10]} không nằm sau mốc dưới của range (audit một cây cũ trước base): cần audit lại" if not after else

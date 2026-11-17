@@ -52,6 +52,13 @@ Daily use (agents): after an Antigravity audit pass on a PR head, run
 `python3 <kit>/bin/verdict_seal.py request --repo . --head <sha40>` (`<kit>` = `universal-agent-devkit` here, `.agents/devkit` in app repos). The seal lands in
 `~/.antigravity-pm/seals/<head>.json`. Gates read it from there.
 
+OpenCodeReview delegation review (#1258, second reviewer, `DEVKIT_OCR_CROSS_REVIEW=0` turns it off): a fresh reviewer session writes a
+report (auditedHead, verdict, reviewer, reviewed_at, files_reviewed, citations and findings with file:line + verbatim snippet), then
+`agent-kit approve-tests --ocr-delegate <report.json> <task-id>` has the SAME entry verify it and sign reviewer `ocr-delegate` into
+`seals/ocr-delegate/<head>.json`; the gate accepts the trailer `Test-approved-by: ocr-delegate <task-id>`. It needs seal mode on and the
+updated `verdict-seal-audit` re-installed (`sudo install -o root -g wheel -m 755 "$KIT/libexec/verdict-seal-audit" /private/etc/devkit/libexec/`).
+The seal proves the machine checks passed and the report was not hand-edited, not that the reviewer is independent (process trust).
+
 Emergency off switch: `sudo rm /private/etc/devkit/verdict-seal.pub`. No environment variable can turn seal mode off.
 
 Known limits:

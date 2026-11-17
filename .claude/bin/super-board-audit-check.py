@@ -194,6 +194,13 @@ def chain_audit(sha, base, top=None):
         if gate is None:
             print("audit-check: --chain-audit cannot check (push_gate.py of the kit not found next to this script)", file=sys.stderr)
             return None
+        # #1258: ocr-delegate (OpenCodeReview, delegation mode) là người duyệt chéo thứ hai: một trailer `Test-approved-by: ocr-delegate
+        # <task-id>` trong base..sha mà push_gate.approved nhận (biên bản có seal ký, đúng head, phủ mọi file sửa) đủ, không cần biên bản
+        # PM. Không nhận → rơi xuống đường PM bên dưới như cũ.
+        log = subprocess.run(["git", "-C", top, "log", "--format=%H", "-E", "--grep=^Test-approved-by:[[:space:]]*ocr-delegate[[:space:]]",
+                              f"{base}..{sha}"], capture_output=True, text=True, timeout=60)
+        if log.returncode == 0 and any(gate.approved(top, f"{c}^!")[0] for c in log.stdout.split()):
+            return True
         # #1000 mục 4: pm home lạ không phải fixture test -> audited_heads trả [] như "không có audit" -> False (đường lỏng nhất: biên
         # nhận cây bỏ verify). PR có sửa test mà biên bản không đáng tin = không kiểm được, không phải "không có".
         overridden, fixture = getattr(gate, "pm_home_overridden", None), getattr(gate, "pm_home_test_fixture", None)

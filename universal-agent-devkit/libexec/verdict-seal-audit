@@ -12,6 +12,7 @@ ONLY as the uid _devkitseal through sudoers (`sudo -n -u _devkitseal …`, env_r
 Paths below are fixed. The SEAL_TEST_* overrides exist for the kit's own tests; they cannot mint a trusted seal because the
 trusted key is only readable by the signer running as _devkitseal (an agent running this file as itself gets no key).
 """
+import calendar
 import datetime
 import fcntl
 import hashlib
@@ -23,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 
 LIBEXEC = "/private/etc/devkit/libexec"   # root-owned chain on macOS (Homebrew owns /usr/local on Intel: review P3)
@@ -103,13 +105,72 @@ def parse_verdict(out):
     return _vf(obj)
 
 
+def verify_ocr_report(clone, text, head, edited):
+    """#1258: machine-verify the report of an OpenCodeReview delegation-mode review (a reviewer agent that read the diff following
+    `ocr delegate preview/rule`; ocr stores no session for it) against the clone, and return the {verdict, findings} to seal. Dies
+    (nothing signed) unless: auditedHead == head; verdict pass; reviewer named; `reviewed_at` (UTC Z) not before the head commit;
+    `files_reviewed` holds every edited path (computed above, not by the caller); no finding of severity blocker/major (a severity
+    outside blocker|major|minor|nit also refuses); every `citations` / `findings` item {file, line, snippet} names a line that exists
+    VERBATIM (trimmed) at head, and every edited file still present at head is cited at least once. Proves the reviewer saw the
+    code at that head, nothing more: that the reviewer is a different, independent session than the author is process trust (the
+    caller refuses a reviewer label equal to its own session identity), not cryptography; the seal only stops hand-edited records."""
+    def bad(why):
+        die(f"ocr-delegate report refused: {why}")
+    try:
+        rep = json.loads(text)
+    except ValueError:
+        bad("not JSON")
+    if not isinstance(rep, dict) or rep.get("auditedHead") != head:
+        bad("auditedHead is not the head under review")
+    if rep.get("verdict") != "pass":
+        bad("verdict is not pass")
+    if not isinstance(rep.get("reviewer"), str) or not rep["reviewer"].strip():
+        bad("no reviewer")
+    files, cites, finds = rep.get("files_reviewed"), rep.get("citations"), rep.get("findings")
+    if not (isinstance(files, list) and all(isinstance(f, str) for f in files) and isinstance(cites, list) and isinstance(finds, list)):
+        bad("files_reviewed / citations / findings have the wrong shape")
+    if [e for e in edited if e not in files]:
+        bad(f"edited files not reviewed: {[e for e in edited if e not in files][:3]}")
+    try:
+        at = calendar.timegm(time.strptime(rep["reviewed_at"], "%Y-%m-%dT%H:%M:%SZ"))
+    except (KeyError, ValueError, TypeError):
+        bad("reviewed_at is missing or not YYYY-MM-DDTHH:MM:SSZ")
+    if at < int(git(clone, "show", "-s", "--format=%ct", head)):
+        bad("report is older than the head commit")
+    cited = set()
+    for item in cites + finds:
+        if not isinstance(item, dict) or not isinstance(item.get("file"), str) or not isinstance(item.get("snippet"), str) \
+                or not isinstance(item.get("line"), int) or isinstance(item.get("line"), bool) or item["line"] < 1 \
+                or len(item["snippet"].strip()) < 6:
+            bad("a citation or finding lacks file / line / snippet (at least 6 chars)")
+        if item in finds and item.get("severity") not in ("blocker", "major", "minor", "nit"):
+            bad("a finding has no valid severity")
+        if item in finds and item["severity"] in ("blocker", "major"):
+            bad(f"open {item['severity']} finding at {item['file']}:{item['line']}")
+        blob = subprocess.run([GIT, "-C", clone, "show", f"{head}:{item['file']}"], capture_output=True, text=True, errors="replace",
+                              timeout=60, env={"PATH": "/usr/bin:/bin", "HOME": clone, "GIT_CONFIG_NOSYSTEM": "1"})
+        lines = blob.stdout.split("\n") if blob.returncode == 0 else []
+        if item["line"] > len(lines) or lines[item["line"] - 1].strip() != item["snippet"].strip():
+            bad(f"{item['file']}:{item['line']} does not hold the cited snippet at the head")
+        cited.add(item["file"])
+    live = [e for e in edited if git(clone, "rev-parse", "--verify", "-q", f"{head}:{e}", check=False)]
+    if [e for e in live if e not in cited]:
+        bad(f"edited files with no verified citation: {[e for e in live if e not in cited][:3]}")
+    return {"verdict": "pass", "findings": [f"{f['file']}:{f['line']} {f['severity']}: {str(f.get('note', ''))[:200]}" for f in finds][:50]}
+
+
 def main(argv):
+    ocr_text, task = None, None                       # #1258: `--ocr-report - --task <id>`: the report on stdin instead of running agy
+    if len(argv) == 8 and argv[4] == "--ocr-report" and argv[5] == "-" and argv[6] == "--task":
+        ocr_text, task, argv = sys.stdin.read(1_000_000), argv[7], argv[:4]
+        if os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0" or not task:
+            die("ocr-delegate seal is off or has no --task", 2)
     if len(argv) != 4 or argv[0] != "--repo" or argv[2] != "--head":
-        die("usage: verdict-seal-audit --repo <path> --head <sha40>", 2)
+        die("usage: verdict-seal-audit --repo <path> --head <sha40> [--ocr-report - --task <id>]", 2)
     repo, head = os.path.realpath(argv[1]), argv[3]
     if len(head) != 40 or any(c not in "0123456789abcdef" for c in head):
         die("--head must be a sha40", 2)
-    if "SEAL_TEST_AGY" not in _TEST:
+    if "SEAL_TEST_AGY" not in _TEST and ocr_text is None:
         cs = subprocess.run(["/usr/bin/codesign", "-v", f"-R={CODESIGN_REQ}", AGY], capture_output=True, text=True, timeout=60)
         if cs.returncode != 0:
             die(f"agy at {AGY} failed the codesign check: {cs.stderr.strip()[-300:]}")
@@ -157,6 +218,7 @@ def main(argv):
                     edited.add(raw[i + 1])
                 i += 2
         edited = sorted(edited)
+        ocr_result = verify_ocr_report(clone, ocr_text, head, edited) if ocr_text is not None else None   # dies unless it holds
         # Review P1: agy never runs in a checkout. A checkout of the agent's head would hand agy the agent's project config
         # (.gemini/settings.json MCP servers or hooks, AGENTS.md/GEMINI.md, .agents workflows), and code agy ran from it would
         # run as _devkitseal, the uid that can run the signer. agy gets a review dir with data only: the diff, name-status, and
@@ -236,6 +298,12 @@ def main(argv):
         record_path = os.path.join(ledger_dir, hashlib.sha256(f"content\0{base}\0{tree}".encode()).hexdigest() + ".json")
         counters_path = os.path.join(ledger_dir, "attempts.json")
         earlier = read_json(record_path)
+        if ocr_result is not None:
+            # #1258: an ocr-delegate pass never enters the ledger (a later agy request must not inherit it as its own verdict), and
+            # a content the ledger already failed stays failed.
+            if earlier is not None and earlier.get("verdict") != "pass":
+                die("this content already has a failed verdict in the ledger: nothing signed")
+            earlier = None
         if earlier is not None:
             if earlier.get("verdict") not in ("pass", "fail") or not isinstance(earlier.get("attempts"), int) \
                     or not isinstance(earlier.get("findings"), list):
@@ -251,25 +319,31 @@ def main(argv):
                 counters[c] = counters.get(c, 0) + 1
             attempts = max((counters[c] for c in ckeys), default=1)
             write_json(counters_path, counters)          # reserved before agy runs
-            # agy needs _devkitseal's login keychain unlocked (empty password, setup doc); no GUI session under sudo.
-            subprocess.run(["/usr/bin/security", "unlock-keychain", "-p", "",
-                            os.path.join(SEAL_HOME, "Library/Keychains/login.keychain-db")], capture_output=True,
-                           timeout=30, env=CHILD_ENV)
-            run = subprocess.run([AGY, "--print", PROMPT, "--output-format", "json", "--json-schema",
-                                  json.dumps(SCHEMA), "--disable-slash-commands", "--sandbox"],
-                                 cwd=review, capture_output=True, text=True, timeout=AGY_TIMEOUT, env=CHILD_ENV)
-            if run.returncode != 0:
-                die(f"agy exit {run.returncode}: {run.stderr.strip()[-500:]}")
-            result = parse_verdict(run.stdout)
-            if result is None:
-                die("agy output is not a {verdict, findings} JSON: nothing signed")
-            write_json(record_path, {"verdict": result["verdict"], "findings": result["findings"][:50], "head": head,
-                                     "attempts": attempts,
-                                     "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")})
-        payload = json.dumps({"v": 1, "head": head, "tree": tree, "base": base, "edited": edited, "attempts": attempts,
-                              "verdict": result["verdict"], "findings": result["findings"][:50],
-                              "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-                              "nonce": secrets.token_hex(16)}, sort_keys=True, separators=(",", ":"))
+            if ocr_result is None:
+                # agy needs _devkitseal's login keychain unlocked (empty password, setup doc); no GUI session under sudo.
+                subprocess.run(["/usr/bin/security", "unlock-keychain", "-p", "",
+                                os.path.join(SEAL_HOME, "Library/Keychains/login.keychain-db")], capture_output=True,
+                               timeout=30, env=CHILD_ENV)
+                run = subprocess.run([AGY, "--print", PROMPT, "--output-format", "json", "--json-schema",
+                                      json.dumps(SCHEMA), "--disable-slash-commands", "--sandbox"],
+                                     cwd=review, capture_output=True, text=True, timeout=AGY_TIMEOUT, env=CHILD_ENV)
+                if run.returncode != 0:
+                    die(f"agy exit {run.returncode}: {run.stderr.strip()[-500:]}")
+                result = parse_verdict(run.stdout)
+                if result is None:
+                    die("agy output is not a {verdict, findings} JSON: nothing signed")
+            else:
+                result = ocr_result
+            if ocr_result is None:
+                write_json(record_path, {"verdict": result["verdict"], "findings": result["findings"][:50], "head": head,
+                                         "attempts": attempts,
+                                         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")})
+        body = {"v": 1, "head": head, "tree": tree, "base": base, "edited": edited, "attempts": attempts,
+                "verdict": result["verdict"], "findings": result["findings"][:50],
+                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), "nonce": secrets.token_hex(16)}
+        if ocr_result is not None:
+            body.update(reviewer="ocr-delegate", task_id=task)   # signed: verdict_seal.ocr_delegate_head finds the seal by task id
+        payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
         sig = subprocess.run([SIGNER], input=payload, capture_output=True, text=True, timeout=60, env=CHILD_ENV)
         if sig.returncode != 0 or not sig.stdout.strip():
             die(f"signer exit {sig.returncode}: {sig.stderr.strip()[-300:]}")
