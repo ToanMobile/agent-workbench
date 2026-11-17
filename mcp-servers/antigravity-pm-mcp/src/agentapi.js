@@ -18,7 +18,9 @@ import { ENV_PROJECT_ID, resolveProject } from './projects.js';
 import { globalConfigPath } from './config.js';
 
 export const TIERS = ['flash_lite', 'flash', 'pro'];
+// 17/11 chu repo: Hydrogen high la model mac dinh cho plan_review, audit ky approved-by va duyet test sua (Argon hay treo).
 export const AGY_MODELS = [
+  'gemini-4-hydrogen-high', 'gemini-4-hydrogen-medium', 'gemini-4-hydrogen-low',
   'gemini-4-argon-high', 'gemini-4-argon-medium', 'gemini-4-argon-low',
   'gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low',
 ];
