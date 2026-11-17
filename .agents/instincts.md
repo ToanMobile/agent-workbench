@@ -876,3 +876,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** A signing helper that runs an LLM auditor must not run it inside the code it audits, and the signed base must be exactly merge-base
 - **Nguyên nhân:** #632 review: agy ran in a checkout of the agent head (project config/MCP run as the signer uid), and base&lt;=merge-base let an older trunk ancestor hide a weakened test (the test shows as Added)
 - **Quy tắc phòng ngừa & Cách fix:** Give the auditor only data files with no config-like names; require signed base == merge-base(trunk, head); keep a content-keyed fail ledger out of the agent's reach
+
+---
+
+### [INSTINCT-112] Model mặc định trong code PM bị config máy ~/.antigravity-pm.json đè
+- **Ngày phát hiện:** 2026-11-17
+- **Hiện tượng lỗi:** Model mặc định trong code PM bị config máy ~/.antigravity-pm.json đè
+- **Nguyên nhân:** Đổi DEFAULT_CONFIG.defaultModel trong antigravity-pm, test agy-model xanh, nhưng ~/.antigravity-pm.json ghim gemini-4-argon-high nên mọi dispatch thật vẫn chạy model cũ (review 17/11 PR #1264 bắt được, test chỉ kiểm DEFAULT_CONFIG)
+- **Quy tắc phòng ngừa & Cách fix:** Đổi default của PM thì grep defaultModel ở ~/.antigravity-pm.json và .antigravity-pm.json của từng repo; bỏ khoá ghim (đừng ghi model mới trước khi PM trên main nhận model đó) và kiểm bằng pm_doctor dòng 'Model mac dinh' trên cả bản mới lẫn bản main

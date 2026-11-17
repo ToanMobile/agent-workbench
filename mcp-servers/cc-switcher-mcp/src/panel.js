@@ -19,10 +19,11 @@ import {
   setRepoAccount,
   addRepo,
   removeRepo,
+  CROSS_VENDOR_ORDER,
 } from './profiles.js';
 
 export const DEFAULT_PANEL_URL = 'http://ai-factory.localhost:4317/cc-switcher';
-export const BACKUP_ORDER = ['grok', 'antigravity_ultra', 'antigravity_pro'];
+export const BACKUP_ORDER = CROSS_VENDOR_ORDER;
 export const PANEL_ACTIONS = [
   'refresh', 'switch', 'rotate', 'limit', 'unfreeze', 'balance', 'cooldown', 'repo_assign', 'repo_add', 'repo_remove',
 ];
@@ -231,7 +232,7 @@ export function repoLastUsed(repoPath, worktrees = [], claudeHomes = claudeHomes
 /**
  * Tai khoan repo dang dung THUC TE luc nay, theo dung luat cua ham claude() trong ~/.zshrc + chong ban:
  * - chua ghim account -> lenh claude dung ~/.claude mac dinh;
- * - tai khoan Claude duoc gan dang 429/het quota -> KHONG nhay cheo Claude, Super-Board xoay khac hang Grok -> AGY Ultra -> AGY Pro.
+ * - tai khoan Claude duoc gan dang 429/het quota -> KHONG nhay cheo Claude, Super-Board xoay khac hang AGY Ultra -> AGY Pro.
  */
 export function effectiveRepoAccount(row, profilesById) {
   if (!row.pathExists) return { kind: 'missing', account: '', note: 'Không thấy thư mục repo trên máy.' };
@@ -244,7 +245,7 @@ export function effectiveRepoAccount(row, profilesById) {
   const until = p.resetTimeFormatted ? ` tới ${p.resetTimeFormatted}` : '';
   const fb = BACKUP_ORDER.map((id) => profilesById[id]).find((b) => b && !b.isFrozen);
   if (!fb) {
-    return { kind: 'blocked', account: '', note: `${p.shortLabel || p.name} chạm 429/hết quota${until}; cả 3 dự phòng khác hãng cũng đang khóa.` };
+    return { kind: 'blocked', account: '', note: `${p.shortLabel || p.name} chạm 429/hết quota${until}; cả ${BACKUP_ORDER.length} dự phòng khác hãng cũng đang khóa.` };
   }
   return {
     kind: 'fallback',

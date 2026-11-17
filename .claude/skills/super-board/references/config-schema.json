@@ -273,8 +273,8 @@
   // `approved-by` for the merge queue (#605) is not governed by this list.
   "review_tiers": {
     "S": ["claude"],
-    "M": ["claude", "antigravity"],
-    "L": ["claude", "antigravity", "ocr"]
+    "M": ["claude", "ocr"],
+    "L": ["claude", "ocr"]
   },
 
   // Shell commands proving the branch still BUILDS against the base branch as it

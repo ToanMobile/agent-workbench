@@ -107,8 +107,8 @@
   "truth_threshold": 70,
   "review_tiers": {
     "S": ["claude"],
-    "M": ["claude", "antigravity"],
-    "L": ["claude", "antigravity", "ocr"]
+    "M": ["claude", "ocr"],
+    "L": ["claude", "ocr"]
   },
   "verify_commands": [
     "python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --brief"
