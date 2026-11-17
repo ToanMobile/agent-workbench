@@ -79,8 +79,6 @@ on missing requirements and recheck each conditional helper before use.
 
 5. **Honor the per-issue 14-gate contract** (TDD, atomic commits, lint/typecheck/test green, etc.). Plan-only issues skip gates 3-7 (execution + tests). Review-only issues skip gates 1-7. Do not expand product scope beyond the issue body; when scope is missing or unsafe, use WIP-PARTIAL or HUMAN GATE instead of guessing.
 
-5b. **PR size (#1255).** Aim for about 400 changed lines per PR (lockfiles, generated files, large test fixtures not counted). Write short and plain, only what the card's ACs ask, no repeated idea across sections, nothing outside the ACs. Longer: split into follow-up PRs by AC, or give one line why it cannot be split. This is guidance, not a gate: `auto_max_lines` stays 0 and no merge is blocked by line count.
-
 6. **After completing all issue work, you MUST:**
    a. Verify all applicable gates green (lint, typecheck, tests for execute issues), then run
       `mattpocock-skills:code-review` against your own diff with the merge-base as the fixed
