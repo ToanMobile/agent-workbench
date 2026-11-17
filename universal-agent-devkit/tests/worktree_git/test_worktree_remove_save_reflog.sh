@@ -24,7 +24,7 @@ mk() { bash "$KIT" worktree add "../$1" >/dev/null 2>&1 || fail "add $1"; }
 # a commit only the reflog names: commit on the detached HEAD, then go back to the integrated base
 lone() { G "$TMP/$1" checkout -q --detach; printf "$1\n" > "$TMP/$1/lone.txt"; G "$TMP/$1" add lone.txt; G "$TMP/$1" commit -qm "lone $1"
          G "$TMP/$1" rev-parse HEAD > "$TMP/$1.sha"; G "$TMP/$1" reset -q --hard main; }
-mk w-a; mk w-b; mk w-c; mk w-d; lone w-a; lone w-b; lone w-c; lone w-d
+mk w-a; mk w-b; mk w-c; mk w-d; mk w-e; lone w-a; lone w-b; lone w-c; lone w-d
 
 bash "$KIT" worktree remove ../w-a >"$TMP/a1.out" 2>&1; rc=$?
 [ "$rc" != 0 ] && [ -d "$TMP/w-a" ] && grep -q UNREACHABLE "$TMP/a1.out" && ok "A1 plain remove refuses UNREACHABLE (rc=$rc)" || { fail "A1 (rc=$rc)"; cat "$TMP/a1.out"; }
@@ -48,6 +48,11 @@ bash "$KIT" worktree remove --save-reflog ../w-c >"$TMP/c.out" 2>&1; rc=$?
 bash "$KIT" worktree remove ../w-d >"$TMP/d.out" 2>&1; rc=$?
 [ "$rc" != 0 ] && [ -d "$TMP/w-d" ] && grep -q UNREACHABLE "$TMP/d.out" && [ -z "$(G "$R" for-each-ref 'refs/devkit/discarded/*' | grep -c w-d | grep -v '^0$')" ] \
   && ok "D no flag: refused, kept (rc=$rc)" || { fail "D (rc=$rc)"; cat "$TMP/d.out"; }
+
+# E: detached HEAD sits on a commit no ref holds (real work, not a replaced one): the flag must NOT drop it
+G "$TMP/w-e" checkout -q --detach; printf 'real\n' > "$TMP/w-e/real.txt"; G "$TMP/w-e" add real.txt; G "$TMP/w-e" commit -qm "real work"
+bash "$KIT" worktree remove --save-reflog ../w-e >"$TMP/e.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && [ -d "$TMP/w-e" ] && [ -f "$TMP/w-e/real.txt" ] && ok "E detached HEAD on an unheld commit still refused with the flag (rc=$rc)" || { fail "E (rc=$rc)"; cat "$TMP/e.out"; }
 
 [ "$FAILS" -eq 0 ] && { echo "✅ test_worktree_remove_save_reflog: all passed"; exit 0; }
 echo "❌ test_worktree_remove_save_reflog: $FAILS failed"; exit 1
