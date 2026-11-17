@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import pwd
+import re
 import secrets
 import shutil
 import subprocess
@@ -105,15 +106,29 @@ def parse_verdict(out):
     return _vf(obj)
 
 
-def verify_ocr_report(clone, text, head, edited):
+def emit(body):
+    """Sign `body` (+ ts, nonce) with the Swift signer and print {payload, sig}; dies (nothing printed) when the signer fails."""
+    body = dict(body, ts=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), nonce=secrets.token_hex(16))
+    payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    sig = subprocess.run([SIGNER], input=payload, capture_output=True, text=True, timeout=60, env=CHILD_ENV)
+    if sig.returncode != 0 or not sig.stdout.strip():
+        die(f"signer exit {sig.returncode}: {sig.stderr.strip()[-300:]}")
+    print(json.dumps({"payload": payload, "sig": sig.stdout.strip()}))
+
+
+def verify_ocr_report(clone, text, head, base, edited):
     """#1258: machine-verify the report of an OpenCodeReview delegation-mode review (a reviewer agent that read the diff following
-    `ocr delegate preview/rule`; ocr stores no session for it) against the clone, and return the {verdict, findings} to seal. Dies
-    (nothing signed) unless: auditedHead == head; verdict pass; reviewer named; `reviewed_at` (UTC Z) not before the head commit;
-    `files_reviewed` holds every edited path (computed above, not by the caller); no finding of severity blocker/major (a severity
-    outside blocker|major|minor|nit also refuses); every `citations` / `findings` item {file, line, snippet} names a line that exists
-    VERBATIM (trimmed) at head, and every edited file still present at head is cited at least once. Proves the reviewer saw the
-    code at that head, nothing more: that the reviewer is a different, independent session than the author is process trust (the
-    caller refuses a reviewer label equal to its own session identity), not cryptography; the seal only stops hand-edited records."""
+    `ocr delegate preview/rule`; ocr stores no session for it) against the clone. Dies (nothing signed) unless: auditedHead == head;
+    verdict pass; reviewer named; `reviewed_at` (UTC Z) between the head commit time and now + 300 s; `files_reviewed` holds every
+    edited path (computed by this entry, not the caller); no finding of severity blocker/major (a severity outside
+    blocker|major|minor|nit also refuses); every `citations` / `findings` item {file, line, snippet, side?} names a line that exists
+    VERBATIM (trimmed) in the blob at head (side "head", default) or at base (side "base"); snippets are not trivial (6+ non-space
+    chars, 3+ alphanumerics); and for every edited file at least one citation falls inside an added/changed hunk at head and, when
+    the file lost lines, one inside a deleted hunk at base, so the reviewer cannot skip the changed or removed assertions.
+    Returns {verdict, findings} to seal. A cited line proves the reviewer saw the code, nothing more: that the reviewer is a
+    different, independent session than the author is process trust, not cryptography. The session-label check lives only in the
+    unprivileged wrapper (approve-tests --ocr-delegate): an author may call this entry through sudo directly (residual risk,
+    docs/verdict-seal-setup.md); the seal only stops hand-edited records, which is why every signing is also logged."""
     def bad(why):
         die(f"ocr-delegate report refused: {why}")
     try:
@@ -135,27 +150,48 @@ def verify_ocr_report(clone, text, head, edited):
         at = calendar.timegm(time.strptime(rep["reviewed_at"], "%Y-%m-%dT%H:%M:%SZ"))
     except (KeyError, ValueError, TypeError):
         bad("reviewed_at is missing or not YYYY-MM-DDTHH:MM:SSZ")
-    if at < int(git(clone, "show", "-s", "--format=%ct", head)):
-        bad("report is older than the head commit")
-    cited = set()
+    if at < int(git(clone, "show", "-s", "--format=%ct", head)) or at > time.time() + 300:
+        bad("reviewed_at is older than the head commit or in the future")
+    genv = {"PATH": "/usr/bin:/bin", "HOME": clone, "GIT_CONFIG_NOSYSTEM": "1"}
+    cache = {}
+
+    def lines_at(rev, path):
+        """Lines (bytes) of the regular blob rev:path, [] when it is no blob (tree, absent) or over 2 MB."""
+        if (rev, path) not in cache:
+            size = subprocess.run([GIT, "-C", clone, "cat-file", "-s", f"{rev}:{path}"], capture_output=True, text=True, timeout=60, env=genv)
+            blob = subprocess.run([GIT, "-C", clone, "cat-file", "blob", f"{rev}:{path}"], capture_output=True, timeout=60, env=genv) \
+                if size.returncode == 0 and size.stdout.strip().isdigit() and int(size.stdout) <= 2_000_000 else None
+            cache[(rev, path)] = blob.stdout.split(b"\n") if blob is not None and blob.returncode == 0 else []
+        return cache[(rev, path)]
+    hit = set()                                       # (path, "head"|"base", line) of every verified citation
     for item in cites + finds:
         if not isinstance(item, dict) or not isinstance(item.get("file"), str) or not isinstance(item.get("snippet"), str) \
                 or not isinstance(item.get("line"), int) or isinstance(item.get("line"), bool) or item["line"] < 1 \
-                or len(item["snippet"].strip()) < 6:
-            bad("a citation or finding lacks file / line / snippet (at least 6 chars)")
-        if item in finds and item.get("severity") not in ("blocker", "major", "minor", "nit"):
-            bad("a finding has no valid severity")
-        if item in finds and item["severity"] in ("blocker", "major"):
-            bad(f"open {item['severity']} finding at {item['file']}:{item['line']}")
-        blob = subprocess.run([GIT, "-C", clone, "show", f"{head}:{item['file']}"], capture_output=True, text=True, errors="replace",
-                              timeout=60, env={"PATH": "/usr/bin:/bin", "HOME": clone, "GIT_CONFIG_NOSYSTEM": "1"})
-        lines = blob.stdout.split("\n") if blob.returncode == 0 else []
-        if item["line"] > len(lines) or lines[item["line"] - 1].strip() != item["snippet"].strip():
-            bad(f"{item['file']}:{item['line']} does not hold the cited snippet at the head")
-        cited.add(item["file"])
-    live = [e for e in edited if git(clone, "rev-parse", "--verify", "-q", f"{head}:{e}", check=False)]
-    if [e for e in live if e not in cited]:
-        bad(f"edited files with no verified citation: {[e for e in live if e not in cited][:3]}")
+                or item.get("side", "head") not in ("head", "base"):
+            bad("a citation or finding lacks file / line / snippet, or has a side other than head|base")
+        snip = item["snippet"].strip()
+        if len("".join(snip.split())) < 6 or sum(c.isalnum() for c in snip) < 3:
+            bad("a snippet is trivial (needs 6+ non-space chars, 3+ alphanumerics)")
+        if item in finds:
+            if item.get("severity") not in ("blocker", "major", "minor", "nit"):
+                bad("a finding has no valid severity")
+            if item["severity"] in ("blocker", "major"):
+                bad(f"open {item['severity']} finding at {item['file']}:{item['line']}")
+        side = item.get("side", "head")
+        lines = lines_at(head if side == "head" else base, item["file"])
+        if item["line"] > len(lines) or lines[item["line"] - 1].decode("utf-8", "replace").strip() != snip:
+            bad(f"{item['file']}:{item['line']} does not hold the cited snippet at the {side}")
+        hit.add((item["file"], side, item["line"]))
+    # NOTE: when `edited` is empty, or every edited file has no hunk (mode change, binary), nothing below is required and the report
+    # passes vacuously. That is only safe because push_gate.approval_head also demands payload.base == merge-base(trunk, head): the
+    # signed `edited` list is then exactly the PR's own change.
+    for e in edited:
+        out = git(clone, "diff", "-U0", "--no-renames", base, head, "--", ":(literal)" + e)
+        for side in ("head", "base"):
+            spans = [(int(m[0]), int(m[0]) + (1 if m[1] == "" else int(m[1])) - 1) for m in
+                     re.findall(r"^@@ " + (r"-(\d+)(?:,(\d*))? \+\d+(?:,\d*)? @@" if side == "base" else r"-\d+(?:,\d*)? \+(\d+)(?:,(\d*))? @@"), out, re.M)]
+            if any(hi >= lo for lo, hi in spans) and not any(lo <= n <= hi for lo, hi in spans for (f, sd, n) in hit if f == e and sd == side):
+                bad(f"{e}: no verified citation inside a {'changed' if side == 'head' else 'deleted'} hunk ({side} side)")
     return {"verdict": "pass", "findings": [f"{f['file']}:{f['line']} {f['severity']}: {str(f.get('note', ''))[:200]}" for f in finds][:50]}
 
 
@@ -163,8 +199,8 @@ def main(argv):
     ocr_text, task = None, None                       # #1258: `--ocr-report - --task <id>`: the report on stdin instead of running agy
     if len(argv) == 8 and argv[4] == "--ocr-report" and argv[5] == "-" and argv[6] == "--task":
         ocr_text, task, argv = sys.stdin.read(1_000_000), argv[7], argv[:4]
-        if os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0" or not task:
-            die("ocr-delegate seal is off or has no --task", 2)
+        if os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0" or not re.fullmatch(r"T\d{4,}-[a-z0-9-]{1,48}", task):
+            die("ocr-delegate seal is off or --task is not a task id (T0001-name)", 2)
     if len(argv) != 4 or argv[0] != "--repo" or argv[2] != "--head":
         die("usage: verdict-seal-audit --repo <path> --head <sha40> [--ocr-report - --task <id>]", 2)
     repo, head = os.path.realpath(argv[1]), argv[3]
@@ -218,7 +254,18 @@ def main(argv):
                     edited.add(raw[i + 1])
                 i += 2
         edited = sorted(edited)
-        ocr_result = verify_ocr_report(clone, ocr_text, head, edited) if ocr_text is not None else None   # dies unless it holds
+        if ocr_text is not None:
+            # #1258: own early branch. No agy, no ledger, no attempt counters (attempts fixed at 1): an ocr signing neither burns the
+            # antigravity attempts of the same base/path nor its own. `kind` is signed so verify() keeps the two seal kinds apart.
+            result = verify_ocr_report(clone, ocr_text, head, base, edited)
+            ledger_dir = LEDGER or os.path.join(SEAL_HOME, "verdict-ledger")
+            os.makedirs(ledger_dir, mode=0o700, exist_ok=True)
+            with open(os.path.join(ledger_dir, "ocr-signings.log"), "a", encoding="utf-8") as lg:   # audit trail of every signing
+                lg.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\tuid={os.getuid()}\tsudo_user={os.environ.get('SUDO_USER', '')}"
+                         f"\thead={head}\ttask={task}\n")
+            emit({"v": 1, "kind": "ocr-delegate", "reviewer": "ocr-delegate", "task_id": task, "head": head, "tree": tree, "base": base,
+                  "edited": edited, "attempts": 1, "verdict": "pass", "findings": result["findings"]})
+            return 0
         # Review P1: agy never runs in a checkout. A checkout of the agent's head would hand agy the agent's project config
         # (.gemini/settings.json MCP servers or hooks, AGENTS.md/GEMINI.md, .agents workflows), and code agy ran from it would
         # run as _devkitseal, the uid that can run the signer. agy gets a review dir with data only: the diff, name-status, and
@@ -298,12 +345,6 @@ def main(argv):
         record_path = os.path.join(ledger_dir, hashlib.sha256(f"content\0{base}\0{tree}".encode()).hexdigest() + ".json")
         counters_path = os.path.join(ledger_dir, "attempts.json")
         earlier = read_json(record_path)
-        if ocr_result is not None:
-            # #1258: an ocr-delegate pass never enters the ledger (a later agy request must not inherit it as its own verdict), and
-            # a content the ledger already failed stays failed.
-            if earlier is not None and earlier.get("verdict") != "pass":
-                die("this content already has a failed verdict in the ledger: nothing signed")
-            earlier = None
         if earlier is not None:
             if earlier.get("verdict") not in ("pass", "fail") or not isinstance(earlier.get("attempts"), int) \
                     or not isinstance(earlier.get("findings"), list):
@@ -319,35 +360,23 @@ def main(argv):
                 counters[c] = counters.get(c, 0) + 1
             attempts = max((counters[c] for c in ckeys), default=1)
             write_json(counters_path, counters)          # reserved before agy runs
-            if ocr_result is None:
-                # agy needs _devkitseal's login keychain unlocked (empty password, setup doc); no GUI session under sudo.
-                subprocess.run(["/usr/bin/security", "unlock-keychain", "-p", "",
-                                os.path.join(SEAL_HOME, "Library/Keychains/login.keychain-db")], capture_output=True,
-                               timeout=30, env=CHILD_ENV)
-                run = subprocess.run([AGY, "--print", PROMPT, "--output-format", "json", "--json-schema",
-                                      json.dumps(SCHEMA), "--disable-slash-commands", "--sandbox"],
-                                     cwd=review, capture_output=True, text=True, timeout=AGY_TIMEOUT, env=CHILD_ENV)
-                if run.returncode != 0:
-                    die(f"agy exit {run.returncode}: {run.stderr.strip()[-500:]}")
-                result = parse_verdict(run.stdout)
-                if result is None:
-                    die("agy output is not a {verdict, findings} JSON: nothing signed")
-            else:
-                result = ocr_result
-            if ocr_result is None:
-                write_json(record_path, {"verdict": result["verdict"], "findings": result["findings"][:50], "head": head,
-                                         "attempts": attempts,
-                                         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")})
-        body = {"v": 1, "head": head, "tree": tree, "base": base, "edited": edited, "attempts": attempts,
-                "verdict": result["verdict"], "findings": result["findings"][:50],
-                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), "nonce": secrets.token_hex(16)}
-        if ocr_result is not None:
-            body.update(reviewer="ocr-delegate", task_id=task)   # signed: verdict_seal.ocr_delegate_head finds the seal by task id
-        payload = json.dumps(body, sort_keys=True, separators=(",", ":"))
-        sig = subprocess.run([SIGNER], input=payload, capture_output=True, text=True, timeout=60, env=CHILD_ENV)
-        if sig.returncode != 0 or not sig.stdout.strip():
-            die(f"signer exit {sig.returncode}: {sig.stderr.strip()[-300:]}")
-        print(json.dumps({"payload": payload, "sig": sig.stdout.strip()}))
+            # agy needs _devkitseal's login keychain unlocked (empty password, setup doc); no GUI session under sudo.
+            subprocess.run(["/usr/bin/security", "unlock-keychain", "-p", "",
+                            os.path.join(SEAL_HOME, "Library/Keychains/login.keychain-db")], capture_output=True,
+                           timeout=30, env=CHILD_ENV)
+            run = subprocess.run([AGY, "--print", PROMPT, "--output-format", "json", "--json-schema",
+                                  json.dumps(SCHEMA), "--disable-slash-commands", "--sandbox"],
+                                 cwd=review, capture_output=True, text=True, timeout=AGY_TIMEOUT, env=CHILD_ENV)
+            if run.returncode != 0:
+                die(f"agy exit {run.returncode}: {run.stderr.strip()[-500:]}")
+            result = parse_verdict(run.stdout)
+            if result is None:
+                die("agy output is not a {verdict, findings} JSON: nothing signed")
+            write_json(record_path, {"verdict": result["verdict"], "findings": result["findings"][:50], "head": head,
+                                     "attempts": attempts,
+                                     "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")})
+        emit({"v": 1, "head": head, "tree": tree, "base": base, "edited": edited, "attempts": attempts,
+              "verdict": result["verdict"], "findings": result["findings"][:50]})
         return 0
     finally:
         shutil.rmtree(work, ignore_errors=True)

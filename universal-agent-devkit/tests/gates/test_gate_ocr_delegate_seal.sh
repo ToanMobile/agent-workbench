@@ -21,8 +21,8 @@ ko() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 git init -q --bare -b main "$TMP/origin.git"
 git clone -q "$TMP/origin.git" "$TMP/repo" 2>/dev/null; cd "$TMP/repo" || exit 1
 git config user.email t@t && git config user.name t && git config commit.gpgsign false
-mkdir -p tests && printf 'assert first == 1\nassert second == 2\n' > tests/test_a.sh && echo o > other.txt && git add . && git commit -qm c1 && git push -q origin main
-git checkout -q --detach && printf 'assert first == 1\nassert second == 2 or True\n' > tests/test_a.sh && git commit -qam "edit test"
+mkdir -p tests && printf 'assert first == 1\nassert second == 2\n' > tests/test_a.sh && printf 'assert alpha == 1\nassert beta == 2\nassert gamma == 3\n' > tests/test_b.sh && echo o > other.txt && git add . && git commit -qm c1 && git push -q origin main
+git checkout -q --detach && printf 'assert first == 1\nassert second == 2 or True\n' > tests/test_a.sh && printf 'assert alpha == 1\nassert beta == 2\n' > tests/test_b.sh && git commit -qam "edit test"
 H="$(git rev-parse HEAD)"; BASE="$(git rev-parse origin/main)"
 cat > "$TMP/signer" <<SH
 #!/bin/bash
@@ -34,11 +34,13 @@ python3 -c 'import base64,sys; sys.path.insert(0,sys.argv[1]); import verdict_se
   "$DEVKIT_DIR/bin" "$TMP/seal.pub"
 export DEVKIT_VERDICT_SEAL_PUB="$TMP/seal.pub"
 report() {   # report [key=json-value ...]: the fixture report (real schema), overridden per case
-  python3 - "$H" "$@" <<'PY'
+  python3 - "${RH:-$H}" "$@" <<'PY'
 import json, sys, time
-r = {"auditedHead": sys.argv[1], "verdict": "pass", "reviewer": "ocr-delegate-reviewer-7", "files_reviewed": ["tests/test_a.sh"],
+r = {"auditedHead": sys.argv[1], "verdict": "pass", "reviewer": "ocr-delegate-reviewer-7", "files_reviewed": ["tests/test_a.sh", "tests/test_b.sh"],
      "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 120)),
-     "citations": [{"file": "tests/test_a.sh", "line": 2, "snippet": "assert second == 2 or True"}],
+     "citations": [{"file": "tests/test_a.sh", "line": 2, "snippet": "assert second == 2 or True"},
+                  {"file": "tests/test_a.sh", "line": 2, "side": "base", "snippet": "assert second == 2"},
+                  {"file": "tests/test_b.sh", "line": 3, "side": "base", "snippet": "assert gamma == 3"}],
      "findings": [{"severity": "minor", "file": "tests/test_a.sh", "line": 1, "snippet": "assert first == 1", "note": "ok"}]}
 for kv in sys.argv[2:]:
     k, v = kv.split("=", 1)
@@ -46,21 +48,30 @@ for kv in sys.argv[2:]:
 print(json.dumps(r))
 PY
 }
-seal() { OUT="$(printf '%s' "$1" | "$AUDIT" --repo "$TMP/repo" --head "$H" --ocr-report - --task "${2:-T0001-x}" 2>"$TMP/err")"; RC=$?; }
-refused() {   # refused <name> <report>: rc != 0 and nothing signed
-  seal "$2"; [ "$RC" -ne 0 ] && [ -z "$OUT" ] && grep -q "ocr-delegate report refused" "$TMP/err" && ok "refused: $1" || ko "$1: rc=$RC out=${OUT:0:80}"
+seal() { OUT="$(printf '%s' "$1" | "$AUDIT" --repo "$TMP/repo" --head "${SH:-$H}" --ocr-report - --task "${2:-T0001-x}" 2>"$TMP/err")"; RC=$?; }
+refused() {   # refused <name> <report> [task]: rc != 0 and nothing signed
+  seal "$2" "${3:-}"; [ "$RC" -ne 0 ] && [ -z "$OUT" ] && grep -q "ocr-delegate report refused" "$TMP/err" && ok "refused: $1" || ko "$1: rc=$RC out=${OUT:0:80}"
 }
 
 seal "$(report)"
 if [ "$RC" = 0 ]; then
   f="$(printf '%s' "$OUT" | python3 -c 'import json,sys; p=json.loads(json.load(sys.stdin)["payload"]); print(p["reviewer"], p["task_id"], p["base"], p["edited"], p["verdict"])')"
-  [ "$f" = "ocr-delegate T0001-x $BASE ['tests/test_a.sh'] pass" ] && ok "accept: report sealed (reviewer ocr-delegate, own base/edited)" || ko "payload: $f"
+  [ "$f" = "ocr-delegate T0001-x $BASE ['tests/test_a.sh', 'tests/test_b.sh'] pass" ] && ok "accept: report sealed (reviewer ocr-delegate, own base/edited)" || ko "payload: $f"
 else ko "accept failed rc=$RC: $(cat "$TMP/err")"; fi
 GOOD="$OUT"
-ls "$TMP/ledger" | grep -v "^attempts.json$" | grep -q . && ko "ocr pass entered the agy ledger" || ok "ocr pass is not written to the agy ledger"
+[ -z "$(ls "$TMP/ledger" 2>/dev/null | grep -v '^ocr-signings.log$')" ] && ok "ocr signing leaves the agy ledger and attempt counters alone" || ko "ocr touched the agy ledger: $(ls "$TMP/ledger")"
+grep -q "$H" "$TMP/ledger/ocr-signings.log" && ok "each ocr signing is logged (uid, SUDO_USER, head, task)" || ko "no signing log"
+for i in 1 2 3 4; do seal "$(report)"; [ "$RC" = 0 ] && [ "$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.loads(json.load(sys.stdin)["payload"])["attempts"])')" = 1 ] || ko "signing $i rc=$RC"; done
+ok "4 consecutive ocr signings of one content all sign (attempts stay 1)"
 refused "head mismatch" "$(report auditedHead="\"$BASE\"")"
-refused "snippet not at that line" "$(report 'citations=[{"file":"tests/test_a.sh","line":1,"snippet":"assert second == 2 or True"}]')"
+B3='{"file":"tests/test_a.sh","line":2,"side":"base","snippet":"assert second == 2"},{"file":"tests/test_b.sh","line":3,"side":"base","snippet":"assert gamma == 3"}'
+refused "snippet not at that line" "$(report 'citations=[{"file":"tests/test_a.sh","line":1,"snippet":"assert second == 2 or True"},'"$B3"']')"
 refused "snippet invented" "$(report 'citations=[{"file":"tests/test_a.sh","line":2,"snippet":"assert second == 3 or True"}]')"
+refused "citation of an unchanged line 1 only proves nothing" "$(report 'citations=[{"file":"tests/test_a.sh","line":1,"snippet":"assert first == 1"},'"$B3"']')"
+refused "deleted lines without a base-side citation" "$(report 'citations=[{"file":"tests/test_a.sh","line":2,"snippet":"assert second == 2 or True"}]')"
+refused "trivial snippet" "$(report 'citations=[{"file":"tests/test_a.sh","line":2,"snippet":"or True"},'"$B3"']')"
+refused "reviewed_at far in the future" "$(report reviewed_at='"2999-01-01T00:00:00Z"')"
+seal "$(report)" "../x"; [ "$RC" -ne 0 ] && [ -z "$OUT" ] && ok "refused: task id of the wrong shape" || ko "bad task id rc=$RC"
 refused "line past end of file" "$(report 'citations=[{"file":"tests/test_a.sh","line":99,"snippet":"assert second == 2 or True"}]')"
 refused "edited test not covered by files_reviewed" "$(report 'files_reviewed=["other.txt"]')"
 refused "edited test never cited" "$(report 'citations=[]' 'findings=[]')"
@@ -94,6 +105,28 @@ want "hand-edited seal payload -> refused" False
 rm -rf "$TMP/pm/seals"; seal_to ""; want "same seal in the antigravity dir does not count for ocr-delegate" False
 rm -rf "$TMP/pm/seals"; seal_to ocr-delegate
 git commit -q --allow-empty -m "other task" -m "Test-approved-by: ocr-delegate T0002-y"; want "trailer for another task id -> refused" False "HEAD^!"
+# kind: copy in both directions through a re-signed payload (test key): ocr seal in the antigravity dir; agy-shaped seal in the ocr dir
+resign() {   # resign <subdir> [keys to drop]: re-sign GOOD's payload with the test key into seals/<subdir>/<H>.json
+  python3 - "$GOOD" "$TMP/pm" "$H" "$DEVKIT_DIR/bin" "$@" <<'PY'
+import base64, json, os, shutil, sys
+sys.path.insert(0, sys.argv[4]); import verdict_seal as v
+good, pm, head, sub, drop = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[5], sys.argv[6:]
+p = json.loads(good["payload"])
+for k in drop: p.pop(k)
+ps = json.dumps(p, sort_keys=True, separators=(",", ":"))
+shutil.rmtree(os.path.join(pm, "seals"), ignore_errors=True)
+d = os.path.join(pm, "seals", sub); os.makedirs(d)
+json.dump({"payload": ps, "sig": base64.b64encode(v.sign(b"\x09" * 32, ps.encode())).decode()}, open(os.path.join(d, head + ".json"), "w"))
+PY
+}
+resign "" ; python3 -c 'import sys; sys.path.insert(0,sys.argv[1]); import verdict_seal as v; sys.exit(1 if v.sealed_pass(sys.argv[2], sys.argv[3], test_fixture=True) else 0)' \
+  "$DEVKIT_DIR/bin" "$TMP/repo" "$H" && ok "ocr seal copied to the antigravity dir is not an antigravity pass" || ko "ocr seal accepted as antigravity pass"
+resign ocr-delegate kind reviewer task_id; want "agy-shaped seal copied to the ocr dir -> refused" False "$TR^!"
+# two valid seals under one task id (same tree, other head): the trailer still approves the one matching its tree
+rm -rf "$TMP/pm/seals"; seal_to ocr-delegate
+H2="$(GIT_COMMITTER_DATE="@$(( $(date +%s) + 30 )) +0000" git commit-tree "$H^{tree}" -p "$H^" -m "edit test again")"
+RH="$H2" SH="$H2" seal "$(RH="$H2" report)"; [ "$RC" = 0 ] && { mkdir -p "$TMP/pm/seals/ocr-delegate"; printf '%s' "$OUT" > "$TMP/pm/seals/ocr-delegate/$H2.json"; } || ko "second seal rc=$RC $(cat "$TMP/err")"
+want "two valid seals under one task id: the one matching the tree approves" True "$TR^!"
 # the ocr seal never stands in for an antigravity seal, so it cannot validate a PM record
 python3 -c 'import sys; sys.path.insert(0,sys.argv[1]); import verdict_seal as v; sys.exit(1 if v.sealed_pass(sys.argv[2], sys.argv[3], test_fixture=True) else 0)' \
   "$DEVKIT_DIR/bin" "$TMP/repo" "$H" && ok "ocr-delegate seal is not an antigravity pass seal (sealed_pass)" || ko "sealed_pass accepted the ocr seal"

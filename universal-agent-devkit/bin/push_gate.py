@@ -865,24 +865,31 @@ def _repo_tasks(top, task_id=None, any_project=False):
         yield task
 
 
-def approval_head(top, word, ident):
-    """The reviewed commit a `Test-approved-by: <word> <ident>` trailer points at, or None. antigravity: the PM record's auditedHead.
-    ocr-delegate (#1258, kill switch DEVKIT_OCR_CROSS_REVIEW=0): the head of the one valid ocr-delegate seal signed for task `ident`
-    (verdict_seal.ocr_delegate_head: Ed25519 signature of the owner's key, so seal mode must be on; an agent that edits the report
-    or the seal file gets nothing) whose SIGNED base equals merge-base(trunk, head), as sealed_scope demands for the other seal.
+def approval_head(top, word, ident, sha=None):
+    """The reviewed commit a `Test-approved-by: <word> <ident>` trailer (on commit `sha`) points at, or None. antigravity: the PM
+    record's auditedHead. ocr-delegate (#1258, kill switch DEVKIT_OCR_CROSS_REVIEW=0): the head of a valid ocr-delegate seal signed
+    for task `ident` (verdict_seal.ocr_delegate_seals: Ed25519 signature of the owner's key, so seal mode must be on; an agent that
+    edits the report or the seal file gets nothing) whose signed tree equals the tree of `sha` (several seals may share a task id:
+    amend, rebase, another agent) and whose SIGNED base equals merge-base(trunk, head), as sealed_scope demands for the other seal.
     Threat model: the seal proves a report passed the machine checks (verdict-seal-audit verify_ocr_report: head, every edited file
-    reviewed, verbatim citations at that head, no blocker/major, not older than the head commit) and was not hand-edited; it does
-    NOT prove the reviewer was independent of the author. That is process trust (a fresh reviewer session; the sealing command
-    refuses the author's own session label), and the residual risk is an author who writes a truthful-looking report itself."""
+    reviewed, citations verbatim at that head inside the changed and the deleted hunks, no blocker/major, not stale) and was not
+    hand-edited; it does NOT prove the reviewer was independent of the author. That is process trust (a fresh reviewer session). The
+    reviewer-label check is only in the unprivileged wrapper (approve-tests --ocr-delegate): an author with shell access can call the
+    sealing entry through sudo directly and seal a report it wrote itself. Residual risk, accepted by the owner; the entry logs every
+    signing (ocr-signings.log in its ledger) so it can be audited afterwards."""
     if word != "ocr-delegate":
         return audited_head(top, ident)
     lib = _seal_lib()
-    payload = lib.ocr_delegate_head(top, ident, _seal_fixture(top)) if lib and os.environ.get("DEVKIT_OCR_CROSS_REVIEW") != "0" else None
-    trunk = _trunk_ref(top) if payload else None
-    if not trunk:
+    if not lib or not sha or os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0":
         return None
-    rc, mb = git(top, "merge-base", trunk, payload["head"])
-    return payload["head"] if rc == 0 and mb.strip() == payload["base"] else None
+    rc, out = git(top, "rev-parse", f"{sha}^{{tree}}", f"{sha}^")
+    tree, parent = (out.split() + ["", ""])[:2] if rc == 0 else ("", "")
+    trunk = _trunk_ref(top)
+    for payload in lib.ocr_delegate_seals(top, ident, _seal_fixture(top), hints=(parent, sha)) if trunk and tree else []:
+        rc_m, mb = git(top, "merge-base", trunk, payload["head"])
+        if payload["tree"] == tree and rc_m == 0 and mb.strip() == payload["base"]:
+            return payload["head"]
+    return None
 
 
 def approved(top, rng):
@@ -910,7 +917,7 @@ def approved(top, rng):
             continue
         word, task_id = m.group(1), m.group(2)
         if word == "ocr-delegate":   # #1258: head from the sealed report (approval_head); the tree rule below is the same
-            head = approval_head(top, word, task_id)
+            head = approval_head(top, word, task_id, sha)
             if not head:
                 whys.append(f"{APPROVED} {word} {task_id}: no valid sealed ocr-delegate record for this task (seal mode off, tampered, base moved or kill switch)")
                 continue

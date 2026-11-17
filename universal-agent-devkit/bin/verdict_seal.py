@@ -261,6 +261,10 @@ def verify(top, head, test_fixture=False, sub=""):
                 or not all(isinstance(e, str) for e in edited) or payload.get("verdict") not in ("pass", "fail") \
                 or not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 1:
             return None
+        # #1258: the seal kind is signed. The antigravity dir takes no payload that carries kind / reviewer / task_id (an ocr seal
+        # copied there), the ocr dir only payloads whose kind is that dir's name (an agy-shaped seal copied there).
+        if (payload.get("kind") != sub if sub else any(k in payload for k in ("kind", "reviewer", "task_id"))):
+            return None
         rc, tree = _git(top, "rev-parse", "--verify", "-q", head + "^{tree}")
         if rc != 0 or not isinstance(payload.get("tree"), str) or tree != payload["tree"]:
             return None
@@ -275,21 +279,22 @@ def sealed_pass(top, head, test_fixture=False):
     return p if p and p["verdict"] == "pass" and p["attempts"] <= MAX_ATTEMPTS else None
 
 
-def ocr_delegate_head(top, task_id, test_fixture=False):
-    """Payload of the ONE valid PASS ocr-delegate seal (#1258) signed for `task_id` in repo `top`, or None (none, two heads for the
-    same task id, key off, tampered). Only the seals/ocr-delegate/ dir is read: an antigravity seal never counts here."""
-    found = []
-    try:
-        names = os.listdir(os.path.join(pm_state_home(), "seals", "ocr-delegate"))
-    except OSError:
-        return None
-    for name in names:
-        head = name[:-5] if name.endswith(".json") else ""
+def ocr_delegate_seals(top, task_id, test_fixture=False, hints=()):
+    """Payloads of the valid PASS ocr-delegate seals (#1258) signed for `task_id` in repo `top` (newest dir listing capped at 500).
+    `hints` (heads the caller guesses, e.g. the parent of the trailer commit) are looked up directly first; the directory is scanned
+    only when no hint matches. Only seals/ocr-delegate/ is read: an antigravity seal never counts here."""
+    def good(head):
         p = verify(top, head, test_fixture, "ocr-delegate")
-        if p and p["verdict"] == "pass" and p["attempts"] <= MAX_ATTEMPTS and p.get("reviewer") == "ocr-delegate" \
-                and p.get("task_id") == task_id:
-            found.append(p)
-    return found[0] if len(found) == 1 else None
+        return p if p and p["verdict"] == "pass" and p["attempts"] <= MAX_ATTEMPTS and p.get("reviewer") == "ocr-delegate" \
+            and p.get("task_id") == task_id else None
+    found = [p for p in (good(h) for h in dict.fromkeys(hints)) if p]
+    if found:
+        return found
+    try:
+        names = sorted(os.listdir(os.path.join(pm_state_home(), "seals", "ocr-delegate")))[:500]
+    except OSError:
+        return []
+    return [p for p in (good(n[:-5]) for n in names if n.endswith(".json")) if p]
 
 
 def request(repo, head, report=None, task=None):
