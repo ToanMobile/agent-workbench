@@ -1,6 +1,6 @@
 # CC Switcher MCP (`cc-switcher-mcp`)
 
-MCP Server và Auto-Switcher Daemon trên macOS dành cho 7 profile đã cấu hình sẵn trong **CC Switch**, tích hợp **Anti-Ban Guard** (nghỉ an toàn 15 phút giữa các tài khoản Claude, đóng băng 5 giờ khi chạm giới hạn `429`) và bảng điều khiển trên web `/cc-switcher` (Telegram chỉ còn gửi cảnh báo).
+MCP Server và Auto-Switcher Daemon trên macOS dành cho 6 profile đã cấu hình sẵn trong **CC Switch**, tích hợp **Anti-Ban Guard** (nghỉ an toàn 15 phút giữa các tài khoản Claude, đóng băng 5 giờ khi chạm giới hạn `429`) và bảng điều khiển trên web `/cc-switcher` (Telegram chỉ còn gửi cảnh báo).
 
 ## Danh sách 6 Profile hỗ trợ
 
@@ -9,7 +9,7 @@ MCP Server và Auto-Switcher Daemon trên macOS dành cho 7 profile đã cấu h
 3. `max` — `3. Personal 5x Max — toan.huynh@finos.asia` (`~/.claude-max`)
 4. `antigravity` — `4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Argon High)`
 5. `antigravity_pro` — `5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Argon High)`
-6. `grok` — `6. Grok CLI — grok-4.7 (xhigh)`
+6. (bỏ trống — Grok CLI gỡ 17/11)
 
 ### Antigravity nhiều profile
 
@@ -17,8 +17,8 @@ MCP Server và Auto-Switcher Daemon trên macOS dành cho 7 profile đã cấu h
 
 ## Các MCP Tools cung cấp
 
-- `switcher_status`: Xem trạng thái thực tế của 7 profile, thời gian Cooldown chống ban và thống kê token/chi phí từ `~/.cc-switch/cc-switch.db`.
-- `switcher_switch`: Chuyển sang một profile cụ thể (`1..7` hoặc ID) kèm kiểm tra Cooldown và thông báo Telegram.
+- `switcher_status`: Xem trạng thái thực tế của 6 profile, thời gian Cooldown chống ban và thống kê token/chi phí từ `~/.cc-switch/cc-switch.db`.
+- `switcher_switch`: Chuyển sang một profile cụ thể (`1..5`, `7` hoặc ID) kèm kiểm tra Cooldown và thông báo Telegram.
 - `switcher_rotate`: Tự động xoay sang profile khả dụng tiếp theo.
 - `switcher_report_limit`: Đánh dấu tài khoản hiện tại dính `429`, tự động đóng băng 5 giờ (`18000s`), xoay sang tài khoản kế tiếp và bắn cảnh báo về điện thoại.
 - `switcher_configure_policy`: Điều chỉnh thời gian nghỉ chống ban (`claudeCooldownMinutes`, `rateLimitFreezeMinutes`).

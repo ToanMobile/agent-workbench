@@ -28,7 +28,7 @@ function setup() {
 const pin = (p) => JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.local.json'), 'utf8'));
 
 test('id moi, id cu la bi danh, thu muc dang nhap giu nguyen', () => {
-  assert.deepEqual(DEFAULT_PROFILES.map((p) => p.id), ['finos_toan', 'finos_linh', 'finos_toan_max', 'antigravity_ultra', 'antigravity_pro', 'grok', 'finos_lua']);
+  assert.deepEqual(DEFAULT_PROFILES.map((p) => p.id), ['finos_toan', 'finos_linh', 'finos_toan_max', 'antigravity_ultra', 'antigravity_pro', 'finos_lua']);
   assert.deepEqual(LEGACY_ID_ALIASES, RENAMES);
   for (const [old, neu] of Object.entries(RENAMES)) {
     assert.equal(canonicalProfileId(old), neu);
@@ -124,5 +124,16 @@ test('migrateIds: settings.local.json hong thi bo qua va bao, khong ghi de', () 
     const res = migrateIds({ stateDir: t.stateDir, repos: [{ name: 'broken', path: p }] });
     assert.equal(res.skipped.length, 1);
     assert.equal(fs.readFileSync(path.join(p, '.claude', 'settings.local.json'), 'utf8'), '{"hooks": {');
+  } finally { t.cleanup(); }
+});
+
+test('17/11 go Grok: state cu con activeProfileId/frozenUntil grok van doc duoc, so 6 va id grok bi tu choi', () => {
+  const t = setup();
+  try {
+    saveSwitcherState(t.stateDir, { activeProfileId: 'grok', frozenUntil: { grok: 456 } });
+    assert.doesNotThrow(() => loadSwitcherState(t.stateDir));
+    assert.throws(() => resolveProfile('grok'), (e) => e.code === 'PROFILE_NOT_FOUND');
+    assert.throws(() => resolveProfile(6), (e) => e.code === 'PROFILE_NOT_FOUND' && /1, 2, 3, 4, 5, 7/.test(e.message));
+    assert.equal(resolveProfile(7).id, 'finos_lua');
   } finally { t.cleanup(); }
 });

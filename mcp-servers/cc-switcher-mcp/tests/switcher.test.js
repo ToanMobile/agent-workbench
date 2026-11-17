@@ -42,14 +42,14 @@ function createTempEnv() {
   };
 }
 
-test('7 profile mac dinh khop dung cau hinh CC Switch cua nguoi dung', () => {
-  assert.equal(DEFAULT_PROFILES.length, 7);
+test('6 profile mac dinh khop dung cau hinh CC Switch cua nguoi dung (17/11: go Grok)', () => {
+  assert.equal(DEFAULT_PROFILES.length, 6);
   assert.deepEqual(
     DEFAULT_PROFILES.map((p) => p.id),
-    ['finos_toan', 'finos_linh', 'finos_toan_max', 'antigravity_ultra', 'antigravity_pro', 'grok', 'finos_lua'],
+    ['finos_toan', 'finos_linh', 'finos_toan_max', 'antigravity_ultra', 'antigravity_pro', 'finos_lua'],
   );
   const status = getStatusReport({ stateDir: createTempEnv().dir });
-  assert.equal(status.profiles.length, 7);
+  assert.equal(status.profiles.length, 6);
   assert.equal(status.activeProfileId, 'finos_toan');
 });
 
@@ -130,10 +130,7 @@ test('Xoay vong 6 profile tuan tu va bo qua tai khoan dang dong bang 5h', () => 
     const r4 = rotateNextProfile({ stateDir: tmp.dir, nowMs: t0 + 41 * 60 * 1000, markCurrentLimited: true });
     assert.equal(r4.activeProfile.id, 'antigravity_pro');
 
-    const r5 = rotateNextProfile({ stateDir: tmp.dir, nowMs: t0 + 42 * 60 * 1000, markCurrentLimited: true });
-    assert.equal(r5.activeProfile.id, 'grok');
-
-    // Profile thu 7 (finos_lua) nam sau grok trong vong xoay
+    // 17/11 go Grok: profile thu 7 (finos_lua) nam ngay sau AGY Pro trong vong xoay
     const r6 = rotateNextProfile({ stateDir: tmp.dir, nowMs: t0 + 43 * 60 * 1000, markCurrentLimited: true });
     assert.equal(r6.activeProfile.id, 'finos_lua');
 

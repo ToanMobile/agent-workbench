@@ -206,7 +206,7 @@
     </section>
 
     <section aria-labelledby="h-backup">
-      <h2 id="h-backup">Dự phòng khác hãng <small>hết limit tự xoay: Grok CLI → AGY Ultra → AGY Pro · không lo ban</small></h2>
+      <h2 id="h-backup">Dự phòng khác hãng <small>hết limit tự xoay: AGY Ultra → AGY Pro · không lo ban</small></h2>
       <div class="grid g3" id="backup"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
     </section>
 
@@ -231,7 +231,7 @@
             <button type="submit" class="btn">Đặt</button>
           </form>
         </div>
-        <p class="hint">Đổi giữa hai tài khoản Claude phải chờ hết thời gian nghỉ (chống quét nhiều tài khoản). Đổi sang Antigravity / Grok không cần chờ.</p>
+        <p class="hint">Đổi giữa hai tài khoản Claude phải chờ hết thời gian nghỉ (chống quét nhiều tài khoản). Đổi sang Antigravity không cần chờ.</p>
       </div>
     </section>
 
@@ -454,7 +454,7 @@
       el('div', null, [el('span', { class: 'badge b-prio', text: 'Ưu tiên ' + p.backupPriority }), ' ', badgeFor(p)])
     ]));
     card.appendChild(facts([
-      ['Hãng', p.vendor === 'google' ? 'Google (Antigravity)' : p.vendor === 'xai' ? 'xAI (Grok)' : p.vendor],
+      ['Hãng', p.vendor === 'google' ? 'Google (Antigravity)' : p.vendor],
       ['Trạng thái', p.isFrozen ? ('Đóng băng, mở ' + (p.resetTimeFormatted || (p.freezeRemainMin + ' phút'))) : 'Đổi ngay, không cần chờ'],
       p.isFrozen && p.frozenUntilMs ? ['Đóng băng tới', fmtTime(p.frozenUntilMs, true)] : null
     ]));
@@ -651,7 +651,7 @@
     var sw = e.target.closest('[data-switch]');
     if (sw && !sw.disabled) {
       var id = sw.dataset.switch;
-      confirmDlg('Chuyển sang ' + profileName(id) + '?', 'CC Switch sẽ dùng tài khoản này cho phiên Claude Code / Antigravity / Grok mới. Phiên đang mở giữ nguyên tài khoản cũ.', 'Chuyển').then(function (ok) {
+      confirmDlg('Chuyển sang ' + profileName(id) + '?', 'CC Switch sẽ dùng tài khoản này cho phiên Claude Code / Antigravity mới. Phiên đang mở giữ nguyên tài khoản cũ.', 'Chuyển').then(function (ok) {
         if (!ok) return;
         act({ action: 'switch', target: id }, sw).then(function (res) {
           if (!res) return;
