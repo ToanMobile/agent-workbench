@@ -1,8 +1,8 @@
 {
   "id": "backend",
   "name": "🗄️ Backend (API / Services / Python · Go · Rust · Node)",
-  "description": "Cấu hình cho dịch vụ backend: hợp đồng API ổn định, idempotency, migration an toàn, timeout/retry có giới hạn, log có cấu trúc không lộ PII, test runner phát hiện theo go.mod/Cargo.toml/pyproject.toml/package.json.",
-  "description_en": "Backend services: stable API contracts, idempotency, safe migrations, bounded timeouts/retries, structured logs without PII, test runner detected from go.mod/Cargo.toml/pyproject.toml/package.json.",
+  "description": "Cấu hình cho dịch vụ backend: hợp đồng API ổn định, idempotency, migration an toàn, timeout/retry có giới hạn, log có cấu trúc không lộ PII, test runner phát hiện theo go.mod/Cargo.toml/pyproject.toml/package.json, SLO và hiệu năng, chất lượng test, UX/DX của API.",
+  "description_en": "Backend services: stable API contracts, idempotency, safe migrations, bounded timeouts/retries, structured logs without PII, test runner detected from go.mod/Cargo.toml/pyproject.toml/package.json, SLO and performance, test quality, API UX/DX.",
   "essential_mcps": [
     "codebase-memory-mcp",
     "context7"

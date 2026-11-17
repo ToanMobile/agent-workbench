@@ -1,8 +1,8 @@
 {
   "id": "android",
   "name": "📱 Android (Mobile App / Jetpack Compose / Clean Architecture)",
-  "description": "Cấu hình chuẩn cho phát triển ứng dụng di động Android: Solo-Dev workflow, chống spam thao tác (Debounce/Loading), Jetpack Compose stability/recomposition, Gradle nhiều module + build-logic, R8 keep rules, baseline profile, SAF/content URI, Hilt, Room migration, analytics không PII, chống ANR/Bitmap-PDF OOM, cờ PendingIntent an toàn, mã native NDK.",
-  "description_en": "Android mobile apps: solo-dev workflow, anti-spam debounce/loading, Jetpack Compose stability/recomposition, multi-module Gradle + build-logic, R8 keep rules, baseline profiles, SAF/content URIs, Hilt, Room migrations, PII-free analytics, ANR and bitmap/PDF OOM prevention, safe PendingIntent flags, NDK native code.",
+  "description": "Cấu hình chuẩn cho phát triển ứng dụng di động Android: Solo-Dev workflow, chống spam thao tác (Debounce/Loading), Jetpack Compose stability/recomposition, Gradle nhiều module + build-logic, R8 keep rules, baseline profile, SAF/content URI, Hilt, Room migration, analytics không PII, chống ANR/Bitmap-PDF OOM, cờ PendingIntent an toàn, mã native NDK; ngân sách hiệu năng đo được trên máy thật, cổng chất lượng (RED→GREEN, lint, flaky), UI/UX Material 3 và TalkBack, bộ công cụ skill/agent theo tình huống.",
+  "description_en": "Android mobile apps: solo-dev workflow, anti-spam debounce/loading, Jetpack Compose stability/recomposition, multi-module Gradle + build-logic, R8 keep rules, baseline profiles, SAF/content URIs, Hilt, Room migrations, PII-free analytics, ANR and bitmap/PDF OOM prevention, safe PendingIntent flags, NDK native code; measurable performance budgets on real devices, quality gates (RED→GREEN, lint, flaky control), Material 3 UI/UX and TalkBack, situational skill/agent toolkit.",
   "essential_mcps": [
     "codebase-memory-mcp",
     "context7",
