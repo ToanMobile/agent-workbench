@@ -19,6 +19,8 @@
 #      chưa áp dụng / không kiểm chứng được / quá ngân sách → giữ halt, gửi super-board-notify một lần, không resume mù;
 #   6. backoff cho phép: lần thứ n chờ 60·2^(n-1) s sau lần trước; 5 lần liên tiếp thì bỏ cuộc tới khi người dùng
 #      khởi động tường minh hoặc runner sống được 10 phút.
+# Ngoại lệ #1221: halted có CAUSE=runaway (runner chạy không SB_DAEMON=1 halt vì RUNAWAY) được dựng lại ở chế độ daemon, tối đa một
+#      lần mỗi giờ (<slug>.runaway-restart), vẫn qua backoff + trần, kèm notify; không bao giờ khi có stop marker.
 # Watchdog không bao giờ kill gì (không pkill theo tên) và không bao giờ xoá marker. Mỗi lần khởi động lại và mỗi lần
 # kết luận đổi được ghi vào .claude/super-board/runner/<slug>.watchdog.log.
 #
@@ -46,6 +48,7 @@ STATE="$DIR/$SLUG.state"; MARK="$DIR/$SLUG.stopped"; WD="$DIR/$SLUG.watchdog"; W
 LABEL="com.superboard.watchdog.$SLUG.$(printf '%s' "$ROOT" | shasum | cut -c1-8)"
 AGENTS="${SB_LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
 PLIST="$AGENTS/$LABEL.plist"
+runaway_restart=0; RUNAWAY_RESTART_FILE="$DIR/$SLUG.runaway-restart"   # #1221: epoch lần dựng lại halt RUNAWAY gần nhất
 INTERVAL=60; MAX_RESTARTS=5; BACKOFF_BASE=60; HEALTHY_SECONDS=600
 RUNNER_TOOLS="gh jq python3 claude git"
 NOW=$(date +%s)
@@ -174,6 +177,7 @@ restart_runner() {   # $1 = PID cũ, $2 = STATE cũ, $3 = RC cũ
   local log daemon new
   log=$(runner_log)
   daemon=$(field DAEMON "$STATE"); [ "$daemon" = 1 ] || daemon=0
+  [ "$runaway_restart" != 1 ] || daemon=1   # #1221: runner halt RUNAWAY dựng lại ở chế độ daemon
   mkdir -p "$(dirname "$log")" 2>/dev/null || { wlog "cannot create the log folder of $log: runner not restarted"; return 0; }
   [ ! -e "$MARK" ] || return 0   # stop vừa chạy giữa lúc kiểm và lúc khởi động
   runner_env
@@ -515,11 +519,17 @@ check() {
     # toàn (chỉ đọc); halt do một lần ghi chưa rõ kết quả thì --resume tự từ chối (cần người đối chiếu).
     halted)
       if [ "$rc" != 79 ]; then
-        verdict "ended-$state" "runner ended on purpose (STATE=${state:-?} rc=${rc:-?}) — not restarted"; return 0
-      fi
-      # rc 79 không bao giờ là dừng có chủ đích. Hết file halt (đã phát lại/lưu trữ ở nơi khác) thì không còn gì để
-      # resume: khởi động lại thẳng (24/10 02:40 board nằm im 5,5 giờ vì nhánh này ghi "ended on purpose").
-      (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1) || halt_resume=1 ;;
+        # #1221: halt RUNAWAY của runner chạy không daemon (CAUSE=runaway trong bản ghi): dựng lại ở chế độ daemon, tối đa một lần mỗi giờ.
+        if [ "$(field CAUSE "$STATE")" = runaway ]; then
+          runaway_restart=1
+        else
+          verdict "ended-$state" "runner ended on purpose (STATE=${state:-?} rc=${rc:-?}) — not restarted"; return 0
+        fi
+      else
+        # rc 79 không bao giờ là dừng có chủ đích. Hết file halt (đã phát lại/lưu trữ ở nơi khác) thì không còn gì để
+        # resume: khởi động lại thẳng (24/10 02:40 board nằm im 5,5 giờ vì nhánh này ghi "ended on purpose").
+        (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1) || halt_resume=1
+      fi ;;
     *) verdict "ended-$state" "runner ended on purpose (STATE=${state:-?} rc=${rc:-?}) — not restarted"; return 0 ;;
   esac
   # Runner watchdog vừa khởi động đã chết trước khi ghi bản ghi của nó (lỗi config, verification-readiness, trước trap
@@ -568,6 +578,15 @@ check() {
     else
       wlog "auto-resumed the GitHub halt of runner pid $pid: its saved read replayed OK (transient failure, e.g. network down after sleep)"
     fi
+  fi
+  if [ "$runaway_restart" = 1 ]; then
+    t=$(cat "$RUNAWAY_RESTART_FILE" 2>/dev/null || true)
+    case "$t" in ''|*[!0-9]*) t=0 ;; esac
+    if [ $((NOW - t)) -lt 3600 ]; then
+      verdict runaway-wait "runner halted on RUNAWAY again within the hour — not restarted until $(( (t + 3600 - NOW) / 60 )) min from now"; return 0
+    fi
+    printf '%s\n' "$NOW" > "$RUNAWAY_RESTART_FILE" 2>/dev/null || true
+    (PATH="${env_path:-$PATH}"; run_capped 20 python3 "$SCRIPT_DIR/super-board-notify.py" send --text "super-board $SLUG: runner halted on RUNAWAY (started without SB_DAEMON=1); watchdog restarts it in daemon mode (once per hour)" >/dev/null 2>&1) || true
   fi
   restart_runner "$pid" "$state" "$rc"
 }
