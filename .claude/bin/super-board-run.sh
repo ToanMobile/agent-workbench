@@ -698,6 +698,7 @@ issue_is_open() {
   # $1 = issue number. Returns 0 when OPEN, 1 when CLOSED.
   # Unreadable is distinct from both OPEN and CLOSED: exit 79 halts the run.
   local state reason raw
+  ISSUE_KEPT_CLOSED=0   # #1222: 1 when CLOSED and returned 0 only because it was not reopened — dispatch_lane must not start a lane
   state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
   [ "$state" = "CLOSED" ] || return 0
   # T0054: thẻ mang nhãn ac-open đã merge một PR nhưng còn AC chưa chứng minh (merge gate gắn nhãn). Worker vẫn có thể
@@ -714,6 +715,7 @@ issue_is_open() {
   if ! raw=$(python3 "$SB_GITHUB_READ" --kind json -- issue view "$1" --json stateReason,labels 2>/dev/null) \
      || ! reason=$(printf '%s' "$raw" | jq -r '(.stateReason // "") + " " + ([.labels[].name | ascii_downcase] | join(","))' 2>/dev/null); then
     log "⚠ #$1 closed with label ac-open; close reason unreadable — not reopened, kept out of Done this tick"
+    ISSUE_KEPT_CLOSED=1
     return 0
   fi
   case ",${reason#* }," in *,ac-open,*) ;; *) return 1 ;; esac
@@ -726,6 +728,7 @@ issue_is_open() {
     log "#$1 was closed with label ac-open (AC not proven yet) — reopened, not moved to Done"
   else
     log "⚠ #$1 closed with label ac-open could not be reopened — kept out of Done; reopen it or remove the label"
+    ISSUE_KEPT_CLOSED=1
   fi
   return 0
 }
@@ -1874,7 +1877,7 @@ dispatch_lane() {
   local issue_rc=0
   issue_is_open "$issue" || issue_rc=$?
   [ "$issue_rc" -le 1 ] || exit "$issue_rc"
-  if [ "$issue_rc" -ne 0 ]; then
+  if [ "$issue_rc" -ne 0 ] || [ "${ISSUE_KEPT_CLOSED:-0}" = 1 ]; then   # #1222: still CLOSED (ac-open not reopened) is no reason to build
     log "skip dispatch lane=${lane} issue=#${issue} — issue is CLOSED"
     return 0
   fi
@@ -3151,6 +3154,11 @@ Did: sweep found the issue closed (completed) while its card was in ${col}
 Next: -" >/dev/null 2>&1 || log "⚠ #${n} moved to Done but its report comment failed"
     [ -n "$BOT_LOGIN" ] && SB_CARD_BLOCKING=1 gh_write_once issue edit "$n" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
     rm -f "$INFLIGHT_DIR/$n"
+    # #1222: a leftover ac-open on a closed card is a stale trace once it is Done; failure is logged, not fatal.
+    if echo "${PROJECT_ITEMS_JSON:-{\}}" | jq -e --argjson n "$n" 'any(.items[]?; .content.number == $n
+        and any(((.labels // []) + (.content.labels // []))[]; ((if type == "object" then .name else . end) // "" | ascii_downcase) == "ac-open"))' >/dev/null 2>&1; then
+      SB_CARD_BLOCKING=1 gh_write_once issue edit "$n" --remove-label ac-open >/dev/null 2>&1 || log "⚠ #${n} moved to Done but removing its leftover ac-open label failed"
+    fi
     log "reconciled closed #${n} -> Done (was '${col}') — closed-issue sweep"
     moved=1
   done <<EOF2
