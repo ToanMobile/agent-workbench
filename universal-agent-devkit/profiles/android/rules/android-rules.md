@@ -22,7 +22,7 @@
 ## 3. Quản trị Hiệu năng & UI Thread (Chống ANR)
 - CẤM chạy tác vụ I/O, truy vấn Room/SQLite hoặc tính toán mã hóa trên UI Main Thread.
 - Sử dụng Kotlin Coroutines với `Dispatchers.IO` hoặc `Dispatchers.Default`.
-- Quản lý kích thước Bitmap, tái chế bộ nhớ tránh OutOfMemory (OOM) — chi tiết ở §11.
+- Quản lý kích thước Bitmap, tái chế bộ nhớ tránh OutOfMemory (OOM) — chi tiết ở §13.
 - "I/O" gồm cả những lời gọi trông vô hại: `ContentResolver.query/openInputStream/openFileDescriptor`, `DocumentFile.listFiles()`/`findFile()`, `SharedPreferences.commit()`, `File.exists()/length()` trên thư mục lớn, lần truy cập đầu tiên của SDK khởi tạo lười (Firebase, HTTP client, DB builder), IPC/Binder đồng bộ.
 - Không `runBlocking` trên main; không `System.gc()`/`Runtime.gc()` ở bất kỳ đâu trên main (đặc biệt trong `dispose`/`onDestroy`) — đó là GC đồng bộ, gây ANR.
 - Main thread không được chờ một lock mà thread nền đang giữ trong lúc làm I/O/parse (lock contention = ANR dù main "không làm I/O"). Tách lock theo tài nguyên, hoặc chuyển cả đoạn cần lock ra thread nền.
@@ -160,41 +160,15 @@
 - Test: fake viết tay trong module dùng chung (`FakeRepository`/`FakeDao`/`FakeNetworkDataSource`) ưu tiên hơn mock repository; `MainCoroutineRule` set/reset `Dispatchers.Main` bằng test dispatcher; mỗi `@Module` có `@TestInstallIn(replaces = …)` đối ứng; test Room dùng DB in-memory (§10, §11).
 - Package theo feature (`tasks/`, `taskdetail/`, …), mỗi feature có Screen + ViewModel và test phản chiếu cấu trúc đó. Chi tiết: `skills/deep-module-design/references/architecture-android.md`.
 - Trích logic ra khỏi một `View` vào `internal object` mới: test của object không chứng minh `View` còn gọi nó (revert call site của `View`, test object vẫn xanh; vacuity gate gọi test đó là rỗng). Sau khi trích, chạy `python3 .agents/devkit/scripts/linters/wiring_pin.py scan` (trong DevKit: `scripts/linters/`): nó tìm `internal object` mới (cùng file hoặc nằm cạnh một file `View`) mà không test nào nhắc tới cả `View` lẫn object đó (test chỉ nhắc `View`, hay pin của object khác trong cùng `View`, không tính), và in sẵn một pin test dạng source-text cho từng cặp (View, object): View vẫn gọi `Object.`, không còn các dòng nhánh cũ. Lưu pin vào đường dẫn nó gợi ý, chạy đúng lệnh `wiring_pin.py verify <pin.kt> --root <module>` nó in (từ gốc repo) thấy xanh, rồi revert call site thử: phải đỏ. `UNWIRED` = không View nào gọi object (nhắc trong comment, KDoc hay chuỗi ký tự không tính). `UNPINNABLE` = không dòng bị xoá nào đủ làm mốc: tự viết assertion "code cũ không còn" bằng tay, vì pin chỉ có nửa "còn gọi" thì không chứng minh gì. `verify` thoát 2 với pin chứa `view.contains(` mà nó không đọc được (pin bị formatter bẻ dòng thì vẫn đọc được). Pin chỉ thấy chuỗi ký tự, không thấy call nằm trong nhánh không bao giờ chạy: test hành vi thật vẫn cần khi có thể dựng được `View`.
+- Luật chung (từ universal) đã nằm ở mục khác, không lặp lại: git, bí mật, file cấu hình cục bộ ở §2 và `AGENTS.md`; chống spam, debounce, Loading ở §1; bằng chứng nghiệm thu, soát `git diff` ở §4; RED→GREEN, mock lỏng lẻo, sửa assertion ở §19.1.
+- Clean Architecture & The Dependency Rule: `Domain` (Entities, Value Objects, Use Cases) là Kotlin thuần, không biết UI, Room hay framework Android; mọi phụ thuộc mã nguồn chỉ trỏ từ ngoài vào trong (Compose UI + ViewModel → Repository interface → data source), không ngược lại.
 <!-- /on-demand -->
 
-## 17. Quy tắc chung
-<!-- on-demand: §17 Quy tắc chung: Git, TDD, kiến trúc -->
-**17.1. Solo-Dev & Git Security **
-- Tự commit/push khi xong và danh sách việc phải hỏi người dùng trước: DevKit essentials trong `AGENTS.md`, mục Git và Working style.
-- KHÔNG commit bí mật / credentials: `.env`, keys, token, mật khẩu, cookies.
-- Mọi tài khoản hoặc cấu hình nhạy cảm phải nạp qua biến môi trường hoặc file cấu hình cục bộ (`.gitignore`).
-- Soát kỹ `git diff` trước khi báo cáo hoàn thành.
-
-**17.2. Paired Executable Oracle & Zero-Defect TDD**
-- Khi sửa lỗi (bug-fixing) hoặc phát triển tính năng mới:
-  1. **RED:** Viết bài test tái hiện lỗi trước, chạy test xác nhận THẤT BẠI.
-  2. **GREEN:** Sửa code tối giản để bài test chuyển sang THÀNH CÔNG.
-  3. Không được mock lỏng lẻo (`assert True`), không được xóa hoặc đổi assertion của test để pass gian lận.
-
-**17.3. Chống Spam & Quản trị Bất đồng bộ (Debounce / Rate Limit)**
-- Các thao tác gọi API tốn kém, xác nhận giao dịch hoặc kích hoạt workflow phải có Debounce / Loading state (chi tiết §1).
-- Không spam request liên tục làm quá tải backend, job queue hoặc làm nghẽn dịch vụ thông báo.
-
-**17.4. Bằng chứng Nghiệm thu (Acceptance Gate)**
-- Tính năng chỉ được xem là hoàn tất khi có bằng chứng xác minh trạng thái **THÀNH CÔNG (PASS / Success State)**:
-  - Thông báo thành công (toast/modal), trạng thái nghiệp vụ hoàn tất.
-  - Báo cáo kiểm thử hoặc screenshot kết quả thực tế (chi tiết §4).
-
-**17.5. Clean Architecture & The Dependency Rule**
-- **Tách biệt phân tầng (Separation of Concerns):**
-  - `Domain`: Chứa Entities, Value Objects và Use Cases thuần túy, độc lập tuyệt đối với UI và CSDL.
-  - `Adapters`: Controllers, Presenters, Gateways chuyển đổi dữ liệu.
-  - `Frameworks & Drivers`: UI, Web/Desktop runtime, Database, Third-party SDKs.
-- **The Dependency Rule:** Mọi phụ thuộc mã nguồn chỉ được phép trỏ từ ngoài vào trong. Lớp Domain cốt lõi không bao giờ biết đến sự tồn tại của UI, database hay framework bên ngoài. Trên Android: tầng UI (Compose + ViewModel) phụ thuộc Repository interface, không ngược lại (§16).
-<!-- /on-demand -->
+## 17. Bằng chứng
+- Hiệu năng: chỉ máy thật, không số đo thì không tuyên bố (§18); AVD chỉ cho ảnh nghiệm thu; RED→GREEN, không nới assertion.
 
 ## 18. Hiệu năng
-<!-- on-demand: §18 Hiệu năng: ngân sách, Macrobenchmark -->
+<!-- on-demand: §18 Hiệu năng -->
 > Mọi con số dưới đây có MỘT trong ba nhãn: **nguồn nền tảng** (tên tài liệu Android), **nguồn kit** (skill/council của DevKit nêu rõ ngưỡng đó), hoặc **"mặc định đề xuất của dự án, cần đo trên máy thật"**. Số nguồn nền tảng vẫn phải kiểm lại theo tài liệu hiện hành trước khi dùng làm cổng chặn (ngưỡng Android vitals/Play có thể đổi). Không có số đo trên **máy thật** (cùng model, bản build release-like, sạc/nhiệt ổn định) thì không được tuyên bố "đã tối ưu"; emulator chỉ dùng để dev nhanh, không làm bằng chứng hiệu năng (`skill:android-real-device-qa`: thiết bị thật là thẩm phán tối cao; không có máy online thì ghi `UNTESTED`, không giả PASS).
 
 **18.1 Bảng ngân sách**
@@ -213,7 +187,7 @@
 | ANR — input | 5 s | Android developers, "ANRs" | `anr-logcat-triage.sh`, `/data/anr/traces`, Play Console ANR |
 | ANR — broadcast foreground | 10 s | Android developers, "ANRs" | như trên |
 | Main thread | Không `Thread.sleep`/`runBlocking`/khoá đồng bộ quá 16 ms trên luồng giao diện | Nguồn kit: `council:07-performance-anr` (Agent 7.1) | StrictMode, Perfetto, review |
-| Tỷ lệ ANR / crash | Dưới ngưỡng "bad behavior" của Google Play (ANR người dùng cảm nhận được 0,47%, crash 1,09%) | Android vitals; kiểm lại con số hiện hành ở Play Console. Mục tiêu nội bộ chặt hơn: mặc định đề xuất của dự án, cần đo trên máy thật | Play Console Android vitals, Crashlytics |
+| Tỷ lệ ANR / crash | Dưới ngưỡng "bad behavior" của Google Play (ANR người dùng cảm nhận được 0,47%, crash 1,09%) | Android vitals; kiểm lại con số hiện hành ở Play Console. Thêm ngưỡng riêng theo từng thiết bị: 8% (Android vitals; kiểm lại tài liệu hiện hành). Mục tiêu nội bộ chặt hơn: mặc định đề xuất của dự án, cần đo trên máy thật | Play Console Android vitals, Crashlytics |
 | Bộ nhớ / rò rỉ | Sau 10 vòng vào–ra một màn hình, heap không tăng đều (không còn instance Activity/ViewModel cũ) | mặc định đề xuất của dự án, cần đo trên máy thật | LeakCanary, Memory Profiler/heap dump |
 | Bitmap OOM | Giải mã theo kích thước hiển thị (§13); không có `OutOfMemoryError` trên fixture ảnh/PDF lớn | Android developers, "Loading large bitmaps efficiently"; nguồn kit: `council:07-performance-anr` (Agent 7.3) | Heap dump + fixture lớn/hỏng |
 | Binder transaction | Tổng dữ liệu một giao dịch Binder dưới 1 MB (bộ đệm chia sẻ cả tiến trình); payload trên 500 KB truyền bằng URI hoặc `SharedMemory` | 1 MB: Android developers, `TransactionTooLargeException`; 500 KB: nguồn kit `council:07-performance-anr` (Agent 7.4) | Không đẩy Bitmap/danh sách lớn qua Intent/Bundle/`savedInstanceState`; truyền URI/ID |
@@ -236,10 +210,9 @@
 - **Hồi quy hiệu năng là hồi quy chức năng**: số đo vượt ngưỡng đã chốt trong baseline của dự án chặn merge giống test đỏ (§19).
 - Công cụ sẵn có trong kit (thư mục `scripts/qa` của profile android; trong dự án: `.agents/active-profile/scripts/qa`): `adb-fps-measure.sh`, `anr-logcat-triage.sh`, `tombstone-triage.sh` (crash native), `dump-view-hierarchy.sh`, `dexscan.py`, `adb-safe-exec.sh`; council `07-performance-anr.md`.
 <!-- /on-demand -->
-
 ## 19. Chất lượng
-<!-- on-demand: §19 Chất lượng: RED→GREEN, lint, flaky -->
-> Con số ở mục này mang nhãn **nguồn** (tài liệu hoặc kit) hoặc **"mặc định đề xuất của dự án, cần đo trên máy thật"** (hoặc "cần đo trên dữ liệu của dự án" khi không liên quan thiết bị).
+<!-- on-demand: §19 Chất lượng -->
+> Con số ở mục này mang nhãn **nguồn** (tài liệu hoặc kit) hoặc **"mặc định đề xuất của dự án, cần đo trên máy thật"** (số liệu lấy từ dữ liệu của dự án thì ghi thêm nguồn dữ liệu đó sau nhãn).
 
 **19.1 Paired oracle RED→GREEN**
 - Mỗi bug fix có đúng một test ở ranh giới lỗi thật: chạy thấy **RED** trước khi sửa code production (cùng acceptance/oracle/lệnh), sửa tối giản, chạy lại đúng test đó thấy **GREEN**; giữ lệnh và exit code. RED phải đỏ ở assertion/triệu chứng, không phải lỗi setup/compile. Compile xanh chỉ chứng minh compile (§4).
@@ -261,27 +234,26 @@
 - Cổng chung: `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief` exit 0.
 
 **19.4 Kim tự tháp test**
-- Nhiều unit test nhanh ở đáy (JVM, không UI), ít hơn integration (Room in-memory, Hilt test), ít nhất là UI/E2E trên máy thật (Compose test, UI Automator). Tỷ lệ tham khảo 70/20/10 (Google Testing Blog, "Just Say No to More End-to-End Tests"); với dự án này là mặc định đề xuất của dự án, cần đo trên dữ liệu của dự án (xem thời gian chạy và số lỗi bắt được mỗi tầng).
+- Nhiều unit test nhanh ở đáy (JVM, không UI), ít hơn integration (Room in-memory, Hilt test), ít nhất là UI/E2E trên máy thật (Compose test, UI Automator). Tỷ lệ tham khảo 70/20/10 (Google Testing Blog, "Just Say No to More End-to-End Tests"); với dự án này là mặc định đề xuất của dự án, cần đo trên máy thật (dữ liệu của dự án: thời gian chạy và số lỗi bắt được mỗi tầng).
 - Fake viết tay ưu tiên hơn mock repository (§16); test không phụ thuộc thứ tự, giờ hệ thống, mạng thật, `Thread.sleep`.
 
 **19.5 Crash-free và bằng chứng thiết bị thật**
-- Không được vượt ngưỡng "bad behavior" của Google Play (crash 1,09% phiên người dùng cảm nhận được, nguồn Android vitals; kiểm lại con số hiện hành). Mục tiêu nội bộ crash-free sessions ≥ 99,5% và crash-free users ≥ 99% là mặc định đề xuất của dự án, cần đo trên dữ liệu Crashlytics của dự án.
+- Không được vượt ngưỡng "bad behavior" của Google Play (crash 1,09% phiên người dùng cảm nhận được; theo từng thiết bị 8%; nguồn Android vitals, kiểm lại tài liệu hiện hành). Mục tiêu nội bộ crash-free sessions ≥ 99,5% và crash-free users ≥ 99% là mặc định đề xuất của dự án, cần đo trên máy thật (dữ liệu Crashlytics của dự án).
 - Mỗi lần phát hành đối chiếu Crashlytics/Play Console với bản trước; crash mới kèm test tái hiện (§19.1). Lỗi dự kiến (mất mạng, file bị xoá, huỷ coroutine) không đẩy lên như lỗi (§12). Crash native: `tombstone-triage.sh` + `ndk-stack`.
 - Nghiệm thu UI: ảnh chụp trạng thái THÀNH CÔNG từ **máy thật** (§4), không phải màn trắng/splash; bản release đã minify chạy thử trên máy (§8), kiểm `apksigner verify` và target SDK theo `agent:mobile-release-auditor`. Bằng chứng test là số đếm trong XML (`tests > 0`, `failures = 0`, `errors = 0`).
 - Bảo mật: đổi Intent/URI/file, exported component, permission, WebView, auth, network security thì chạy `skill:security-checklist` và test cho input độc hại/bị từ chối/sai định dạng/quá cỡ.
 
 **19.6 Kiểm soát flaky**
 - Test flaky là lỗi chất lượng: không `sleep` cố định, không toạ độ cứng, không phụ thuộc thứ tự; dùng idling/await có điều kiện và `StandardTestDispatcher` (§3, §7).
-- Test mới hoặc test vừa sửa chạy lặp liên tiếp trước khi merge (ví dụ 20 lần; mặc định đề xuất của dự án, cần đo trên máy thật/CI của dự án) và phải xanh mọi lần; một lần đỏ ngẫu nhiên thì sửa nguyên nhân, không `@Ignore`/retry che.
+- Test mới hoặc test vừa sửa chạy lặp liên tiếp trước khi merge (ví dụ 20 lần; mặc định đề xuất của dự án, cần đo trên máy thật; chạy trên CI của dự án) và phải xanh mọi lần; một lần đỏ ngẫu nhiên thì sửa nguyên nhân, không `@Ignore`/retry che.
 - Retry tự động ở CI chỉ để phát hiện (ghi nhãn flaky và mở thẻ), không để làm xanh.
 - Test hiệu năng chạy trên máy thật cố định model, sạc đủ, nhiệt ổn định, tắt cập nhật nền; ghi model và build vào báo cáo.
 <!-- /on-demand -->
-
 ## 20. UI/UX
-<!-- on-demand: §20 UI/UX: TalkBack, dark mode -->
+<!-- on-demand: §20 UI/UX, TalkBack, M3 -->
 > Token màu, typography, spacing, chuyển động, trạng thái, dark mode, haptic: xem `DESIGN.md` của profile. Dưới đây là cổng kiểm tra ngắn cho mọi PR đổi giao diện (Compose/View). Bổ sung §15, không thay thế.
 
-- **Vùng chạm**: ≥ 48×48 dp (Android accessibility docs); hai vùng chạm cách nhau ≥ 8 dp. Icon nhìn thấy nhỏ hơn thì mở hit area, không phóng icon.
+- **Vùng chạm**: ≥ 48×48 dp (Android accessibility docs); hai vùng chạm cách nhau ≥ 8 dp (mặc định đề xuất của dự án, cần đo trên máy thật). Icon nhìn thấy nhỏ hơn thì mở hit area, không phóng icon.
 - **Tương phản**: chữ thường ≥ 4,5:1, chữ lớn ≥ 3:1 (WCAG 2.x AA); thành phần không phải chữ (icon có nghĩa, viền input, trạng thái focus) ≥ 3:1 (WCAG 1.4.11); đo cả sáng lẫn tối; màu không là kênh duy nhất truyền thông tin.
 - **Chữ co giãn**: `sp` chịu font scale 200%; không cố định chiều cao khung chữ; map chữ vào vai trò type scale Material (Display/Headline/Title/Body/Label), không chọn cỡ tay theo từng màn hình.
 - **TalkBack**: `contentDescription`/`semantics` (`role`, `stateDescription`), thứ tự đọc logic, nhóm bằng `mergeDescendants`; control icon có tên và báo trạng thái chọn/bật/mở; icon trang trí cạnh chữ nhìn thấy được ẩn khỏi cây trợ năng. Duyệt thủ công bằng TalkBack trên máy thật cho luồng chính; Accessibility Scanner chỉ bổ sung.
@@ -291,15 +263,14 @@
 - **4 trạng thái** Loading/Empty/Error/Populated cho mọi màn hình (§15); Error có Thử lại; Empty có CTA; offline giữ dữ liệu cũ và báo rõ.
 - **Phản hồi chạm và debounce**: phản hồi nhấn (ripple/opacity/elevation, không dịch bounds làm giật layout) trong khoảng 80–150 ms (nguồn kit: `skill:ui-ux-pro-max`, `references/pro-rules.md`); thao tác tốn kém disable ngay lần chạm đầu và debounce ≥ 1000 ms (§1).
 - **Haptic**: chỉ để xác nhận hành động hoặc báo lỗi, tôn trọng cài đặt hệ thống, không là kênh duy nhất báo kết quả (xem `DESIGN.md`).
-- **Material 3**: dùng thành phần chuẩn (button filled/tonal/outlined/text, FAB, chip, snackbar, bottom sheet, dialog) trước khi tự vẽ; navigation bar (3–5 đích) ở chiều rộng compact, navigation rail/drawer ở chiều rộng expanded; Back hệ thống và predictive back luôn hoạt động; một FAB cho một hành động chính; snackbar cho phản hồi thoáng qua, dialog chỉ cho quyết định phải ngắt luồng; Dynamic Color (Android 12+) tuỳ chỗ, có scheme tĩnh dự phòng.
+- **Material 3**: dùng thành phần chuẩn (button filled/tonal/outlined/text, FAB, chip, snackbar, bottom sheet, dialog) trước khi tự vẽ; chọn điều hướng theo window size class: compact dùng navigation bar (3–5 đích), medium dùng navigation rail, expanded dùng rail hoặc drawer (kiểm lại tài liệu hiện hành); Back hệ thống và predictive back luôn hoạt động; một FAB cho một hành động chính; snackbar cho phản hồi thoáng qua, dialog chỉ cho quyết định phải ngắt luồng; Dynamic Color (Android 12+) tuỳ chỗ, có scheme tĩnh dự phòng.
 - **Edge-to-edge**: xử lý inset status/nav bar, cutout, IME; kiểm tra trên điện thoại nhỏ, điện thoại lớn và tablet, dọc lẫn ngang (§15).
 - **Icon**: icon vector cùng một họ và độ dày nét; không emoji làm icon cấu trúc; kích thước icon là token.
 - **Zero-Slop**: không `Card` lồng `Card`, không icon tile đặt trên heading, không `Color.Gray`/`#808080` trần, không gradient tím–xanh mặc định (neutral pha 3–5% tông chủ đạo), nhịp spacing 4–8 / 12–16 / 24–32 (không 16 cho mọi thứ), không câu chào sáo rỗng (§15). Tiêu đề quan trọng không dùng Roboto trần mà không chủ đích: nạp font thương hiệu qua type scale của theme.
 - **Bằng chứng**: ảnh chụp từ máy thật ở chế độ sáng và tối, font scale lớn, và một lượt TalkBack cho màn hình mới; với thay đổi chỉ trong tooling/docs không cần ảnh. Ảnh chụp bằng `python3 .agents/devkit/bin/proof-capture.py`, tuân thủ `.adb-denylist`.
 <!-- /on-demand -->
-
-## 21. Bộ công cụ theo tình huống
-<!-- on-demand: §21 Bộ công cụ, nghiệm thu -->
+## 21. Bộ công cụ
+<!-- on-demand: §21 Bộ công cụ -->
 > Gọi đúng công cụ của kit đúng lúc; tên viết dạng `skill:`, `agent:`, `council:` đều có thật trong kit.
 
 | Nhóm | Tình huống | Công cụ | Cho ra |
@@ -307,10 +278,10 @@
 | UI/UX | Dựng màn hình/luồng mới hoặc làm lại giao diện rập khuôn | `skill:taste-mobile-app` | Quy trình 7 pha chống slop: dial, `MOBILE-DESIGN.md` lấy token từ `DESIGN.md`, 4 trạng thái, 10 câu tự kiểm |
 | UI/UX | Chọn bảng màu, font, style nút, micro-interaction, haptic; checklist trước khi giao UI app | `skill:ui-ux-pro-max` | Quyết định thẩm mỹ và checklist `references/pro-rules.md` |
 | UI/UX | Thiết kế mới, critique, audit, polish giao diện native Android | `skill:impeccable` | Phê bình/audit/polish theo Material 3 (`reference/android.md`) và trích `DESIGN.md` |
-| UI/UX | Có `qa.config.json`, cần chụp màn route × viewport, soi lệch layout (phần web/WebView) | `skill:qa-visual` | Ảnh các màn và danh sách lỗi bố cục đo trên DOM, đính vào PR |
+| UI/UX | Có `qa.config.json`, cần chụp màn route × viewport, soi lệch layout của màn WebView trong app | `skill:qa-visual` | Ảnh các màn và danh sách lỗi bố cục đo từ cây giao diện, đính vào PR |
 | UI/UX | Kiểm giao diện trên máy thật: vùng chạm ≥ 48 dp, tràn khung, ảnh nghiệm thu màn thành công | `agent:real-device-ui-auditor` | Báo cáo accessibility tree, touch target, layout overflow, xác thực ảnh proof |
 | Hiệu năng | Sửa Compose, State, ViewModel, LazyColumn/LazyRow hoặc thấy UI giật | `skill:compose-recomp-audit` | Soát recomposition thừa trong Compose |
-| Hiệu năng | Đo FPS jank, chẩn ANR/crash logcat, audit UI hierarchy, quét DEX 64K trên máy Android thật/emulator | `skill:android-real-device-qa` | Số đo FPS, log ANR/crash, hierarchy qua adb, báo cáo HTML kèm ảnh |
+| Hiệu năng | Đo FPS jank, chẩn ANR/crash logcat, audit UI hierarchy, quét DEX 64K trên máy Android thật (emulator chỉ để dev nhanh) | `skill:android-real-device-qa` | Số đo FPS, log ANR/crash, hierarchy qua adb, báo cáo nghiệm thu kèm ảnh |
 | Hiệu năng | Main thread > 16 ms, ANR, nóng máy/pin, OOM bitmap, giới hạn Binder 1 MB | `council:07-performance-anr` | Phán quyết hiệu năng/ANR/thermal theo ngân sách §18 |
 | Hiệu năng | Thêm hoặc audit log, metric, trace, Crashlytics/Firebase Performance | `skill:observability-instrumentation` | Điểm đo đủ để chẩn đoán lỗi production |
 | Chất lượng | Thêm/sửa logic testable, viết regression test | `skill:tdd-workflow` | Chu trình RED rồi GREEN an toàn, Surviving Mutant Guard |
