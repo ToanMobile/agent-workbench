@@ -16,6 +16,8 @@
   - Bug có giao diện: gửi ảnh cũ đang lỗi (`reports/before-*.png`) và ảnh mới vừa fix xong (`reports/proof-*.png`).
   - Task mới có giao diện: gửi ảnh nghiệm thu mới.
   - Task không có ảnh (backend, tooling, docs): viết hai câu, cũ bị gì và mới đã sửa gì, kèm một kết quả chạy thật (vd test ĐỎ rồi XANH).
+- **Ảnh hiện thẳng, không bắt bấm link**: trong Claude Code, mở file PNG bằng công cụ Read để ảnh hiện ngay trong khung chat, rồi nhúng `![mô tả](đường dẫn)` ở báo cáo; không chỉ dán đường dẫn hay link. Cả ảnh cũ lỗi và ảnh mới đều hiện như vậy.
+- **Comment trên task theo đúng mẫu báo cáo này**: dòng đầu là kết quả, rồi bằng chứng trước/sau theo 3 trường hợp ở trên, rồi các mục còn hở. Ảnh nhúng thẳng vào comment (URL raw ghim theo sha), không để link. Giữ nguyên dòng tiêu đề `[role] [label]` và các dòng máy đọc (`blocked-by:`, `Local tests:`).
 - **Trạng thái mở đầu**: Sử dụng `XONG` / `CHƯA XONG` / `CHỜ DUYỆT`.
 
 ## 3. Git Commit & Pull Request

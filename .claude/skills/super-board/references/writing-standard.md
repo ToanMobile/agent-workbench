@@ -360,6 +360,9 @@ Header regex: `^\[(builder|qa|reviewer|collect|orchestrator)\] \[(blocker|issue|
 - ≤ 8 lines of prose. Evidence before adjectives: the command, the sha, the file:line.
 - Machine lines (`Local tests:`, `gh-quota-on-exit:`, `blocked-by:`, `root-cause-hash:`) go
   last and do not count toward the 8.
+- A lane comment follows the same shape as the handover report: result first, then before/after evidence
+  (bug with UI: old broken image + new image; new UI task: new image; no image: two plain sentences, what was
+  wrong and what is fixed, plus one real test result), then what is still open. Images are embedded, never linked.
 - Screenshots (QA) go below, as an embedded table. They do not count either.
 - The Block template (`block-template.md`) uses the same header and keeps its fields.
 - The needs-you note is the one comment with no header: a hidden `<!-- super-board:needs-you -->`
