@@ -92,7 +92,7 @@ remove_wt() {
   local out rc=0
   [ -n "$KIT_WT" ] || { echo "kept $1: $NO_KIT" >&2; return 0; }
   # thành công: in lại lời kit (nhánh đã xoá, commit cất ở refs/devkit/discarded 30 ngày, ⚠ memory note đi theo worktree) — OCR 18/10
-  out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove ${2+"--merged=$2"} "$1" 2>&1) && { printf '%s\n' "$out" >&2; return 0; }
+  out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove ${2+"--merged=$2"} ${REMOVE_EXTRA:+"$REMOVE_EXTRA"} "$1" 2>&1) && { printf '%s\n' "$out" >&2; return 0; }
   rc=$?
   [ -e "$1" ] || { echo "removed $1 (agent-kit exited $rc after removing it: $(printf '%s\n' "$out" | tail -1 | cut -c1-200))" >&2; return 0; }
   # Có dòng ✖ (có việc sẽ mất, chưa tích hợp, git lỗi khi dò bí mật…) = kit TỪ CHỐI; không có (kit chết giữa chừng): không nói được = giữ.
@@ -649,7 +649,7 @@ closed_wt() {
   if [ "$DRY" -eq 1 ]; then
     echo "would ask agent-kit to remove $wt (card closed, no merged PR of its own; kept if it holds real work)" >&2; DRY_GONE="$DRY_GONE$wt"$'\n'; rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"; return 0
   fi
-  remove_wt "$wt"
+  REMOVE_EXTRA=--save-reflog remove_wt "$wt"   # #1234: a commit only the reflog holds (QA evidence v1 replaced by v2) is kept in refs/devkit/discarded, then removed
   if [ -n "$TIDY_NAME" ] && [ -d "$wt" ]; then untidy "$wt"
   elif [ -n "$TIDY_NAME" ]; then rm -rf "$TIDY_NAME.dropped"; fi
   rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"

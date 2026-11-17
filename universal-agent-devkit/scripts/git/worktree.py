@@ -9,9 +9,10 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py diff <path> [--with-checklist]   the worktree's own changes as a binary patch
   worktree.py finish <path>    merge its work into the main branch AUTOMATICALLY, then remove it (exit 0 done, 3 conflict, 1 blocked)
   worktree.py automerge <path> the same, one JSON line on stdout (what the Stop gate runs)
-  worktree.py remove [--merged[=<sha>]] <path>   remove it once nothing of its work would be lost; --merged: only when its HEAD is
+  worktree.py remove [--merged[=<sha>]] [--save-reflog] <path>   remove it once nothing of its work would be lost; --merged: only when its HEAD is
                                integrated (the trunk holds it, or it is <sha> - a PR head just merged - or behind it) and, asked
-                               again right before the removal, nothing holds it (the rule of `held`)
+                               again right before the removal, nothing holds it (the rule of `held`); --save-reflog: when reflog-only commits are the ONLY
+                               blocker, keep them in refs/devkit/discarded (30 days) and remove
   worktree.py held <path>      exit 0 when no session or lock holds it, 3 (reason on stdout) when one does; read-only
   worktree.py discard <path>   remove one `remove` refuses, only when it holds nothing but deleted files / untracked IDE junk, its HEAD is
                                in the trunk and no live session holds it; a fallback copy goes to refs/devkit/discarded/* (30 days)
@@ -2337,14 +2338,16 @@ SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 def cmd_remove(cwd, args):
     # --merged[=<sha>] (U2, audit 25/10): the board's clean-up after a merge removes only what is integrated (_integrated); the bare flag or
     # an empty value: the trunk alone decides.
-    merged, rest = None, []
+    merged, rest, save_reflog = None, [], False
     for a in args:
         if a == "--merged" or a.startswith("--merged="):
             merged = a.partition("=")[2]
+        elif a == "--save-reflog":   # #1234: UNREACHABLE as the ONLY blocker: keep the reflog-only commits in refs/devkit/discarded, then remove
+            save_reflog = True
         else:
             rest.append(a)
     if len(rest) != 1 or (merged and not SHA_RE.fullmatch(merged)):
-        die("usage: agent-kit worktree remove [--merged[=<merged head sha>]] <path>")
+        die("usage: agent-kit worktree remove [--merged[=<merged head sha>]] [--save-reflog] <path>")
     wt = os.path.abspath(os.path.join(cwd, rest[0]))
     if merged is not None:
         why = _integrated(main_checkout(cwd), wt, merged or None)
@@ -2366,7 +2369,13 @@ def cmd_remove(cwd, args):
         waive = waive or (merged is not None and bool(head) and lost is not None and rows[0]["unreachable"]
                           and git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip() == head)
         waived = False
-        for code, kind, text, detail in _iter_blockers(cwd, wt, rest[0], None, rows=rows):   # a person is waiting: a git call is still bounded (_timeout)
+        blockers = _iter_blockers(cwd, wt, rest[0], None, rows=rows)   # a person is waiting: a git call is still bounded (_timeout)
+        if save_reflog:   # #1234: only when no other kind of blocker exists (dirty files, busy, nested, holder ...) is UNREACHABLE waived
+            blockers = list(blockers)
+            r0 = rows[0] if len(rows) == 1 else {}   # HEAD itself must be held by a ref: only reflog-only commits (a non-empty list) are kept
+            waive = waive or (bool(blockers) and all(b[1] == "unreachable" for b in blockers) and bool(r0.get("reflog"))
+                              and not (r0["detached"] and r0["ahead"] != 0 and (r0["held_only"] is None or r0["held_only"] > 0)))
+        for code, kind, text, detail in blockers:
             if kind == "unreachable" and waive:
                 waived = True
                 continue
