@@ -50,7 +50,7 @@ test('state cu (id cu o activeProfileId, frozenUntil, quotaCache) duoc doc ra ba
     saveSwitcherState(t.stateDir, { activeProfileId: 'finos_team', frozenUntil: { max: 123, grok: 456 }, quotaCache: { finos: { remainingPct: 40 } } });
     const st = loadSwitcherState(t.stateDir);
     assert.equal(st.activeProfileId, 'finos_linh');
-    assert.deepEqual(st.frozenUntil, { finos_toan_max: 123, grok: 456 });
+    assert.deepEqual(st.frozenUntil, { finos_toan_max: 123 }); // 17/11: khoa cua profile da go (grok) bi bo
     assert.deepEqual(Object.keys(st.quotaCache), ['finos_toan']);
   } finally { t.cleanup(); }
 });
@@ -130,8 +130,12 @@ test('migrateIds: settings.local.json hong thi bo qua va bao, khong ghi de', () 
 test('17/11 go Grok: state cu con activeProfileId/frozenUntil grok van doc duoc, so 6 va id grok bi tu choi', () => {
   const t = setup();
   try {
-    saveSwitcherState(t.stateDir, { activeProfileId: 'grok', frozenUntil: { grok: 456 } });
-    assert.doesNotThrow(() => loadSwitcherState(t.stateDir));
+    saveSwitcherState(t.stateDir, { activeProfileId: 'grok', frozenUntil: { grok: 456, finos_linh: 9 }, quotaCache: { grok: { remainingPct: 1 } } });
+    const st = loadSwitcherState(t.stateDir);
+    // active la profile da go: khong roi ve DEFAULT_PROFILES[0] mot cach ngam (dong bang nham Claude), ma ve mac dinh tu settings CC Switch
+    assert.equal(st.activeProfileId, 'finos_toan');
+    assert.deepEqual(st.frozenUntil, { finos_linh: 9 });
+    assert.deepEqual(st.quotaCache, {});
     assert.throws(() => resolveProfile('grok'), (e) => e.code === 'PROFILE_NOT_FOUND');
     assert.throws(() => resolveProfile(6), (e) => e.code === 'PROFILE_NOT_FOUND' && /1, 2, 3, 4, 5, 7/.test(e.message));
     assert.equal(resolveProfile(7).id, 'finos_lua');

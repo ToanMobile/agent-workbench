@@ -110,6 +110,13 @@ export const LEGACY_ID_ALIASES = {
   antigravity: 'antigravity_ultra',
 };
 
+/** Profile da go (17/11 chu repo go Grok): khoa cua no trong state cu bi bo khi doc, active tro toi no thi ve mac dinh. */
+export const REMOVED_PROFILE_IDS = new Set(['grok']);
+
+function dropRemoved(obj) {
+  return Object.fromEntries(Object.entries(obj).filter(([k]) => !REMOVED_PROFILE_IDS.has(k)));
+}
+
 export function canonicalProfileId(id) {
   return typeof id === 'string' && Object.hasOwn(LEGACY_ID_ALIASES, id) ? LEGACY_ID_ALIASES[id] : id;
 }
@@ -157,16 +164,17 @@ export function loadSwitcherState(stateDir) {
   const dir = resolveStateDir(stateDir);
   const existing = readJsonSafe(stateFilePath(dir), null);
   const ccSettings = readJsonSafe(ccSwitchSettingsPath(dir), {});
-  const initialActive = canonicalProfileId(existing?.activeProfileId || ccSettings?.currentProviderClaude || 'finos_toan');
+  const savedActive = REMOVED_PROFILE_IDS.has(existing?.activeProfileId) ? '' : existing?.activeProfileId;
+  const initialActive = canonicalProfileId(savedActive || ccSettings?.currentProviderClaude || 'finos_toan');
 
   return {
     activeProfileId: initialActive,
     lastClaudeSwitchAtMs: existing?.lastClaudeSwitchAtMs || 0,
     lastClaudeRateLimitAtMs: existing?.lastClaudeRateLimitAtMs || 0,
-    frozenUntil: canonicalKeys(existing?.frozenUntil),
-    quotaCache: canonicalKeys(existing?.quotaCache),
+    frozenUntil: dropRemoved(canonicalKeys(existing?.frozenUntil)),
+    quotaCache: dropRemoved(canonicalKeys(existing?.quotaCache)),
     quotaFetchedAtMs: existing?.quotaFetchedAtMs || 0,
-    quotaIssues: canonicalKeys(existing?.quotaIssues), // ly do lan lay quota gan nhat that bai, theo profile
+    quotaIssues: dropRemoved(canonicalKeys(existing?.quotaIssues)), // ly do lan lay quota gan nhat that bai, theo profile
     switchHistory: Array.isArray(existing?.switchHistory) ? existing.switchHistory.slice(-50) : [],
     policy: {
       ...DEFAULT_POLICY,
