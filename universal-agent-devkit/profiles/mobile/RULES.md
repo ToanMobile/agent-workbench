@@ -1,1 +1,0 @@
-rules/mobile-rules.md
