@@ -103,6 +103,43 @@ function findAnyUuid(obj, depth = 0) {
 
 // ---- duong agy (model cu the) ---------------------------------------------------------------------------------------------
 const AGY_INIT_WAIT_MS = 60000;
+// #1230: han cho ca luot SAU init (agy chay tach nhom, dispatch da tra ve): han cung + han im lang (tep dau ra khong lon them). 0 = tat.
+const envMs = (name, dflt) => { const raw = process.env[name]; if (raw === undefined || raw === '') return dflt; const n = Math.trunc(Number(raw)); return Number.isFinite(n) && n >= 0 ? n : dflt; };
+export const agyTurnMaxMs = () => envMs('PM_AGY_TURN_MAX_MS', 20 * 60 * 1000);
+export const agySilentMaxMs = () => envMs('PM_AGY_SILENT_MAX_MS', 10 * 60 * 1000);
+const AGY_KILL_GRACE_MS = 2000;
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+
+/** Canh luot agy da init: qua han cung / im lang thi SIGTERM ca nhom, SIGKILL sau han han, ghi loi ro vao tep dau ra. Het nhom thi tu dung. */
+function watchTurn(pid, pidTag, outFile) {
+  const turnMax = agyTurnMaxMs();
+  const silentMax = agySilentMaxMs();
+  if (!(pid > 1) || (!turnMax && !silentMax)) return;
+  const t0 = Date.now();
+  let size = -1;
+  let lastGrow = t0;
+  const timer = setInterval(() => {
+    if (!pidAlive(pid)) { clearInterval(timer); return; }
+    let sz = size;
+    try { sz = fs.statSync(outFile).size; } catch { /* tep mat: coi nhu khong lon them */ }
+    const now = Date.now();
+    if (sz !== size) { size = sz; lastGrow = now; }
+    let why = null;
+    if (turnMax && now - t0 >= turnMax) why = `agy turn timed out after ${turnMax} ms`;
+    else if (silentMax && now - lastGrow >= silentMax) why = `agy produced no output for ${silentMax} ms`;
+    if (!why) return;
+    clearInterval(timer);
+    // pid dung lai sau nhieu phut: chi dung khi con DUNG la agy cua luot (dau van tay ps); ps hong => khong giet gi
+    try { if (!sameProcess(pid, pidTag)) return; } catch (e) { logStderr(`han gio agy: bo qua, ${e.message}`); return; }
+    logStderr(`${why} (pid ${pid}): dung ca nhom`);
+    killGroup(pid, 'SIGTERM');   // loi = nhom da het
+    const hard = setTimeout(() => { killGroup(pid); }, AGY_KILL_GRACE_MS);   // loi = nhom da het
+    hard.unref();
+    try { fs.appendFileSync(outFile, `\n${JSON.stringify({ event: 'error', error: why })}\n`); } catch (e) { logStderr(`khong ghi duoc loi han gio vao ${outFile}: ${e.message}`); }
+  }, 250);
+  timer.unref();
+}
+
 const AGY_RUNS_KEEP_MS = 7 * 24 * 3600 * 1000;
 /** The luot trong env cua agy (= ten file chay agy-runs/<the>.jsonl, muc so dang ky giu o `out`): moi lenh cua agent mang theo no. */
 const RUN_ENV = 'ANTIGRAVITY_PM_RUN';
@@ -469,6 +506,7 @@ function agyStart(args, cwd, onSpawn) {
       let r;
       try { r = ready(j); } catch (e) { stopChild(); finish(reject, e); return; }
       finish(resolve, r);
+      watchTurn(r.pid, r.pidTag, outFile);
     };
     const timer = setInterval(() => {
       const j = initEvent();
