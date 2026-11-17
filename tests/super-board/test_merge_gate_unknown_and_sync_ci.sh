@@ -18,7 +18,7 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-unknown-sync-ci-test.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
+trap '[ -n "${KEEP_TMP:-}" ] || rm -rf "$TMP"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 XDG_CONFIG_HOME="$TMP/xdg"
 export SB_HEAVY_SLOT_DIR="$TMP/slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"
 export SB_GITHUB_RETRY_DELAY=0 SB_MERGEABLE_POLL_S=0 SB_MERGE_AUTO_POLL_S=1
@@ -34,10 +34,17 @@ case " $* " in
   *" pr view "*"--json mergeable"*)
     # ca 1: GitHub còn tính (UNKNOWN) tới khi verify chạy xong
     if [ -e "$FAKE_DIR/unknown-until-verify" ] && [ ! -e "$FAKE_DIR/verify-ran" ]; then echo UNKNOWN
+    elif [ -e "$FAKE_DIR/unknown-until-ci-pending" ] && [ ! -e "$FAKE_DIR/ci-pending-done" ]; then echo UNKNOWN
     elif conflicting; then echo CONFLICTING; else echo MERGEABLE; fi | tee -a "$FAKE_DIR/mergeable-answers" ;;
   *" pr checks "*)
     # ca 2: head cũ X luôn có check; head đồng bộ Y chưa có check ở FAKE_EMPTY_READS lần đọc đầu
-    if [ "$(tip)" = "$(cat "$FAKE_DIR/x" 2>/dev/null)" ]; then echo '[{"name":"ci","state":"SUCCESS","bucket":"pass"}]'; exit 0; fi
+    if [ "$(tip)" = "$(cat "$FAKE_DIR/x" 2>/dev/null)" ]; then
+      # ca 4: lần đọc thứ 2 sau verify (ci_precheck trong khoá; lần 1 là trước khoá) trả pending một lần rồi xanh
+      if [ -e "$FAKE_DIR/pending-once" ] && [ -e "$FAKE_DIR/verify-ran" ] && [ ! -e "$FAKE_DIR/ci-pending-done" ]; then
+        echo x >> "$FAKE_DIR/post-verify-reads"
+        [ "$(wc -l < "$FAKE_DIR/post-verify-reads")" -ge 2 ] || { echo '[{"name":"ci","state":"SUCCESS","bucket":"pass"}]'; exit 0; }
+        touch "$FAKE_DIR/ci-pending-done"; echo '[{"name":"ci","state":"PENDING","bucket":"pending"}]'; exit 0; fi
+      echo '[{"name":"ci","state":"SUCCESS","bucket":"pass"}]'; exit 0; fi
     n=$(cat "$FAKE_DIR/checks-reads" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE_DIR/checks-reads"
     if [ "$n" -lt "$(cat "$FAKE_DIR/empty-reads" 2>/dev/null || echo 2)" ]; then echo '[]'; else echo '[{"name":"ci","state":"SUCCESS","bucket":"pass"}]'; fi ;;
   *" pr view "*"headRefName,headRefOid"*) echo "issue-61-x $(tip)" ;;
@@ -90,7 +97,9 @@ touch "$D/verify-ran"
 inv=\$(( \$(grep -c '^start ' "$D/vlog" 2>/dev/null || true) + 1 ))
 echo "start inv=\$inv head=\$(git rev-parse HEAD)" >> "$D/vlog"
 if [ "\$inv" -eq 1 ] && [ "${MAIN_MOVES_IN_VERIFY:-0}" = 1 ]; then
-  cd "$D/merger" && git pull -q origin main && echo m-main >> m.txt && git commit -qam main-moves && git push -q origin main
+  cd "$D/merger" && git pull -q origin main
+  if [ "${MAIN_MOVES_CONFLICT:-0}" = 1 ]; then echo g > g.txt; git add g.txt; else echo m-main >> m.txt; fi
+  git commit -qam main-moves && git push -q origin main
 fi
 exit 0
 SH
@@ -127,6 +136,14 @@ MAIN_MOVES_IN_VERIFY=1 setup sync_ci_never
 echo 9999 > "$D/empty-reads"
 SB_MERGE_SYNC_CI_WAIT_S=3 gate --expect-head "$X"
 [ "$RC" -eq 4 ] && [ ! -e "$D/merge-args" ] && ok "3: checks never register: exit 4, no merge" || fail "3: gate exit $RC, merge-args $(cat "$D/merge-args" 2>/dev/null): $(why)"
+
+# 4) R1 (review #1239): UNKNOWN also in the lock after the base moved during verify, then CI pending => drop lock + continue. The base
+# must not be pinned on that UNKNOWN: the next lap re-reads mergeable (CONFLICTING: s.txt changed on both sides) => exit 14, no merge call
+MAIN_MOVES_IN_VERIFY=1 MAIN_MOVES_CONFLICT=1 setup unknown_in_lock_ci_pending
+touch "$D/unknown-until-verify" "$D/unknown-until-ci-pending" "$D/pending-once"
+gate --expect-head "$X"
+[ "$RC" -eq 14 ] && ok "4: UNKNOWN in the lock, CI pending lap, then CONFLICTING: exit 14" || fail "4: gate exit $RC, want 14: $(why)"
+[ ! -e "$D/merge-args" ] && ok "4: gh pr merge never called" || fail "4: gh pr merge called: $(cat "$D/merge-args")"
 
 echo
 if [ "$FAILS" -eq 0 ]; then echo "test_merge_gate_unknown_and_sync_ci: PASS"; exit 0; else echo "test_merge_gate_unknown_and_sync_ci: FAIL ($FAILS)"; exit 1; fi

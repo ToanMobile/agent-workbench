@@ -2057,7 +2057,8 @@ while :; do
         conflicting_exit
       fi
     fi
-    MG_BASE=$BASE_NOW
+    # #1021 R1: UNKNOWN (GitHub still computing) is no answer for BASE_NOW: leave MG_BASE empty so the next lap (CI pending continue) re-reads.
+    case "$MERGEABLE" in MERGEABLE|CONFLICTING) MG_BASE=$BASE_NOW ;; *) MG_BASE="" ;; esac
   fi
   if [ "$BASE_NOW" != "$BASE_SHA" ]; then
     old_base=$BASE_SHA
