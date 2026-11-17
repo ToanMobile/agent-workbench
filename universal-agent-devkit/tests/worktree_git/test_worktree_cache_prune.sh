@@ -40,5 +40,5 @@ run WORKTREE_CACHE_PRUNE_GIB=100000 WORKTREE_DISK_MIN_GIB=100000; rc=$?
 d=$(env -u WORKTREE_DISK_WARN_GIB -u WORKTREE_DISK_MIN_GIB -u WORKTREE_CACHE_PRUNE_GIB python3 -c "
 import importlib.util,sys; s=importlib.util.spec_from_file_location('w',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
 print(m.DISK_WARN_GIB, m.DISK_MIN_GIB, m.CACHE_PRUNE_GIB)" "$WT" 2>&1)
-[ "$d" = "25.0 15.0 25.0" ] && ok "mặc định: cảnh báo 25, sàn 15, tỉa 25 GiB" || fail "mặc định: $d"
+[ "$d" = "25.0 5.0 25.0" ] && ok "mặc định: cảnh báo 25, sàn 5, tỉa 25 GiB" || fail "mặc định: $d"
 [ "$FAILS" = 0 ]
