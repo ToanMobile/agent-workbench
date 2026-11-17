@@ -164,8 +164,9 @@ export function loadSwitcherState(stateDir) {
   const dir = resolveStateDir(stateDir);
   const existing = readJsonSafe(stateFilePath(dir), null);
   const ccSettings = readJsonSafe(ccSwitchSettingsPath(dir), {});
-  const savedActive = REMOVED_PROFILE_IDS.has(existing?.activeProfileId) ? '' : existing?.activeProfileId;
-  const initialActive = canonicalProfileId(savedActive || ccSettings?.currentProviderClaude || 'finos_toan');
+  // ca hai nguon (state da luu, settings CC Switch) deu loc profile da go
+  const live = (id) => (REMOVED_PROFILE_IDS.has(id) ? '' : id);
+  const initialActive = canonicalProfileId(live(existing?.activeProfileId) || live(ccSettings?.currentProviderClaude) || 'finos_toan');
 
   return {
     activeProfileId: initialActive,

@@ -141,3 +141,15 @@ test('17/11 go Grok: state cu con activeProfileId/frozenUntil grok van doc duoc,
     assert.equal(resolveProfile(7).id, 'finos_lua');
   } finally { t.cleanup(); }
 });
+
+test('17/11 go Grok: settings CC Switch con currentProviderClaude grok cung khong thanh active (audit hydrogen 119770ed)', () => {
+  const t = setup();
+  try {
+    fs.mkdirSync(t.stateDir, { recursive: true });
+    fs.writeFileSync(path.join(t.stateDir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'grok' }));
+    assert.equal(loadSwitcherState(t.stateDir).activeProfileId, 'finos_toan');
+    // id da go o ca hai nguon: van ve mac dinh
+    saveSwitcherState(t.stateDir, { activeProfileId: 'grok' });
+    assert.equal(loadSwitcherState(t.stateDir).activeProfileId, 'finos_toan');
+  } finally { t.cleanup(); }
+});
