@@ -61,7 +61,8 @@ The seal proves the machine checks passed (citations verbatim inside the changed
 report was not hand-edited, not that the reviewer is independent (process trust). The reviewer-label check lives only in the
 unprivileged `approve-tests` wrapper: an agent with shell access can call `sudo -n -u _devkitseal .../verdict-seal-audit --repo R --head H
 --ocr-report - --task T` itself and seal a report it wrote (residual risk). Every such signing appends a line (time, uid, SUDO_USER,
-head, task) to `~_devkitseal/verdict-ledger/ocr-signings.log`; ocr signings do not use the agy attempt counters.
+head, task) to `~_devkitseal/verdict-ledger/ocr-signings.log` after the signing succeeded (the log is tamper-evident only while that
+dir is owned by `_devkitseal` with mode 0700, which the entry creates but this kit cannot verify); ocr signings do not use the agy attempt counters.
 
 Emergency off switch: `sudo rm /private/etc/devkit/verdict-seal.pub`. No environment variable can turn seal mode off.
 

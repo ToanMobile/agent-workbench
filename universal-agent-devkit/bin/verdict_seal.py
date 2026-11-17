@@ -280,21 +280,20 @@ def sealed_pass(top, head, test_fixture=False):
 
 
 def ocr_delegate_seals(top, task_id, test_fixture=False, hints=()):
-    """Payloads of the valid PASS ocr-delegate seals (#1258) signed for `task_id` in repo `top` (newest dir listing capped at 500).
-    `hints` (heads the caller guesses, e.g. the parent of the trailer commit) are looked up directly first; the directory is scanned
-    only when no hint matches. Only seals/ocr-delegate/ is read: an antigravity seal never counts here."""
-    def good(head):
-        p = verify(top, head, test_fixture, "ocr-delegate")
-        return p if p and p["verdict"] == "pass" and p["attempts"] <= MAX_ATTEMPTS and p.get("reviewer") == "ocr-delegate" \
-            and p.get("task_id") == task_id else None
-    found = [p for p in (good(h) for h in dict.fromkeys(hints)) if p]
-    if found:
-        return found
+    """Payloads of the valid PASS ocr-delegate seals (#1258) signed for `task_id` in repo `top`: the seals of the `hints` (heads the
+    caller guesses, e.g. the parent of the trailer commit; looked up directly) MERGED with a scan of the whole seals/ocr-delegate/
+    directory (no cap: a flood of junk files must not push the real seal out). Only that dir is read: an antigravity seal never
+    counts here."""
     try:
-        names = sorted(os.listdir(os.path.join(pm_state_home(), "seals", "ocr-delegate")))[:500]
+        names = [n[:-5] for n in os.listdir(os.path.join(pm_state_home(), "seals", "ocr-delegate")) if n.endswith(".json")]
     except OSError:
-        return []
-    return [p for p in (good(n[:-5]) for n in names if n.endswith(".json")) if p]
+        names = []
+    out = []
+    for h in dict.fromkeys([*hints, *names]):
+        p = verify(top, h, test_fixture, "ocr-delegate")
+        if p and p["verdict"] == "pass" and p["attempts"] <= MAX_ATTEMPTS and p.get("reviewer") == "ocr-delegate" and p.get("task_id") == task_id:
+            out.append(p)
+    return out
 
 
 def request(repo, head, report=None, task=None):

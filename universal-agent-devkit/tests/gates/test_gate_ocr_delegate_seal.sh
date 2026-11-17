@@ -69,7 +69,6 @@ refused "snippet not at that line" "$(report 'citations=[{"file":"tests/test_a.s
 refused "snippet invented" "$(report 'citations=[{"file":"tests/test_a.sh","line":2,"snippet":"assert second == 3 or True"}]')"
 refused "citation of an unchanged line 1 only proves nothing" "$(report 'citations=[{"file":"tests/test_a.sh","line":1,"snippet":"assert first == 1"},'"$B3"']')"
 refused "deleted lines without a base-side citation" "$(report 'citations=[{"file":"tests/test_a.sh","line":2,"snippet":"assert second == 2 or True"}]')"
-refused "trivial snippet" "$(report 'citations=[{"file":"tests/test_a.sh","line":2,"snippet":"or True"},'"$B3"']')"
 refused "reviewed_at far in the future" "$(report reviewed_at='"2999-01-01T00:00:00Z"')"
 seal "$(report)" "../x"; [ "$RC" -ne 0 ] && [ -z "$OUT" ] && ok "refused: task id of the wrong shape" || ko "bad task id rc=$RC"
 refused "line past end of file" "$(report 'citations=[{"file":"tests/test_a.sh","line":99,"snippet":"assert second == 2 or True"}]')"
@@ -127,6 +126,32 @@ rm -rf "$TMP/pm/seals"; seal_to ocr-delegate
 H2="$(GIT_COMMITTER_DATE="@$(( $(date +%s) + 30 )) +0000" git commit-tree "$H^{tree}" -p "$H^" -m "edit test again")"
 RH="$H2" SH="$H2" seal "$(RH="$H2" report)"; [ "$RC" = 0 ] && { mkdir -p "$TMP/pm/seals/ocr-delegate"; printf '%s' "$OUT" > "$TMP/pm/seals/ocr-delegate/$H2.json"; } || ko "second seal rc=$RC $(cat "$TMP/err")"
 want "two valid seals under one task id: the one matching the tree approves" True "$TR^!"
+# each seal field the gate relies on is pinned: reviewer, base, tree (called directly), a flood of junk files
+resignp() {   # resignp '<json patch>': GOOD's payload patched and re-signed into seals/ocr-delegate/<H>.json
+  python3 - "$GOOD" "$TMP/pm" "$H" "$DEVKIT_DIR/bin" "$1" <<'PY'
+import base64, json, os, shutil, sys
+sys.path.insert(0, sys.argv[4]); import verdict_seal as v
+p = json.loads(json.loads(sys.argv[1])["payload"]); p.update(json.loads(sys.argv[5]))
+ps = json.dumps(p, sort_keys=True, separators=(",", ":"))
+shutil.rmtree(os.path.join(sys.argv[2], "seals"), ignore_errors=True)
+d = os.path.join(sys.argv[2], "seals", "ocr-delegate"); os.makedirs(d)
+json.dump({"payload": ps, "sig": base64.b64encode(v.sign(b"\x09" * 32, ps.encode())).decode()}, open(os.path.join(d, sys.argv[3] + ".json"), "w"))
+PY
+}
+resignp '{"reviewer":"someone"}'; want "seal of another reviewer -> refused" False "$TR^!"
+resignp '{"base":"1111111111111111111111111111111111111111"}'; want "seal signed for another base -> refused" False "$TR^!"
+resignp '{"attempts":9}'; want "seal past the attempt cap -> refused" False "$TR^!"
+resignp '{}'
+ah() { python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(p.approval_head(sys.argv[2], "ocr-delegate", sys.argv[3], sys.argv[4]))' "$DEVKIT_DIR/bin" "$TMP/repo" "$1" "$2" 2>&1 | tail -1; }
+[ "$(ah T0002-y "$TR")" = None ] && [ "$(ah T0001-x "$TR")" = "$H" ] && ok "approval_head: the seal is found by its task id only" || ko "approval_head task id: $(ah T0002-y "$TR") / $(ah T0001-x "$TR")"
+X="$(git commit-tree "$BASE^{tree}" -p "$H" -m "other tree")"
+got="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(p.approval_head(sys.argv[2], "ocr-delegate", "T0001-x", sys.argv[3]))' "$DEVKIT_DIR/bin" "$TMP/repo" "$X" 2>&1 | tail -1)"
+[ "$got" = None ] && ok "approval_head: seal of another tree than the trailer commit's -> None" || ko "approval_head other tree: $got"
+for i in $(seq 1 600); do : > "$TMP/pm/seals/ocr-delegate/!junk$i.json"; done
+MID="$(git commit-tree "$H^{tree}" -p "$H" -m mid)"
+TR2="$(git commit-tree "$H^{tree}" -p "$MID" -m "t" -m "Test-approved-by: ocr-delegate T0001-x")"
+want "600 junk files do not hide the seal (parent is not the sealed head)" True "$H..$TR2"
+seal_to ocr-delegate
 # the ocr seal never stands in for an antigravity seal, so it cannot validate a PM record
 python3 -c 'import sys; sys.path.insert(0,sys.argv[1]); import verdict_seal as v; sys.exit(1 if v.sealed_pass(sys.argv[2], sys.argv[3], test_fixture=True) else 0)' \
   "$DEVKIT_DIR/bin" "$TMP/repo" "$H" && ok "ocr-delegate seal is not an antigravity pass seal (sealed_pass)" || ko "sealed_pass accepted the ocr seal"
@@ -141,4 +166,112 @@ CLAUDECODE=1 DEVKIT_OCR_CROSS_REVIEW=0 python3 "$APPROVE" --ocr-delegate "$TMP/o
 [ "$RC" = 2 ] && ok "approve-tests --ocr-delegate: kill switch refuses" || ko "kill switch (approve-tests) rc=$RC"
 CLAUDECODE=1 python3 "$APPROVE" --ocr-delegate "$TMP/ok.json" T0001-x >/dev/null 2>"$TMP/err"; RC=$?
 [ "$RC" = 3 ] && grep -q "not installed" "$TMP/err" && ok "independent reviewer reaches the sealing entry (not installed here: rc 3)" || ko "reach entry rc=$RC $(cat "$TMP/err")"
+# --- report verification on throw-away repos: attributes, hunks, trivial lines, caps, rename, delete, CRLF (python driver) ---
+python3 - "$AUDIT" "$TMP" <<'PY'
+import json, os, subprocess, sys, time
+audit, tmp = sys.argv[1:3]
+fails = 0
+
+
+def git(cwd, *a, env=None):
+    return subprocess.run(["git", "-C", cwd, *a], capture_output=True, text=True, check=True, env=env).stdout.strip()
+
+
+def repo(name, base, head, rename=()):
+    """origin + clone with `base` pushed to main and `head` committed detached; files are {path: bytes|None (delete)}."""
+    o, r = f"{tmp}/{name}.git", f"{tmp}/{name}"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", o], check=True)
+    subprocess.run(["git", "clone", "-q", o, r], capture_output=True)
+    for k, v in (("user.email", "t@t"), ("user.name", "t"), ("commit.gpgsign", "false")):
+        git(r, "config", k, v)
+
+    def put(files):
+        for path, data in files.items():
+            if data is None:
+                git(r, "rm", "-q", path)
+            else:
+                os.makedirs(os.path.dirname(f"{r}/{path}") or r, exist_ok=True)
+                open(f"{r}/{path}", "wb").write(data)
+        git(r, "add", "-A")
+    put(base); git(r, "commit", "-qm", "base"); git(r, "push", "-q", "origin", "main")
+    git(r, "checkout", "-q", "--detach")
+    for a, b in rename:
+        git(r, "mv", a, b)
+    put(head); git(r, "commit", "-qm", "head", "--allow-empty")
+    return r, git(r, "rev-parse", "HEAD")
+
+
+def seal(r, h, **over):
+    rep = {"auditedHead": h, "verdict": "pass", "reviewer": "r-1", "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 60)),
+           "files_reviewed": [], "citations": [], "findings": []}
+    rep.update(over)
+    env = dict(os.environ, SEAL_TEST_LEDGER=f"{tmp}/ledger2")
+    p = subprocess.run([audit, "--repo", r, "--head", h, "--ocr-report", "-", "--task", "T0009-s"], input=json.dumps(rep), capture_output=True,
+                       text=True, env=env)
+    return p.returncode == 0 and bool(p.stdout.strip()), p.stderr.strip()[-160:]
+
+
+def case(name, want, base, head, files, cites, rename=(), **over):
+    global fails
+    r, h = repo(name, base, head, rename)
+    got, err = seal(r, h, files_reviewed=files, citations=[dict(c, file=c.get("file")) for c in cites], **over)
+    ok = got == want
+    fails += not ok
+    print(("✔ " if ok else "✖ ") + f"{'accepted' if want else 'refused'}: {name}" + ("" if ok else f" (got {got}: {err})"))
+
+
+def c(f, line, snip, side=None):
+    d = {"file": f, "line": line, "snippet": snip}
+    if side:
+        d["side"] = side
+    return d
+
+
+T = "tests/t.sh"
+B2 = b"assert a == 1\nassert b == 2\n"
+H2 = b"assert a == 1\nassert b == 3\n"
+GOOD2 = [c(T, 2, "assert b == 3"), c(T, 2, "assert b == 2", "base")]
+case("honest two-sided citation", True, {T: B2}, {T: H2}, [T], GOOD2)
+# attack: .gitattributes `tests/* -diff` makes a plain git diff print "Binary files differ" (no hunk, so no citation was demanded)
+case("gitattributes -diff hides the hunks", False, {T: B2}, {T: H2, ".gitattributes": b"tests/* -diff\n"}, [T],
+     [c(".gitattributes", 1, "tests/* -diff")])
+case("gitattributes -diff, honest report still passes", True, {T: B2}, {T: H2, ".gitattributes": b"tests/* -diff\n"}, [T], GOOD2)
+case("NUL file: changed line must be cited", False, {"tests/t.bin": b"ab\0cd\nline two here\n"}, {"tests/t.bin": b"ab\0cd\nline 2 changed\n"},
+     ["tests/t.bin"], [c("tests/t.bin", 1, "ab\0cd")])
+case("NUL file: honest citations", True, {"tests/t.bin": b"ab\0cd\nline two here\n"}, {"tests/t.bin": b"ab\0cd\nline 2 changed\n"},
+     ["tests/t.bin"], [c("tests/t.bin", 2, "line 2 changed"), c("tests/t.bin", 2, "line two here", "base")])
+# every hunk, not every file
+two = lambda a, b: ("\n".join(["first " + a] + ["same line %d here" % i for i in range(2, 9)] + ["last " + b]) + "\n").encode()
+case("two hunks, only one cited", False, {T: two("x", "y")}, {T: two("X", "Y")}, [T], [c(T, 1, "first X"), c(T, 1, "first x", "base")])
+case("two hunks, both cited", True, {T: two("x", "y")}, {T: two("X", "Y")}, [T],
+     [c(T, 1, "first X"), c(T, 1, "first x", "base"), c(T, 9, "last Y"), c(T, 9, "last y", "base")])
+# trivial hunks need no citation; a non-trivial one does, whatever its length
+tv = lambda a, z: ("\n".join(["first " + a] + ["same line %d here" % i for i in range(2, 9)] + [z]) + "\n").encode()
+case("trivial-only hunk (fi -> done) exempt", True, {T: tv("x", "fi")}, {T: tv("X", "done")}, [T], [c(T, 1, "first X"), c(T, 1, "first x", "base")])
+case("short non-trivial hunk (exit 0) not exempt", False, {T: tv("x", "fi")}, {T: tv("X", "exit 0")}, [T], [c(T, 1, "first X"), c(T, 1, "first x", "base")])
+case("short non-trivial hunk cited", True, {T: tv("x", "fi")}, {T: tv("X", "exit 0")}, [T],
+     [c(T, 1, "first X"), c(T, 1, "first x", "base"), c(T, 9, "exit 0"), c(T, 9, "fi", "base")] and [c(T, 1, "first X"), c(T, 1, "first x", "base"), c(T, 9, "exit 0")])
+# trivial snippets are no proof
+for snip, line in (("};};};", b"};};};\n"), ("fi", b"fi\n"), ("abc", b"abc\n")):
+    case(f"snippet {snip!r} is trivial", False, {T: B2 + b"old\n"}, {T: H2 + line}, [T], GOOD2 + [c(T, 3, snip)])
+# CRLF, indentation and spaces around the snippet are trimmed
+case("CRLF + indentation + padded snippet", True, {T: b"  assert a == 1 \r\n"}, {T: b"  assert a == 2 \r\n"}, [T],
+     [c(T, 1, "   assert a == 2   "), c(T, 1, "assert a == 1", "base")])
+big = b"first line of a big file\n" + b"x" * 2_100_000 + b"\n"
+case("blob over 2 MB cannot be cited", False, {T: big}, {T: big.replace(b"first", b"FIRST")}, [T],
+     [c(T, 1, "FIRST line of a big file"), c(T, 1, "first line of a big file", "base")])
+case("line as JSON true", False, {T: b"assert a == 1\n"}, {T: b"assert a == 2\n"}, [T], [c(T, True, "assert a == 2"), c(T, 1, "assert a == 1", "base")])
+case("side other than head|base", False, {T: B2}, {T: H2}, [T], GOOD2 + [c(T, 2, "assert b == 2", "BASE")])
+case("line 0 (python index -1) is no line", False, {T: B2}, {T: H2.rstrip(b"\n")}, [T], GOOD2 + [c(T, 0, "assert b == 3")])
+case("deleted file: base citation required", False, {T: B2, "tests/gone.sh": b"assert gone == 1\n"}, {T: B2, "tests/gone.sh": None},
+     ["tests/gone.sh"], [c(T, 1, "assert a == 1")])
+case("deleted file: base citation given", True, {T: B2, "tests/gone.sh": b"assert gone == 1\n"}, {T: B2, "tests/gone.sh": None},
+     ["tests/gone.sh"], [c("tests/gone.sh", 1, "assert gone == 1", "base")])
+case("renamed file: both sides cited", True, {"tests/old.sh": b"assert r == 1\n"}, {"tests/new.sh": b"assert r == 2\n"},
+     ["tests/old.sh", "tests/new.sh"], [c("tests/new.sh", 1, "assert r == 2"), c("tests/old.sh", 1, "assert r == 1", "base")], rename=[("tests/old.sh", "tests/new.sh")])
+case("renamed file: old side missing", False, {"tests/old.sh": b"assert r == 1\n"}, {"tests/new.sh": b"assert r == 2\n"},
+     ["tests/old.sh", "tests/new.sh"], [c("tests/new.sh", 1, "assert r == 2")], rename=[("tests/old.sh", "tests/new.sh")])
+sys.exit(1 if fails else 0)
+PY
+[ $? -eq 0 ] || FAILS=$((FAILS + 1))
 [ "$FAILS" -eq 0 ] && echo "ALL OK" || { echo "FAILS=$FAILS"; exit 1; }

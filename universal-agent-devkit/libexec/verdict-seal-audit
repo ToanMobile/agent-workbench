@@ -116,19 +116,24 @@ def emit(body):
     print(json.dumps({"payload": payload, "sig": sig.stdout.strip()}))
 
 
+TRIVIAL = re.compile(r"^\W*(?:fi|done|esac|end|endif|then|else|do)?\W*$")   # blank, punctuation only, or a bare closing keyword
+HUNK = re.compile(r"^@@ -(\d+)(?:,(\d*))? \+(\d+)(?:,(\d*))? @@")
+
+
 def verify_ocr_report(clone, text, head, base, edited):
     """#1258: machine-verify the report of an OpenCodeReview delegation-mode review (a reviewer agent that read the diff following
     `ocr delegate preview/rule`; ocr stores no session for it) against the clone. Dies (nothing signed) unless: auditedHead == head;
-    verdict pass; reviewer named; `reviewed_at` (UTC Z) between the head commit time and now + 300 s; `files_reviewed` holds every
-    edited path (computed by this entry, not the caller); no finding of severity blocker/major (a severity outside
-    blocker|major|minor|nit also refuses); every `citations` / `findings` item {file, line, snippet, side?} names a line that exists
-    VERBATIM (trimmed) in the blob at head (side "head", default) or at base (side "base"); snippets are not trivial (6+ non-space
-    chars, 3+ alphanumerics); and for every edited file at least one citation falls inside an added/changed hunk at head and, when
-    the file lost lines, one inside a deleted hunk at base, so the reviewer cannot skip the changed or removed assertions.
-    Returns {verdict, findings} to seal. A cited line proves the reviewer saw the code, nothing more: that the reviewer is a
-    different, independent session than the author is process trust, not cryptography. The session-label check lives only in the
-    unprivileged wrapper (approve-tests --ocr-delegate): an author may call this entry through sudo directly (residual risk,
-    docs/verdict-seal-setup.md); the seal only stops hand-edited records, which is why every signing is also logged."""
+    verdict pass; reviewer named; `reviewed_at` (UTC Z) between the head commit time and now + 300 s (a sanity bound only: the commit
+    time is author-controlled, so this is no proof of freshness); `files_reviewed` holds every edited path (computed by this entry,
+    not the caller); no finding of severity blocker/major (a severity outside blocker|major|minor|nit also refuses); every
+    `citations` / `findings` item {file, line, snippet, side?} names a line that exists VERBATIM (trimmed) in the blob at head (side
+    "head", default) or base (side "base"), the snippet being at least 4 non-space chars and not blank / punctuation / a bare closing
+    keyword; and EVERY hunk of every edited file (diff -U0 base..head, forced to text with -a, repo attributes ignored) has one
+    verified citation inside it: added lines on the head side, deleted lines on the base side. A hunk whose changed lines are all
+    trivial in that sense needs none. Returns {verdict, findings} to seal. A cited line proves the reviewer saw the code, nothing
+    more: that the reviewer is a different, independent session than the author is process trust, not cryptography. The
+    session-label check lives only in the unprivileged wrapper (approve-tests --ocr-delegate): an author may call this entry through
+    sudo directly (residual risk, docs/verdict-seal-setup.md); the seal only stops hand-edited records, hence the signing log."""
     def bad(why):
         die(f"ocr-delegate report refused: {why}")
     try:
@@ -170,8 +175,8 @@ def verify_ocr_report(clone, text, head, base, edited):
                 or item.get("side", "head") not in ("head", "base"):
             bad("a citation or finding lacks file / line / snippet, or has a side other than head|base")
         snip = item["snippet"].strip()
-        if len("".join(snip.split())) < 6 or sum(c.isalnum() for c in snip) < 3:
-            bad("a snippet is trivial (needs 6+ non-space chars, 3+ alphanumerics)")
+        if len("".join(snip.split())) < 4 or TRIVIAL.fullmatch(snip):
+            bad("a snippet is trivial (4+ non-space chars, not punctuation or a bare closing keyword)")
         if item in finds:
             if item.get("severity") not in ("blocker", "major", "minor", "nit"):
                 bad("a finding has no valid severity")
@@ -182,16 +187,35 @@ def verify_ocr_report(clone, text, head, base, edited):
         if item["line"] > len(lines) or lines[item["line"] - 1].decode("utf-8", "replace").strip() != snip:
             bad(f"{item['file']}:{item['line']} does not hold the cited snippet at the {side}")
         hit.add((item["file"], side, item["line"]))
-    # NOTE: when `edited` is empty, or every edited file has no hunk (mode change, binary), nothing below is required and the report
-    # passes vacuously. That is only safe because push_gate.approval_head also demands payload.base == merge-base(trunk, head): the
-    # signed `edited` list is then exactly the PR's own change.
+    # NOTE: when `edited` is empty, or every edited file has no hunk, nothing below is required and the report passes vacuously. That
+    # is only safe because push_gate.approval_head also demands payload.base == merge-base(trunk, head): the signed `edited` list is
+    # then exactly the PR's own change.
+    # Attributes of the author's repo must not change the diff (`tests/* -diff` prints "Binary files differ"): empty work tree and
+    # index, no attributes file, -a (NUL files as text), no external diff or textconv.
+    empty = os.path.join(os.path.dirname(clone), "empty-tree")
+    os.makedirs(empty, exist_ok=True)
+    denv = dict(genv, GIT_DIR=os.path.join(clone, ".git"), GIT_WORK_TREE=empty, GIT_INDEX_FILE=os.path.join(empty, "idx"))
+
+    def need(path, side, lo, hi, texts):
+        if hi >= lo and any(not TRIVIAL.fullmatch(t.strip()) for t in texts) \
+                and not any(f == path and sd == side and lo <= n <= hi for (f, sd, n) in hit):
+            bad(f"{path}: no verified citation inside the {'changed' if side == 'head' else 'deleted'} lines {lo}-{hi} ({side} side)")
     for e in edited:
-        out = git(clone, "diff", "-U0", "--no-renames", base, head, "--", ":(literal)" + e)
-        for side in ("head", "base"):
-            spans = [(int(m[0]), int(m[0]) + (1 if m[1] == "" else int(m[1])) - 1) for m in
-                     re.findall(r"^@@ " + (r"-(\d+)(?:,(\d*))? \+\d+(?:,\d*)? @@" if side == "base" else r"-\d+(?:,\d*)? \+(\d+)(?:,(\d*))? @@"), out, re.M)]
-            if any(hi >= lo for lo, hi in spans) and not any(lo <= n <= hi for lo, hi in spans for (f, sd, n) in hit if f == e and sd == side):
-                bad(f"{e}: no verified citation inside a {'changed' if side == 'head' else 'deleted'} hunk ({side} side)")
+        out = subprocess.run([GIT, "-c", "core.attributesFile=/dev/null", "diff", "-a", "-U0", "--no-ext-diff", "--no-textconv",
+                              "--no-renames", base, head, "--", ":(literal)" + e], capture_output=True, text=True, errors="replace",
+                             timeout=60, env=denv).stdout
+        cur = None
+        for ln in out.split("\n") + ["@@ -0 +0 @@"]:       # the sentinel flushes the last hunk
+            m = HUNK.match(ln)
+            if m:
+                for side, lo, hi, texts in (cur or ()):
+                    need(e, side, lo, hi, texts)
+                a, b, c, d = m.groups()
+                a, c = int(a), int(c)
+                b, d = 1 if b is None else int(b or 1), 1 if d is None else int(d or 1)
+                cur = [("base", a, a + b - 1, []), ("head", c, c + d - 1, [])]
+            elif cur and ln[:1] in "+-" and ln:
+                cur[0 if ln[0] == "-" else 1][3].append(ln[1:])
     return {"verdict": "pass", "findings": [f"{f['file']}:{f['line']} {f['severity']}: {str(f.get('note', ''))[:200]}" for f in finds][:50]}
 
 
@@ -258,13 +282,13 @@ def main(argv):
             # #1258: own early branch. No agy, no ledger, no attempt counters (attempts fixed at 1): an ocr signing neither burns the
             # antigravity attempts of the same base/path nor its own. `kind` is signed so verify() keeps the two seal kinds apart.
             result = verify_ocr_report(clone, ocr_text, head, base, edited)
-            ledger_dir = LEDGER or os.path.join(SEAL_HOME, "verdict-ledger")
-            os.makedirs(ledger_dir, mode=0o700, exist_ok=True)
-            with open(os.path.join(ledger_dir, "ocr-signings.log"), "a", encoding="utf-8") as lg:   # audit trail of every signing
-                lg.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\tuid={os.getuid()}\tsudo_user={os.environ.get('SUDO_USER', '')}"
-                         f"\thead={head}\ttask={task}\n")
             emit({"v": 1, "kind": "ocr-delegate", "reviewer": "ocr-delegate", "task_id": task, "head": head, "tree": tree, "base": base,
                   "edited": edited, "attempts": 1, "verdict": "pass", "findings": result["findings"]})
+            ledger_dir = LEDGER or os.path.join(SEAL_HOME, "verdict-ledger")   # audit line AFTER a successful signing
+            os.makedirs(ledger_dir, mode=0o700, exist_ok=True)
+            with open(os.path.join(ledger_dir, "ocr-signings.log"), "a", encoding="utf-8") as lg:
+                lg.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\tuid={os.getuid()}\tsudo_user={os.environ.get('SUDO_USER', '')}"
+                         f"\thead={head}\ttask={task}\n")
             return 0
         # Review P1: agy never runs in a checkout. A checkout of the agent's head would hand agy the agent's project config
         # (.gemini/settings.json MCP servers or hooks, AGENTS.md/GEMINI.md, .agents workflows), and code agy ran from it would
