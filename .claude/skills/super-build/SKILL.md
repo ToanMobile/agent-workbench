@@ -107,6 +107,9 @@ Follow spec `.claude/skills/super-board/references/run.md` → Builder (first pa
 7. Follow [PR author notes](../super-board/references/pr-author-notes.md), then post the `[builder] [report]` PR comment + the short issue comment with the PR URL (writing-standard.md § 4).
 8. Move card Ready/Building → QA.
 
+### PR size (#1255)
+Aim for about 400 changed lines per PR (lockfiles, generated files, large test fixtures not counted): short, plain, only what the ACs ask, no repeated idea across sections. One card, one PR if it fits; longer, split into follow-up PRs by AC or give one line why it cannot be split. Guidance, not a gate: `auto_max_lines` stays 0 and the "no line cap" rule below still applies.
+
 ### Keep each PR small (only when the board set a positive cap)
 Unset `merge_policy.auto_max_lines` is 0: there is no line-count cap. Build the card's ACs as one
 PR. A positive `auto_max_lines` is opt-in (additions + deletions; lockfiles, generated files,
