@@ -2018,7 +2018,7 @@ EOF
     # later does not exist yet at dispatch, so a first build still starts in main; upgrade: create the lane worktree here with the DevKit.
     ( lane_wt="$REPO_ROOT/.claude/worktrees/issue-${issue}-${lane}"
       [ -d "$lane_wt" ] && cd "$lane_wt"
-      exec nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" ) >> "$worker_log_abs" 2>&1 &
+      exec nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-argon-high --dangerously-skip-permissions -p "$prompt" ) >> "$worker_log_abs" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
     agent_office_args "$worker_log"
     AGENT_OFFICE_NONCE="$AO_NONCE" CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
