@@ -110,7 +110,8 @@ SALVAGE_DIR="${COMMON_DIR:+$COMMON_DIR/super-board/salvage}"
 # File đã xoá, kể cả xoá đã stage (` D`, `D `: HEAD vẫn giữ bản của nó), được lấy lại từ HEAD. Đường dẫn khác, hay mọi thay đổi đã stage
 # khác (index có thể giữ bản duy nhất), là việc thật: giữ worktree.
 KEEP_RE='^\.agents/local/|\.asset$'
-DROP_RE='^(docs/super-board/runs/|reports/)|\.log$|(^|/)\.(vscode|idea)/'
+# #1232: .claude/settings.json và .claude/agents/ do kit tự sinh / đồng bộ vào mỗi worktree: dựng lại được, không giữ worktree lại.
+DROP_RE='^(docs/super-board/runs/|reports/)|\.log$|(^|/)\.(vscode|idea)/|^\.claude/(settings\.json$|agents/)'
 
 # lane_live <N>: in "<pid> <lane>" và trả 0 khi inflight/<N> của runner mang PID còn sống (lane đó đang làm thẻ N). Đọc cả dạng
 # trước v1.3.0 (một dòng chỉ có PID, như read_lock của super-board-stop.sh): lane không biết thì in "?" (người gọi giữ mọi worktree).
@@ -634,6 +635,64 @@ except (KeyError, TypeError, ValueError):
   return 0
 }
 
+# closed_wt <wt>: #1232 — worktree của thẻ CLOSED không có PR merged riêng (đường clean_wt cần head của PR merged). Cùng thứ tự với clean_wt
+# (ai giữ, tidy, gỡ) nhưng `remove` trần của kit, KHÔNG --merged và KHÔNG --force: kit tự từ chối khi còn việc chưa lưu (commit chỉ reflog,
+# sửa thật); từ chối thì giữ và in lý do như remove_wt.
+closed_wt() {
+  local wt="$1" why
+  if why=$(kit_held "$wt"); then echo "kept $wt: $why; not touched" >&2; return 0; fi
+  TIDY_NAME=""; TIDY_DL=""; TIDY_SDEL=""; TIDY_DROPZ=""
+  if ! tidy "$wt"; then
+    [ -z "$TIDY_NAME" ] || untidy "$wt"
+    rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"; return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then
+    echo "would ask agent-kit to remove $wt (card closed, no merged PR of its own; kept if it holds real work)" >&2; DRY_GONE="$DRY_GONE$wt"$'\n'; rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"; return 0
+  fi
+  remove_wt "$wt"
+  if [ -n "$TIDY_NAME" ] && [ -d "$wt" ]; then untidy "$wt"
+  elif [ -n "$TIDY_NAME" ]; then rm -rf "$TIDY_NAME.dropped"; fi
+  rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"
+}
+# close_card <N>: #1232 — thẻ CLOSED (mọi lý do) quá GRACE giây, không PR MERGED riêng (PR gom vào PR khác, đóng tay). Không PR mở của nhánh
+# issue-<N>-*, không lane sống (đã loại trước khi gọi), không ai giữ khoá (kit_held) thì mỗi worktree của thẻ đi qua closed_wt. 0 = đã xử lý
+# (gỡ hoặc giữ kèm lý do), 1 = không áp dụng (thẻ chưa CLOSED / chưa tới hạn / không đọc được).
+close_card() {
+  local n="$1" info st prs i wt br
+  [ -n "$KIT_WT" ] || return 1
+  info=$(gh_t issue view "$n" --json state,stateReason,closedAt 2>/dev/null) || return 1
+  st=$(printf '%s' "$info" | python3 -I -c '
+import calendar, json, sys, time
+try:
+    d = json.load(sys.stdin)
+    print(d["state"], int(time.time() - calendar.timegm(time.strptime(d["closedAt"], "%Y-%m-%dT%H:%M:%SZ"))))
+except (KeyError, TypeError, ValueError):
+    print("? 0")') || return 1
+  case "$st" in "CLOSED "*) ;; *) return 1 ;; esac
+  [ "${st##* }" -ge "$GRACE" ] || return 1
+  prs=$(gh_t pr list --state open --search "head:issue-$n-" --limit 100 --json number,headRefName,isCrossRepository 2>/dev/null) \
+    || { echo "kept card $n: gh pr list failed; nothing removed" >&2; return 0; }
+  prs=$(printf '%s' "$prs" | python3 -I -c '
+import json, re, sys
+try:
+    for r in json.load(sys.stdin):
+        if re.match(r"issue-" + sys.argv[1] + r"-", r["headRefName"]):
+            print(r["number"])
+except (KeyError, TypeError, ValueError):
+    sys.exit(1)' "$n") || { echo "kept card $n: gh pr list gave an unreadable answer; nothing removed" >&2; return 0; }
+  if [ -n "$prs" ]; then echo "kept card $n: closed, but a PR of it is still open (#$(printf '%s' "$prs" | head -1))" >&2; return 0; fi
+  i=0
+  while [ "$i" -lt "${#WT_P[@]}" ]; do
+    wt="${WT_P[$i]}"; i=$((i + 1))
+    [ "${WT_N[$((i - 1))]}" = "$n" ] && [ -d "$wt" ] || continue
+    case "$HERE_PWD/" in "$(cd "$wt" && pwd -P)"/*) echo "kept $wt: it holds this sweep's working directory" >&2; continue ;; esac
+    br=$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null) || br=""
+    case "$br" in ""|"issue-$n-"*) ;; *) echo "kept $wt: it is on branch $br, not a branch of card $n" >&2; continue ;; esac
+    closed_wt "$wt"
+  done
+  return 0
+}
+
 READ_OK=0
 # Mỗi thẻ là một lần gọi search API của GitHub (~30 lần/phút): một lượt xử lý tối đa 20 thẻ, thứ tự xáo ngẫu nhiên, để lượt dừng giữa
 # chừng (giới hạn, gh hỏng) không bỏ đói mãi các thẻ cuối danh sách (OCR). Thẻ chưa tới lượt thì lần sweep sau.
@@ -645,7 +704,7 @@ for n in $NS; do
   rows=$(merged_rows "$n") || { echo "sweep: gh pr list failed (card $n); stopping, nothing more removed" >&2; break; }
   READ_OK=1
   if [ -z "$rows" ]; then
-    drop_card "$n" || { [ "$DRY" -eq 0 ] || echo "kept card $n: no merged PR of it into $BASE" >&2; }
+    drop_card "$n" || close_card "$n" || { [ "$DRY" -eq 0 ] || echo "kept card $n: no merged PR of it into $BASE" >&2; }
     continue
   fi
   if printf '%s\n' "$rows" | grep -q $'\tyoung$'; then echo "kept card $n: a PR of it merged under ${GRACE}s ago (Reviewer's post-merge steps)" >&2; continue; fi
