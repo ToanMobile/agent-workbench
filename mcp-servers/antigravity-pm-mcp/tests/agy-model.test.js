@@ -138,9 +138,11 @@ test('conversationProgress va transcriptErrors doc ca thu muc cua agy (~/.gemini
   assert.equal(te.lastStepIsError, true);
 });
 
-test('model mac dinh cua PM la Argon (khong con flash/pro), va nam trong MODELS', () => {
-  assert.equal(DEFAULT_CONFIG.defaultModel, ARGON);
+test('model mac dinh cua PM la Hydrogen high (chu repo 17/11: plan_review, audit approved-by, duyet test sua), Argon van chon duoc', () => {
+  assert.equal(DEFAULT_CONFIG.defaultModel, 'gemini-4-hydrogen-high');
   assert.ok(MODELS.includes(DEFAULT_CONFIG.defaultModel));
+  assert.ok(isAgyModel('gemini-4-hydrogen-high'));
+  assert.ok(MODELS.includes(ARGON));
 });
 
 test('gui tin vao hoi thoai agy dang chay: loi noi ro pid va cach go (agy thoat = luot dung)', async (t) => {

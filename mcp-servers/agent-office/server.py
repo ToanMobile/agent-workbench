@@ -2772,7 +2772,7 @@ CC_ACTIONS = {"refresh", "switch", "login", "rotate", "limit", "unfreeze", "bala
               "repo_assign", "repo_add", "repo_remove"}
 # repo chỉ gán được tài khoản Claude; id cũ (finos, finos_team, max, antigravity) vẫn nhận làm bí danh, cc-switcher-mcp chuẩn hoá sang id mới
 CC_CLAUDE_ACCOUNTS = {"finos_toan", "finos_linh", "finos_toan_max", "finos_lua", "finos", "finos_team", "max"}
-CC_PROFILES = {"finos_toan", "finos_linh", "finos_toan_max", "antigravity_ultra", "antigravity_pro", "grok", "finos_lua",
+CC_PROFILES = {"finos_toan", "finos_linh", "finos_toan_max", "antigravity_ultra", "antigravity_pro", "finos_lua",
                "finos", "finos_team", "max", "antigravity"}
 CC_BALANCE_MODES = {"even", "swap"}
 _cc_lock = threading.Lock()   # một thao tác ghi một lúc: bấm hai nút liền không ghi chồng switcher-state.json

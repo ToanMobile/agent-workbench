@@ -87,7 +87,7 @@ test('panel state: hang repo co nhom, duong dan, tai khoan gan, tai khoan thuc t
     fs.utimesSync(path.join(old, 's1.jsonl'), tOld, tOld);
     fs.utimesSync(path.join(newer, 's2.jsonl'), tNew, tNew);
     fs.utimesSync(path.join(other, 's3.jsonl'), tOther, tOther);
-    // max cham 429 -> gamma tam chay khac hang (Grok)
+    // max cham 429 -> gamma tam chay khac hang (AGY Ultra; Grok go 17/11)
     const nowMs = Date.parse('2026-10-31T04:00:00Z');
     reportRateLimit({ stateDir: t.stateDir, profileId: 'finos_toan_max', nowMs });
 
@@ -116,7 +116,7 @@ test('panel state: hang repo co nhom, duong dan, tai khoan gan, tai khoan thuc t
 
     const rc = row('gamma');
     assert.equal(rc.effective.kind, 'fallback');
-    assert.equal(rc.effective.account, 'grok');
+    assert.equal(rc.effective.account, 'antigravity_ultra');
     assert.match(rc.effective.note, /không nhảy chéo Claude/);
     assert.equal(rc.differs, true);
 
