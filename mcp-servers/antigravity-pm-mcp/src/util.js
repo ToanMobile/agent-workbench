@@ -8,10 +8,10 @@ import os from 'node:os';
  * SIGKILL ca nhom tien trinh `pid` (tien trinh tach nhom + moi lenh con cua no). Cho DUY NHAT gui tin hieu nay. Khong nem:
  * tra ve null khi da gui, hoac loi (ESRCH = nhom da het) de noi goi tu chon bo qua hay bao ra.
  */
-export function killGroup(pid) {
+export function killGroup(pid, sig = 'SIGKILL') {   // sig 0 = chi hoi nhom con song khong
   // kill(-0) hits our own group, kill(-1) every process we may signal, a negative pid one process: no pid <= 1 is a group of ours to kill
   if (!(pid > 1)) return Object.assign(new RangeError(`killGroup: invalid pid ${pid}`), { code: 'EINVAL' });
-  try { process.kill(-pid, 'SIGKILL'); return null; } catch (e) { return e; }
+  try { process.kill(-pid, sig); return null; } catch (e) { return e; }
 }
 
 // Nhom tien trinh con dang song (detached => khong tu chet theo server): server thoat thi don luon.
