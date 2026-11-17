@@ -1,4 +1,4 @@
-# QA #1259 · PR #1260 · head bedd104614
+# QA #1259 · PR #1260 · head 30b5eb7d53 (gate --scoped exit 0, chạy lại sau khi merge main)
 
 | AC | Kết quả | Bằng chứng |
 |---|---|---|
