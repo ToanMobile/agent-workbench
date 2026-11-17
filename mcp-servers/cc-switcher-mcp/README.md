@@ -7,8 +7,8 @@ MCP Server và Auto-Switcher Daemon trên macOS dành cho 6 profile đã cấu h
 1. `finos` — `1. FinOS — toan.huynh@finos.asia (5x Team)` (`~/.claude-finos`)
 2. `finos_team` — `2. FinOS Team — linhnt@finos.asia (5x Team)` (`~/.claude-finos_team`)
 3. `max` — `3. Personal 5x Max — toan.huynh@finos.asia` (`~/.claude-max`)
-4. `antigravity` — `4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Argon High)`
-5. `antigravity_pro` — `5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Argon High)`
+4. `antigravity` — `4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Hydrogen High)`
+5. `antigravity_pro` — `5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Hydrogen High)`
 6. (bỏ trống — Grok CLI gỡ 17/11)
 
 ### Antigravity nhiều profile

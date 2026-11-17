@@ -62,7 +62,7 @@ export const DEFAULT_PROFILES = [
     index: 4,
     id: 'antigravity_ultra',
     shortLabel: '4. AGY Ultra',
-    name: '4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Argon High)',
+    name: '4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Hydrogen High)',
     vendor: 'google',
     appType: 'gemini',
     // agy chi tach tai khoan qua HOME (khong co bien CONFIG_DIR): ham agy() trong ~/.zshrc dat HOME=homeDir.
@@ -76,7 +76,7 @@ export const DEFAULT_PROFILES = [
     index: 5,
     id: 'antigravity_pro',
     shortLabel: '5. AGY Pro',
-    name: '5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Argon High)',
+    name: '5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Hydrogen High)',
     vendor: 'google',
     appType: 'gemini',
     homeDir: path.join(os.homedir(), '.agy-antigravity_pro'),
@@ -419,7 +419,7 @@ export function switchProfile(opts = {}) {
 }
 
 /**
- * Xoay vong sang profile kha dung tiep theo theo thu tu 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 1.
+ * Xoay vong sang profile kha dung tiep theo theo thu tu 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 1 (so 6 Grok go 17/11).
  */
 export function rotateNextProfile(opts = {}) {
   const {

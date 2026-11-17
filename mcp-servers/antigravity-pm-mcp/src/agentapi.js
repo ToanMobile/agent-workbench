@@ -5,7 +5,7 @@
 // Hai duong, chon theo `model`:
 //   bac (flash_lite | flash | pro) -> `agentapi --model=<bac>`: hoi thoai nam trong IDE, model do server quyet (14/10/2026: ca `pro` va
 //     `flash` deu ra gemini-3.8-flash-tiered; agentapi tu choi ten model cu the: "no available models found for tier ...").
-//   model cu the (gemini-4-argon-high ...) -> CLI `agy --model`: cach DUY NHAT chon duoc model. Hoi thoai cua agy nam o
+//   model cu the (gemini-4-hydrogen-high ...) -> CLI `agy --model`: cach DUY NHAT chon duoc model. Hoi thoai cua agy nam o
 //     ~/.gemini/antigravity-cli (IDE khong thay: "trajectory not found"), luot chay song cung tien trinh agy (agy thoat = luot dung),
 //     nen tien trinh duoc tach nhom, chay den het, va so dang ky agy-conversations.json giu model + cwd + pid cua tung hoi thoai.
 import fs from 'node:fs';
@@ -382,7 +382,7 @@ function requireAgy() {
   if (!agy) {
     throw new AntigravityUnavailable(
       'Khong tim thay CLI agy cua Antigravity.',
-      'Model cu the (vd gemini-4-argon-high) chi chay duoc qua agy: cai ~/.local/bin/agy hoac tro ANTIGRAVITY_PM_AGY vao dung file. KHONG tu doi sang bac flash.',
+      'Model cu the (vd gemini-4-hydrogen-high) chi chay duoc qua agy: cai ~/.local/bin/agy hoac tro ANTIGRAVITY_PM_AGY vao dung file. KHONG tu doi sang bac flash.',
     );
   }
   return agy;

@@ -667,7 +667,7 @@
     if (!a || a.disabled) return;
     var kind = a.dataset.act;
     var cfg = {
-      rotate: ['Đổi sang tài khoản kế tiếp?', 'Xoay vòng theo thứ tự 1 → 7, bỏ qua tài khoản đang đóng băng. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đổi', false],
+      rotate: ['Đổi sang tài khoản kế tiếp?', 'Xoay vòng theo thứ tự 1 → 5 rồi 7 (số 6 bỏ trống), bỏ qua tài khoản đang đóng băng. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đổi', false],
       limit: ['Báo tài khoản hiện tại chạm 429?', 'Đóng băng "' + (state ? profileName(state.activeProfileId) : '') + '" ' + (state ? Math.round(state.antiBan.rateLimitFreezeSec / 3600 * 10) / 10 : 5) + ' giờ và chuyển ngay sang tài khoản an toàn kế tiếp. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đóng băng & đổi', true],
       unfreeze: ['Mở khóa toàn bộ?', 'Xóa mọi đóng băng 429 và đặt lại thời gian nghỉ chống ban về 0. Chỉ làm khi chắc quota đã hồi.', 'Mở khóa', true],
       balance: a.dataset.mode === 'swap'

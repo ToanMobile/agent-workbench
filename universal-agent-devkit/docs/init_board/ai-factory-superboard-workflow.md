@@ -1,6 +1,6 @@
 # 🏭 AI Factory: quy trình nhà máy tự hành cho 6 repo
 
-> 17/11: chủ repo gỡ Grok khỏi DevKit. Mọi đoạn Grok trong các script tham khảo bên dưới (`grok`, `GROK_BIN`, `SB_FALLBACK_GROK`) là bản cũ, không còn chạy: cc-switcher không còn profile 6, runner ép `SB_FALLBACK_GROK` rỗng.
+> 17/11: chủ repo gỡ Grok khỏi DevKit. Mọi đoạn Grok trong các script tham khảo bên dưới (`grok`, `GROK_BIN`, `SB_FALLBACK_GROK`) là bản cũ, không còn chạy: cc-switcher không còn profile 6, runner ép `SB_FALLBACK_GROK` rỗng. Cùng ngày, model Antigravity đổi từ `gemini-4-argon-high` sang `gemini-4-hydrogen-high` (Argon hay treo).
 
 Máy Mac ở nhà chạy 24/7. Bạn giao việc bằng thẻ trên GitHub Project, các runner super-board tự nhận thẻ, viết code, chạy gate của DevKit rồi merge. Agent Office là văn phòng 3D để xem và điều khiển cả 6 board, mở được trên Mac lẫn điện thoại.
 
@@ -171,8 +171,8 @@ Không để SSH hỏi mật khẩu giữa đêm: `ssh-add --apple-use-keychain 
 | `finos` | toan.huynh@finos.asia (FinOS) | `sonnet`, advisor `opus` | `~/.claude-finos` |
 | `finos_team` | linhnt@finos.asia (FinOS Team) | `sonnet`, advisor `opus` | `~/.claude-finos_team` |
 | `max` | toan.huynh@finos.asia (Personal Max) | `sonnet`, advisor `opus` | `~/.claude-max` |
-| `antigravity` | phathuy.vetgo@gmail.com (Google AI Ultra) | `gemini-4-argon-high` | `~/.gemini/antigravity-cli/` |
-| `antigravity_pro` | alex.1993.dev@gmail.com (Google AI Pro) | `gemini-4-argon-high` | `~/.gemini/antigravity-cli/` |
+| `antigravity` | phathuy.vetgo@gmail.com (Google AI Ultra) | `gemini-4-hydrogen-high` | `~/.gemini/antigravity-cli/` |
+| `antigravity_pro` | alex.1993.dev@gmail.com (Google AI Pro) | `gemini-4-hydrogen-high` | `~/.gemini/antigravity-cli/` |
 
 - CC Switch để chế độ `Direct`: không proxy, không chèn token tĩnh. `claude` nói chuyện thẳng với Anthropic bằng Keychain.
 - Máy này có dữ liệu CC Switch (`~/.cc-switch/`) nhưng chưa có `CC Switch.app` trong `/Applications`, nên mục 7 của `--verify` báo FAIL (đo ngày 22/10). `ccswitch` dòng lệnh vẫn chạy.
@@ -269,8 +269,8 @@ Các bản vá tự động trong script:
 #      - 1. finos            : toan.huynh@finos.asia [FinOS 5x Team]       (sonnet / advisor opus • xhigh)
 #      - 2. finos_team       : linhnt@finos.asia [FinOS Team 5x]           (sonnet / advisor opus • xhigh)
 #      - 3. max              : toan.huynh@finos.asia [Personal 5x Max]     (sonnet / advisor opus • xhigh)
-#      - 4. antigravity      : phathuy.vetgo@gmail.com [Google AI Ultra]   (gemini-4-argon-high • xhigh)
-#      - 5. antigravity_pro  : alex.1993.dev@gmail.com [Google AI Pro]     (gemini-4-argon-high • xhigh)
+#      - 4. antigravity      : phathuy.vetgo@gmail.com [Google AI Ultra]   (gemini-4-hydrogen-high • xhigh)
+#      - 5. antigravity_pro  : alex.1993.dev@gmail.com [Google AI Pro]     (gemini-4-hydrogen-high • xhigh)
 #      - 6. grok             : Grok CLI v1.0.50 [xAI]                      (grok-4.7 • xhigh)
 #   4. 100% Unified Session Symlinks across ~/.claude-{finos,finos_team,max} -> ~/.claude/
 #   5. CC Switch.app GUI SQLite (`~/.cc-switch/cc-switch.db`) & `settings.json` (100% safe Direct mode)
@@ -304,8 +304,8 @@ install_account_pool_script() {
 #   1. finos            -> ~/.claude-finos         | FinOS Org (toan.huynh@finos.asia)
 #   2. finos_team       -> ~/.claude-finos_team    | FinOS Team (linhnt@finos.asia)
 #   3. max              -> ~/.claude-max           | Personal 5x Max (toan.huynh@finos.asia)
-#   4. antigravity      -> ~/.local/bin/agy        | Google Antigravity Ultra (phathuy.vetgo@gmail.com • gemini-4-argon-high)
-#   5. antigravity_pro  -> ~/.local/bin/agy        | Google Antigravity Pro (alex.1993.dev@gmail.com • gemini-4-argon-high)
+#   4. antigravity      -> ~/.local/bin/agy        | Google Antigravity Ultra (phathuy.vetgo@gmail.com • gemini-4-hydrogen-high)
+#   5. antigravity_pro  -> ~/.local/bin/agy        | Google Antigravity Pro (alex.1993.dev@gmail.com • gemini-4-hydrogen-high)
 #   6. grok             -> ~/.grok/bin/grok        | Grok CLI v1.0.50 (grok-4.7 • xhigh)
 
 set -euo pipefail
@@ -348,7 +348,7 @@ set_antigravity_google_account() {
   fi
   mkdir -p "$HOME/.gemini/antigravity-cli"
   printf '{\n  "active": "%s",\n  "old": [\n    "%s"\n  ]\n}\n' "$active_email" "$old_email" > "$HOME/.gemini/google_accounts.json"
-  printf '{\n  "model": "gemini-4-argon-high",\n  "effort": "xhigh",\n  "activeAccount": "%s"\n}\n' "$active_email" > "$HOME/.gemini/antigravity-cli/settings.json"
+  printf '{\n  "model": "gemini-4-hydrogen-high",\n  "effort": "xhigh",\n  "activeAccount": "%s"\n}\n' "$active_email" > "$HOME/.gemini/antigravity-cli/settings.json"
 }
 
 detect_current_account() {
@@ -611,8 +611,8 @@ cmd_exec() {
   if [ "$engine" = "antigravity" ]; then
     agy_email="$(echo "$resolved" | jq -r '.email // "phathuy.vetgo@gmail.com"')"
     set_antigravity_google_account "$acct"
-    echo "⚡ [Multi-Account Pool] Using Antigravity CLI (gemini-4-argon-high • xhigh — $agy_email)" >&2
-    exec "$AGY_BIN" --model gemini-4-argon-high --effort xhigh "$@"
+    echo "⚡ [Multi-Account Pool] Using Antigravity CLI (gemini-4-hydrogen-high • xhigh — $agy_email)" >&2
+    exec "$AGY_BIN" --model gemini-4-hydrogen-high --effort xhigh "$@"
   fi
   if [ "$engine" = "grok" ]; then
     echo "⚡ [Multi-Account Pool] Using Grok CLI (grok-4.7 • xhigh)" >&2
@@ -685,7 +685,7 @@ for run_sh in [
     fi
   fi
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
-    nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup "$HOME/.local/bin/agy" --model gemini-4-hydrogen-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ "$pool_engine" = "grok" ] && [ -x "$HOME/.grok/bin/grok" ]; then
     nohup "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
@@ -984,19 +984,19 @@ if os.path.exists(grok_cfg):
     with open(grok_cfg, "w") as f:
         f.write(txt)
 
-# 2. Antigravity CLI -> Ultra (phathuy.vetgo@gmail.com) + Pro (alex.1993.dev@gmail.com) + gemini-4-argon-high (xhigh)
+# 2. Antigravity CLI -> Ultra (phathuy.vetgo@gmail.com) + Pro (alex.1993.dev@gmail.com) + gemini-4-hydrogen-high (xhigh)
 os.makedirs(os.path.expanduser("~/.gemini/antigravity-cli"), exist_ok=True)
 with open(os.path.expanduser("~/.gemini/google_accounts.json"), "w") as f:
     json.dump({"active": "phathuy.vetgo@gmail.com", "old": ["alex.1993.dev@gmail.com"]}, f, indent=2)
 
 agy_st_path = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
 agy_st = json.load(open(agy_st_path)) if os.path.exists(agy_st_path) else {}
-agy_st["model"] = "gemini-4-argon-high"
+agy_st["model"] = "gemini-4-hydrogen-high"
 agy_st["effort"] = "xhigh"
 agy_st["activeAccount"] = agy_st.get("activeAccount") or "phathuy.vetgo@gmail.com"
 agy_st["accounts"] = {
-    "antigravity": {"email": "phathuy.vetgo@gmail.com", "tier": "Ultra", "model": "gemini-4-argon-high", "effort": "xhigh"},
-    "antigravity_pro": {"email": "alex.1993.dev@gmail.com", "tier": "Pro", "model": "gemini-4-argon-high", "effort": "xhigh"},
+    "antigravity": {"email": "phathuy.vetgo@gmail.com", "tier": "Ultra", "model": "gemini-4-hydrogen-high", "effort": "xhigh"},
+    "antigravity_pro": {"email": "alex.1993.dev@gmail.com", "tier": "Pro", "model": "gemini-4-hydrogen-high", "effort": "xhigh"},
 }
 with open(agy_st_path, "w") as f:
     json.dump(agy_st, f, indent=2)
@@ -1004,7 +1004,7 @@ with open(agy_st_path, "w") as f:
 gem_st_path = os.path.expanduser("~/.gemini/settings.json")
 if os.path.exists(gem_st_path):
     gem_st = json.load(open(gem_st_path))
-    gem_st["model"] = "gemini-4-argon-high"
+    gem_st["model"] = "gemini-4-hydrogen-high"
     with open(gem_st_path, "w") as f:
         json.dump(gem_st, f, indent=2)
 
@@ -1035,11 +1035,11 @@ if os.path.exists(db_path):
         ("finos", "claude", "1. FinOS — toan.huynh@finos.asia (5x Team)", '{"advisorModel": "opus", "model": "sonnet"}', "https://claude.ai", "official", 1, "FinOS Organization • ~/.claude-finos • 100% Shared Sessions", "anthropic", "#D4915D", '{"commonConfigEnabled":true}', 1),
         ("finos_team", "claude", "2. FinOS Team — linhnt@finos.asia (5x Team)", '{"advisorModel": "opus", "model": "sonnet"}', "https://claude.ai", "official", 2, "FinOS Team • ~/.claude-finos_team • 100% Shared Sessions", "anthropic", "#10B981", '{"commonConfigEnabled":true}', 0),
         ("max", "claude", "3. Personal 5x Max — toan.huynh@finos.asia", '{"advisorModel": "opus", "model": "sonnet"}', "https://claude.ai", "official", 3, "Personal 5x Max • ~/.claude-max • 100% Shared Sessions", "anthropic", "#8B5CF6", '{"commonConfigEnabled":true}', 0),
-        ("antigravity", "claude", "4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Argon High)", '{"advisorModel": "opus", "model": "sonnet"}', "https://idx.google.com", "official", 4, "Google Antigravity Ultra • gemini-4-argon-high (xhigh) • phathuy.vetgo@gmail.com", "google", "#4285F4", '{"commonConfigEnabled":true}', 0),
-        ("antigravity_pro", "claude", "5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Argon High)", '{"advisorModel": "opus", "model": "sonnet"}', "https://idx.google.com", "official", 5, "Google Antigravity Pro • gemini-4-argon-high (xhigh) • alex.1993.dev@gmail.com", "google", "#34A853", '{"commonConfigEnabled":true}', 0),
+        ("antigravity", "claude", "4. Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Hydrogen High)", '{"advisorModel": "opus", "model": "sonnet"}', "https://idx.google.com", "official", 4, "Google Antigravity Ultra • gemini-4-hydrogen-high (xhigh) • phathuy.vetgo@gmail.com", "google", "#4285F4", '{"commonConfigEnabled":true}', 0),
+        ("antigravity_pro", "claude", "5. Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Hydrogen High)", '{"advisorModel": "opus", "model": "sonnet"}', "https://idx.google.com", "official", 5, "Google Antigravity Pro • gemini-4-hydrogen-high (xhigh) • alex.1993.dev@gmail.com", "google", "#34A853", '{"commonConfigEnabled":true}', 0),
         ("grok", "claude", "6. Grok CLI — grok-4.7 (xhigh)", '{"advisorModel": "opus", "model": "sonnet"}', "https://x.ai/grok", "official", 6, "Grok CLI v1.0.50 • grok-4.7 (xhigh) • Auto-Failover Engine", "grok", "#000000", '{"commonConfigEnabled":true}', 0),
-        ("antigravity", "gemini", "Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Argon High)", '{"model": "gemini-4-argon-high", "effort": "xhigh", "email": "phathuy.vetgo@gmail.com"}', "https://idx.google.com", "official", 1, "Google AI Ultra • gemini-4-argon-high (xhigh) • phathuy.vetgo@gmail.com", "google", "#4285F4", '{"commonConfigEnabled":true}', 1),
-        ("antigravity_pro", "gemini", "Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Argon High)", '{"model": "gemini-4-argon-high", "effort": "xhigh", "email": "alex.1993.dev@gmail.com"}', "https://idx.google.com", "official", 2, "Google AI Pro • gemini-4-argon-high (xhigh) • alex.1993.dev@gmail.com", "google", "#34A853", '{"commonConfigEnabled":true}', 0),
+        ("antigravity", "gemini", "Antigravity Ultra — phathuy.vetgo@gmail.com (Gemini 4 Hydrogen High)", '{"model": "gemini-4-hydrogen-high", "effort": "xhigh", "email": "phathuy.vetgo@gmail.com"}', "https://idx.google.com", "official", 1, "Google AI Ultra • gemini-4-hydrogen-high (xhigh) • phathuy.vetgo@gmail.com", "google", "#4285F4", '{"commonConfigEnabled":true}', 1),
+        ("antigravity_pro", "gemini", "Antigravity Pro — alex.1993.dev@gmail.com (Gemini 4 Hydrogen High)", '{"model": "gemini-4-hydrogen-high", "effort": "xhigh", "email": "alex.1993.dev@gmail.com"}', "https://idx.google.com", "official", 2, "Google AI Pro • gemini-4-hydrogen-high (xhigh) • alex.1993.dev@gmail.com", "google", "#34A853", '{"commonConfigEnabled":true}', 0),
     ]
     for r in rows:
         cur.execute(
