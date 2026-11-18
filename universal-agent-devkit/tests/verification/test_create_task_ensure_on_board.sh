@@ -57,4 +57,10 @@ rc=$(run)
 [ "$rc" != 0 ] && ! has project item-add \
   && ok "C gh error: non-zero exit, nothing added" || fail "C: rc=$rc calls=$(cat "$FAKE_LOG")"
 
+# D. on the board but with no Status (an earlier add whose column edit failed or was killed): set to Backlog, not left stuck
+export FAKE_ITEMS='[{"title":"Agent Workbench","status":null}]' FAKE_VIEW_RC=0
+rc=$(run)
+[ "$rc" = 0 ] && grep '"item-edit"' "$FAKE_LOG" | grep -q '"B1"' \
+  && ok "D on board without a column: set to Backlog" || fail "D: rc=$rc $(cat "$TMP/out") calls=$(cat "$FAKE_LOG")"
+
 [ "$FAILS" -eq 0 ] && { echo "✅ test_create_task_ensure_on_board: all passed"; exit 0; } || { echo "❌ test_create_task_ensure_on_board: $FAILS failed"; exit 1; }

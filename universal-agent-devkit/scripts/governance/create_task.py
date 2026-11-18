@@ -656,11 +656,16 @@ def ensure_on_board(issue_url, repo=None):
     if items is None:
         print(f"   ❌ Không đọc được board của {issue_url} (gh issue view thoát {res.returncode}).", file=sys.stderr)
         return 1
-    if items:
+    # Có trên board VÀ có cột ⇒ để yên. Trên board mà cột trống (lần trước item-add xong nhưng gán cột lỗi / bị giết) ⇒ gán Backlog:
+    # item-add trả lại đúng item đã có, nên đi tiếp đường thêm mới.
+    if any(isinstance(it, dict) and (it.get("status") or {}).get("name") for it in items):
         print(f"   ✅ {issue_url} đã nằm trên board, giữ nguyên cột.")
         return 0
     cfg = resolve_project_config(repo or detect_repo())
     project_id = cfg.get("project_id", "") or project_node_id(cfg["number"])
+    if not project_id:
+        print(f"   ❌ Không tra được ID node của Project #{cfg['number']}: chưa thêm {issue_url}.", file=sys.stderr)
+        return 1
     res_add = run_cmd(["gh", "project", "item-add", str(cfg["number"]), "--owner", PROJECT_OWNER, "--url", issue_url,
                        "--format", "json"], check=False)
     try:

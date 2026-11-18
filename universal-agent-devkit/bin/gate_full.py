@@ -1233,7 +1233,7 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
                 erc, eout = sh(bcmd + (["--repo", slug] if slug else []) + ["--ensure-on-board", dup], cwd=repo, timeout=120)
                 if erc != 0:
                     run.raw(eout or "")
-                    run.log("thẻ %s: ensure-on-board lỗi exit %d (thẻ có thể nằm ngoài board, lượt sau thử lại)" % (dup, erc))
+                    run.log("thẻ %s: ensure-on-board lỗi exit %d (thẻ có thể nằm ngoài board; chỉ thử lại khi suite này có đỏ mới)" % (dup, erc))
             continue
         base = card_cmd()
         cmd = base + (["--repo", slug] if slug else []) + [
