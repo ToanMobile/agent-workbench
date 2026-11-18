@@ -3703,6 +3703,25 @@ reload_swap_self() {
 }
 # #623: bản runner do lần swap trước ghi (đĩa lệch HEAD) làm file dirty nên chặn ff và `worktree finish` mãi mãi. Trả file về HEAD trước khi
 # ff/finish (runner đang chạy giữ inode cũ). Chỉ khi đĩa đúng bản runner tự ghi và index sạch: sửa tay (kể cả đã stage) thì không đụng.
+# 18/11 (#1266 Blocked lại vì runner kẹt code cũ): sửa tay runner mà origin đã chứa (gộp 3 chiều HEAD/đĩa/origin ra đúng bản origin) không
+# phải lý do giữ code cũ: trả file về HEAD để ff/swap đi tiếp. Sửa đã stage hoặc origin chưa chứa thì không đụng (#623 7d). $1 = rel, $2 = blob origin.
+reload_drop_subsumed_edit() {
+  # "origin đã chứa" = bản vá sửa tay không ngữ cảnh (git diff -U0 HEAD) áp NGƯỢC được lên bản origin: mọi dòng sửa tay đã có ở origin
+  # (đo 18/11: bản dùng git merge-file làm ca S1/S2 của test_runner_self_reload_subsumed_edit.sh đỏ, vì origin sửa giống hệt sát dòng khác).
+  local rel="$1" new="$2" d
+  git diff --cached --quiet -- "$rel" 2>/dev/null || return 1
+  d=$(mktemp -d 2>/dev/null) || return 1
+  mkdir -p "$d/t/$(dirname "$rel")" 2>/dev/null
+  if git diff -U0 --no-color --no-ext-diff HEAD -- "$rel" > "$d/p" 2>/dev/null && [ -s "$d/p" ] \
+     && git cat-file blob "$new" > "$d/t/$rel" 2>/dev/null \
+     && ( cd "$d/t" && git apply -R --check --unidiff-zero "$d/p" ) >/dev/null 2>&1; then
+    rm -rf "$d"
+    log "self-reload: hand edit of super-board-run.sh is already on origin/${BASE_BRANCH}; dropping it to load the new code"
+    git restore --source=HEAD -- "$rel" 2>/dev/null
+    return $?
+  fi
+  rm -rf "$d"; return 1
+}
 reload_restore_self() {
   local rel="$1" disk head
   disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || return 1
@@ -3725,6 +3744,10 @@ self_reload_tick() {
   [ "$new" != "$RELOAD_RUN_SUM" ] || return 0
   disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
   if [ "$disk" != "$new" ]; then
+    if [ "$disk" != "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] && [ "$disk" != "${SB_RELOAD_SWAPPED_SUM:-}" ] \
+       && reload_drop_subsumed_edit "$rel" "$new"; then
+      disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
+    fi
     cur=$(git symbolic-ref -q --short HEAD 2>/dev/null) || cur=""
     if [ -z "$cur" ] \
       && [ "$disk" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] && git diff --cached --quiet -- "$rel" 2>/dev/null; then

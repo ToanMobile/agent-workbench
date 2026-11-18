@@ -4569,6 +4569,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "runner-self-reload-subsumed-edit",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_self_reload_subsumed_edit.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-RUNNER-RELOAD-SUBSUMED-EDIT-01",
+          "name": "18/11: runner sửa tay mà origin đã chứa (bản vá -U0 áp ngược được lên origin) thì bỏ sửa tay và nạp code mới; sửa tay origin chưa có hoặc đã stage thì giữ, cảnh báo",
+          "command": "bash tests/super-board/test_runner_self_reload_subsumed_edit.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
