@@ -49,12 +49,16 @@ if [ "$rc" = 10 ] && printf '%s' "$out" | grep -q "rerun $C3"; then ok "head đ�
 out=$(run --branch pr --sha "$C1" --settle 1 --poll 1 --attempt 3 --max-tries 3); rc=$?
 if [ "$rc" = 11 ] && printf '%s' "$out" | grep -q "3" && printf '%s' "$out" | grep -qi "head"; then ok "quá N lần → exit 11 kèm lý do và số lần"; else fail "quá N lần: rc=$rc out=$out"; fi
 
-# 5. Head không bao giờ đứng yên trong --max-wait: exit 11.
+# 5. Head không bao giờ đứng yên trong --max-wait: exit 11 kèm lý do và số lần.
 ( for i in 1 2 3 4 5 6; do sleep 1; cd "$TMP/w" && echo "x$i" > f && G add f && G commit -q -m "x$i" && G push -q origin pr 2>/dev/null; done ) &
 BG=$!
 out=$(run --branch pr --sha "$C1" --settle 3 --poll 1 --max-wait 4 --attempt 1 --max-tries 3); rc=$?
 wait "$BG"
-[ "$rc" = 11 ] && ok "head không đứng yên trong max-wait → exit 11" || fail "không đứng yên: rc=$rc out=$out"
+if [ "$rc" = 11 ] && printf '%s' "$out" | grep -q "không đứng yên" && printf '%s' "$out" | grep -q "1 lần"; then
+  ok "head không đứng yên trong max-wait → exit 11 kèm lý do và số lần"
+else
+  fail "không đứng yên: rc=$rc out=$out"
+fi
 
 # 6. ls-remote lỗi (origin biến mất): không coi là đứng yên (không rerun giả), exit 11.
 commit six >/dev/null
@@ -88,7 +92,7 @@ if printf '%s' "$step6" | grep -q "5b" && ! printf '%s' "$step6" | grep -q "is n
 # phải quay về 5b; (2) 5b đưa nhánh cục bộ lên <sha> để lượt K+1 ff được.
 step5b=$(grep -n '^5b\. ' "$RUNMD" | head -1 | cut -d: -f2-)
 if printf '%s' "$step6" | grep -q "non-fast-forward" && ! printf '%s' "$step6" | grep -q "any command exits non-zero, do not retry or force: Block"; then ok "run.md bước 6: push non-ff do đầu đổi → 5b, không Block"; else fail "run.md bước 6 còn Block vô điều kiện khi lệnh thoát khác 0"; fi
-if printf '%s' "$step5b" | grep -q "super-board-qa-sync.sh"; then ok "run.md 5b đưa nhánh cục bộ lên <sha> trước lượt K+1 (qa-sync)"; else fail "run.md 5b không cập nhật nhánh cục bộ"; fi
+if printf '%s' "$step5b" | grep -q "super-board-qa-sync.sh" && printf '%s' "$step5b" | grep -q -- "--base <config.base_branch>"; then ok "run.md 5b đưa nhánh cục bộ lên <sha> trước lượt K+1 (qa-sync + --base)"; else fail "run.md 5b thiếu qa-sync hoặc --base <config.base_branch>"; fi
 
 # 11. Major audit T0003: chạy git thật vòng push non-ff → 5b → K+1. Bằng chứng QA E1 đã commit vào nhánh
 # cục bộ, push bị từ chối vì phiên khác đẩy S: `merge --ff-only S` lỗi (phân kỳ), 5b phải đặt lại nhánh về S
@@ -160,15 +164,49 @@ out=$(PATH="$TMP/shim:$PATH" SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr 
 # 17. Major 3: không --worktree và chưa có nhánh cục bộ → tạo nhánh tại <sha>, in synced.
 G clone -q "$ORIG" "$TMP/qe" 2>/dev/null
 ( cd "$TMP/qe" && G checkout -q --detach origin/pr )
-out=$(cd "$TMP/qe" && SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch newbr --sha "$S4" --base main 2>&1); rc=$?
 ( cd "$TMP/w" && G push -q origin "$S4:refs/heads/newbr" 2>/dev/null )
 out=$(cd "$TMP/qe" && SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch newbr --sha "$S4" --base main 2>&1); rc=$?
-[ "$rc" = 0 ] && [ "$(cd "$TMP/qe" && G rev-parse refs/heads/newbr)" = "$S4" ] && ok "17: chưa có nhánh cục bộ → tạo tại sha, synced" || fail "17: rc=$rc out=$out"
+[ "$rc" = 0 ] && printf '%s' "$out" | grep -q "synced" && [ "$(cd "$TMP/qe" && G rev-parse refs/heads/newbr)" = "$S4" ] && ok "17: chưa có nhánh cục bộ → tạo tại sha, synced" || fail "17: rc=$rc out=$out"
 
-# 18. Should fix (Historian): mọi chỗ còn viết "ls-remote ≠ sha → Block" phải nhắc 5b / qa-sync.
-for f in "$ROOT/.claude/skills/super-board/references/run.md" "$ROOT/.claude/skills/super-qa/SKILL.md" "$ROOT/.claude/skills/super-qa/references/tester-verifiers-evidence.md" "$ROOT/.claude/workflows/super-board-wave.js"; do
+# 18. Should fix (Historian) + R10 (super-board-run.sh): mọi chỗ còn viết "ls-remote ≠ sha → Block" phải nhắc 5b / qa-sync.
+for f in "$ROOT/.claude/skills/super-board/references/run.md" "$ROOT/.claude/skills/super-qa/SKILL.md" "$ROOT/.claude/skills/super-qa/references/tester-verifiers-evidence.md" "$ROOT/.claude/workflows/super-board-wave.js" "$ROOT/.claude/bin/super-board-run.sh"; do
   if grep -n 'is not <sha>, do not retry or force: Block the card' "$f" | grep -v '5b' | grep -q .; then fail "18: $f còn 'ls-remote ≠ sha → Block' không nhắc 5b"; else ok "18: $(basename "$f") không còn Block thẳng"; fi
 done
+if grep -n 'lane_worktree_hint' -A 10 "$ROOT/.claude/bin/super-board-run.sh" | grep 'qa)' | grep -q '5b'; then ok "18b: super-board-run.sh lane_worktree_hint qa có nhắc bước 5b"; else fail "18b: super-board-run.sh lane_worktree_hint qa thiếu bước 5b"; fi
+
+# 19. R12: --poll phải >= 1 (chặn --poll 0); now đo sau head_of để ls-remote chậm không làm hết hạn settle sớm.
+out=$(run --branch pr --sha "$C1" --poll 0); rc=$?
+[ "$rc" = 11 ] && printf '%s' "$out" | grep -q -- "--poll" && ok "19a: --poll 0 bị từ chối với exit 11" || fail "19a: --poll 0: rc=$rc out=$out"
+
+# 19b: giả lập lần ls-remote thứ 2 (đổi sang C_SLOW) mất 2s với --settle 2 --poll 1.
+# Nếu now đo trước head_of, stable_since bị lùi 2s nên vừa thấy C_SLOW là iter kế thoát rerun sớm (<2s sau khi quan sát C_SLOW).
+( cd "$TMP/w" && echo slow0 > f && G add f && G commit -q -m "slow0" && G push -q origin pr 2>/dev/null )
+mkdir -p "$TMP/shim_slow"
+cat > "$TMP/shim_slow/git" <<SH
+#!/bin/sh
+if [ "\$1" = "ls-remote" ]; then
+  c=\$(cat "$TMP/cnt" 2>/dev/null || echo 0)
+  c=\$((c + 1)); echo "\$c" > "$TMP/cnt"
+  if [ "\$c" = "2" ]; then
+    sleep 2
+    ( cd "$TMP/w" && echo slow1 > f && "$REALGIT" -c user.name=t -c user.email=t@t add f && "$REALGIT" -c user.name=t -c user.email=t@t commit -q -m "slow1" && "$REALGIT" push -q origin pr 2>/dev/null )
+    date +%s > "$TMP/seen_at"
+  fi
+fi
+exec "$REALGIT" "\$@"
+SH
+chmod +x "$TMP/shim_slow/git"
+rm -f "$TMP/cnt" "$TMP/seen_at"
+out=$(cd "$TMP/w" && PATH="$TMP/shim_slow:$PATH" SB_QA_HEAD_REMOTE="$ORIG" bash "$HEADCHK" --branch pr --sha "$C1" --settle 2 --poll 1 --max-wait 10 --attempt 1 --max-tries 3 2>&1); rc=$?
+done_at=$(date +%s)
+C_SLOW=$(cd "$TMP/w" && G rev-parse HEAD)
+seen_at=$(cat "$TMP/seen_at" 2>/dev/null || echo 0)
+elapsed=$((done_at - seen_at))
+if [ "$rc" = 10 ] && printf '%s' "$out" | grep -q "rerun $C_SLOW" && [ "$elapsed" -ge 2 ]; then
+  ok "19b: now đo sau head_of — settle đủ ${elapsed}s >= 2s sau khi thấy $C_SLOW"
+else
+  fail "19b: now trước head_of hoặc lỗi settle: rc=$rc elapsed=${elapsed}s out=$out"
+fi
 
 echo "---"
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL: $FAILS"; exit 1; }

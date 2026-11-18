@@ -27,6 +27,8 @@ done
 for _kv in "attempt=$attempt" "max-tries=$max_tries" "settle=$settle" "poll=$poll" "max-wait=$max_wait"; do
   case "${_kv#*=}" in ''|*[!0-9]*) echo "blocked: cờ --${_kv%%=*} phải là số nguyên không âm (nhận '${_kv#*=}')"; exit 11 ;; esac
 done
+# Tránh --poll 0 gây vòng lặp git ls-remote liên tục không nghỉ.
+[ $((10#$poll)) -ge 1 ] || { echo "blocked: cờ --poll phải >= 1 (nhận '$poll')"; exit 11; }
 [ -n "$branch" ] && [ -n "$sha" ] || { echo "blocked: thiếu --branch hoặc --sha"; exit 11; }
 remote="${SB_QA_HEAD_REMOTE:-origin}"
 
@@ -45,8 +47,9 @@ fi
 start=$(date +%s); stable_since=$start
 while :; do
   sleep "$poll"
-  now=$(date +%s)
   nxt="$(head_of)"
+  # Đo mốc thời gian sau head_of để một lần ls-remote chậm không rút ngắn thời gian --settle.
+  now=$(date +%s)
   # ls-remote lỗi/rỗng KHÔNG phải head đứng yên: chặn thay vì rerun giả.
   [ -n "$nxt" ] || { echo "blocked: không đọc được head của $branch trên $remote khi đợi đứng yên (head cuối biết: $cur)"; exit 11; }
   if [ "$nxt" != "$cur" ]; then cur="$nxt"; stable_since=$now; fi
