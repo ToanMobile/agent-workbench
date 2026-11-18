@@ -3723,31 +3723,46 @@ reload_edit_absorbed() {
 }
 # 18/11: runner blob đã mới (lần trước chỉ swap runner vì file khác của phiên khác chặn ff) thì `new == RELOAD_RUN_SUM` từng thoát sớm,
 # nên main kẹt sau origin cả ngày và mọi bản sửa kit chạy bằng code cũ. Đây là lượt đuổi kịp: đang ở <base>, HEAD là tổ tiên của origin
-# và HEAD != origin ⇒ thử ff lại (trả bản runner tự swap về HEAD trước). Vẫn bị chặn ⇒ đặt lại bản runner của origin, KHÔNG exec (không
-# restart-loop), không stash/autostash (stash dùng chung các worktree), một cảnh báo cho mỗi sha origin kèm đúng các file đang chặn.
+# và HEAD != origin ⇒ ff main lên origin (mục tiêu chung, không chỉ khi kit đổi). Có file sửa dở chặn thật ⇒ không đụng gì (runner origin đã trên đĩa,
+# không exec nên không restart-loop), không stash/autostash (stash dùng chung các worktree), một cảnh báo cho mỗi sha origin kèm đúng các file chặn.
 RELOAD_CATCHUP_WARNED=""
 reload_catchup_ff() {
-  local rel="$1" new="$2" cur head orig blockers
+  local rel="$1" new="$2" cur head orig blockers disk
   cur=$(git symbolic-ref -q --short HEAD 2>/dev/null) || return 0
   [ "$cur" = "$BASE_BRANCH" ] || return 0
   head=$(git rev-parse -q --verify HEAD 2>/dev/null) || return 0
   orig=$(git rev-parse -q --verify "origin/${BASE_BRANCH}" 2>/dev/null) || return 0
   [ "$head" != "$orig" ] || return 0
   git merge-base --is-ancestor HEAD "origin/${BASE_BRANCH}" 2>/dev/null || return 0
-  reload_restore_self "$rel" || true
-  if git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then
-    log "♻ self-reload: main caught up with origin/${BASE_BRANCH} (${head:0:7} → ${orig:0:7}); the runner was already current"
+  # File chặn thật = file khác nhau giữa HEAD và origin mà đĩa đang sửa dở (kể cả untracked). Bản runner trên đĩa đúng blob origin (lần
+  # swap trước ghi, kể cả sau khởi động lạnh làm mất env) không phải sửa tay nên không tính. Còn chặn thì không đụng gì: không restore/swap mỗi tick.
+  disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
+  blockers=$(comm -12 <(git diff --name-only "$head" "$orig" 2>/dev/null | sort) \
+    <({ git diff --name-only HEAD 2>/dev/null; git ls-files -o --exclude-standard 2>/dev/null; } | sort -u) \
+    | { if [ "$disk" = "$new" ] && git diff --cached --quiet -- "$rel" 2>/dev/null; then grep -vxF -- "$rel"; else cat; fi; } | tr '\n' ' ') || blockers=""
+  if [ -n "$blockers" ]; then
+    [ "$RELOAD_CATCHUP_WARNED" != "$orig" ] || return 0
+    RELOAD_CATCHUP_WARNED="$orig"
+    log "⚠ self-reload: main stays ${head:0:7}, behind origin/${BASE_BRANCH} ${orig:0:7}: uncommitted edits in the way: ${blockers}"
+    board_notify send --card "$CONFIG_SLUG" --text "main chưa ff được tới origin/${BASE_BRANCH} ${orig:0:7}: file sửa dở chặn: ${blockers}. Commit hoặc bỏ các file đó (không stash, stash dùng chung worktree)."
     return 0
   fi
-  # bị chặn: chỉ đặt lại runner origin khi đĩa đang sạch so với HEAD (không đè sửa tay), không exec
+  # runner trên đĩa = blob origin mà chưa khớp HEAD: trả về HEAD không mất gì, để ff đi qua
+  if [ "$disk" = "$new" ] && [ "$disk" != "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] && git diff --cached --quiet -- "$rel" 2>/dev/null; then
+    git restore --source=HEAD -- "$rel" 2>/dev/null || true
+  fi
+  if git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then
+    log "♻ self-reload: main caught up with origin/${BASE_BRANCH} (${head:0:7} → ${orig:0:7})"
+    return 0
+  fi
+  # ff vẫn hỏng dù không thấy file chặn: đặt lại runner origin nếu đĩa sạch so với HEAD, một cảnh báo mỗi sha
   if [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] && git diff --cached --quiet -- "$rel" 2>/dev/null; then
     reload_swap_self "origin/${BASE_BRANCH}:${rel}" || true
   fi
   [ "$RELOAD_CATCHUP_WARNED" != "$orig" ] || return 0
   RELOAD_CATCHUP_WARNED="$orig"
-  blockers=$(comm -12 <(git diff --name-only "$head" "$orig" 2>/dev/null | sort) <(git status --porcelain 2>/dev/null | cut -c4- | sort) | tr '\n' ' ')
-  log "⚠ self-reload: main stays ${head:0:7} behind origin/${BASE_BRANCH} ${orig:0:7}: uncommitted edits in the way: ${blockers:-unknown}"
-  board_notify send --card "$CONFIG_SLUG" --text "main chưa ff được tới origin/${BASE_BRANCH} ${orig:0:7} (kit chạy code cũ): file sửa dở chặn: ${blockers:-không rõ}. Commit hoặc bỏ các file đó (không stash, stash dùng chung worktree)."
+  log "⚠ self-reload: git merge --ff-only origin/${BASE_BRANCH} failed with no blocking file found; main stays ${head:0:7}"
+  board_notify send --card "$CONFIG_SLUG" --text "main chưa ff được tới origin/${BASE_BRANCH} ${orig:0:7}: ff-only lỗi, không tìm ra file chặn"
 }
 self_reload_tick() {
   local now new disk rel cur

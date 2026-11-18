@@ -62,5 +62,24 @@ mkrepo c; ( cd "$C/other" && echo helper-v2 > other.txt && git add -A && git com
 self_reload_tick
 [ "$(git rev-parse HEAD)" = "$h" ] && [ "$(execs)" = 0 ] && ok "C local commit: catch-up leaves main alone" || fail "C: exec=$(execs)"
 
+# D. cold restart (env SB_RELOAD_SWAPPED_SUM lost: watchdog/launchd/by hand) after a blocked swap: the on-disk runner equals origin's blob,
+#    so it is not a hand edit and must not block the ff once the other file is cleaned
+mkrepo d; echo mine > other.txt; push_other hydrogen
+self_reload_tick; unset SB_RELOAD_SWAPPED_SUM; restart
+git restore -- other.txt
+self_reload_tick
+[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && [ -z "$(git status --porcelain)" ] && [ "$(execs)" = 1 ] \
+  && ok "D cold restart: absorbed runner copy does not block the catch-up" \
+  || fail "D: head=$(git rev-parse --short HEAD) origin=$(git rev-parse --short origin/main) st=$(git status --porcelain | tr '\n' ' ')"
+
+# E. while blocked, the runner file is not rewritten tick after tick (same inode), and untracked blockers are named too
+mkrepo e; echo new > other.txt2; ( cd "$C/other" && echo x > other.txt2 && git add -A && git commit -qm n2 && git push -q origin main 2>/dev/null )
+push_other hydrogen
+self_reload_tick; restart; i1=$(ls -i "$RELOAD_SELF" | cut -d' ' -f1)
+self_reload_tick; RELOAD_NEXT_CHECK=0; self_reload_tick
+i2=$(ls -i "$RELOAD_SELF" | cut -d' ' -f1)
+[ "$i1" = "$i2" ] && [ "$(execs)" = 1 ] && grep -q 'other.txt2' "$TMP/notify" \
+  && ok "E blocked: runner file untouched across ticks, untracked blocker named" || fail "E: inode $i1 → $i2 exec=$(execs) notify=$(cat "$TMP/notify")"
+
 cd "$TMP" || exit 1
 [ "$FAILS" -eq 0 ] && { echo "✅ test_runner_self_reload_catchup_ff: all passed"; exit 0; } || { echo "❌ test_runner_self_reload_catchup_ff: $FAILS failed"; exit 1; }
