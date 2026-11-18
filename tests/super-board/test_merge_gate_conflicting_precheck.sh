@@ -117,8 +117,8 @@ run_case unknown_then_conflicting UNKNOWN CONFLICTING
 
 # 5) UNKNOWN mãi: đọc lại có giới hạn rồi đi tiếp như cũ (GitHub tự từ chối nếu thật sự xung đột)
 run_case unknown_forever UNKNOWN
-[ "$RC" -eq 0 ] && [ -e "$DIR/verify-ran" ] && [ "$READS" -eq 4 ] \
-  && ok "UNKNOWN forever: bounded re-reads ($READS), then verify + merge as before" \
+[ "$RC" -eq 0 ] && [ -e "$DIR/verify-ran" ] && [ "$READS" -eq 8 ] \
+  && ok "UNKNOWN forever: bounded re-reads (4 before verify + 4 in the lock = $READS), then verify + merge as before" \
   || fail "UNKNOWN forever: gate exit $RC, reads $READS"
 
 # 5b) --preflight (train gọi cho từng PR trước verify_set của đợt): CONFLICTING ⇒ 14, không in "preflight: ok"; MERGEABLE ⇒ ok
