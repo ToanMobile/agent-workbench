@@ -24,6 +24,9 @@ while [ $# -gt 0 ]; do
     *) echo "blocked: đối số lạ $1"; exit 11 ;;
   esac
 done
+for _kv in "attempt=$attempt" "max-tries=$max_tries" "settle=$settle" "poll=$poll" "max-wait=$max_wait"; do
+  case "${_kv#*=}" in ''|*[!0-9]*) echo "blocked: cờ --${_kv%%=*} phải là số nguyên không âm (nhận '${_kv#*=}')"; exit 11 ;; esac
+done
 [ -n "$branch" ] && [ -n "$sha" ] || { echo "blocked: thiếu --branch hoặc --sha"; exit 11; }
 remote="${SB_QA_HEAD_REMOTE:-origin}"
 

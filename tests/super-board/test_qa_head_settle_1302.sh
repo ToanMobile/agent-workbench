@@ -71,5 +71,16 @@ wait "$BG"
 out=$(run --branch pr --sha); rc=$?
 if [ "$rc" = 11 ] && ! printf '%s' "$out" | grep -qi "shift"; then ok "cờ thiếu giá trị → exit 11 gọn"; else fail "cờ thiếu giá trị: rc=$rc out=$out"; fi
 
+# 8. Cờ số không phải số (R5): exit 11 gọn, không lỗi bash, không rơi vào vòng đợi.
+for flag in --attempt --max-tries --settle --poll --max-wait; do
+  out=$(run --branch pr --sha "$C1" "$flag" abc); rc=$?
+  if [ "$rc" = 11 ] && ! printf '%s' "$out" | grep -qi "integer expression"; then ok "cờ số $flag=abc → exit 11"; else fail "cờ số $flag=abc: rc=$rc out=$out"; fi
+done
+
+# 9. run.md bước 6 (R4): đầu đổi sau 5b thì quay lại 5b, không Block thẻ.
+RUNMD="$ROOT/.claude/skills/super-board/references/run.md"
+step6=$(grep -n '^6\. \*\*Pass\*\*' "$RUNMD" | head -1 | cut -d: -f2-)
+if printf '%s' "$step6" | grep -q "5b" && ! printf '%s' "$step6" | grep -q "is not <sha>, do not retry or force: Block the card"; then ok "run.md bước 6 chuyển về 5b khi đầu đổi"; else fail "run.md bước 6 vẫn Block khi đầu đổi"; fi
+
 echo "---"
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL: $FAILS"; exit 1; }
