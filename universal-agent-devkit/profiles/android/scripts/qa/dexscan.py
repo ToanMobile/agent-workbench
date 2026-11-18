@@ -133,7 +133,12 @@ def dex_blobs(target_path):
 
 def unguarded_exports(manifest_path):
     """Exported components without a permission. Raises OSError / ET.ParseError on an unreadable manifest."""
-    root = ET.parse(manifest_path).getroot()  # expat: no external entities are fetched
+    with open(manifest_path, "rb") as f:
+        raw = f.read()
+    # A real manifest has no DTD: refuse one (entity expansion / external entities) instead of parsing it.
+    if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
+        raise ET.ParseError("manifest has a DOCTYPE/ENTITY declaration, refused")
+    root = ET.fromstring(raw)
     found = []
     for tag in COMPONENTS:
         for node in root.iter(tag):

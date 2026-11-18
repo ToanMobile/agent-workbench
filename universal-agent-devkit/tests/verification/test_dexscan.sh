@@ -80,6 +80,11 @@ printf '<manifest><application><receiver' > "$TMP/broken.xml"
 python3 "$SCAN" "$TMP/clean.apk" --manifest "$TMP/broken.xml" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ! grep -q Traceback "$TMP/log" && ok "--manifest broken XML -> exit 2" || bad "broken xml -> exit $rc: $(cat "$TMP/log")"
 
+# QA 2026-11-19 (AC4): a manifest with a DOCTYPE / ENTITY is never read, referenced or not -> exit 2 (a real manifest has none).
+printf '<!DOCTYPE manifest [<!ENTITY xxe SYSTEM "file:///etc/hostname">]>\n<manifest><application/></manifest>\n' > "$TMP/xxe.xml"
+python3 "$SCAN" "$TMP/clean.apk" --manifest "$TMP/xxe.xml" >"$TMP/log" 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ! grep -q Traceback "$TMP/log" && ok "--manifest with DOCTYPE/ENTITY -> exit 2" || bad "xxe manifest -> exit $rc: $(cat "$TMP/log")"
+
 cat > "$TMP/prov.xml" <<'XML'
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"><application>
   <provider android:name="com.sdk.ReadGuarded" android:exported="true" android:readPermission="com.x.R"/>

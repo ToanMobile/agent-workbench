@@ -53,9 +53,8 @@ ROOT="$(printf '%s' "${RAW}" | python3 -I -c 'import json,sys
 try: d = json.load(sys.stdin)
 except Exception: d = {}
 if not isinstance(d, dict): d = {}
-tc = d.get("toolCall") if isinstance(d.get("toolCall"), dict) else {}
-args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
-print(args.get("Cwd") or d.get("cwd") or "")' 2>/dev/null)"   # same order as the payload cwd below
+c = d.get("cwd")
+print(c if isinstance(c, str) else "")' 2>/dev/null)"   # never toolCall.args.Cwd: the model writes it, and it would move the policy files (.adb-denylist) out of reach
 [ -n "${ROOT}" ] && [ -d "${ROOT}" ] || ROOT="$PWD"
 ROOT="$(git -C "${ROOT}" rev-parse --show-toplevel 2>/dev/null || printf '%s' "${ROOT}")"
 

@@ -78,6 +78,15 @@ done
 agt run_command '{"CommandLine":"git status","toolSummary":"explain why git reset --hard is dangerous"}'
 [ -z "$OUT" ] && ok "toolSummary text is not read as the command" || fail "toolSummary read as command: out=$OUT"
 
+# QA 2026-11-19 (security): toolCall.args.Cwd is model-written. As the repo root it let `Cwd=/tmp` point the policy files
+# (.adb-denylist, .adb-allowlist, active-profile.json) at a folder without them: a denied serial passed. The root comes
+# from the payload cwd / the hook's own folder only.
+echo BADSERIAL123 > "$P/.adb-denylist"
+payload="$(python3 -c 'import json,sys; print(json.dumps({"toolCall":{"id":"t3","name":"run_command","args":{"CommandLine":"adb -s BADSERIAL123 shell id","Cwd":"/tmp"}},"cwd":sys.argv[1]}))' "$P")"
+OUT="$(cd "$P/.agents" && printf '%s' "$payload" | bash "$BRIDGE" antigravity shell hardware_safety_gate.sh 2>/dev/null)"; RC=$?
+[ "$(decision)" = deny ] && ok "args.Cwd=/tmp does not move the repo root: denied serial -> deny" || fail "Cwd override bypassed .adb-denylist: rc=$RC out=$OUT"
+: > "$P/.adb-denylist"
+
 # Broken payload: fail open (a broken bridge must not stop the agent), never print allow.
 OUT="$(cd "$P/.agents" && printf 'not json' | bash "$BRIDGE" antigravity shell block-dangerous-git.sh 2>/dev/null)"; RC=$?
 [ "$RC" = 0 ] && ! printf '%s' "$OUT" | grep -q allow && ok "garbage payload -> fail open, no allow" || fail "garbage payload: rc=$RC out=$OUT"
@@ -111,6 +120,9 @@ R="$TMP/r"; mkdir -p "$R"; (cd "$R" && git init -q)
 bash "$DEVKIT_DIR/bin/install.sh" -t "$R" -a claude,gemini -p none -y >"$TMP/out" 2>&1 || { fail "install failed"; tail -20 "$TMP/out"; }
 grep -q "agent_bridge.sh antigravity" "$R/.agents/hooks.json" 2>/dev/null \
   && ok "install -a claude,gemini registers the Antigravity guards" || fail "no .agents/hooks.json after install -a claude,gemini"
+# QA 2026-11-19 (AC2): a repo installed with -a claude,gemini is healthy.
+(cd "$R" && bash "$DEVKIT_DIR/bin/agent-kit" health >"$TMP/health" 2>&1); hrc=$?
+[ "$hrc" = 0 ] && ok "agent-kit health exits 0 on a repo installed with -a claude,gemini" || fail "agent-kit health rc=$hrc: $(tail -5 "$TMP/health")"
 # Antigravity audit 2026-11-19: a plain re-init (-y, no -a) keeps the guards; a broken .agents/hooks.json is never overwritten.
 bash "$DEVKIT_DIR/bin/install.sh" -t "$R" -p none -y >"$TMP/out2" 2>&1
 grep -q "agent_bridge.sh antigravity" "$R/.agents/hooks.json" 2>/dev/null && ok "re-init -y keeps the Antigravity guards" \

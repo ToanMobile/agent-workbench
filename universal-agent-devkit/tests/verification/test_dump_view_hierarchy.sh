@@ -49,7 +49,7 @@ bash "$DUMP" "$TMP/newdir/out.xml" >"$TMP/log" 2>&1; rc=$?
 
 reset; export ADB_DENY_SERIALS=emu-1
 bash "$DUMP" "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?
-if [ "$rc" -ne 0 ] && ! grep -q uiautomator "$TMP/calls"; then ok "denied serial -> refused (exit $rc), nothing dumped"
+if [ "$rc" -eq 2 ] && ! grep -q uiautomator "$TMP/calls"; then ok "denied serial -> refused (exit 2), nothing dumped"
 else bad "denied serial -> exit $rc, uiautomator calls: $(grep -c uiautomator "$TMP/calls")"; fi
 
 reset; export FAKE_DEVICES=2
@@ -85,6 +85,6 @@ printf '%s' "$out" | grep -q 'PASS' && ! printf '%s' "$out" | grep -q 'in logcat
 
 reset; export ADB_DENY_SERIALS=emu-1
 bash "$DUMP" -s emu-1 "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?
-if [ "$rc" -ne 0 ] && ! grep -q uiautomator "$TMP/calls"; then ok "-s on a denied serial -> refused (exit $rc)"; else bad "-s denied serial -> exit $rc"; fi
+if [ "$rc" -eq 2 ] && ! grep -q uiautomator "$TMP/calls"; then ok "-s on a denied serial -> refused (exit 2)"; else bad "-s denied serial -> exit $rc"; fi
 
 exit $((FAILS > 0))
