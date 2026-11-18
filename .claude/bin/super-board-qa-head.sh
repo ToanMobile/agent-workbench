@@ -3,11 +3,16 @@
 #   0  current <sha>        đầu nhánh vẫn là sha QA đang chạy: giữ kết quả
 #   10 rerun <sha> ...      đầu đã đổi: bỏ kết quả cũ, chạy lại QA trên <sha> (đã đứng yên)
 #   11 blocked ...          head vẫn đổi sau N lần thử, hoặc không đứng yên trong --max-wait
+# --sha = sha của origin/<PR branch> lúc QA bắt đầu (không phải HEAD của worktree QA sau khi merge main).
 # Dùng: super-board-qa-head.sh --branch B --sha S [--attempt K] [--max-tries N]
 #        [--settle 120] [--poll 5] [--max-wait 900]    (K = số lần QA đã chạy lại, tính từ 1)
 set -u
 branch=""; sha=""; attempt=1; max_tries=3; settle=120; poll=5; max_wait=900
 while [ $# -gt 0 ]; do
+  case "$1" in
+    --branch|--sha|--attempt|--max-tries|--settle|--poll|--max-wait)
+      [ $# -ge 2 ] || { echo "blocked: cờ $1 thiếu giá trị"; exit 11; } ;;
+  esac
   case "$1" in
     --branch) branch="${2:-}"; shift 2 ;;
     --sha) sha="${2:-}"; shift 2 ;;
@@ -39,7 +44,8 @@ while :; do
   sleep "$poll"
   now=$(date +%s)
   nxt="$(head_of)"
-  [ -n "$nxt" ] || nxt="$cur"
+  # ls-remote lỗi/rỗng KHÔNG phải head đứng yên: chặn thay vì rerun giả.
+  [ -n "$nxt" ] || { echo "blocked: không đọc được head của $branch trên $remote khi đợi đứng yên (head cuối biết: $cur)"; exit 11; }
   if [ "$nxt" != "$cur" ]; then cur="$nxt"; stable_since=$now; fi
   if [ $((now - stable_since)) -ge "$settle" ]; then
     echo "rerun $cur attempt=$((attempt + 1))/$max_tries (head đổi từ $sha)"

@@ -54,5 +54,22 @@ out=$(run --branch pr --sha "$C1" --settle 3 --poll 1 --max-wait 4 --attempt 1 -
 wait "$BG"
 [ "$rc" = 11 ] && ok "head không đứng yên trong max-wait → exit 11" || fail "không đứng yên: rc=$rc out=$out"
 
+# 6. ls-remote lỗi giữa lúc đợi: không coi là đứng yên (không rerun giả), exit 11.
+C6=$(commit six)
+mv "$ORIG" "$ORIG.gone"
+out=$(run --branch pr --sha "$C1" --settle 1 --poll 1 --attempt 1 --max-tries 3); rc=$?
+mv "$ORIG.gone" "$ORIG"
+[ "$rc" = 11 ] && ok "ls-remote lỗi → exit 11, không rerun giả" || fail "ls-remote lỗi: rc=$rc out=$out"
+# 6b. Lỗi ls-remote xuất hiện sau lần đọc đầu (head đã khác sha QA): vẫn exit 11.
+( sleep 0.5; mv "$ORIG" "$ORIG.gone"; sleep 2; mv "$ORIG.gone" "$ORIG" ) &
+BG=$!
+out=$(run --branch pr --sha "$C1" --settle 2 --poll 1 --attempt 1 --max-tries 3); rc=$?
+wait "$BG"
+[ "$rc" = 11 ] && ok "ls-remote lỗi giữa lúc đợi → exit 11" || fail "ls-remote lỗi giữa lúc đợi: rc=$rc out=$out"
+
+# 7. Cờ thiếu giá trị (--sha cuối dòng): báo blocked rõ ràng, không lỗi shift.
+out=$(run --branch pr --sha); rc=$?
+if [ "$rc" = 11 ] && ! printf '%s' "$out" | grep -qi "shift"; then ok "cờ thiếu giá trị → exit 11 gọn"; else fail "cờ thiếu giá trị: rc=$rc out=$out"; fi
+
 echo "---"
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL: $FAILS"; exit 1; }
