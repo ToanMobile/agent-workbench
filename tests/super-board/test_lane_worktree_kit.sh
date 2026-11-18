@@ -242,4 +242,25 @@ fi
 [ -z "$miss" ] && ok "6. held worktree: build push refused by the real hook => Block with reason, review detached, unknown held exit keeps the worktree" \
   || fail "6. held-worktree delivery:$miss"
 
+# ── 7. (#1303 review R6/R7) the `agent-kit worktree add` command of the exit-3 branch must RUN: take it from the brief, swap the
+#       placeholders, execute the real worktree.py add in a repo, expect rc 0 and a worktree at the named path (build: suffixed branch;
+#       review: detached). `--lane` refuses a `-2` folder name (BOARD_WT_RE), so the brief must not pass it there.
+WT_PY="$ROOT/universal-agent-devkit/scripts/git/worktree.py"
+miss=""
+for lane in build review; do
+  h="$(lane_worktree_hint "$lane" 7)"
+  acmd="$(printf '%s' "$h" | grep -o 'worktree add .claude/worktrees/issue-7-'"$lane"'-2[^,]*' | head -1 | sed -e 's/^worktree //' -e 's/ (review.*//' -e 's/<slug>/x/g' -e 's/<that branch>/main/' -e 's/<PR branch>/main/')"
+  if [ -z "$acmd" ]; then miss="$miss $lane:no-add-command"; continue; fi
+  if [ -d "$E/r" ] && [ -f "$WT_PY" ]; then
+    out="$( cd "$E/r" && eval "python3 -I $WT_PY ${acmd} --no-init" 2>&1 )"; arc=$?
+    [ "$arc" -eq 0 ] || miss="$miss $lane:add-rc=$arc($(printf '%s' "$out" | tr '\n' ' ' | cut -c1-120))"
+    [ -d "$E/r/.claude/worktrees/issue-7-$lane-2" ] || miss="$miss $lane:no-worktree-dir"
+  else
+    miss="$miss $lane:fixture-failed"
+  fi
+done
+grep -q -- 'issue-${n}-${lane}-2[^`]*--lane' "$WAVE" && miss="$miss wave:still-passes---lane-to-the--2-path"
+[ -z "$miss" ] && ok "7. held worktree: the suffixed add command from the brief really creates the worktree" \
+  || fail "7. suffixed add command does not run:$miss"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_lane_worktree_kit: all passed" || { echo "❌ test_lane_worktree_kit: $FAILS failed"; exit 1; }
