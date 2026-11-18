@@ -72,7 +72,10 @@ IFS=$'\t' read -r vstate approved vwhy <<<"$verdict" || true
 [ "$approved" = "$head" ] || refuse "$approved" "duyệt cho head cũ, PR đã đổi head sau khi duyệt"
 case "$vwhy" in
   owner) ;;
-  task:?*)
+  task:?*|cv:?*)
+    # #1328: cv:<id> = biên bản claude-verify, cùng đường audit-check (nó chuyển cho claude_verify.py check).
+    src_id=${vwhy#*:}; src_name="audit pass của antigravity-pm với auditedHead"
+    case "$vwhy" in cv:*) src_name="biên bản claude-verify pass (cùng tree, reviewer khác builder) cho head" ;; esac
     # Biên bản audit của task nằm theo project PM: repo (hoặc worktree) đang đứng nếu cùng git-common-dir với repo của helper — một
     # worktree thấy cả biên bản của nó lẫn của checkout chính (push_gate._task_audits) —, không thì repo của helper.
     top="$(cd "$HERE/../.." && pwd)"
@@ -89,14 +92,14 @@ case "$vwhy" in
     # không bao giờ đưa URL thô (có thể chứa token) vào lời từ chối (Antigravity audit vòng 2)
     origin=$(git -C "$top" remote get-url origin 2>/dev/null | sed -nE 's#/*$##; s#\.git$##; s#^.*github\.com[:/]([^/:]+/[^/]+)$#\1#p' | tr 'A-Z' 'a-z') || origin=""
     [ -n "$prrepo" ] && [ "$origin" = "$prrepo" ] \
-      || refuse "$approved" "approved-by task_id ${vwhy#task:} được audit trong repo ${origin:-không rõ}, PR thuộc repo ${prrepo:-không rõ}"
+      || refuse "$approved" "approved-by task_id ${src_id} được audit trong repo ${origin:-không rõ}, PR thuộc repo ${prrepo:-không rõ}"
     arc=0
     # -I: file chưa track cạnh audit-check (vd argparse.py) không được che module stdlib để đổi verdict (review #826)
-    run_t python3 -I "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${vwhy#task:}" "$head" >/dev/null 2>"$ERRF" || arc=$?
+    run_t python3 -I "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${src_id}" "$head" >/dev/null 2>"$ERRF" || arc=$?
     # hết giờ (fetch refs/pull chậm) là "không kiểm được" (69), không phải "chưa duyệt" (3 bảo agent quay về lane Review)
-    [ "$arc" -ne 124 ] || { echo "queue-label: kiểm audit của approved-by task_id ${vwhy#task:} hết ${LIMIT} s — không gắn nhãn ${LABEL}, thử lại sau" >&2; exit 69; }
+    [ "$arc" -ne 124 ] || { echo "queue-label: kiểm audit của approved-by task_id ${src_id} hết ${LIMIT} s — không gắn nhãn ${LABEL}, thử lại sau" >&2; exit 69; }
     [ "$arc" -eq 0 ] \
-      || refuse "$approved" "approved-by task_id ${vwhy#task:} chưa có audit pass của antigravity-pm với auditedHead ${head:0:7} ($(tail -1 "$ERRF" 2>/dev/null | cut -c1-160))" ;;
+      || refuse "$approved" "approved-by task_id ${src_id} chưa có ${src_name} ${head:0:7} ($(tail -1 "$ERRF" 2>/dev/null | cut -c1-160))" ;;
   *) refuse "$approved" "không rõ nguồn duyệt" ;;
 esac
 [ "$CHECK" -eq 0 ] || exit 0

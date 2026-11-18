@@ -9,6 +9,8 @@ pm home lạ (ANTIGRAVITY_PM_STATE_HOME, HOME=/tmp/x) không phải fixture test
 pm_home_test_fixture, audit T0066 vòng 3). `--pr N`: head chưa có object trong repo thì fetch refs/pull/N/head trước (lỗi → không duyệt).
 
 CLI: super-board-audit-check.py <task_id> <sha40> [--top DIR] [--pr N]   exit 0 = khớp, 1 = không khớp / không kiểm được.
+     #1328: task_id dạng CV<yyyymmdd>T<HHMMSS>-<head12> là biên bản claude-verify: chuyển cho claude_verify.check của kit (tìm theo
+     vị trí thật của script, như push_gate()); một trong hai nguồn (antigravity-pm hoặc claude-verify) là đủ.
 CLI: super-board-audit-check.py --chain-audit <sha40> --base <ref> [--top DIR]   (04/11, merge gate / train --has-edited-tests)
      exit 0 = PR sửa/xoá file đã có mà gate có thể coi là test (edited_existing) VÀ có biên bản audit pass của antigravity-pm với
      auditedHead thuộc <base>..<sha40> (duyệt test sửa tra thẳng biên bản, post-fix-gate _pm_audit_cross_review);
@@ -27,6 +29,7 @@ import sys
 from pathlib import Path
 
 TASK_ID = re.compile(r"T\d{4,}-[a-z0-9-]{1,48}\Z")   # antigravity-pm TASK_ID_RE (src/tasks.js), như push_gate.APPROVED_VALUE
+CV_TASK_ID = re.compile(r"CV[0-9]{8}T[0-9]{6}-[0-9a-f]{12}\Z")   # #1328: id biên bản claude_verify.py (khớp super-board-approved-head.jq)
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 _PUSH_GATE = []
 
@@ -44,6 +47,18 @@ def push_gate():
                 break
         _PUSH_GATE.append(mod if mod is not None and callable(getattr(mod, "audited_head", None)) else None)
     return _PUSH_GATE[0]
+
+
+def claude_verify():
+    """claude_verify.py của kit cạnh push_gate.py (cùng gốc kit, không theo biến môi trường), hoặc None."""
+    gate = push_gate()
+    path = Path(gate.__file__).with_name("claude_verify.py") if gate is not None else None
+    if path is None or not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("sb_claude_verify", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod if callable(getattr(mod, "check", None)) else None
 
 
 def repo_top(cwd=None):
@@ -253,6 +268,16 @@ def main():
     ap.add_argument("--top", help="repo chứa biên bản (mặc định: git toplevel của cwd)")
     ap.add_argument("--pr", type=int, help="số PR: head chưa có trong repo thì fetch refs/pull/<pr>/head trước khi đối chiếu")
     args = ap.parse_args()
+    if CV_TASK_ID.fullmatch(args.task_id):
+        top = args.top or repo_top()
+        try:
+            cv = claude_verify()
+            ok, why = cv.check(args.task_id, args.sha, top, args.pr) if cv is not None and top else (False, "kit has no claude_verify.py")
+        except Exception as error:   # noqa: BLE001 - biên bản / kit hỏng không bao giờ thành duyệt
+            ok, why = False, error.__class__.__name__
+        if not ok:
+            print(f"audit-check: claude-verify {args.task_id} is not a pass for {args.sha[:12]}: {why}", file=sys.stderr)
+        return 0 if ok else 1
     if args.pr is not None:
         ensure_commit(args.top, args.sha, args.pr)
     if matches(args.task_id, args.sha, args.top):

@@ -1548,6 +1548,7 @@ EOF
   case "$vwhy" in
     owner) ;;
     task:?*) python3 "$SB_AUDIT_CHECK" --top "${REPO_ROOT:-.}" --pr "$pr" "${vwhy#task:}" "$head" 2>/dev/null || return 1 ;;
+    cv:?*) python3 "$SB_AUDIT_CHECK" --top "${REPO_ROOT:-.}" --pr "$pr" "${vwhy#cv:}" "$head" 2>/dev/null || return 1 ;;   # #1328 claude-verify
     *) return 1 ;;
   esac
   printf '%s %s' "$pr" "$head"

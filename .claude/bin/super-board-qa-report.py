@@ -295,7 +295,8 @@ def review_proved(comments, qa_at, pr_author, head):
     # approved-by bắt buộc (nguồn `task:`): approved-head trần của OWNER (`owner`) không đủ để gỡ mục Not done của QA.
     # ponytail: chỉ kiểm DẠNG approved-by (jq); task_id ↔ biên bản audit antigravity-pm do merge queue đối chiếu trước khi gọi gate
     # (super-board-audit-check.py), checker này giữ thuần, không đọc state ngoài repo. Nâng khi gate gọi checker mà không qua queue.
-    return len(out) >= 3 and out[0].strip() == "ok" and out[1].strip() == head and out[2].strip().startswith("task:")
+    # #1328: nguồn `cv:` (biên bản claude-verify) ngang `task:`.
+    return len(out) >= 3 and out[0].strip() == "ok" and out[1].strip() == head and out[2].strip().startswith(("task:", "cv:"))
 
 
 def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None, head=None):

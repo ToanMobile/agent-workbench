@@ -108,11 +108,20 @@ once left a six-hour run with zero commits on `main`. In order, no shortcuts:
 
 1. `gh pr ready <PR>` — idempotent, safe on an already-ready PR.
    **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` (its runner drains
-   the queue every tick) or `"workflow"` (the launchd schedule `super-board-queue-schedule.sh` does), without `--codex`): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP:
+   the queue every tick) or `"workflow"` (the launchd schedule `super-board-queue-schedule.sh` does), without `--codex`): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, the cross-review is **claude-verify** by default (#1328):
+   your session (never the builder's: the seal refuses the session holding the PR branch's worktree) writes the review as JSON
+   `{head, base: merge-base(origin/<base>, head), findings: [{id, severity: important|nit|pre-existing, file, line, snippet, class}], reviewed_at}`
+   (every finding cites a line the PR added at head; `pre-existing` may cite any line of a changed file), then runs
+   `python3 .agents/devkit/bin/claude_verify.py seal --repo <review worktree> --head <sha40> --report <file>`: exit 0 prints `task_id=CV…`
+   (verdict pass), exit 4 = an `important` finding (no approval: route the fix), exit 2/3 = refused (fix the report; 3 = seal mode on
+   without the owner's claude-verify signer: `blocked-by: agent`). On exit 0 post `approved-head:<sha40>` with
+   `approved-by: {"reviewer":"claude-verify","builder":"<builder lane id>","task_id":"CV…","gate_receipt":"<impacted task receipt id>"}`.
+   Antigravity is optional: only when config `review_tiers` names `antigravity` or `SB_REVIEW_ANTIGRAVITY=1`, run an Antigravity audit of
+   the PR head through the antigravity-pm MCP instead:
    `pm_task_create` (project = this card's review worktree `.claude/worktrees/issue-<N>-review`, already at the PR head, never the main checkout; put the focus in its `brief`), `pm_dispatch kind=audit` WITHOUT `message`; the dispatch output must contain `Pham vi:` and must NOT contain `Khong ghi pham vi`, else do not `pm_verdict` (with `message`, or a project not at the PR head, the PM records no scope and the gate ignores the audit). Read its `audit-agent.json`, and only on Antigravity's
    pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR as its own comment `approved-head:<sha40>`
    with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}` and NO `edited-tests:` line (queue on only): the queue approves edited tests via the PM audit record from `pm_verdict`, which survives main moving ahead; an `edited-tests:` line pins the approval to this head, so every main move forces gate-exit-2 (RUNAWAY loop of 2026-11-12). `gate_receipt` as above (empty fp: do not comment).
-   Antigravity unavailable (MCP absent, `pm_dispatch` errors, verdict not pass): no approval, card stays in **Review** with a
+   On the Antigravity path, Antigravity unavailable (MCP absent, `pm_dispatch` errors, verdict not pass): no approval, card stays in **Review** with a
    `[reviewer]` comment whose last line is `blocked-by: -` (`blocked-by: agent` if down; a bare `approved-head` is the owner's hand approval; the guard blocks it). Add
    the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, write
    the report (`merge-ready`) and leave the card in **Review**: the queue merges it in one train (run.md → Merge
