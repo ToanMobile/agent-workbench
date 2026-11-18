@@ -71,6 +71,10 @@ BODY=$'## Acceptance criteria\n- [ ] AC1 code review of parser fix\n' mk "$TMP/c
 expect "$(run "$TMP/c9.json")" 1 "C9: chữ review tình cờ trong AC code không đủ"
 BODY=$'## Acceptance criteria\n- [ ] AC10 reviewer không phải tác giả duyệt PR\n' mk "$TMP/c10.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
 expect "$(run "$TMP/c10.json")" 1 "C10: AC10 không thay cho AC1"
+BODY=$'## Acceptance criteria\n- [ ] AC2 bot không phải tác giả commit vẫn push được\n' mk "$TMP/c11.json" "AC4 pass" "AC2 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c11.json")" 1 "C11: 'không phải tác giả' trần trong AC code không đủ"
+BODY=$'## Acceptance criteria\n- [ ] AC1 sửa parser; AC4 review độc lập\n' mk "$TMP/c12.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c12.json")" 1 "C12: mục AC thân PR có nhiều mã AC không gỡ mã đầu"
 mk "$TMP/c1.json" "AC4 pass" "AC1 test cổng OCR còn đỏ" "$MR" "$HEAD" ok;  expect "$(run "$TMP/c1.json")" 1 "C1: AC code ở Not done vẫn chặn"
 mk "$TMP/c2.json" "AC1 pass" "AC4 phần review độc lập; AC1 test còn đỏ" "$MR" "$HEAD" ok; expect "$(run "$TMP/c2.json")" 1 "C2: mục trộn AC khác vẫn chặn"
 mk "$TMP/c3.json" "AC1 pass" "AC4 phần review độc lập
