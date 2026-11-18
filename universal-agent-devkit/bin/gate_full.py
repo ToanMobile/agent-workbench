@@ -592,7 +592,7 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
         if not isinstance(t, dict):
             continue
         st, sid, cmd = t.get("status"), t.get("id") or "?", t.get("command") or ""
-        if st == "PASS":
+        if st == "PASS" and t.get("mode") not in ("skip-compile", "resource"):   # PASS không chạy gì (Unity compile) không chứng minh
             run.info["passed"].append(sid)
         if st == "FAIL" and t.get("env_blocked"):
             env_red.append(sid)
@@ -611,6 +611,8 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
                 group_b.append(sid)
         elif st in ("TIMEOUT", "UNTESTED"):
             env_red.append("%s (%s)" % (sid, st))
+    if kit_rc == 0:
+        run.info["passed"].append("agent-kit test")
     if kit_rc not in (None, 0):
         paths = test_paths(kit_out, kit_dir)
         if paths:
@@ -1127,7 +1129,8 @@ def open_issue_for(slug: str, first: str):
     return ""
 
 
-CARD_SUITE = re.compile(re.escape(CARD_PREFIX) + r" \S+: (\S+) đỏ$")
+CARD_SUITE = re.compile(re.escape(CARD_PREFIX) + r" \S+: (.+?) đỏ$")   # .+? : "agent-kit test" có dấu cách
+TRUNK_REF = "origin/main"   # mặc định của --ref: ref lượt đêm chạy và thẻ gate-full nói tới
 
 
 def close_proven_cards(run, slug: str, sha: str) -> None:
@@ -1135,6 +1138,9 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
     (ac-open) chờ người mãi. Sau lượt: thẻ gate-full còn mở mà suite của nó PASS ở lượt này ⇒ comment bằng chứng, gỡ ac-open, đóng
     completed (sweep đóng-issue của board chuyển thẻ về Done). gh lỗi ⇒ chỉ log, thẻ giữ nguyên, lượt sau thử lại."""
     passed = set(run.info.get("passed") or [])
+    # Thẻ đêm nói về origin/main: lượt --ref nhánh khác hay lệnh gate thay thế (DEVKIT_GATE_FULL_CMD) không chứng minh AC của nó.
+    if run.info.get("ref") != TRUNK_REF or os.environ.get("DEVKIT_GATE_FULL_CMD"):
+        return
     if not slug or not passed or not shutil.which("gh"):
         return
     rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "open", "--search", '"gate-full đêm" in:title',
@@ -1142,7 +1148,8 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
     try:
         items = json.loads(out.strip().splitlines()[-1]) if rc == 0 and out.strip() else []
     except ValueError:
-        items = []
+        run.log("đóng thẻ đã chứng minh: danh sách thẻ không đọc được (JSON hỏng) — lượt sau thử lại")
+        return
     if rc != 0:
         run.log("đóng thẻ đã chứng minh: gh issue list exit %d — lượt sau thử lại" % rc)
         return
@@ -1154,13 +1161,16 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
         sid = m.group(1)
         body = ("[gate-full] %s %s PASS trên %s @ %s: AC \"Lượt gate_full.py run kế tiếp không còn %s đỏ\" đã chứng minh. Log: %s"
                 % (run.started.strftime("%Y-%m-%d"), sid, run.info.get("ref") or "?", sha[:12], sid, run.log_path))
-        rc1, _ = sh(["gh", "issue", "comment", str(n), "--repo", slug, "--body", body], timeout=60)
-        if rc1 != 0:
-            run.log("thẻ #%d (%s PASS): comment lỗi exit %d — giữ mở, lượt sau thử lại" % (n, sid, rc1))
+        # ac-open gỡ trước (sweep của board mở lại thẻ còn ac-open); bằng chứng đi cùng lệnh đóng: đóng lỗi thì lượt sau làm lại cả hai,
+        # không để lại comment bằng chứng lặp trên thẻ còn mở.
+        rc2, _ = sh(["gh", "issue", "edit", str(n), "--repo", slug, "--remove-label", "ac-open"], timeout=60)
+        if rc2 != 0:
+            run.log("thẻ #%d (%s PASS): gỡ ac-open lỗi exit %d — giữ mở, lượt sau thử lại" % (n, sid, rc2))
             continue
-        sh(["gh", "issue", "edit", str(n), "--repo", slug, "--remove-label", "ac-open"], timeout=60)
-        rc3, _ = sh(["gh", "issue", "close", str(n), "--repo", slug, "--reason", "completed"], timeout=60)
-        run.log("thẻ #%d: %s PASS ⇒ %s" % (n, sid, "đã đóng" if rc3 == 0 else "đóng lỗi exit %d" % rc3))
+        rc3, _ = sh(["gh", "issue", "close", str(n), "--repo", slug, "--reason", "completed", "--comment", body], timeout=60)
+        run.log("thẻ #%d: %s PASS ⇒ %s" % (n, sid, "đã đóng" if rc3 == 0 else "đóng lỗi exit %d, lượt sau thử lại" % rc3))
+        if rc3 == 0:
+            run.info.setdefault("notes", []).append("đã đóng thẻ #%d: %s PASS (AC lượt kế không còn đỏ)" % (n, sid))
 
 
 def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
