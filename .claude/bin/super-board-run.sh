@@ -3711,6 +3711,16 @@ reload_restore_self() {
   [ -n "${SB_RELOAD_SWAPPED_SUM:-}" ] && [ "$disk" = "$SB_RELOAD_SWAPPED_SUM" ] && git diff --cached --quiet -- "$rel" 2>/dev/null || return 1
   git restore --source=HEAD -- "$rel" 2>/dev/null
 }
+# #1281: sửa tay chưa commit mà phần sửa đó ĐÃ nằm trong bản origin (PR của chính nó vừa merge) làm file dirty nên chặn ff mãi và gây cảnh báo giả.
+# Gộp 3 chiều (đĩa, HEAD, origin): sạch và ra đúng bản origin ⇒ mọi dòng sửa tay đã có trên origin, thay file bằng bản origin không mất gì.
+# $1 = đường dẫn tương đối của runner, $2 = blob origin. Sửa tay có dòng chưa lên origin ⇒ khác 0, giữ nguyên.
+reload_edit_absorbed() {
+  local rel="$1" new="$2" d b o rc=1
+  d=$(mktemp "${TMPDIR:-/tmp}/sb-rl-disk.XXXXXX") && b=$(mktemp "${TMPDIR:-/tmp}/sb-rl-base.XXXXXX") && o=$(mktemp "${TMPDIR:-/tmp}/sb-rl-orig.XXXXXX") || { rm -f "${d:-}" "${b:-}"; return 1; }
+  if cp "$RELOAD_SELF" "$d" && git show "HEAD:${rel}" > "$b" 2>/dev/null && git show "origin/${BASE_BRANCH}:${rel}" > "$o" 2>/dev/null \
+    && git merge-file -q "$d" "$b" "$o" 2>/dev/null && [ "$(git hash-object "$d")" = "$new" ]; then rc=0; fi
+  rm -f "$d" "$b" "$o"; return "$rc"
+}
 self_reload_tick() {
   local now new disk rel cur
   [ -n "$RELOAD_RUN_SUM" ] || return 0
@@ -3747,7 +3757,8 @@ self_reload_tick() {
         # đó bằng bản origin (không đụng index, không đụng file dở của người khác); script đang bị sửa tay thì giữ nguyên và cảnh báo.
         # ponytail: bin/ helper khác vẫn là bản cũ tới khi main ff được; nâng lên stash/worktree nếu helper đổi cùng lúc làm hỏng runner mới.
         # "Sạch" = đĩa khớp HEAD và index sạch (reload_restore_self đã trả bản runner tự ghi về HEAD ở trên).
-        [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] \
+        { [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] \
+          || reload_edit_absorbed "$rel" "$new"; } \
           && git diff --cached --quiet -- "$rel" 2>/dev/null \
           || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
         reload_swap_self "origin/${BASE_BRANCH}:${rel}" \
