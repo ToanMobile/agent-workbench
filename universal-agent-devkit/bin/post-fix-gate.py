@@ -948,11 +948,12 @@ def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = Fa
     for sha in res.stdout.split():                    # newest first
         ok, note = _push_gate().approved(root, f"{sha}^!")
         m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None   # `antigravity <task-id>`
-        head = _push_gate().audited_head(root, m.group(2)) if m else None
+        head = _push_gate().trailer_head(root, m.group(1), m.group(2), sha) if m else None
         # auditedHead trước `since` (task cũ, commit rỗng ở nhánh phụ gộp vào range) kéo base lùi về cây yếu cũ: không duyệt.
         if head and _push_gate().head_after(root, since, head):
             base = sha
-            PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
+            if m.group(1) == "antigravity":
+                PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
             break
     # A trailer commit after the rename knows only the new name; at `since` (or before the rename) the old one.
     if old_path and base != since and object_info(base, old_path) is None:
@@ -1235,12 +1236,23 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
         for sha in res.stdout.split():
             ok, note = _push_gate().approved(root, f"{sha}^!")
             m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None
-            head = _push_gate().audited_head(root, m.group(2)) if m else None
+            head = _push_gate().trailer_head(root, m.group(1), m.group(2), sha) if m else None
             if head and m.group(1) not in agents:
                 audited.append((head, m.group(1), m.group(2)))
+        # R11: an older trailer head whose test blob differs from a newer accepted head's is a replay of a weaker, superseded test.
+        def _superseded(f, head):
+            rc_a, mine = _git_out(root, "rev-parse", "-q", "--verify", f"{head}:{prefix}{f}")
+            for h2, _rv, _tid in audited:
+                if h2 != head and _is_ancestor(root, head, h2):
+                    rc_b, theirs = _git_out(root, "rev-parse", "-q", "--verify", f"{h2}:{prefix}{f}")
+                    if rc_a != 0 or rc_b != 0 or mine != theirs:
+                        return True
+            return False
         out = {}
         for f in paths if audited else []:
             for head, rv, task_id in audited:
+                if _superseded(f, head):
+                    continue
                 if audit_covers(root, prefix, project_root, f, head)[0]:
                     out[f] = (rv, task_id)
                     break
