@@ -1180,6 +1180,21 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
             run.info.setdefault("notes", []).append("đã đóng thẻ #%d: %s PASS (AC lượt kế không còn đỏ)" % (n, sid))
 
 
+def card_cmd() -> list:
+    """Lệnh tạo/đưa thẻ lên board: DEVKIT_GATE_FULL_CARD_CMD (test) hoặc create_task.py của kit."""
+    return shlex.split(os.environ["DEVKIT_GATE_FULL_CARD_CMD"]) if os.environ.get("DEVKIT_GATE_FULL_CARD_CMD") \
+        else [sys.executable, os.path.join(KIT, "scripts", "governance", "create_task.py")]
+
+
+def board_cmd() -> list:
+    """Lệnh đưa thẻ dùng lại lên board (#1287): DEVKIT_GATE_FULL_BOARD_CMD, else create_task.py của kit. Chỉ đặt
+    DEVKIT_GATE_FULL_CARD_CMD (harness giả) mà không đặt biến này thì trả [] và bước này bị bỏ qua."""
+    if os.environ.get("DEVKIT_GATE_FULL_BOARD_CMD"):
+        return shlex.split(os.environ["DEVKIT_GATE_FULL_BOARD_CMD"])
+    return [] if os.environ.get("DEVKIT_GATE_FULL_CARD_CMD") else \
+        [sys.executable, os.path.join(KIT, "scripts", "governance", "create_task.py")]
+
+
 def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
     """Thẻ theo TỪNG đỏ mới (v26 mục 6): suite mới ⇒ thẻ riêng mang tên nó (đã có thẻ mở cùng suite ⇒ comment); ca mới trong suite đỏ
     kinh niên ⇒ comment vào thẻ mở của suite đó, nêu đúng các ca. Đỏ kinh niên không ca mới ⇒ không thẻ, không comment. gh lỗi khi tìm
@@ -1212,9 +1227,15 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
                 i["unreported"].append(sid)
             cards.append(dup + (" (đã có, ghi thêm)" if rc == 0 else " (comment lỗi exit %d, lượt sau báo lại)" % rc))
             run.log("thẻ mở cùng suite %s đã có: %s (comment exit %d)" % (sid, dup, rc))
+            bcmd = board_cmd()
+            if rc == 0 and bcmd and dup.startswith("http"):
+                # #1287: thẻ dùng lại có thể không nằm trên board (vd #685) ⇒ comment không tới lane nào; đưa nó vào Backlog.
+                erc, eout = sh(bcmd + (["--repo", slug] if slug else []) + ["--ensure-on-board", dup], cwd=repo, timeout=120)
+                if erc != 0:
+                    run.raw(eout or "")
+                    run.log("thẻ %s: ensure-on-board lỗi exit %d (thẻ có thể nằm ngoài board; chỉ thử lại khi suite này có đỏ mới)" % (dup, erc))
             continue
-        base = shlex.split(os.environ["DEVKIT_GATE_FULL_CARD_CMD"]) if os.environ.get("DEVKIT_GATE_FULL_CARD_CMD") \
-            else [sys.executable, os.path.join(KIT, "scripts", "governance", "create_task.py")]
+        base = card_cmd()
         cmd = base + (["--repo", slug] if slug else []) + [
             "--new-card", "gate-full đêm", "--labels", "bug",
             "--title", "%s %s: %s đỏ" % (CARD_PREFIX, run.started.strftime("%Y-%m-%d"), sid), "--problem", problem,
