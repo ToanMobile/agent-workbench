@@ -45,6 +45,8 @@ expect() { [ "$1" = "$2" ] && ok "$3" || { fail "$3 (rc=$1, muốn $2)"; cat "$T
 mk "$TMP/a.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok
 expect "$(run "$TMP/a.json")" 0 "A: dạng #1292 + reviewer + approved-head đúng head qua"
 
+BODY=$'## Acceptance criteria\n- [ ] AC4 reviewer (không phải tác giả) duyệt\n' mk "$TMP/a2.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok
+expect "$(run "$TMP/a2.json")" 0 "A2: mục AC thân PR viết 'reviewer (không phải tác giả)' vẫn được gỡ"
 mk "$TMP/b1.json" "AC1 pass" "$RO" "$MR" none ok;                    expect "$(run "$TMP/b1.json")" 1 "B1: thiếu approved-head vẫn chặn"
 mk "$TMP/b2.json" "AC1 pass" "$RO" "✅ merge-ready · head ${OTHER:0:8}" "$HEAD" ok; expect "$(run "$TMP/b2.json")" 1 "B2: reviewer ở head khác vẫn chặn"
 mk "$TMP/b3.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok; expect "$(run "$TMP/b3.json")" 1 "B3: reviewer ❌ mới nhất vẫn chặn"
