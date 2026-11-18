@@ -252,7 +252,8 @@ def review_proved(comments, qa_at, pr_author, head):
     after = [c for c in (comments or [])[qa_at + 1:] if isinstance(c, dict) and isinstance(c.get("body"), str)]
     verdict = None
     for c in after:
-        if trusted(c, pr_author):
+        # chỉ OWNER/MEMBER/COLLABORATOR: tác giả PR (builder) không tự viết phán quyết reviewer, kể cả khi authorAssociation là NONE
+        if c.get("authorAssociation") in TRUSTED_ASSOC:
             for line in visible_lines(c["body"]):
                 m = REVIEWER_REPORT.match(line)
                 if m:
@@ -301,7 +302,7 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None,
         if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
             # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.
             if (not decided or _DEC.is_stop(text)) and not (
-                    review_only_item(parts, text, acs) and review_proved(comments, latest_at, pr_author, head)):
+                    not _DEC.is_stop(text) and review_only_item(parts, text, acs) and review_proved(comments, latest_at, pr_author, head)):
                 items.append(text)
     return items
 

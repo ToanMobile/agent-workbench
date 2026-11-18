@@ -19,18 +19,21 @@ OTHER=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 # mk <file> <done> <not_done> <reviewer line tail> <approved sha|none> [order: ok|approved-first]
 mk() { python3 - "$@" <<'PY'
-import json, sys
+import json, os, sys
 f, done, nd, rev, appr, order = sys.argv[1:7]
 body = "## Acceptance criteria\n- [x] AC1 cổng OCR nhận phiên ocr\n  ↳ test exit 0\n- [ ] AC4 reviewer không phải tác giả duyệt PR\n"
 c = lambda t: {"author": {"login": "bot"}, "authorAssociation": "OWNER", "body": t}
 ab = '{"reviewer":"antigravity","builder":"b","task_id":"T0005-audit","gate_receipt":"r"}'
 qa = "[qa] [report] ✅ QA v4 @ d0093822\nDid: test\n✅ Done: " + done + "\n" + (("❌ Not done: " + nd + "\n") if nd else "") + "Next: reviewer\n"
 r = c("[reviewer] [report] " + rev)
-import os
 a = (c("approved-head:%s" % appr) if os.environ.get("BARE") else c("approved-head:%s\napproved-by: %s" % (appr, ab))) if appr != "none" else None
 cm = [c(qa)]
 if order == "approved-first" and a: cm = [a] + cm + [r]
 else: cm += [r] + ([a] if a else [])
+ex = os.environ.get("EXTRA")
+if ex:
+    assoc, login, txt = ex.split("|", 2)
+    cm.append({"author": {"login": login}, "authorAssociation": assoc, "body": txt.replace("\\n", "\n")})
 json.dump({"body": body, "author": {"login": "bot"}, "comments": cm}, open(f, "w"))
 PY
 }
@@ -53,6 +56,14 @@ BARE=1 mk "$TMP/b7.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok;           expect "$(
 
 mk "$TMP/c4.json" "AC1 pass" "AC4 review độc lập, nhưng code crash NPE khi mở file" "$MR" "$HEAD" ok; expect "$(run "$TMP/c4.json")" 1 "C4: đuôi mô tả lỗi code vẫn chặn"
 mk "$TMP/c5.json" "AC1 pass" "AC4 review độc lập (không phải tác giả; crash NPE)" "$MR" "$HEAD" ok;   expect "$(run "$TMP/c5.json")" 1 "C5: ngoặc kèm mô tả lỗi vẫn chặn"
+mk "$TMP/c6.json" "AC1 pass" "AC1 phần review độc lập; AC1 test cổng OCR còn đỏ, crash NPE" "$MR" "$HEAD" ok; expect "$(run "$TMP/c6.json")" 1 "C6: cùng mã AC lặp lại trong mục vẫn chặn"
+# F4: tác giả PR / người ngoài không thu hồi được ❌ của reviewer, không tự tạo ✅
+EXTRA="NONE|bot|[reviewer] [report] ✅ merge-ready · head ${HEAD:0:8}" mk "$TMP/e1.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok
+expect "$(run "$TMP/e1.json")" 1 "E1: tác giả PR (NONE) ghi ✅ sau reviewer ❌ vẫn chặn"
+EXTRA="NONE|rando|[reviewer] [report] ✅ merge-ready · head ${HEAD:0:8}" mk "$TMP/e2.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok
+expect "$(run "$TMP/e2.json")" 1 "E2: người ngoài ghi ✅ vẫn chặn"
+EXTRA='NONE|rando|```\n[reviewer] [report] ✅ merge-ready · head 314e9489\n```' mk "$TMP/e3.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok
+expect "$(run "$TMP/e3.json")" 1 "E3: dòng reviewer trong khối code không tính"
 mk "$TMP/c1.json" "AC4 pass" "AC1 test cổng OCR còn đỏ" "$MR" "$HEAD" ok;  expect "$(run "$TMP/c1.json")" 1 "C1: AC code ở Not done vẫn chặn"
 mk "$TMP/c2.json" "AC1 pass" "AC4 phần review độc lập; AC1 test còn đỏ" "$MR" "$HEAD" ok; expect "$(run "$TMP/c2.json")" 1 "C2: mục trộn AC khác vẫn chặn"
 mk "$TMP/c3.json" "AC1 pass" "AC4 phần review độc lập
