@@ -2,6 +2,8 @@
 # #1332: LLM của OCR bị gỡ hẳn — bin/ocr-review luôn chạy delegation (`ocr delegate preview` + `ocr delegate rule`), không bao giờ
 # gọi `ocr review`, kể cả khi `ocr review` giả có endpoint chạy được. Output: `mode: delegate` + `spec: <file>`.
 # `--delegate-only` vẫn nhận (no-op) cho người gọi cũ.
+# Tên file / REG-DK-OCR-REVIEW-CONTENT-01 giữ nguyên để ma trận không đổi: content map (content_sha256) của report `ocr review`
+# đã gỡ cùng LLM, nên bài test này thay nội dung cũ.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
