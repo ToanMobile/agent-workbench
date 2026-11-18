@@ -189,7 +189,6 @@ def scan_apk_or_dex(target_path, manifest_path=None):
             print(f"⚠️ [{name}] không đọc được header DEX — chưa đếm method, chưa quét API")
             unreadable.append(f"{name}: không phải header DEX")  # never let a skipped entry read as clean
             continue
-        counts.append((name, module, count))
         (declared,) = struct.unpack_from("<I", data, 0x20)  # header file_size: d8 writes the real size
         if declared != len(data):
             # A cut anywhere (string data sits after the id tables) must never pass the "no dangerous strings" shortcut.
@@ -199,6 +198,7 @@ def scan_apk_or_dex(target_path, manifest_path=None):
         if zlib.adler32(data[12:]) != checksum:
             unreadable.append(f"{name}: checksum adler32 sai (DEX hỏng)")
             continue
+        counts.append((name, module, count))  # only an intact DEX: a corrupt header gives a garbage count
         try:
             findings += [(name, label, ref) for label, ref in dangerous_refs(data)]
         except (DexError, struct.error) as e:

@@ -226,5 +226,7 @@ open(f'{sys.argv[1]}/flip.dex', 'wb').write(bytes(full))
 PY2
 python3 "$SCAN" "$TMP/flip.dex" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 2 ] && grep -q 'checksum' "$TMP/log" && ok "one flipped byte, same size -> checksum mismatch, exit 2" || bad "flip dex -> exit $rc: $(tail -2 "$TMP/log")"
+# Antigravity final audit: a corrupt DEX must not print a method count (possibly garbage) before it is rejected.
+! grep -q 'flip.dex\] [0-9]* method' "$TMP/log" && ok "corrupt DEX prints no method count" || bad "corrupt dex printed a count: $(grep method "$TMP/log")"
 
 exit $((FAILS > 0))
