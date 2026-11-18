@@ -199,5 +199,16 @@ else
 fi
 [ -z "$bad" ] && ok "4. no lane brief or lane file removes a worktree with a plain git worktree remove" \
   || fail "4. plain git worktree remove instructions left:$bad"
+# ── 5. (#1303) a worktree held by another session is never removed: build/review briefs (runner and wave) ask `worktree held` first, exit 3
+#       means make an own worktree (suffixed name) for the same PR branch, and Block only when that add fails (with the reason).
+miss=""
+for pair in "runner:$hint_text" "wave:$wave_text"; do
+  t="${pair#*:}"
+  case "$t" in *"worktree.py held"*|*"worktree held"*) ;; *) miss="$miss ${pair%%:*}:no-held-check" ;; esac
+  case "$t" in *"never remove"*) ;; *) miss="$miss ${pair%%:*}:no-never-remove-held" ;; esac
+  case "$t" in *"-2"*"Block"*|*"-2"*"blocked"*) ;; *) miss="$miss ${pair%%:*}:no-suffixed-worktree-or-block-on-add-failure" ;; esac
+done
+[ -z "$miss" ] && ok "5. held worktree: briefs check held, never remove it, add a suffixed worktree, Block only if that fails" \
+  || fail "5. held-worktree guidance missing:$miss"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_lane_worktree_kit: all passed" || { echo "❌ test_lane_worktree_kit: $FAILS failed"; exit 1; }
