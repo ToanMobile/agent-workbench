@@ -109,7 +109,8 @@ once left a six-hour run with zero commits on `main`. In order, no shortcuts:
 1. `gh pr ready <PR>` — idempotent, safe on an already-ready PR.
    **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` (its runner drains
    the queue every tick) or `"workflow"` (the launchd schedule `super-board-queue-schedule.sh` does), without `--codex`): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, the cross-review is **claude-verify** by default (#1328):
-   claude-verify only works for cards the board dispatched: the runner records the build and review worker session ids before they
+   claude-verify only works for cards the board dispatched, and only the `claude-p` worker backend uses claude-verify (the `workflow`
+   backend records no session ledger, so its reviews take the Antigravity path): the runner records the build and review worker session ids before they
    start, and the seal requires your session in the card's reviewer ledger and not in its builder ledger (a manual session outside the
    board takes the Antigravity path or the owner's approval). A PR that edits or deletes an existing test (edited_existing) still
    needs the Antigravity path below until #1331 lands: a claude-verify approval does not approve edited tests. Your session writes the review as JSON

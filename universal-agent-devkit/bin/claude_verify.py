@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Biên bản duyệt chéo `claude-verify` (#1328): nguồn duyệt của merge queue ngoài antigravity-pm.
 
-  register --lane build|review --repo DIR --issue N --session SID   runner ghi sổ phiên TRƯỚC khi chạy worker (chỉ thêm, không xoá)
+  register --lane build|review --repo DIR --issue N --session SID   runner ghi sổ phiên TRƯỚC khi chạy worker (chỉ thêm, không xoá).
+      Trong env phiên agent (CLAUDECODE=1 hoặc CLAUDE_CODE_SESSION_ID) → exit 2, trừ khi lệnh mang cờ SB_RUNNER_REGISTER=1 mà
+      super-board-run.sh đặt inline; hook PreToolUse (block_dangerous_git_main.py) chặn lệnh Bash của agent gọi register hay mang cờ đó.
   seal --repo DIR --head SHA40 --report FILE --branch issue-N-…      exit 0 pass, 4 = có finding important, 2 = báo cáo/phiên bị từ
                                                                      chối, 3 = không kiểm được (git/kit lỗi, seal mode bật)
-  check TASK_ID SHA40 [--top DIR] [--pr N] [--branch B]               exit 0 = biên bản pass đúng head/tree, phiên hợp lệ; 1 = còn lại
+  check TASK_ID SHA40 --branch B [--top DIR] [--pr N]                 exit 0 = biên bản pass đúng head/tree, phiên hợp lệ, thẻ của nhánh
+                                                                     PR B trùng thẻ biên bản; 1 = còn lại (thiếu --branch cũng là 1)
 
 `seal` kiểm báo cáo {head, base, findings:[{id, severity, file, line, snippet, class}], reviewed_at}: head sha40 == --head và là đỉnh
-của nhánh --branch (refs/remotes/origin/<b> hoặc refs/heads/<b>); base == merge-base(trunk, head) (push_gate._trunk_ref); finding có
+của nhánh --branch ở origin (refs/remotes/origin/<b>; nhánh local không tính); base == merge-base(trunk, head) (push_gate._trunk_ref); finding có
 severity important|nit|pre-existing, file thuộc diff, dòng trong hunk thêm ở head (pre-existing được ngoài hunk), snippet khớp dòng đó.
 task_id = CV<yyyymmdd>T<HHMMSS>-<head12>-<6 hex ngẫu nhiên>, ghi O_EXCL (không đè biên bản khác).
 
@@ -22,8 +25,8 @@ Biên bản: <home của uid>/.claude-verify/records/<task_id>.json = {"payload"
 (verdict_seal.seal_mode: chủ repo cài pubkey root-owned) BẬT → chỉ nhận biên bản có chữ ký Ed25519 hợp lệ của pubkey tin cậy; agent
 không tự ký được nên `seal` báo "cần chủ repo cài signer claude-verify" (exit 3). Seal mode TẮT → nhận biên bản không ký.
 
-Rủi ro còn lại (cùng mức biên bản ~/.antigravity-pm khi seal mode tắt): agent cùng uid CỐ Ý sửa sổ phiên / biên bản dưới ~ (vd tự thêm
-một phiên giả vào sổ reviewers rồi đặt env theo nó). Thư mục lạ (CLAUDE_VERIFY_HOME) chỉ nhận trong fixture test: DEVKIT_PM_HOME_TEST=1,
+Rủi ro còn lại (chấp nhận; cùng mức biên bản ~/.antigravity-pm khi seal mode tắt; đóng hẳn khi có signer của chủ repo): agent cùng
+uid CỐ Ý vòng qua (python -c gọi hàm register, script trong file, sửa thẳng file sổ / biên bản dưới ~) vẫn tự cấp duyệt được. Thư mục lạ (CLAUDE_VERIFY_HOME) chỉ nhận trong fixture test: DEVKIT_PM_HOME_TEST=1,
 thư mục dưới gốc tạm cố định VÀ repo cũng dưới gốc tạm (như push_gate._seal_fixture); ngoài fixture → từ chối hết. Không theo $HOME.
 """
 import base64
@@ -113,6 +116,12 @@ def ledger_sessions(top, lane, issue):
     if not all(isinstance(r, dict) and isinstance(r.get("session"), str) and SESSION.fullmatch(r["session"]) for r in rows):
         raise Unchecked(f"sổ {lane} có dòng sai dạng")
     return {r["session"] for r in rows}
+
+
+def agent_env():
+    """True khi lệnh chạy trong env phiên agent mà không có cờ runner (register bị từ chối)."""
+    agent = os.environ.get("CLAUDECODE") == "1" or bool(os.environ.get("CLAUDE_CODE_SESSION_ID"))
+    return agent and os.environ.get("SB_RUNNER_REGISTER") != "1"
 
 
 def register(top, lane, issue, session):
@@ -211,10 +220,9 @@ def _tree(top, head):
 
 
 def _branch_tip(top, branch):
-    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
-        rc, out = git(top, "rev-parse", "--verify", "-q", ref + "^{commit}")
-        if rc == 0:
-            yield out.strip()
+    rc, out = git(top, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}^{{commit}}")
+    if rc == 0:
+        yield out.strip()
 
 
 def seal(repo, head, report_path, branch):
@@ -318,10 +326,11 @@ def _check(task_id, sha, top, pr, branch):
     issue = payload.get("issue")
     if type(issue) is not int or issue <= 0:
         return False, "biên bản không ghi thẻ (issue)"
-    if branch is not None:
-        m = BRANCH.fullmatch(branch)
-        if not m or int(m.group(1)) != issue:
-            return False, f"nhánh PR {branch} không thuộc thẻ issue #{issue} của biên bản"
+    if not branch:
+        return False, "thiếu --branch (nhánh PR): không buộc được biên bản vào thẻ"
+    m = BRANCH.fullmatch(branch)
+    if not m or int(m.group(1)) != issue:
+        return False, f"nhánh PR {branch} không thuộc thẻ issue #{issue} của biên bản"
     recorded = payload.get("builder_session")
     why = session_problem(top, sha, issue, payload.get("reviewer_session"),
                           recorded.split(",") if isinstance(recorded, str) else ())
@@ -356,6 +365,9 @@ def main(argv):
         return 0 if ok else 1
     try:
         if a.cmd == "register":
+            if agent_env():
+                print("claude-verify: register chỉ do runner gọi (env phiên agent: CLAUDECODE/CLAUDE_CODE_SESSION_ID)", file=sys.stderr)
+                return 2
             register(os.path.realpath(a.repo), a.lane, a.issue, a.session)
             return 0
         rc, why = seal(a.repo, a.head, a.report, a.branch)

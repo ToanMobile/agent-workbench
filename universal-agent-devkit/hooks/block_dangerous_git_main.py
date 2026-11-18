@@ -2378,7 +2378,13 @@ _rs = [m.start() for m in re.finditer(r"\brestore\b", cmd)]
 _upto = len(cmd) if not _rs or re.search(r"\b(do|done|eval|xargs|function)\b|\(\)\s*\{", cmd) else _rs[-1]
 CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_upto]))
 # (RETARGETED is set from the parsed tokens in analyse_simple: a regex over the raw text was beaten by GIT_""DIR.)
-reason = analyse(cmd) or (PENDING_FEED[0] if PENDING_FEED else None)
+# (#1328) Sổ phiên claude-verify (claude_verify.py register) chỉ do super-board-run.sh ghi, ngoài phiên agent: lệnh Bash của agent nhắc
+# claude_verify kèm `register`, hay mang cờ SB_RUNNER_REGISTER của runner, bị chặn (quét chữ thô, cả trong chuỗi / heredoc). ponytail:
+# agent cùng uid cố ý vòng qua (tên ghép từ biến, script trong file, sửa thẳng file sổ) vẫn được — rủi ro chấp nhận, đóng khi có signer.
+CV_REGISTER_MSG = "ghi sổ phiên claude-verify từ phiên agent"
+reason = (CV_REGISTER_MSG if re.search(r"sb_runner_register", cmd, re.I)
+          or (re.search(r"claude_verify", cmd, re.I) and re.search(r"(?<![\w-])register(?![\w-])", cmd)) else None)
+reason = reason or analyse(cmd) or (PENDING_FEED[0] if PENDING_FEED else None)
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"
 if reason and reason.startswith("push") and "agent-kit integrate" in reason:
@@ -2412,6 +2418,10 @@ if reason and reason.startswith(MQ_MSG):
 if reason and reason.startswith(PM_STATE_MSG):
     print(f"BLOCKED: {cmd!r} — {reason}. Luật #605: biên bản audit antigravity-pm chỉ do PM server ghi ở ~/.antigravity-pm; ANTIGRAVITY_PM_STATE_HOME / DEVKIT_PM_HOME_TEST "
           "chỉ test tự đặt bên trong script của nó. Chạy lệnh không kèm biến; chạy test thì gọi thẳng script test.", file=sys.stderr)
+    sys.exit(2)
+if reason and reason.startswith(CV_REGISTER_MSG):
+    print(f"BLOCKED: {cmd!r} — {reason}. Luật #1328: sổ builders/reviewers của claude-verify chỉ do super-board-run.sh ghi lúc giao "
+          "worker (agent tự ghi = tự cấp quyền duyệt). Thẻ không có sổ thì đi đường Antigravity hoặc chủ repo duyệt.", file=sys.stderr)
     sys.exit(2)
 if reason and reason.startswith("kill theo tên"):
     print(f"BLOCKED: {cmd!r} — {reason}. Chạy lệnh nền rồi giữ PID của chính nó: `cmd & pid=$!`, sau đó `wait $pid` / `kill -0 $pid` / "

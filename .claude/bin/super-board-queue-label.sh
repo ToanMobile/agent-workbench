@@ -48,11 +48,12 @@ SEL=(); [ -z "$PR" ] || SEL=("$PR")
 ERRF=$(mktemp "${TMPDIR:-/tmp}/sb-qlabel.XXXXXX") || { echo "queue-label: mktemp hỏng — không gắn nhãn" >&2; exit 69; }
 trap 'rm -f "$ERRF"' EXIT
 # ${a[@]+"${a[@]}"}: mảng rỗng dưới set -u của bash 3.2 (macOS) không bị coi là biến chưa đặt.
-view=$(run_t gh pr view ${SEL[@]+"${SEL[@]}"} ${REPO_ARG[@]+"${REPO_ARG[@]}"} --json number,state,url,headRefOid,comments 2>"$ERRF") || {
+view=$(run_t gh pr view ${SEL[@]+"${SEL[@]}"} ${REPO_ARG[@]+"${REPO_ARG[@]}"} --json number,state,url,headRefOid,comments,headRefName 2>"$ERRF") || {
   echo "queue-label: không đọc được PR ${PR:-của nhánh hiện tại} từ GitHub ($(tail -1 "$ERRF" 2>/dev/null | cut -c1-160)) — không gắn nhãn ${LABEL}" >&2
   exit 69; }
 n=$(printf '%s' "$view" | jq -r '.number // empty' 2>/dev/null) || n=""
 head=$(printf '%s' "$view" | jq -r '.headRefOid // empty' 2>/dev/null) || head=""
+hbranch=$(printf '%s' "$view" | jq -r '.headRefName // empty' 2>/dev/null) || hbranch=""   # #1328: thẻ của nhánh ↔ biên bản claude-verify
 case "$n" in ''|*[!0-9]*) echo "queue-label: PR ${PR}: GitHub trả dữ liệu thiếu số PR — không gắn nhãn" >&2; exit 69 ;; esac
 printf '%s' "$head" | grep -Eq '^[0-9a-f]{40}$' || { echo "queue-label: PR #${n}: GitHub trả dữ liệu thiếu head sha — không gắn nhãn" >&2; exit 69; }
 
@@ -95,7 +96,7 @@ case "$vwhy" in
       || refuse "$approved" "approved-by task_id ${src_id} được audit trong repo ${origin:-không rõ}, PR thuộc repo ${prrepo:-không rõ}"
     arc=0
     # -I: file chưa track cạnh audit-check (vd argparse.py) không được che module stdlib để đổi verdict (review #826)
-    run_t python3 -I "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${src_id}" "$head" >/dev/null 2>"$ERRF" || arc=$?
+    run_t python3 -I "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${src_id}" "$head" --branch "$hbranch" >/dev/null 2>"$ERRF" || arc=$?
     # hết giờ (fetch refs/pull chậm) là "không kiểm được" (69), không phải "chưa duyệt" (3 bảo agent quay về lane Review)
     [ "$arc" -ne 124 ] || { echo "queue-label: kiểm audit của approved-by task_id ${src_id} hết ${LIMIT} s — không gắn nhãn ${LABEL}, thử lại sau" >&2; exit 69; }
     [ "$arc" -eq 0 ] \

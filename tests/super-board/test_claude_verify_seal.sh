@@ -39,6 +39,7 @@ BASE=$(git -C "$R" rev-parse HEAD)
 mkpr() {   # mkpr <N> <dòng thêm>: commit trên nhánh issue-N-x từ main, in sha
   git -C "$R" checkout -q -b "issue-$1-x" main
   printf 'a = 1\n%s\nb = 2\nc = 3\n' "$2" > "$R/src.py"; git -C "$R" commit -qam "pr $1"
+  git -C "$R" update-ref "refs/remotes/origin/issue-$1-x" HEAD
   git -C "$R" rev-parse HEAD; git -C "$R" checkout -q main
 }
 H1=$(mkpr 21 'x = danger(1)'); H2=$(mkpr 22 'y = 2'); H3=$(mkpr 23 'z = 3'); H4=$(mkpr 24 'w = 4'); H5=$(mkpr 25 'v = 5')
@@ -47,11 +48,16 @@ H31=$(mkpr 31 'p = 31')
 git -C "$R" worktree add -q "$TMP/wt1" issue-21-x
 printf '{"session_id":"builder-sess","heartbeat":0}' > "$(git -C "$TMP/wt1" rev-parse --absolute-git-dir)/devkit-session.lock"
 # Sổ phiên do runner ghi lúc giao việc: thẻ 21..29, 31 có builder + reviewer; thẻ 30 chỉ có reviewer (sổ builder rỗng).
-reg() { python3 "$CV" register --lane "$1" --repo "$R" --issue "$2" --session "$3"; }
+reg() { SB_RUNNER_REGISTER=1 python3 "$CV" register --lane "$1" --repo "$R" --issue "$2" --session "$3"; }
 REGRC=0
-for n in 21 22 23 24 25 26 27 28 29 31; do reg build "$n" builder-sess || REGRC=$?; reg review "$n" reviewer-sess || REGRC=$?; done
+for n in 21 22 23 24 25 26 27 28 29 31 32; do reg build "$n" builder-sess || REGRC=$?; reg review "$n" reviewer-sess || REGRC=$?; done
 reg review 30 reviewer-sess || REGRC=$?
 [ "$REGRC" = 0 ] && ok "d-reg register ghi sổ builder/reviewer" || fail "d-reg register exit $REGRC"
+# P2: register trong env phiên agent (CLAUDECODE=1 / CLAUDE_CODE_SESSION_ID) mà không có cờ của runner → exit 2, không ghi.
+( unset SB_RUNNER_REGISTER; CLAUDECODE=1 python3 "$CV" register --lane review --repo "$R" --issue 1 --session x ) 2> "$TMP/reg.err"; RA=$?
+( unset SB_RUNNER_REGISTER CLAUDECODE; CLAUDE_CODE_SESSION_ID=s1 python3 "$CV" register --lane review --repo "$R" --issue 1 --session x ) 2>/dev/null; RB=$?
+{ [ "$RA" = 2 ] && [ "$RB" = 2 ] && ! grep -rq '"x"' "$CLAUDE_VERIFY_HOME/reviewers"; } \
+  && ok "d-reg2 register trong env phiên agent → exit 2, không ghi sổ" || fail "d-reg2 rc=$RA/$RB $(cat "$TMP/reg.err")"
 
 # ── d. seal
 report() {   # report <file> <head> <base> <findings JSON>
@@ -84,9 +90,11 @@ for c in 'noline|[{"id":"f1","severity":"nit","file":"src.py","snippet":"danger(
 done
 report "$TMP/r-pre.json" "$H1" "$BASE" '[{"id":"p1","severity":"pre-existing","file":"src.py","line":3,"snippet":"b = 2"}]'
 seal reviewer-sess "$H1" "$TMP/r-pre.json" issue-21-x; [ "$SRC" = 0 ] && ok "d-pre finding pre-existing ngoài hunk được nhận" || fail "d-pre rc=$SRC $(cat "$TMP/seal.err")"
-report "$TMP/r-h.json" "$H2" "$BASE" '[]'; seal reviewer-sess "$H1" "$TMP/r-h.json" issue-21-x; refused "d-head báo cáo head khác --head" 2 "head"
+report "$TMP/r-h2.json" "$H2" "$BASE" '[]'; report "$TMP/r-h.json" "$H2" "$BASE" '[]'; seal reviewer-sess "$H1" "$TMP/r-h.json" issue-21-x; refused "d-head báo cáo head khác --head" 2 "head"
 report "$TMP/r-b.json" "$H1" "$H2" '[]'; seal reviewer-sess "$H1" "$TMP/r-b.json" issue-21-x; refused "d-base base không phải merge-base" 2 "merge-base"
 seal reviewer-sess "$H1" "$TMP/r-ok.json" issue-22-x; refused "d-branch nhánh khai báo không trỏ tới head" 2 "issue-22-x"
+git -C "$R" branch issue-32-z "$H2"   # probe G: nhánh LOCAL issue-32-z trỏ head của thẻ 22 (không có ở origin)
+seal reviewer-sess "$H2" "$TMP/r-h2.json" issue-32-z; refused "d-G nhánh local (không có ở origin) trỏ head thẻ khác → từ chối" 2 "issue-32-z"
 seal "" "$H1" "$TMP/r-ok.json" issue-21-x; refused "d-sess CLAUDE_CODE_SESSION_ID rỗng" 2 "CLAUDE_CODE_SESSION_ID"
 seal builder-sess "$H1" "$TMP/r-ok.json" issue-21-x; refused "d-self phiên builder tự niêm phong" 2 "builder"
 report "$TMP/r-e.json" "$H2" "$BASE" '[]'
@@ -147,9 +155,11 @@ approved-by: $(by claude-verify "CV20261119T000000-${H1:0:12}")" '{comments:[{au
 printf '%s' "$JQOUT" | grep -q "neither an antigravity-pm nor a claude-verify id" && ok "a-jq id CV dạng cũ (không hậu tố) → bad" || fail "a-jq bad id: $JQOUT"
 
 # ── b9. check: mã exit và lời từ chối đúng
-( cd "$R" && python3 "$CV" check "$CV1" "$H1" --top "$R" ) > /dev/null 2> "$TMP/chk.err"; CRC=$?
+( cd "$R" && python3 "$CV" check "$CV1" "$H1" --top "$R" --branch issue-21-x ) > /dev/null 2> "$TMP/chk.err"; CRC=$?
 [ "$CRC" = 0 ] && ok "b0 check biên bản đúng → exit 0" || fail "b0 check rc=$CRC $(cat "$TMP/chk.err")"
-( cd "$R" && DEVKIT_PM_HOME_TEST=0 python3 "$CV" check "$CV1" "$H1" --top "$R" ) > /dev/null 2> "$TMP/chk.err"; CRC=$?
+( cd "$R" && python3 "$CV" check "$CV1" "$H1" --top "$R" ) > /dev/null 2> "$TMP/chk.err"; CRC=$?
+{ [ "$CRC" = 1 ] && grep -q -- "--branch" "$TMP/chk.err"; } && ok "b0b check thiếu --branch → exit 1" || fail "b0b rc=$CRC $(cat "$TMP/chk.err")"
+( cd "$R" && DEVKIT_PM_HOME_TEST=0 python3 "$CV" check "$CV1" "$H1" --top "$R" --branch issue-21-x ) > /dev/null 2> "$TMP/chk.err"; CRC=$?
 { [ "$CRC" = 1 ] && grep -q "CLAUDE_VERIFY_HOME" "$TMP/chk.err"; } && ok "b9 CLAUDE_VERIFY_HOME ngoài fixture → check exit 1, nêu lý do" \
   || fail "b9 rc=$CRC err=$(cat "$TMP/chk.err")"
 ( cd "$R" && python3 "$CV" check "$CV11" "$H31" --top "$R" --branch issue-29-x ) > /dev/null 2> "$TMP/chk.err"; CRC=$?
@@ -178,8 +188,9 @@ elif a[:2] == ['pr', 'view'] and opt('--json') == 'comments':
     print(open(p).read() if os.path.exists(p) else '{"comments":[]}')
 elif a[:2] == ['pr', 'view'] and 'url' in (opt('--json') or ''):
     n = num(); c = json.load(open(f'{F}/comments-{n}.json'))
-    h = next(p['headRefOid'] for p in json.load(open(F + '/prs.json')) if str(p['number']) == n)
-    print(json.dumps({'number': int(n), 'state': 'OPEN', 'url': f'https://github.com/acme/widgets/pull/{n}', 'headRefOid': h, **c}))
+    p = next(p for p in json.load(open(F + '/prs.json')) if str(p['number']) == n)
+    print(json.dumps({'number': int(n), 'state': 'OPEN', 'url': f'https://github.com/acme/widgets/pull/{n}', 'headRefOid': p['headRefOid'],
+                      'headRefName': p['headRefName'], **c}))
 elif a[:2] == ['pr', 'view']:
     print(json.dumps({'body': '', 'headRefOid': 'a' * 40, 'title': 't', 'state': 'OPEN', 'mergeCommit': None}))
 elif a[0] == 'api' and '/timeline' in a[1]:
@@ -245,17 +256,35 @@ ln -s "$ROOT/.claude/bin/super-board-audit-check.py" "$R/.claude/bin/super-board
 
 # ── e3. runner gán --session-id cho worker và ghi sổ TRƯỚC khi chạy (không có Agent Office)
 mkdir -p "$TMP/home0"
-E3=$(HOME="$TMP/home0" REPO_ROOT_T="$R" SB_LIB_ONLY=1 bash -c '. "$1" || exit 9; set +e; REPO_ROOT="$REPO_ROOT_T"
+E3=$(env -u SB_RUNNER_REGISTER HOME="$TMP/home0" CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=parent REPO_ROOT_T="$R" SB_LIB_ONLY=1 bash -c '. "$1" || exit 9; set +e; REPO_ROOT="$REPO_ROOT_T"
   agent_office_args "$2"; worker_session_args build 40 "$2"; printf "%s|%s\n" "${#AO_ARGS[@]}" "${AO_ARGS[1]:-}"' _ "$ROOT/.claude/bin/super-board-run.sh" "$TMP/w.log" 2>&1)
 SID40=${E3#*|}
 { [ "${E3%%|*}" = 2 ] && printf '%s' "$SID40" | grep -Eq '^[0-9a-f-]{36}$' && grep -rq "$SID40" "$CLAUDE_VERIFY_HOME/builders" 2>/dev/null; } \
   && ok "e3 runner: worker build nhận --session-id riêng, sổ builders ghi id đó" || fail "e3 got: $E3"
 mkdir -p "$TMP/home1/.agent-office/app"; cp "$ROOT/mcp-servers/agent-office/inbox_hook.py" "$TMP/home1/.agent-office/app/inbox_hook.py"
-E4=$(HOME="$TMP/home1" REPO_ROOT_T="$R" SB_LIB_ONLY=1 bash -c '. "$1" || exit 9; set +e; REPO_ROOT="$REPO_ROOT_T"
+E4=$(env -u SB_RUNNER_REGISTER HOME="$TMP/home1" CLAUDECODE=1 REPO_ROOT_T="$R" SB_LIB_ONLY=1 bash -c '. "$1" || exit 9; set +e; REPO_ROOT="$REPO_ROOT_T"
   agent_office_args "$2"; worker_session_args review 41 "$2"; printf "%s|%s\n" "${#AO_ARGS[@]}" "${AO_ARGS[1]:-}"' _ "$ROOT/.claude/bin/super-board-run.sh" "$TMP/w.log" 2>&1)
 SID41=${E4#*|}
 { [ "${E4%%|*}" = 6 ] && grep -rq "$SID41" "$CLAUDE_VERIFY_HOME/reviewers" 2>/dev/null; } \
   && ok "e4 runner: có Agent Office → dùng chính sid của AO (không gán 2 lần), ghi sổ reviewers" || fail "e4 got: $E4"
+
+# e5: hai dòng bật `claude -p` của dispatch đều gọi worker_session_args ngay trước (bỏ lời gọi thì đỏ)
+awk '/worker_session_args "\$lane" "\$issue" "\$worker_log"/ { seen = NR } /nohup "\$SB_WORKER_WRAP" claude / { n++; if (seen == NR - 1) k++ }
+     END { exit !(n == 2 && k == 2) }' "$ROOT/.claude/bin/super-board-run.sh" \
+  && ok "e5 cả 2 dòng bật claude -p gọi worker_session_args ngay trước" || fail "e5 dòng bật claude không gọi worker_session_args"
+# e6: hook PreToolUse của kit chặn register trong phiên agent, cho qua check
+hook() { printf '%s' "$1" | jq -Rs '{tool_name:"Bash",tool_input:{command:.}}' | ( cd "$TMP" && bash "$ROOT/universal-agent-devkit/hooks/block-dangerous-git.sh" ) >/dev/null 2>"$TMP/hook.err"; }
+hook "python3 universal-agent-devkit/bin/claude_verify.py register --lane review --repo . --issue 1 --session x"; HA=$?
+hook "SB_RUNNER_REGISTER=1 python3 .agents/devkit/bin/claude_verify.py seal --repo . --head x --report r --branch b"; HB=$?
+hook "python3 .agents/devkit/bin/claude_verify.py check CV1 abc --branch issue-1-a"; HC=$?
+{ [ "$HA" = 2 ] && [ "$HB" = 2 ] && [ "$HC" = 0 ]; } && ok "e6 hook: chặn register / cờ SB_RUNNER_REGISTER trong phiên agent, cho qua check" \
+  || fail "e6 hook rc=$HA/$HB/$HC $(cat "$TMP/hook.err")"
+RS="$ROOT/.claude/bin/super-board-run.sh"
+grep -q 'SB_RUNNER_REGISTER=1 python3' "$RS" && ok "e7 runner tự đặt SB_RUNNER_REGISTER=1 inline cho lệnh register" || fail "e7 runner thiếu cờ inline"
+P_REV=$(grep -F 'The merge queue is on for this board' "$RS")
+{ printf '%s' "$P_REV" | grep -q 'claude_verify.py seal' && printf '%s' "$P_REV" | grep -q 'edited_existing' \
+  && ! printf '%s' "$P_REV" | grep -q "the cross-review is Antigravity's"; } \
+  && ok "e8 prompt Review (queue bật): mặc định claude-verify, Antigravity khi edited_existing/workflow/review_tiers" || fail "e8 prompt Review chưa đổi"
 
 # ── b5. seal mode bật (pubkey fixture dưới thư mục tạm): chỉ biên bản ký đúng mới tính.
 SEED=$(printf '%064d' 7); BAD=$(printf '%064d' 9)
@@ -287,6 +316,7 @@ sys.exit(0 if need <= set(deps) else 1)
 PY
 SK="$ROOT/.claude/skills/super-review/SKILL.md"
 { grep -q "edited_existing" "$SK" && grep -q "claude-verify only works for cards the board dispatched" "$SK" \
+  && grep -q 'only the `claude-p` worker backend uses claude-verify' "$SK" \
   && ! grep -q "the seal refuses the session holding the PR branch's worktree" "$SK"; } \
   && ok "f2 SKILL.md: test cũ bị sửa vẫn đi Antigravity; claude-verify chỉ cho thẻ board giao; bỏ lời hứa cũ" || fail "f2 SKILL.md"
 
