@@ -2348,6 +2348,11 @@ note_worker_exit() {
   local line role
   line=$(worker_exit_line "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}")
   log "worker of #${1} (lane ${LANE:-?}) exit record: ${line:-none — wrapper killed or host asleep}"
+  # #1266: a build worker that ended clean proves the earlier deaths are fixed; drop the card's reclaim ledger so the next
+  # crash starts from zero instead of re-blocking at once (SB_RECLAIM_MAX counts deaths since the last clean run).
+  if [ "${LANE:-}" = build ] && worker_ended_clean "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}"; then
+    rm -f "$INFLIGHT_DIR/reclaims/$1" 2>/dev/null || true
+  fi
   # exit=0: finished; exit=143: stopped by the runner itself (super-board stop sends TERM), not a death worth a card comment.
   case "$line" in *"exit=0 "*|*"exit=143 "*) return 0 ;; esac
   case "${LANE:-}" in qa) role=qa ;; review) role=reviewer ;; *) role=builder ;; esac
