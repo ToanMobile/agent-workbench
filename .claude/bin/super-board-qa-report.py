@@ -284,8 +284,9 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None,
         if text.strip(" .").lower() in EMPTY_VALUES:
             continue
         # #1199: mỗi dòng/bullet của mục kiểm riêng, để dòng dẫn issue repo khác không che AC cục bộ ở dòng kia.
-        clauses = [c for p in parts if p for c in re.split(r"[;；]", p)]
-        if reviewed and not any(names_ac(c, acs) and not REVIEW_ONLY.search(c) for c in clauses):
+        # vế tách theo ; , — để chữ "review độc lập" của AC này không che AC code đứng cạnh; chữ trong ngoặc không tính là dấu review-only
+        clauses = [c for p in parts if p for c in re.split(r"[;；,，—–]", p)]
+        if reviewed and not any(names_ac(c, acs) and not REVIEW_ONLY.search(re.sub(r"[(（][^()（）]*[)）]", " ", c)) for c in clauses):
             continue    # #1298: mọi vế nêu AC đều là AC review-only và lane Review đã duyệt đúng head
         if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
             # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.

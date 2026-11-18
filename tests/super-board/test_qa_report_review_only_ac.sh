@@ -9,6 +9,8 @@
 #  E  reviewer + approved-head CŨ hơn report QA -> exit 1.
 #  F  mục lẫn `AC1 chưa đạt; AC4 review độc lập` -> exit 1 (vế AC1 vẫn chặn).
 #  G  không có --head -> exit 1 (fail closed).
+#  I  `AC1 chưa đạt, AC4 review độc lập` (nối bằng dấu phẩy) và `AC1 chưa đạt — chuyển lane Review` -> exit 1.
+#  J  `AC4 review độc lập, chuyển lane Review` (dấu phẩy trong chính vế review-only) -> exit 0.
 #  H  comment reviewer của người không đáng tin -> exit 1.
 set -u
 export LC_ALL=C LANG=C
@@ -67,5 +69,14 @@ mk "$TMP/g.json" "$ND" ok
 
 mk "$TMP/h.json" "$ND" untrusted
 [ "$(run "$TMP/h.json" "$HEAD")" = 1 ] && ok "H: reviewer không đáng tin không gỡ" || { fail "H: bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/i.json" '❌ Not done: AC1 test cổng OCR chưa đạt, AC4 phần review độc lập — chuyển lane Review' ok
+[ "$(run "$TMP/i.json" "$HEAD")" = 1 ] && ok "I1: AC code nối dấu phẩy vẫn chặn" || { fail "I1: bị lọt"; cat "$TMP/out"; }
+mk "$TMP/i2.json" '❌ Not done: AC1 test cổng OCR chưa đạt — chuyển lane Review' ok
+[ "$(run "$TMP/i2.json" "$HEAD")" = 1 ] && ok "I2: AC code + 'chuyển lane Review' vẫn chặn" || { fail "I2: bị lọt"; cat "$TMP/out"; }
+mk "$TMP/i3.json" '❌ Not done: AC1 chưa đạt (xem review độc lập)' ok
+[ "$(run "$TMP/i3.json" "$HEAD")" = 1 ] && ok "I3: chữ trong ngoặc không tính" || { fail "I3: bị lọt"; cat "$TMP/out"; }
+mk "$TMP/j.json" '❌ Not done: AC4 phần review độc lập, chuyển lane Review' ok
+[ "$(run "$TMP/j.json" "$HEAD")" = 0 ] && ok "J: dấu phẩy trong vế review-only vẫn qua" || { fail "J: bị chặn"; cat "$TMP/out"; }
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_qa_report_review_only_ac: all passed" || { echo "❌ $FAILS failed"; exit 1; }
