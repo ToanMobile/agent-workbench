@@ -84,6 +84,14 @@ chk "reject: evidence file written in the repo, not stored by ocr" False $A
 mk $A
 XENV="DEVKIT_OCR_CROSS_REVIEW=0" chk "reject: kill switch DEVKIT_OCR_CROSS_REVIEW=0" False $A
 XENV="DEVKIT_OCR_BIN=$TMP/bin/nope" chk "reject: ocr binary missing" False $A
+# R4: both env switches are author-settable, so the binary override also needs the repo itself under a temp dir (_seal_fixture):
+# same env, but the repo no longer counts as a throw-away one -> the fake ocr is ignored (no real ocr in the fixed paths -> refused)
+got="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; p._seal_lib().fixture_repo = lambda top: False; print(*p.ocr_review(sys.argv[2], sys.argv[3], sys.argv[4]))' "$DEVKIT_DIR/bin" "$R" "$A" "$HEAD_SHA" 2>&1 | tail -1)"
+[ "${got%% *}" = "False" ] && echo "✔ reject: DEVKIT_OCR_BIN ignored for a repo not under a temp dir -> $got" || { echo "✖ real repo honoured DEVKIT_OCR_BIN: $got"; FAILS=$((FAILS + 1)); }
+# R6: test-file detection covers FooTest.kt and androidTest/ as post-fix-gate does
+for f in src/FooTest.kt app/androidTest/Bar.kt src/foo.spec.ts; do
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; sys.exit(0 if p.OCR_TEST_PATH.search(sys.argv[2]) else 1)' "$DEVKIT_DIR/bin" "$f" && echo "✔ test path: $f" || { echo "✖ not seen as test path: $f"; FAILS=$((FAILS + 1)); }
+done
 XENV="-u DEVKIT_PM_HOME_TEST" chk "reject: DEVKIT_OCR_BIN ignored without the test switch" False $A
 XENV="-u DEVKIT_PM_HOME_TEST -u DEVKIT_OCR_BIN PATH=$TMP/bin:$PATH" chk "reject: fake ocr first on PATH is not used" False $A
 # marker: trailer commit on top of the reviewed head, through approved() (the push gate / post-fix-gate trailer path)
@@ -93,6 +101,13 @@ mk $A to=$BASE_SHA
 got="$(appr "$TRAILER_SHA^!")"; case "$got" in "(False,"*) echo "✔ approved(): ocr trailer refused when the session head differs";; *) echo "✖ approved() accepted a wrong head: $got"; FAILS=$((FAILS + 1));; esac
 rm -f "$FAKE_OCR_DIR"/*
 got="$(appr "$TRAILER_SHA^!")"; case "$got" in "(False,"*) echo "✔ approved(): trailer naming no ocr session refused";; *) echo "✖ approved() accepted a forged trailer: $got"; FAILS=$((FAILS + 1));; esac
+# R5: the trailer commit must not carry a change (tree differs from the reviewed head), nor may later commits change the tip tree
+mk $A
+git checkout -q -f "$HEAD_SHA"; echo x > code.txt; git commit -qam "trailer with change" -m "Test-approved-by: ocr $A"; CHG_SHA="$(git rev-parse HEAD)"
+got="$(appr "$CHG_SHA^!")"; case "$got" in "(False,"*) echo "✔ approved(): trailer commit that changes the tree refused";; *) echo "✖ non-empty trailer commit accepted: $got"; FAILS=$((FAILS + 1));; esac
+git checkout -q -f "$TRAILER_SHA"; echo y > code.txt; git commit -qam "later change"
+got="$(appr "$BASE_SHA..HEAD")"; case "$got" in "(False,"*) echo "✔ approved(): later change after the trailer refused (tip tree differs)";; *) echo "✖ stale approval accepted: $got"; FAILS=$((FAILS + 1));; esac
+git checkout -q -f "$TRAILER_SHA"
 # post-fix-gate reads the reviewed head of an accepted trailer through trailer_head(): the parent of the ocr trailer commit
 got="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(p.trailer_head(sys.argv[2], "ocr", sys.argv[4], sys.argv[3]))' "$DEVKIT_DIR/bin" "$R" "$TRAILER_SHA" "$A" 2>&1 | tail -1)"
 [ "$got" = "$HEAD_SHA" ] && echo "✔ trailer_head(ocr) = parent of the trailer commit" || { echo "✖ trailer_head(ocr): $got"; FAILS=$((FAILS + 1)); }

@@ -867,7 +867,8 @@ def _repo_tasks(top, task_id=None, any_project=False):
 
 
 OCR_BINS = ("/opt/homebrew/bin/ocr", "/usr/local/bin/ocr", "/usr/bin/ocr")    # fixed install paths: an author-edited $PATH never picks the binary
-OCR_TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec)/|(^|[/_.-])tests?[_.-]|\.(test|spec)\.")
+OCR_TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|androidtest|unittest|integrationtest|testfixtures|specs?|mocks?|__mocks__)/"
+                           r"|(^|[/_.-])tests?[_.-]|\.(test|spec)\.|(Test|Tests|Spec)\.\w+$|(_test|_spec)\.\w+$", re.I)
 OCR_OK_SEVERITY = ("low", "medium", "info", "nit")      # anything else (high, critical, unknown) blocks
 
 
@@ -888,13 +889,15 @@ def ocr_review(top, session_id, head):
     no failed file / LLM failure / abort; resolved_head == head and resolved_base == merge-base(trunk, head); the session started
     after the head commit; every edited (M/D/R) test file of base..head is in its completed coverage; no critical/high/unknown finding.
     Threat model: the author agent cannot make a session by writing evidence into the work tree, only through the `ocr` it
-    does not control (fixed binary path; DEVKIT_OCR_BIN is honoured only in the test fixture). A same-uid agent that edits ocr's
-    store under ~ can still forge a session: that residual is accepted here, as it is for a hand-written ~/.antigravity-pm record."""
+    does not control (fixed binary path; DEVKIT_OCR_BIN is honoured only when _seal_fixture(top): the pm-home switch AND the repo itself
+    under a temp dir, as the author can set the env but not move the real repo). Accepted residuals, same class as a hand-written
+    ~/.antigravity-pm record: a same-uid agent that edits ocr's store under ~, and the author agent running `ocr review` itself on its
+    own head (same binary and uid, so it is not an independent reviewer by construction: the independence rests on the LLM, not the uid)."""
     if os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0":
         return False, "DEVKIT_OCR_CROSS_REVIEW=0"
     if not isinstance(head, str) or not SHA40.fullmatch(head) or not re.fullmatch(r"[0-9a-f-]{36}", str(session_id)):
         return False, "ocr: head must be 40 hex and the session a uuid"
-    binary = os.environ.get("DEVKIT_OCR_BIN") if pm_home_test_fixture() else None
+    binary = os.environ.get("DEVKIT_OCR_BIN") if _seal_fixture(top) else None
     binary = binary or next((b for b in OCR_BINS if os.access(b, os.X_OK)), None)
     if not binary or not os.access(binary, os.X_OK):
         return False, "ocr: binary not found"
