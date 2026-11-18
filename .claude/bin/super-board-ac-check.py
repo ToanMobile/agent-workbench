@@ -165,8 +165,12 @@ def synthesize_block(issue_body, pr_body, branch):
     card = CARD_FROM_BRANCH.search(branch or "")
     if not card or AC_BLOCK.search(pr_body or ""):
         return None
-    lines = [ln.strip() for ln in FENCE_BLOCK.sub("", pr_body or "").splitlines() if CHECKBOX.match(ln)]
-    need, _ = card_ac(ac_items(issue_body), int(card.group(1)), {})
+    items = ac_items(issue_body)
+    need, indirect = card_ac(items, int(card.group(1)), {})
+    if indirect:   # AC gián tiếp/đợt: số dòng phải chứng minh cần body thẻ khác, không đủ dữ liệu ở đây → đường cũ, không nới cổng
+        return None
+    # Chỉ các dòng checkbox dưới mục `## AC…` của thân PR (không gom checkbox của mục khác như "Rủi ro", "Kiểm thử")
+    lines = [ln for ln in ac_items(pr_body) if CHECKBOX.match(ln)]
     if not lines or len(lines) < need:
         return None
     return (pr_body or "").rstrip("\n") + "\n\n<!-- sb:ac -->\n" + "\n".join(lines) + "\n<!-- /sb:ac -->\n"

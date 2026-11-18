@@ -35,6 +35,8 @@ cat > "$Q/super-board-merge-train.sh" <<'SH'
 echo "train $*" >> "$FAKE/calls"
 # #676: một train cho MỘT PR — stub chỉ in dòng train-* của PR trong --prs; mã thoát train.rc.<N> nếu có, không thì train.rc
 n=""; prev=""; for a in "$@"; do [ "$prev" = --prs ] && n="${a%%:*}"; prev="$a"; done
+# #1310: sau khi queue dựng khối sb:ac vào thân PR, train chạy lại không còn bị ac-check chặn (không in kết quả gate-exit-11 nữa)
+[ -f "$FAKE/body-${n}.md" ] && grep -q 'sb:ac' "$FAKE/body-${n}.md" && exit 0
 [ -f "$FAKE/train.out" ] && grep -E "^train-(result|detail|red): ${n}( |\$)" "$FAKE/train.out"
 exit "$(cat "$FAKE/train.rc.$n" 2>/dev/null || cat "$FAKE/train.rc" 2>/dev/null || echo 0)"
 SH
@@ -80,6 +82,8 @@ elif a[:2] == ['pr', 'view'] and opt('--json') == 'comments':
     print(json.dumps({'comments': [{'authorAssociation': 'OWNER', 'body': 'approved-head:' + open(f'{F}/head-{num()}').read().strip()}]}))
 elif a[:2] == ['pr', 'view'] and opt('--json') == 'body,headRefOid':   # #531: PR body for the sb:ac check (no block = nothing unproven)
     bf = f'{F}/body-{num()}.md'
+    if os.path.exists(f'{F}/body-broken-{num()}'):   # #1310: body read comes back malformed (github-read retries, then halts)
+        print('{}'); sys.exit(0)
     print(json.dumps({'body': open(bf).read() if os.path.exists(bf) else '', 'headRefOid': 'a' * 40}))
 elif a[:2] == ['pr', 'view'] and 'state' in (opt('--json') or ''):
     n = num(); m = f'{F}/merged-{n}'
@@ -98,6 +102,8 @@ elif a[:2] == ['issue', 'view']:
     print('{}' if os.path.exists(f'{F}/issue-broken-{k}') else json.dumps(issue(k)))
 elif a[:2] == ['pr', 'edit']:
     n = num(); lab = opt('--remove-label')
+    if opt('--body-file') and os.path.exists(f'{F}/edit-fail-{n}'):   # #1310: the body write fails (not a read halt)
+        sys.stderr.write('fake gh: edit failed\n'); sys.exit(1)
     if opt('--body-file'):
         open(f'{F}/body-{n}.md', 'w').write(open(opt('--body-file')).read()); w(f'pr-body-edit {n}')
     if lab: w(f'pr-unlabel {n} {lab}')
@@ -161,6 +167,14 @@ OUT=$(python3 "$AC" --synthesize-block --issue-body "$TMP/issue3.md" --pr-body "
 printf '## AC\n- [x] a1\n- [x] a2\n<!-- sb:ac -->\n- [x] a1\n<!-- /sb:ac -->\n' > "$TMP/pr-short.md"
 OUT=$(python3 "$AC" --synthesize-block --issue-body "$TMP/issue2.md" --pr-body "$TMP/pr-short.md" --branch issue-7-x 2>/dev/null); RC=$?
 [ "$RC" -ne 0 ] && [ -z "$OUT" ] && ok "A3 an existing but shorter sb:ac block is never rewritten" || fail "A3 (rc=$RC): $OUT"
+# A4: checkbox lines outside the AC section (risk/test checklists) are not AC lines
+printf '## AC\n- [x] a1\n\n## Kiểm thử\n- [x] chạy test\n- [x] chụp ảnh\n' > "$TMP/pr-other.md"
+OUT=$(python3 "$AC" --synthesize-block --issue-body "$TMP/issue3.md" --pr-body "$TMP/pr-other.md" --branch issue-7-x 2>/dev/null); RC=$?
+[ "$RC" -ne 0 ] && [ -z "$OUT" ] && ok "A4 checkboxes outside the AC section are not counted" || fail "A4 (rc=$RC): $OUT"
+# A5: indirect AC ("AC của thẻ #X") need that card's body: never synthesized (no loosening)
+printf '## Acceptance Criteria\n- [ ] a1\n- [ ] AC của thẻ #99\n' > "$TMP/issue-ind.md"
+OUT=$(python3 "$AC" --synthesize-block --issue-body "$TMP/issue-ind.md" --pr-body "$TMP/pr-noblock.md" --branch issue-7-x 2>/dev/null); RC=$?
+[ "$RC" -ne 0 ] && [ -z "$OUT" ] && ok "A5 indirect AC: nothing synthesized" || fail "A5 (rc=$RC): $OUT"
 
 # ── B. queue
 COLLAPSE='ac-check: card #19 has 2 acceptance criteria (cards it refers to included) but the PR'"'"'s sb:ac block lists 0 — one line per criterion, each ticked with its own proof or left unticked with the reason'
@@ -183,5 +197,28 @@ printf 'train-result: 10 gate-exit-11\ntrain-detail: 10 %s\n' "${COLLAPSE//#19/#
 run_q
 has_w "pr-body-edit 10" && fail "B2 body edited though AC lines are fewer than the card's AC" || ok "B2 body untouched"
 has_w "issue-labels 20 loop:rebuild-1" && has_w "card move 20 Ready" && ok "B2 short body: still back to Build" || fail "B2: $(cat "$F/writes")"
+
+# B3: autofix clears the pending row of the head, so the next tick starts a train instead of replaying the old result
+reset
+pr 11 issue-21-c 20; issue 21
+python3 -c 'import json;d={"number":21,"title":"c","state":"OPEN","labels":[],"body":"## Acceptance Criteria\n- [ ] a1\n- [ ] a2\n"};json.dump(d,open("'"$F"'/issue-21.json","w"))'
+cp "$TMP/pr-noblock.md" "$F/body-11.md"
+printf 'train-result: 11 gate-exit-11\ntrain-detail: 11 %s\n' "${COLLAPSE//#19/#21}" > "$F/train.out"; echo 11 > "$F/train.rc"
+printf '11 %s gate-exit-11 0\n' "$(sha 11)" > "$COMMON/super-board/merge-queue.pending" 2>/dev/null || { mkdir -p "$COMMON/super-board"; printf '11 %s gate-exit-11 0\n' "$(sha 11)" > "$COMMON/super-board/merge-queue.pending"; }
+printf '%s\n' "${COLLAPSE//#19/#21}" > "$COMMON/super-board/merge-queue.detail.11"
+run_q
+[ ! -s "$COMMON/super-board/merge-queue.pending" ] && ok "B3 pending row cleared after the autofix" || fail "B3 pending left: $(cat "$COMMON/super-board/merge-queue.pending")"
+has_w "issue-labels 21 loop:rebuild" && fail "B3 rebuild counted" || ok "B3 no rebuild counted"
+# B4: a failed body write while rewriting keeps the label and never counts a rebuild
+reset
+pr 12 issue-22-d 20; issue 22
+python3 -c 'import json;d={"number":22,"title":"c","state":"OPEN","labels":[],"body":"## Acceptance Criteria\n- [ ] a1\n- [ ] a2\n"};json.dump(d,open("'"$F"'/issue-22.json","w"))'
+cp "$TMP/pr-noblock.md" "$F/body-12.md"; 
+printf 'train-result: 12 gate-exit-11\ntrain-detail: 12 %s\n' "${COLLAPSE//#19/#22}" > "$F/train.out"; echo 11 > "$F/train.rc"
+touch "$F/edit-fail-12"
+run_q
+has_w "issue-labels 22 loop:rebuild" && fail "B4 rebuild counted on a read failure" || ok "B4 no rebuild when the body write fails"
+has_w "card move 22 Blocked" || has_w "card move 22 Ready" && fail "B4 card moved on a read failure" || ok "B4 card not moved when the body write fails"
+has_w "pr-unlabel 12" && fail "B4 label dropped on a read failure" || ok "B4 label kept"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_queue_ac_autofix_1310: all passed" || { echo "$FAILS FAILED"; exit 1; }
