@@ -552,8 +552,12 @@ if [ "$QA_FETCH_OK" -eq 0 ]; then
   say "git fetch origin ${HEAD_REF} ${BASE} failed 3 times — cannot pin the QA report to the head; nothing merged"
   exit 1
 fi
+# #1300: checker treo không được treo cả cổng merge: bọc cả hai lời gọi bằng timeout (SB_QA_REPORT_TIMEOUT_S, mặc định 60 s).
+# Quá giờ thì rc 124 -> không quyết định được -> exit 7 (cổng người) kèm dòng `qa-report: timeout`, không phải lỗi build.
+QA_TIMEOUT_S="${SB_QA_REPORT_TIMEOUT_S:-60}"
+case "$QA_TIMEOUT_S" in ''|*[!0-9]*|0) QA_TIMEOUT_S=60 ;; esac
 QA_REPORT_RC=0
-QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"}) \
+QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" timeout "$QA_TIMEOUT_S" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"}) \
   || QA_REPORT_RC=$?
 # #1175: [decision] của chủ nằm trên ISSUE thẻ (decision-policy.md, deps.sh đọc ở đó), không chỉ trên PR. Chỉ khi checker từ chối vì
 # lý do không-stale và nhánh mang issue-<N> mới đọc comment issue (đường thường không thêm lời gọi GitHub) rồi chạy lại checker.
@@ -564,7 +568,7 @@ if [ "$QA_REPORT_RC" -eq 1 ] && [ -n "$QA_CARD" ] \
   QA_ISSUE_COMMENTS=$(mktemp)
   if gh issue view "$QA_CARD" ${REPO:+--repo "$REPO"} --json comments > "$QA_ISSUE_COMMENTS" 2>/dev/null; then
     QA_RC2=0
-    QA_OUT2=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"} \
+    QA_OUT2=$(SB_CONFIG="$CONFIG" timeout "$QA_TIMEOUT_S" python3 "$HERE/super-board-qa-report.py" --meta "$META" ${QA_PIN[@]+"${QA_PIN[@]}"} \
       --issue-comments "$QA_ISSUE_COMMENTS") || QA_RC2=$?
     # Chỉ nhận lượt chạy lại khi nó quyết định được (0/1); crash ở lượt này giữ kết quả lượt đầu (exit 11), không thành cổng người.
     case "$QA_RC2" in 0|1) QA_REPORT_RC=$QA_RC2; QA_REPORT_OUT=$QA_OUT2 ;; esac
@@ -579,6 +583,7 @@ if [ "$QA_REPORT_RC" -ne 0 ]; then
     say "QA report/AC not clean — nothing merged; the card goes back to Build"
     exit 11
   fi
+  [ "$QA_REPORT_RC" -ne 124 ] || echo "qa-report: timeout (checker exceeded ${QA_TIMEOUT_S}s)"
   echo "human-gate: qa-report — could not evaluate the QA report / AC (checker exit ${QA_REPORT_RC}; metadata unreadable or checker crashed)"
   say "QA report could not be evaluated — a human merges this one"
   exit 7
