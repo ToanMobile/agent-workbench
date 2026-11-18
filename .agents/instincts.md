@@ -868,3 +868,27 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Lệnh hook dạng mới trong hooks.json làm health, gate và uninstall cùng đánh giá sai ở repo ngoài agent-workbench
 - **Nguyên nhân:** PR #1108 đưa vào hooks.json lệnh guard-protected-push thử hai đường dẫn (nguồn kit rồi tới .claude/hooks). Ba nơi đọc lệnh hook không hiểu dạng này: registered_hook_scripts (health, gate, push gate) coi cả hai đường dẫn là bắt buộc nên mọi repo mới cài FAIL; _hook_key rút ra khoá bắt đầu bằng p= nên uninstall để sót dòng đăng ký. Không test nào chạy init rồi health, gate, uninstall trên một repo không chứa universal-agent-devkit/, và test_uninstall.sh đỏ 2/29 trên main mà không ai thấy.
 - **Quy tắc phòng ngừa & Cách fix:** Khi thêm hay đổi dạng một lệnh trong hooks/hooks.json: chạy lệnh thật đó qua cả bốn chỗ trên một repo tạm KHÔNG phải agent-workbench (agent-kit init, agent-kit health phải thoát 0, post-fix-gate khi settings.json nằm trong diff, agent-kit uninstall của dự án đã sửa settings không để sót hook). Test đọc lệnh từ hooks.json chứ không chép tay: tests/gates/test_hook_alternative_paths.sh (H1, G1) và tests/installer/test_uninstall.sh.
+
+---
+
+### [INSTINCT-111] A signing helper that runs an LLM auditor must not run it inside the code it audits, and the signed base must be exactly merge-base
+- **Ngày phát hiện:** 2026-11-15
+- **Hiện tượng lỗi:** A signing helper that runs an LLM auditor must not run it inside the code it audits, and the signed base must be exactly merge-base
+- **Nguyên nhân:** #632 review: agy ran in a checkout of the agent head (project config/MCP run as the signer uid), and base&lt;=merge-base let an older trunk ancestor hide a weakened test (the test shows as Added)
+- **Quy tắc phòng ngừa & Cách fix:** Give the auditor only data files with no config-like names; require signed base == merge-base(trunk, head); keep a content-keyed fail ledger out of the agent's reach
+
+---
+
+### [INSTINCT-113] Đổi profile kit mà không commit file sinh ra làm bẩn mọi worktree
+- **Ngày phát hiện:** 2026-11-18
+- **Hiện tượng lỗi:** Đổi profile kit mà không commit file sinh ra làm bẩn mọi worktree
+- **Nguyên nhân:** #1243 đổi mô tả profile backend nhưng không commit .agents/active-profile.json; mỗi lần cài DevKit vào worktree sinh diff, cây review bẩn nên audit Antigravity không ghi được phạm vi, reviewer no-op rồi thẻ Blocked
+- **Quy tắc phòng ngừa & Cách fix:** Sửa profiles/ thì chạy lại agent-config và commit .agents/active-profile.json cùng PR; thấy 'M .agents/active-profile.json' trong worktree mới là file trên main đã cũ, sửa ở main, không khôi phục tay
+
+---
+
+### [INSTINCT-112] Model mặc định trong code PM bị config máy ~/.antigravity-pm.json đè
+- **Ngày phát hiện:** 2026-11-17
+- **Hiện tượng lỗi:** Model mặc định trong code PM bị config máy ~/.antigravity-pm.json đè
+- **Nguyên nhân:** Đổi DEFAULT_CONFIG.defaultModel trong antigravity-pm, test agy-model xanh, nhưng ~/.antigravity-pm.json ghim gemini-4-argon-high nên mọi dispatch thật vẫn chạy model cũ (review 17/11 PR #1264 bắt được, test chỉ kiểm DEFAULT_CONFIG)
+- **Quy tắc phòng ngừa & Cách fix:** Đổi default của PM thì grep defaultModel ở ~/.antigravity-pm.json và .antigravity-pm.json của từng repo; bỏ khoá ghim (đừng ghi model mới trước khi PM trên main nhận model đó) và kiểm bằng pm_doctor dòng 'Model mac dinh' trên cả bản mới lẫn bản main

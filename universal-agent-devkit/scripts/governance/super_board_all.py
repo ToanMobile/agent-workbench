@@ -321,7 +321,9 @@ def watchdog_line(rdir, slug):
     st, wd = kv(os.path.join(d, f"{slug}.state")), kv(os.path.join(d, f"{slug}.watchdog"))
     mark = "stop marker" if os.path.exists(os.path.join(d, f"{slug}.stopped")) else "no stop marker"
     return (f"   Watchdog: {mark} · runner STATE={st.get('STATE', '-')} rc={st.get('RC', '-')}"
-            f" · verdict={wd.get('VERDICT') or '-'} · restarts={wd.get('RESTARTS', '0')}")
+            f" · verdict={wd.get('VERDICT') or '-'} · restarts={wd.get('RESTARTS', '0')}"
+            + (" · ⚠ DAEMON=0: a RUNAWAY will halt this runner (start with super_board_all.py start)"
+               if st.get('STATE') == 'running' and st.get('DAEMON') == '0' else ""))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Quản lý đồng thời cả các Super-Board Runners")

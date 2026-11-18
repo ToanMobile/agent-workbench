@@ -1,8 +1,8 @@
-# QA v2 · #1160 · PR #1172 @ b1afe912 (rebuild #1)
+# QA #1160 v2 — PR #1177, head a0364ffb (lượt rebuild #1)
 
-- Lệnh: `bash tests/super-board/<file>` cho 10 file test_github_read*.sh, 2 file test_scratch_config*.sh, test_merge_gate_red_on_base_null_matrix.sh → tất cả exit 0.
-- `bash universal-agent-devkit/tests/worktree_git/test_agent_kit_integrate.sh` (I13 đỏ ở merge-queue) → ALL OK.
-- Không sửa test có sẵn (diff chỉ thêm 4 test mới).
-- github-read.py khớp OfficeReader main (0 dòng lệch); verify-flags.sh khớp GeelyEx2 main (0).
-- scratch-config.sh lệch GeelyEx2 2 dòng: chỉ câu comment đổi để I13 xanh, logic giống.
-- Ảnh: không cần (tooling).
+- `bash tests/super-board/test_github_read*.sh` (10 file): exit 0 cả 10.
+- RED: hai test mới (`closed_duplicate`, `diff_too_large`) exit 1 trên `super-board-github-read.py` của origin/main, exit 0 sau sửa.
+- `git merge origin/main`: Already up to date.
+- `post-fix-gate.py --run-tests --scoped --brief --json` qua `super-board-qa-exit2.sh`: `pass` (exit 0).
+- CI `devkit-tests` ở lượt trước đỏ do `test_prompt_hook_gate_env` (CPU 154 ms > 150 trên runner), file không thuộc diff; lượt CI mới trên a0364ffb đang chạy.
+- Test có sẵn không bị sửa. Ảnh: không cần.

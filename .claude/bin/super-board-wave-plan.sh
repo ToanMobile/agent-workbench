@@ -66,7 +66,7 @@
 # to keep the script offline.
 # MERGE QUEUE (#453). With the queue on (merge_queue.enabled or SB_MERGE_QUEUE=1, SB_MERGE_QUEUE=0 off; backend claude-p or workflow)
 # a Review card whose PR carries the `merge-queue` label waits for super-board-merge-queue.sh: it is not planned (a wave would launch a
-# reviewer for an approved card every time). --queued <prs.json> (`pr list --json headRefName` shape) replaces the live read in tests.
+# reviewer for an approved card every time). --queued <prs.json> (`pr list --json headRefName,closingIssuesReferences` shape) replaces the live read in tests.
 # On the workflow backend a live plan also ensures the launchd schedule that drains the queue (super-board-queue-schedule.sh ensure),
 # so a queue that is on always has a drainer; no schedule possible (not macOS, a temp dir) is a warning on stderr, the plan still runs.
 #
@@ -118,10 +118,12 @@ esac
 QUEUED_ISSUES='[]'
 if [ "$QUEUE_ON" = true ]; then
   if [ -n "$QUEUED_FILE" ]; then QUEUED_PRS=$(cat "$QUEUED_FILE")
-  else QUEUED_PRS=$(python3 "$HERE/super-board-github-read.py" --kind array -- pr list --state open --label merge-queue --limit 200 --json headRefName) \
+  else QUEUED_PRS=$(python3 "$HERE/super-board-github-read.py" --kind array -- pr list --state open --label merge-queue --limit 200 --json headRefName,closingIssuesReferences) \
     || { rc=$?; echo "could not read the PRs queued for merge" >&2; exit "$rc"; }
   fi
-  QUEUED_ISSUES=$(echo "$QUEUED_PRS" | jq -c '[.[].headRefName | capture("^issue-(?<n>[0-9]+)-")? | .n | tonumber]')
+  # #1192: PR mở ngoài board (nhánh không issue-<N>-) vẫn là của thẻ nó qua closingIssuesReferences, như super-board-merge-queue.sh.
+  QUEUED_ISSUES=$(echo "$QUEUED_PRS" | jq -c '[.[] | ((.headRefName // "" | capture("^issue-(?<n>[0-9]+)-")? | .n | tonumber),
+    ((.closingIssuesReferences // [])[] | .number))] | unique')
   # The workflow backend has no runner to drain the queue: make sure the schedule exists (idempotent, quiet when unchanged).
   # No schedule = no drainer: queued cards then stay plannable, or their PRs would sit hidden forever.
   if { [ -z "$ITEMS_FILE" ] || [ -n "${SB_QUEUE_SCHEDULE_BIN:-}" ]; } && [ "$(echo "$CONFIG_JSON" | jq -r '(.worker_backend // "workflow") == "workflow"')" = true ]; then

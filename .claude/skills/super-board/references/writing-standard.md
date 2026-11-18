@@ -18,6 +18,12 @@ Every template in this pack points here. Change the format here first, then the 
 - DON'T repeat a changed-file list in status comments. Explain each file in its own PR
   review comment, using "Author notes" below.
 - DON'T restate the ticket. DON'T narrate ("I have successfully…").
+- **Short, plain, human.** Every text the pack writes (comment, PR body, ticket, report) reads like a person
+  talking to a teammate: short sentences, everyday words, one idea per line, so anyone can follow it without
+  context. Short but clear: cut filler, never cut meaning. A reader with no context must still learn what
+  happened, why, and who acts next (no clipped "done, ok"). State the result first, the reason second. Never paste a log: quote at most 3 lines, the rest stays
+  in the log file. Drop empty ritual fields (`Checked:`, `Owner:`, `Move back:`); keep only the lines a person
+  or a script needs.
 - **Language policy (`lang: vi`):** For repositories with `"lang": "vi"`, all ticket prose, PR bodies, review notes, and lane status comments must be in **Vietnamese** (`tiếng Việt`). Machine header keys (`Did:`, `✅ Done:`, `❌ Not done:`, `Next:`) are preserved for script parsing, with their content written in Vietnamese. Identifiers/symbols remain English.
 
 ## 1 · Commit
@@ -336,6 +342,8 @@ Did: <what this lane did, one line>
 Next: <owner>
 ```
 
+An AC measurable only in another repo is split into an issue there (`gh issue create -R <owner/repo>`) and replaced by the reference. In the card/PR AC list mark it `(repo: <other>)`; in `❌ Not done:` cite `<owner/repo>#N`. The merge-gate `qa-report` check (#1199) then does not count it as an open AC of this repo.
+
 | Field | Values |
 |---|---|
 | role (who writes it) | `builder` · `qa` · `reviewer` · `collect` · `orchestrator` |
@@ -352,6 +360,9 @@ Header regex: `^\[(builder|qa|reviewer|collect|orchestrator)\] \[(blocker|issue|
 - ≤ 8 lines of prose. Evidence before adjectives: the command, the sha, the file:line.
 - Machine lines (`Local tests:`, `gh-quota-on-exit:`, `blocked-by:`, `root-cause-hash:`) go
   last and do not count toward the 8.
+- A lane comment follows the same shape as the handover report: result first, then before/after evidence
+  (bug with UI: old broken image + new image; new UI task: new image; no image: two plain sentences, what was
+  wrong and what is fixed, plus one real test result), then what is still open. Images are embedded, never linked.
 - Screenshots (QA) go below, as an embedded table. They do not count either.
 - The Block template (`block-template.md`) uses the same header and keeps its fields.
 - The needs-you note is the one comment with no header: a hidden `<!-- super-board:needs-you -->`

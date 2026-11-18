@@ -3,7 +3,7 @@
 #   super-board-review-plan.sh [--config FILE] [--base REF] [--deletes-data]
 # Chạy ở gốc worktree review đã ở head PR. In 2 dòng:
 #   <S|M|L> product_lines=<N> reasons=<…>   (nguyên văn review_tier.py)
-#   reviewers: claude antigravity …         (mặc định luật chủ repo 02/11 là sàn; config review_tiers[<bậc>] chỉ THÊM bên;
+#   reviewers: claude ocr …                 (mặc định luật chủ repo 02/11 là sàn; config review_tiers[<bậc>] chỉ THÊM bên;
 #                                            danh sách sai kiểu / tên ngoài claude|antigravity|ocr ⇒ bỏ cả danh sách;
 #                                            13/11 chủ repo bỏ Grok: grok là tên lạ)
 # review_tier.py thiếu hoặc lỗi ⇒ bậc L (nghiêng bậc cao, không rơi về S) kèm cảnh báo stderr; exit 0 để lane luôn có danh sách.
@@ -52,8 +52,9 @@ fi
 tier="${line%% *}"
 case "$tier" in
   S) list="claude" ;;
-  M) list="claude antigravity" ;;
-  *) list="claude antigravity ocr" ;;
+  # 17/11 chủ repo: bên review nội dung antigravity ở M/L đổi thành ocr (delegate, LLM hết credit). plan_review Antigravity
+  # trước code ở L và audit Antigravity ký approved-by / duyệt test sửa vẫn giữ (run.md), không do danh sách này quyết.
+  *) list="claude ocr" ;;
 esac
 if [ -n "$CONFIG" ]; then
   # Chỉ nhận mảng toàn tên bên đã biết; tên lạ / sai kiểu ⇒ bỏ cả danh sách. Mặc định là sàn: config chỉ thêm bên.

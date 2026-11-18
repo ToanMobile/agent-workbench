@@ -80,6 +80,15 @@ mkrepo; ( cd "$C/repo" && git checkout -q -b other-branch ); : > "$TMP/finish"
 push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
 [ "$(execs)" = 0 ] && [ "$(wc -l < "$TMP/finish" | tr -d ' ')" = 0 ] && [ "$(notes)" = 1 ] && ok "main checkout on another branch: finish not called, notified" || fail "other-branch: exec=$(execs) notify=$(notes)"
 
+# ── 4d. (#1107) main checkout ở detached HEAD (merge gate/review dừng giữa chừng): runner vẫn nạp bản mới bằng cách thay đúng file runner
+#    (finish stub được đếm: kỳ vọng 0 lần gọi); runner bị sửa tay thì giữ nguyên file và notify
+mkrepo; ( cd "$C/repo" && git checkout -q --detach ); : > "$TMP/finish"
+push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
+[ "$(execs)" = 1 ] && [ "$(notes)" = 0 ] && [ "$(wc -l < "$TMP/finish" | tr -d ' ')" = 0 ] && grep -q v2 "$RELOAD_SELF" && ok "detached HEAD: runner swapped from origin and exec'd, no false warning" || fail "detached: exec=$(execs) notify=$(notes) log=$(cat "$TMP/log")"
+mkrepo; ( cd "$C/repo" && git checkout -q --detach && echo dirty >> "$REL" ); RELOAD_RUN_SUM=$(git hash-object "$RELOAD_SELF")
+push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
+[ "$(execs)" = 0 ] && [ "$(notes)" = 1 ] && grep -q dirty "$RELOAD_SELF" && ok "detached HEAD + hand-edited runner: kept, notified" || fail "detached-dirty: exec=$(execs) notify=$(notes)"
+
 # ── 5. file trên đĩa đã là bản origin (phiên khác đã ff main): exec ngay, không cần merge
 mkrepo; push_other $'#!/usr/bin/env bash\necho v2'; ( cd "$C/repo" && git pull -q --ff-only origin main 2>/dev/null )
 self_reload_tick

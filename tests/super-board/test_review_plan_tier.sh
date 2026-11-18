@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # #858 PR2: super-board-review-plan.sh đọc bậc review S/M/L (review_tier.py) và in các bên review theo config `review_tiers`.
-# PR giả trong repo git tạm: bậc S ⇒ 1 bên (claude), M ⇒ 2, diff 5 dòng chạm super-board-merge-gate.sh ⇒ L 4 bên; config tuỳ biến
+# PR giả trong repo git tạm: bậc S ⇒ 1 bên (claude), M ⇒ 2, diff 5 dòng chạm super-board-merge-gate.sh ⇒ L 2 bên (17/11: bên antigravity ở M/L đổi thành ocr delegate); config tuỳ biến
 # được đọc; danh sách rỗng / config hỏng / thiếu review_tier.py không làm mất bên review (thiếu bậc ⇒ L). review-flow.md và run.md gọi script.
 # Tương thích bash 3.2.
 set -u
@@ -49,23 +49,23 @@ expect() {  # expect <nhãn> <bậc> <danh sách>
 run pr-s;                        expect "PR S, không config" S "claude"
 n="$(printf '%s\n' "$OUT" | sed -n 's/^reviewers: //p' | wc -w | tr -d ' ')"
 [ "$n" = 1 ] && ok "bậc S ⇒ đúng 1 bên review" || fail "bậc S ⇒ $n bên"
-run pr-m;                        expect "PR M 60 dòng" M "claude antigravity"
-run pr-l;                        expect "PR L 5 dòng merge-gate" L "claude antigravity ocr"
+run pr-m;                        expect "PR M 60 dòng" M "claude ocr"
+run pr-l;                        expect "PR L 5 dòng merge-gate" L "claude ocr"
 n="$(printf '%s\n' "$OUT" | sed -n 's/^reviewers: //p' | wc -w | tr -d ' ')"
-[ "$n" = 3 ] && ok "bậc L ⇒ đúng 3 bên review (13/11: bỏ Grok)" || fail "bậc L ⇒ $n bên"
-run pr-s --deletes-data;         expect "PR S + thẻ xoá dữ liệu" L "claude antigravity ocr"
+[ "$n" = 2 ] && ok "bậc L ⇒ đúng 2 bên review (17/11: antigravity → ocr delegate)" || fail "bậc L ⇒ $n bên"
+run pr-s --deletes-data;         expect "PR S + thẻ xoá dữ liệu" L "claude ocr"
 
 # config thật của board: có review_tiers và in đúng luật chủ repo
 jq -e '.review_tiers.S and .review_tiers.M and .review_tiers.L' "$CONF" >/dev/null 2>&1 \
   && ok "config agent-workbench có review_tiers S/M/L" || fail "config agent-workbench thiếu review_tiers S/M/L"
 run pr-s --config "$CONF";       expect "config thật, PR S" S "claude"
-run pr-m --config "$CONF";       expect "config thật, PR M" M "claude antigravity"
-run pr-l --config "$CONF";       expect "config thật, PR L" L "claude antigravity ocr"
+run pr-m --config "$CONF";       expect "config thật, PR M" M "claude ocr"
+run pr-l --config "$CONF";       expect "config thật, PR L" L "claude ocr"
 
 # config tuỳ biến được đọc; danh sách rỗng / sai kiểu / JSON hỏng ⇒ mặc định (không bậc nào 0 bên)
 printf '{"review_tiers":{"S":["claude","ocr"]}}' > "$TMP/c1.json"
 run pr-s --config "$TMP/c1.json"; expect "config tuỳ biến S" S "claude ocr"
-run pr-m --config "$TMP/c1.json"; expect "config thiếu bậc M ⇒ mặc định" M "claude antigravity"
+run pr-m --config "$TMP/c1.json"; expect "config thiếu bậc M ⇒ mặc định" M "claude ocr"
 printf '{"review_tiers":{"S":[]}}' > "$TMP/c2.json"
 run pr-s --config "$TMP/c2.json"; expect "S rỗng ⇒ mặc định" S "claude"
 printf '{"review_tiers":{"S":[1,"ocr"]}}' > "$TMP/c3.json"
@@ -75,13 +75,16 @@ run pr-s --config "$TMP/c4.json"; expect "config hỏng ⇒ mặc định" S "cl
 case "$ERR" in *review_tiers*) ok "config hỏng có cảnh báo stderr" ;; *) fail "config hỏng không cảnh báo: '$ERR'" ;; esac
 # mặc định là sàn: config chỉ thêm bên, không bớt (PR sửa config của chính nó không tự giảm bên review)
 printf '{"review_tiers":{"L":["claude"],"M":["claude"]}}' > "$TMP/c5.json"
-run pr-l --config "$TMP/c5.json"; expect "config L ít bên hơn luật ⇒ vẫn đủ 3" L "claude antigravity ocr"
-run pr-m --config "$TMP/c5.json"; expect "config M ít bên hơn luật ⇒ vẫn 2" M "claude antigravity"
+run pr-l --config "$TMP/c5.json"; expect "config L ít bên hơn luật ⇒ vẫn đủ 2" L "claude ocr"
+run pr-m --config "$TMP/c5.json"; expect "config M ít bên hơn luật ⇒ vẫn 2" M "claude ocr"
+# 17/11: antigravity không còn trong mặc định M/L, nhưng config vẫn THÊM được (sàn, không trần)
+printf '{"review_tiers":{"M":["claude","antigravity"]}}' > "$TMP/c10.json"
+run pr-m --config "$TMP/c10.json"; expect "config thêm antigravity ở M ⇒ được thêm" M "claude ocr antigravity"
 printf '{"review_tiers":{"S":["ocr","foo"]}}' > "$TMP/c6.json"
 run pr-s --config "$TMP/c6.json"; expect "tên bên lạ ⇒ bỏ cả danh sách" S "claude"
 # 13/11: chủ repo bỏ Grok — grok là tên lạ ⇒ bỏ cả danh sách, không bên nào chạy grok
 printf '{"review_tiers":{"L":["claude","antigravity","ocr","grok"],"S":["grok"]}}' > "$TMP/c9.json"
-run pr-l --config "$TMP/c9.json"; expect "config còn grok ở L ⇒ bỏ, mặc định 3 bên" L "claude antigravity ocr"
+run pr-l --config "$TMP/c9.json"; expect "config còn grok ở L ⇒ bỏ, mặc định 2 bên" L "claude ocr"
 run pr-s --config "$TMP/c9.json"; expect "config S chỉ grok ⇒ bỏ" S "claude"
 printf '{"review_tiers":{"S":["ocr","claude","ocr"]}}' > "$TMP/c7.json"
 run pr-s --config "$TMP/c7.json"; expect "tên trùng ⇒ một lần" S "claude ocr"
@@ -92,15 +95,15 @@ run pr-s --config "$TMP/c8.json"; expect "tên có xuống dòng ⇒ bỏ" S "cl
 git -C "$REPO" checkout -q main; git -C "$REPO" checkout -q -b pr-self
 printf 'print("S product_lines=0 reasons=-")\n' > "$REPO/universal-agent-devkit/bin/review_tier.py"
 git -C "$REPO" commit -qam pr-self
-run pr-self;                     expect "PR tự hạ review_tier.py ⇒ bậc của base (L)" L "claude antigravity ocr"
+run pr-self;                     expect "PR tự hạ review_tier.py ⇒ bậc của base (L)" L "claude ocr"
 
 # thiếu review_tier.py ⇒ bậc L (không rơi về S)
 git -C "$REPO" checkout -q pr-s
 mv "$REPO/universal-agent-devkit" "$TMP/kit-off"
-run pr-s;                        expect "thiếu review_tier.py ⇒ L" L "claude antigravity ocr"
+run pr-s;                        expect "thiếu review_tier.py ⇒ L" L "claude ocr"
 case "$ERR" in *"bậc L"*) ok "thiếu review_tier.py có cảnh báo stderr" ;; *) fail "thiếu review_tier.py không cảnh báo: '$ERR'" ;; esac
 mv "$TMP/kit-off" "$REPO/universal-agent-devkit"
-SB_REVIEW_TIER_PY="$TMP/none.py" run pr-s; expect "SB_REVIEW_TIER_PY trỏ file thiếu ⇒ L" L "claude antigravity ocr"
+SB_REVIEW_TIER_PY="$TMP/none.py" run pr-s; expect "SB_REVIEW_TIER_PY trỏ file thiếu ⇒ L" L "claude ocr"
 
 # reviewer đọc bậc: review-flow.md (super-review, SKILL.md bắt đọc trước khi review) và run.md bước 4 (lane board) gọi script
 for f in "$ROOT/.claude/skills/super-review/references/review-flow.md" "$ROOT/.claude/skills/super-board/references/run.md"; do

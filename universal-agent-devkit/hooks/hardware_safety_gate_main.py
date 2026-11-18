@@ -11,7 +11,7 @@ def _fail_closed(etype, value, tb):
     finally:
         os._exit(2)
 sys.excepthook = _fail_closed
-import json, re, fnmatch, shlex, shutil, subprocess, signal, unicodedata
+import json, re, fnmatch, functools, shlex, shutil, subprocess, signal, unicodedata
 # Watchdog: the hook limit is 10 s (.claude/settings.json) and a hook killed there is no verdict. A command the parser cannot judge in 7 s
 # (a pattern word[^;&|\n]*rare re-scans the line for every word: 15 s for 60 KB of `dd dd dd …`) is refused with a reason. SIGALRM also
 # interrupts a regex search in the middle (checked on Python 3.9 and 3.14). tests/gates/test_hook_big_command_fast_path.sh
@@ -280,20 +280,230 @@ variants = [v for t in TEXTS for v in readings(t)]
 # A pattern of the shape word[^;&|\n]*rare re-scans the rest of the line for every word: quadratic on a long one-line variant (50 KB of rm
 # lines cost 1+ s here). It can only match where its rare part is, so it is tried on the variants that hold one (tests/gates/test_hook_big_command_fast_path.sh).
 RARE = {r"\brm\b[^;&|\n]*(?:MobileDevice/Provisioning|Library/Keychains)": ("mobiledevice/provisioning", "library/keychains")}
-label = None
-for pat, lab in PATTERNS:
-    need = RARE.get(pat)
-    if any(re.search(pat, v, re.I) for v in variants if not need or any(x in v.lower() for x in need)):
-        label = lab
-        break
-if label is None and any(rm_hits(v) for v in variants):
-    label = "rm -rf phân vùng hệ thống cốt lõi"
+def pattern_label(variants):
+    """The label of the first pattern (then rm_hits) one of the variants matches, or None."""
+    for pat, lab in PATTERNS:
+        need = RARE.get(pat)
+        if any(re.search(pat, v, re.I) for v in variants if not need or any(x in v.lower() for x in need)):
+            return lab
+    return "rm -rf phân vùng hệ thống cốt lõi" if any(rm_hits(v) for v in variants) else None
+
+label = pattern_label(variants)
+
+# ── (14/11, C4d) Dangerous words that are only DATA: git commit -m "test: npm publish guard", grep -rn "npm publish" docs/, echo "never run
+# firebase deploy", echo "rm -rf /system/ is dangerous" were refused: the patterns read the flat text, quotes dropped. Exonerate-only: the
+# verdict above stands unless the hit is gone once the text arguments of the pure data commands of the line are taken out (echo, printf,
+# grep, egrep, fgrep, rg; the value of git commit -m / --message). Never when the text can become a command: a lex error, a substitution
+# ($( ), backticks, <( ), >( )), a heredoc or here-string, eval, a ( ) group; the data command writes to a file (echo "adb remount" >
+# x.sh && sh x.sh) or is piped into anything that is not a plain reader (| sh, | xargs, | tee). Every other command of the line is still
+# read, and the rm walk below still runs.
+DATA_CMDS = {"echo", "printf", "grep", "egrep", "fgrep", "rg"}
+DATA_PIPE_READERS = {"cat", "wc", "grep", "egrep", "fgrep", "rg", "sort", "uniq", "head", "tail", "cut", "tr", "nl", "column", "less", "more", "jq"}
+DATA_NEVER = re.compile(r"\$\(|\x60|<<|[<>]\(|\beval\b")
+NULL_REDIRECT = re.compile(r"\d*(?:>>?|&>)(?:/dev/null|&\d)")
+
+def data_cmd(prog, rest):
+    """True when prog with its words rest only prints or searches its text arguments: rg --pre CMD runs CMD, printf -v NAME stores the
+    text in a variable the line may run ($X, OCR review 15/11)."""
+    return prog in DATA_CMDS and not any(a.startswith("--pre") for a in rest) \
+        and not (prog == "printf" and any(a.startswith("-v") for a in rest))
+
+def plain_reader(words):
+    """True when the simple command words (its prefix included) is a plain reader of its input: in DATA_PIPE_READERS, and it writes no
+    file (OCR review 15/11: sort -o / --output, uniq IN OUT, less -o / --log-file wrote the text to a file) and starts nothing
+    (sort --compress-program, rg --pre, less +!cmd). Long options are refused by their prefix: getopt takes an abbreviation (--out)."""
+    j = shell_norm.prefix_end(words)
+    if j >= len(words):
+        return False
+    prog, args = os.path.basename(words[j]), words[j + 1:]
+    if prog not in DATA_PIPE_READERS or writes_file(args):
+        return False
+    pos, opts, k, ended = [], [], 0, False
+    while k < len(args):   # the operands and the options, redirect words and their targets left out
+        a = args[k]
+        if shell_norm.REDIRECT.match(a):
+            k += 2 if shell_norm.REDIRECT_ALONE.fullmatch(a) else 1
+            continue
+        if ended or a == "-" or not a.startswith("-"):
+            pos.append(a)
+        elif a == "--":
+            ended = True
+        else:
+            opts.append(a)
+            if prog == "uniq" and a in ("-f", "-s", "-w"):
+                k += 1   # its value
+        k += 1
+    short = "".join(a[1:] for a in opts if not a.startswith("--"))
+    longs = [a[2:].lower() for a in opts if a.startswith("--")]
+    if prog == "sort":
+        return "o" not in short and not any(a.startswith(("o", "co")) for a in longs)
+    if prog == "uniq":
+        return len(pos) <= 1   # uniq IN OUT writes OUT
+    if prog == "less":
+        return "o" not in short.lower() and not any(a.startswith("l") for a in longs) and not any(a.startswith("+") for a in args)
+    if prog == "rg":
+        return not any(a.startswith("--pre") for a in args)
+    return True
+
+# (OCR review 15/11) A line that writes a data command's text to a file and also runs or sources a file: the written file may be the one
+# that runs (echo '…' > x.sh; sh ./x*.sh, a glob the file name check cannot follow). No data exemption for the line.
+FILE_RUNNERS = shell_norm.SHELLS | shell_norm.RUNNERS | {"source", ".", "exec", "xargs", "find", "env"}
+
+def runs_file(segs):
+    """True when a simple command of segs runs or sources a file: a shell, source / ., an interpreter, a runner, a path or glob as program."""
+    for s in segs:
+        i = shell_norm.prefix_end(s)
+        if i < len(s):
+            p = s[i]
+            b = os.path.basename(p)
+            if "/" in p or re.search(r"[*?\[]", p) or b in FILE_RUNNERS or shell_norm.INTERPRETER.fullmatch(b):
+                return True
+    return False
+
+def writes_file(words):
+    """True when a word of the simple command redirects its output anywhere but /dev/null or another descriptor."""
+    for k, a in enumerate(words):
+        if shell_norm.REDIRECT.match(a) and a[:1] != "<" and not NULL_REDIRECT.fullmatch(a) \
+                and not (shell_norm.REDIRECT_ALONE.fullmatch(a) and words[k + 1:k + 2] == ["/dev/null"]):
+            return True
+    return False
+
+DATA_MARK = ""   # stands for a data backtick while a text is rewritten or lexed
+GIT_TEXT_SUBS, GH_TEXT_SUBS = {"commit", "tag"}, {"pr", "issue", "release"}
+
+def data_backticks(text):
+    """(14/11 round 2) The positions of the backticks of text that are data: inside a closed single-quoted string (shell_norm.sq_backticks:
+    the shell expands nothing there) that is an argument of a command which only prints, searches or stores it: echo, printf, grep, rg,
+    git commit / tag, gh pr / issue / release (git commit -m, echo and gh pr create --body with a backtick payload in single quotes were
+    refused). All or nothing, fail closed: empty when one such string is anything else (a script of bash -c, eval, ssh, watch, trap, an
+    alias, a NAME= value: another shell reads it and runs the backticks), when its command is piped into anything but a plain reader,
+    or when the text has a ( ) group or does not lex."""
+    data = shell_norm.sq_backticks(text)
+    if not data:
+        return data
+    try:
+        toks = shell_norm.lex_words("".join(DATA_MARK if k in data else c for k, c in enumerate(text.replace(DATA_MARK, " "))))
+    except ValueError:
+        return set()
+    segs, seps, seg, glue = [], [], [], False
+    for tk in toks + [";"]:
+        if tk == "&" and seg and re.fullmatch(r"\d*>>?", seg[-1]):   # N>&M, as data_stripped reads it
+            seg[-1], glue = seg[-1] + "&", True
+        elif glue:
+            seg[-1], glue = seg[-1] + tk, False
+        elif set(tk) <= set(";&|()\n"):
+            if "(" in tk or ")" in tk:
+                return set()
+            if seg:
+                segs.append(seg)
+                seps.append(tk.strip("\n") or ";")
+            seg = []
+        else:
+            seg.append(tk)
+    if any(w in ("function", "alias", "{", "}") for s in segs for w in s[:shell_norm.prefix_end(s) + 1]):
+        return set()   # function echo { eval "$1"; } / alias echo=eval: the data command may be something else; { …; } | sh: a group (round 3)
+    for n, s in enumerate(segs):
+        if not any(DATA_MARK in w for w in s):
+            continue
+        i = shell_norm.prefix_end(s)
+        if i >= len(s) or any(DATA_MARK in w for w in s[:i + 1]):
+            return set()
+        prog, rest = os.path.basename(s[i]), s[i + 1:]
+        if not (data_cmd(prog, rest)
+                or (prog == "git" and rest[:1] and rest[0] in GIT_TEXT_SUBS) or (prog == "gh" and rest[:1] and rest[0] in GH_TEXT_SUBS)):
+            return set()
+        for x, a in enumerate(rest):   # the file it writes is named once: echo '…' > x.sh && sh x.sh keeps the old reading
+            if shell_norm.REDIRECT.match(a) and a[:1] != "<":
+                name = os.path.basename((rest[x + 1] if x + 1 < len(rest) else "") if shell_norm.REDIRECT_ALONE.fullmatch(a)
+                                        else re.sub(r"^[\d&]*>[>|&]?", "", a))
+                if not name or (not NULL_REDIRECT.fullmatch(a) and name != "null" and (text.count(name) > 1 or runs_file(segs))):
+                    return set()
+        k = n
+        while seps[k] in ("|", "|&") and k + 1 < len(segs):   # every later stage of the pipeline is a plain reader that writes no file
+            k += 1
+            if not plain_reader(segs[k]):
+                return set()
+    return data
+
+def data_stripped(text):
+    """(text rebuilt from its words, the same without the text arguments of its data commands), or None when nothing may be taken out."""
+    data = data_backticks(text)   # (14/11 round 2) a backtick inside a closed '…' of a data command is no substitution
+    if DATA_NEVER.search("".join(" " if k in data else c for k, c in enumerate(text)) if data else text) or shell_norm.drop_comments(text) != text:
+        return None
+    try:
+        if shell_norm.dq_nested_quote(text):
+            return None
+        toks = shell_norm.lex_words(text)
+    except ValueError:
+        return None
+    segs, seps, seg, glue = [], [], [], False
+    for tk in toks + [";"]:
+        if tk == "&" and seg and re.fullmatch(r"\d*>>?", seg[-1]):   # N>&M: the lexer cuts the & and the descriptor off the operator
+            seg[-1], glue = seg[-1] + "&", True
+        elif glue:
+            seg[-1], glue = seg[-1] + tk, False
+        elif set(tk) <= set(";&|()\n"):
+            if "(" in tk or ")" in tk:
+                return None
+            if seg:
+                segs.append(seg)
+                seps.append(tk.strip("\n") or ";")
+            seg = []
+        else:
+            seg.append(tk)
+    # (round 3) a { …; } group like a ( ) one: what its commands print goes where the GROUP is piped or redirected ({ echo "npm
+    # publish"; } | sh passed), so nothing is taken out, as before the data exemption existed
+    if any(w in ("{", "}") for s in segs for w in s[:shell_norm.prefix_end(s) + 1]):
+        return None
+    def data_writer(s):
+        i = shell_norm.prefix_end(s)
+        return i < len(s) and data_cmd(os.path.basename(s[i]), s[i + 1:]) and writes_file(s[i + 1:])
+    if any(data_writer(s) for s in segs) and runs_file(segs):   # (OCR review 15/11) the file it writes may be the one that runs
+        return None
+    full, cut, removed = [], [], False
+    for n, s in enumerate(segs):
+        i = shell_norm.prefix_end(s)
+        prog, rest = (os.path.basename(s[i]), s[i + 1:]) if i < len(s) else ("", [])
+        keep = s
+        writes = writes_file(rest)
+        piped, k = True, n   # every later stage of the pipeline is a plain reader that writes no file
+        while piped and seps[k] in ("|", "|&") and k + 1 < len(segs):
+            k += 1
+            piped = plain_reader(segs[k])
+        if writes or not piped:
+            pass
+        elif data_cmd(prog, rest):
+            keep = s[:i + 1]
+        elif prog == "git" and rest[:1] == ["commit"]:   # git with a global option (-c alias.x=!…, -C) is read as before
+            keep, j = s[:i + 2], 1
+            while j < len(rest):
+                a = rest[j]
+                if a == "--message" or (a.startswith("-") and not a.startswith("--") and a.endswith("m")):
+                    keep.append(a)
+                    j += 1   # the next word is the message
+                elif not (a.startswith("--message=") or re.fullmatch(r"-[a-ln-zA-Z]*m.+", a)):   # --message=TEXT, -mTEXT: dropped whole
+                    keep.append(a)
+                j += 1
+        removed = removed or keep is not s
+        for out, words in ((full, s), (cut, keep)):
+            out.append(" ".join(shlex.quote(w) for w in words) + " " + seps[n])
+    return (" ".join(full), " ".join(cut)) if removed else None
+
+if label and not MCP:
+    _pairs = [data_stripped(t) for t in TEXTS]
+    # the hit must live in the rebuilt text (the rebuild itself hides nothing) and be gone without the data
+    if all(_pairs) and pattern_label([v for f, _c in _pairs for v in readings(f)]) \
+            and not pattern_label([v for _f, c in _pairs for v in readings(c)]):
+        label = None
 
 
 # ── Destructive rm in / around the project (Bash only: an MCP adb-shell rm is on the device) ──
 BUILD_OUTPUTS = {"build", "dist", "out", "target", "node_modules", ".gradle", ".cxx", ".externalNativeBuild",
                  "Library", "Temp", "Logs", "obj", "bin", ".next", ".nuxt", ".turbo", ".parcel-cache",
-                 ".cache", "coverage", ".pytest_cache", "__pycache__", ".dart_tool", "DerivedData", "Pods"}
+                 ".cache", "coverage", ".pytest_cache", "__pycache__", ".dart_tool", "DerivedData", "Pods",
+                 # (14/11, C4e) regenerable Python caches and environments, refused as a top-level folder while rm -rf build passed. Like the
+                 # others: only when git tracks nothing in them. Not tmp (what it holds is not known to be regenerable).
+                 ".venv", "venv", ".mypy_cache", ".ruff_cache", "htmlcov"}
 RM_WRAPPERS = {"sudo", "doas", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "nice",
                "ionice", "stdbuf", "caffeinate", "xargs", "then", "do", "else", "!", "{"}
 ROOT = os.path.realpath(os.environ.get("REPO_ROOT", "."))
@@ -1281,8 +1491,10 @@ def find_narrowed(args, starts):
         if a not in FIND_NAME_FILTERS:
             continue
         pat, fold = args[k + 1], a.startswith("-i")
-        groups = ([("0", ".Q", "Zz-9.x")] if a in ("-name", "-iname")
-                  else [[s.rstrip("/") + "/" + n for n in ("0", ".Q/Zz-9.x")] for s in starts])
+        # (14/11) second group: the names that do not start with a dot. A pattern that matches all of them (-name "[!.]*", -path "./[!.]*")
+        # keeps everything but the hidden entries: it narrows nothing either (find . -name "[!.]*" -delete passed)
+        groups = ([("0", ".Q", "Zz-9.x"), ("0", "Q", "Zz-9.x", "a_b")] if a in ("-name", "-iname")
+                  else [[s.rstrip("/") + "/" + n for n in g] for s in starts for g in (("0", ".Q/Zz-9.x"), ("0", "Q/Zz-9.x", "a_b"))])
         if a.endswith("regex"):
             try:
                 rx = re.compile(pat, re.I if fold else 0)
@@ -1334,24 +1546,371 @@ def find_narrowed(args, starts):
         return all(alts), i
     return seq(0, False)[0]
 
+def find_start_problem(s, cwds, env, remote):
+    """(14/11, audit T0479) Why a find that DELETES behind a filter that narrows (find_narrowed) is refused for its start point s, or None.
+    Such a find removes some entries under s, so s is not judged as rm -rf s (find . -name "*.pyc" -delete stays allowed) — but the filter
+    used to switch the start-point check off altogether: find ~ -name "*.py" -delete, find / -name x -exec rm {} \\; passed. Now s must
+    be inside the project or a temp folder; one outside them (home, /, .. — which holds the project root) is refused. On a device or a remote
+    host: only / and the system partitions count, as for rm there (remote_target_problem of s/*). A start point that cannot be read
+    ($VAR, an unknown cwd) is not judged, as before."""
+    if remote:
+        return remote_target_problem(s.rstrip("/") + "/*", cwds, env, remote)
+    t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), s.replace(ZSH_QUAL, ""))
+    t = os.path.expanduser(t) if t.startswith("~") else t
+    if t.startswith("~") or "$" in t or "`" in t:
+        return None
+    if GLOB.search(t):   # judged as the folder before the glob, like an rm target
+        parts = t.split("/")
+        t = "/".join(parts[:next(k for k, x in enumerate(parts) if GLOB.search(x))]) or ("/" if t.startswith("/") else ".")
+    for cwd in ([None] if os.path.isabs(t) else cwds):
+        if cwd in (None, LINK_CWD) and not os.path.isabs(t):
+            continue
+        p = os.path.realpath(os.path.join(cwd or "/", t))
+        if rel_below(p, ROOT) is None and not any(p == d or under(p, d) for d in TMP_ROOTS):
+            return (f"{s}: find xoá theo bộ lọc tên, nhưng điểm bắt đầu nằm ngoài project và thư mục tạm ({p}) — mọi mục khớp dưới đó "
+                    f"bị xoá (find -delete / -exec rm / | xargs rm)")
+    return None
+
 def feed_paths(feed):
-    """(paths, from find) of a command piped into `xargs rm`: find start points ([] when a name filter narrows them), the
-    words of a literal echo / printf; None when they cannot be read. from find: find recursed into the paths (2026-10-13)."""
+    """(paths, from find, narrowed start points) of a command piped into `xargs rm`: find start points ([] when a name filter narrows
+    them: they are then the third value, for find_start_problem), the words of a literal echo / printf; None when they cannot be read.
+    from find: find recursed into the paths (2026-10-13)."""
     if not feed:
-        return None, False
+        return None, False, []
     i = 0
     while i < len(feed) and (re.match(r"^[A-Za-z_]\w*=", feed[i]) or os.path.basename(feed[i]) in RM_WRAPPERS):
         i += 1
     if i >= len(feed):
-        return None, False
+        return None, False, []
     prog, args = os.path.basename(feed[i]), [FIND_ESC.get(x, x) for x in feed[i + 1:]]
     if prog == "find":
         starts = find_starts(args)
-        return ([] if find_narrowed(args, starts) else starts), True
+        return ([], True, starts) if find_narrowed(args, starts) else (starts, True, [])
     if prog in ("echo", "printf") and not any(c in a for a in args for c in "$`("):
         words = re.split(r"(?:\s|\\[nt0])+", " ".join(a for a in args if not re.fullmatch(r"-[neE]+", a)))
-        return [w for w in words if w and "%" not in w], False
-    return None, False
+        return [w for w in words if w and "%" not in w], False, []
+    return None, False, []
+
+# ── A recursive delete in the inline program of an interpreter (14/11, C4c; tests/gates/test_guard_zero_defect_c4.sh) ─────────────
+# python3 -c "shutil.rmtree(…)", node -e "fs.rmSync(…, {recursive: true})", ruby -e "FileUtils.rm_rf(…)" are rm -rf with no rm in
+# them. The first argument is read when it is a string literal (the home and cwd expressions become ~ and .) and judged like an rm -rf
+# target; any other argument (a variable, a call) cannot be read: refused in an inline program (strict), not judged in a heredoc program
+# (a script body often removes a temp folder it made itself). ponytail: no data flow (p = "/"; rmtree(p) is refused as unreadable inline,
+# passes in a heredoc), a script file is not read; upgrade when a real case shows up.
+INTERP_RM = re.compile(r"\b(rmtree|rmSync|rmdirSync|rm_rf|rm_r|remove_dir|remove_entry_secure)\b[ \t]*(\(?)")
+INTERP_HOME = re.compile(r"(?:\b(?:pathlib\.)?Path\.home\(\)|\b(?:require\([\x27\x22]os[\x27\x22]\)|os)\.homedir\(\)|\bDir\.home\b"
+                         r"|\bos\.environ(?:\[|\.get\()[\x27\x22]HOME[\x27\x22][\])]|\bos\.getenv\([\x27\x22]HOME[\x27\x22]\)"
+                         r"|\bprocess\.env\.HOME\b|\bENV\[[\x27\x22]HOME[\x27\x22]\])")
+INTERP_CWD = re.compile(r"\bos\.getcwd\(\)|\bprocess\.cwd\(\)|\bDir\.pwd\b|\b(?:pathlib\.)?Path\.cwd\(\)|\b(?:pathlib\.)?Path\(\)")
+INTERP_WRAP = re.compile(r"\b(?:os\.path\.)?(?:expanduser|abspath|realpath|normpath)\(\s*(\x27[^\x27\x22]*\x27|\x22[^\x27\x22]*\x22)\s*\)"
+                         r"|\b(?:pathlib\.)?Path\(\s*(\x27[^\x27\x22]*\x27|\x22[^\x27\x22]*\x22)\s*\)")
+INTERP_LIT = re.compile(r"[rRbB]?(?:\x27([^\x27\x22\\{}]*)\x27|\x22([^\x27\x22\\{}]*)\x22)")
+
+def interp_first_arg(code, i, paren):
+    """The text of the first argument of a call whose arguments start at code[i] (paren: after a "(" — up to its top-level comma or the
+    closing parenthesis; else a ruby call without parentheses, up to a comma or the end of the statement). At most 300 characters."""
+    depth, q, j, end = 0, None, i, min(len(code), i + 300)
+    while j < end:
+        c = code[j]
+        if q:
+            if c == "\\":
+                j += 1
+            elif c == q:
+                q = None
+        elif c in "\x27\x22\x60":
+            q = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0 and (c == "," or (not paren and c in ";\n")):
+            break
+        j += 1
+    return code[i:j].strip()
+
+INTERP_TEMP = r"(?:mkdtemp|mkdtempSync|TemporaryDirectory|mkstemp|mktmpdir)\b"
+
+# (OCR review 15/11) Each delete call read the whole program again for its variable (assignments, bindings, the temp-folder setting):
+# 700 rmSync calls in a 30 KB node -e took 3.3 s. The answers per (program, name) are kept: one scan per variable, not per call.
+# ponytail: a program with hundreds of DISTINCT variables still costs one scan each; index all names in one pass if one shows up.
+_memo = functools.lru_cache(maxsize=None)
+
+@_memo
+def interp_temp_var(code, name):
+    """True when the variable name is filled from tempfile in this program and by nothing else: every `name =` of it is a mkdtemp /
+    TemporaryDirectory / mkstemp call (or it is the `as name` of a `with TemporaryDirectory()`)."""
+    assigns = re.findall(r"(?<![\w.])" + name + r"[ \t]*=(?!=)([^;\n]*)", code)
+    temp = [a for a in assigns if re.search(r"\b" + INTERP_TEMP, a)]
+    bound = re.search(r"\b" + INTERP_TEMP + r"\([^()]*\)[ \t]+as[ \t]+" + name + r"\b", code)
+    return len(temp) == len(assigns) and bool(temp or bound)
+
+# (14/11 round 2, replay of 12,000 real commands) node -e "… for (const f of fs.readdirSync(t)) fs.rmSync(p.join(t, f), {recursive: true})"
+# with t = os.tmpdir() was refused: cleaning probe folders under the temp folder is daily work. Closed rule: the target is safe when the
+# SAME program builds it from the temp root, as a child of it:
+#   root:   os.tmpdir(), tempfile.gettempdir(), Dir.tmpdir, process.env.TMPDIR, os.environ["TMPDIR"] (.get, os.getenv, ENV[]), a
+#           mkdtemp / mkdtempSync / TemporaryDirectory / mkstemp / mktmpdir call, or a variable every assignment of which is one of these;
+#   child:  join(root | child, part…) (path.join, os.path.join, File.join), root + "/part" …, a template literal or f-string that starts
+#           with the root and a slash; a part is a string literal with no .. component that is not absolute, or the loop variable of a
+#           listing of a root (for … of fs.readdirSync(root), for … in os.listdir(root), .forEach(f => …) after it);
+#   target: a child, or a variable every assignment of which is a child or a mkdtemp call.
+# Still refused: the root itself, a way out of it (.., an absolute part), a variable of unknown origin or one assigned anything else,
+# and every program of a command that sets the temp folder (TMPDIR=…, tempfile.tempdir = …, os.tmpdir = …).
+INTERP_TMPROOT = re.compile(r"(?:require\([\x27\x22]os[\x27\x22]\)\.|\bos\.)tmpdir\(\)|\b(?:tempfile\.)?gettempdir\(\)|\bDir\.tmpdir\b"
+                            r"|\bprocess\.env\.TMPDIR\b|\bos\.environ\[[\x27\x22]TMPDIR[\x27\x22]\]|\bos\.environ\.get\([\x27\x22]TMPDIR[\x27\x22]\)"
+                            r"|\bos\.getenv\([\x27\x22]TMPDIR[\x27\x22]\)|\bENV\[[\x27\x22]TMPDIR[\x27\x22]\]")
+# (round 3) only what names the temp folder variable: a bare del / delete (del d["a"], requests.delete(url)) refused every program
+INTERP_TMP_SET = re.compile(r"(?:\b(?:TMPDIR|TEMP|TMP)\b[\x27\x22]?\]?|\.(?:env|environ|tempdir|tmpdir|gettempdir|mkdtemp\w*|mkstemp|TemporaryDirectory|mktmpdir)\b)"
+                            r"[ \t]*=(?![=>~])"
+                            r"|\b(?:del|delete|unset|setenv|putenv|unsetenv|pop|setdefault|update|store|assign)\b[^;\n]*\b(?:TMPDIR|TEMP|TMP)\b"
+                            r"|\b(?:environ|ENV|env)\.(?:clear|replace)\b")
+INTERP_LISTING = re.compile(r"\b(?:readdirSync|listdir|children)\(")
+INTERP_ASSIGN = r"[ \t]*(?:[-+*/%|&^:]|\|\||&&|\?\?|\*\*|<<|>>)?=(?![=>~])"
+
+def interp_args(e):
+    """(callee, [arguments]) when the expression e is exactly one call NAME(…) whose parenthesis closes at its end, else None;
+    interp_parts(e, sep): e cut at the top-level sep (outside quotes and brackets)."""
+    m = re.match(r"[A-Za-z_][\w.]*(?=\()", e)
+    if not m or not e.endswith(")"):
+        return None
+    parts = interp_parts(e[m.end() + 1:-1], ",")
+    return None if parts is None else (m.group(0), parts)
+
+def interp_parts(e, sep):
+    out, depth, q, start, j = [], 0, None, 0, 0
+    while j < len(e):
+        c = e[j]
+        if q:
+            if c == "\\":
+                j += 1
+            elif c == q:
+                q = None
+        elif c in "\x27\x22\x60":
+            q = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0:
+                return None   # the call closed before the end of e: not one call
+        elif depth == 0 and c == sep:
+            out.append(e[start:j].strip())
+            start = j + 1
+        j += 1
+    if q or depth:
+        return None
+    return out + [e[start:].strip()]
+
+@_memo
+def interp_assigns(code, name):
+    """The right-hand side of every assignment to the variable name (compound ones too: d += "/.." is read as its own value)."""
+    return tuple([interp_first_arg(code, m.end(), False) for m in re.finditer(r"(?<![\w.$])" + re.escape(name) + INTERP_ASSIGN, code)])
+
+@_memo
+def interp_bound(code, name):
+    """The spans (kind, position) where name is bound by a loop, an arrow function, a block or a parameter list."""
+    n = re.escape(name)
+    out = [("for", m.end()) for m in re.finditer(r"\bfor\b[ \t]*\(?[ \t]*(?:const[ \t]+|let[ \t]+|var[ \t]+)?" + n + r"[ \t]+(?:of|in)\b", code)]
+    out += [("fn", m.start()) for m in re.finditer(r"(?:\([ \t]*" + n + r"[ \t]*\)|(?<![\w.$])" + n + r")[ \t]*=>|\|[ \t]*" + n + r"[ \t]*\|", code)]
+    out += [("other", m.start()) for m in re.finditer(r"\b(?:function\b[^(]*|def[ \t]+\w+|lambda)[ \t(]*[^)\n:]*(?<![\w.$])" + n + r"\b[^)\n:]*[):]", code)
+            if not any(m.start() <= p <= m.end() for _k, p in out)]
+    return tuple(out)
+
+def interp_temp_root(code, e, depth=0):
+    """True when e is the temp root or a folder the program made with mkdtemp: something a child is built from (see above)."""
+    if depth > 4:
+        return False
+    if INTERP_TMPROOT.fullmatch(e):
+        return True
+    call = interp_args(e)
+    if call:
+        return re.fullmatch(r"(?:[\w.]+\.)?" + INTERP_TEMP, call[0]) is not None
+    if not re.fullmatch(r"[A-Za-z_]\w*", e) or interp_bound(code, e):
+        return False
+    if interp_temp_var(code, e):
+        return True
+    assigns = interp_assigns(code, e)
+    return bool(assigns) and all(interp_temp_root(code, a, depth + 1) for a in assigns)
+
+def interp_listed(code, name):
+    """True when name is only ever the loop variable of a listing of a temp root: a directory entry name (never .., never absolute)."""
+    bound = interp_bound(code, name)
+    if not bound or interp_assigns(code, name):
+        return False
+    for kind, pos in bound:
+        if kind == "other":
+            return False
+        # for … of LISTING(root): the listing follows; LISTING(root).filter(f => …).forEach(f => …): it stands before, in the same statement
+        span = code[pos:pos + 200].split("{")[0].split("\n")[0] if kind == "for" else re.split(r"[;\n]", code[:pos])[-1]
+        calls = [interp_first_arg(span, m.end(), True) for m in INTERP_LISTING.finditer(span)]
+        if not calls or not all(interp_temp_root(code, c) for c in calls):
+            return False
+    return True
+
+def interp_tail_ok(tail):
+    """The text after a temp root in a concatenation or a template (a listed variable shown as X): /name…, with no .. component."""
+    return tail.startswith("/") and ".." not in tail.split("/") and re.search(r"[^/.\s]", tail) is not None and "\\" not in tail
+
+def interp_temp_child(code, e, depth=0):
+    """True when the expression e is a path under a temp root, built in this program (see above)."""
+    if depth > 4 or not e:
+        return False
+    call = interp_args(e)
+    if call:   # path.join(root, part…), os.path.join, File.join
+        args = call[1]
+        if not re.fullmatch(r"(?:[\w.]+\.)?join", call[0]) or len(args) < 2 \
+                or not (interp_temp_root(code, args[0]) or interp_temp_child(code, args[0], depth + 1)):
+            return False
+        for a in args[1:]:
+            lit = INTERP_LIT.fullmatch(a)
+            if lit:
+                v = lit.group(1) if lit.group(1) is not None else lit.group(2)
+                if a[:1] not in "\x27\x22" or not v.strip("./ \t") or v[:1] in "/~" or ".." in v.split("/"):
+                    return False
+            elif not (re.fullmatch(r"[A-Za-z_]\w*", a) and interp_listed(code, a)):
+                return False
+        return True
+    tpl = re.fullmatch(r"\x60\$\{([^{}]+)\}([^\x60\\]*)\x60|[fF](?:\x27\{([^{}]+)\}([^\x27\\]*)\x27|\x22\{([^{}]+)\}([^\x22\\]*)\x22)", e)
+    if tpl:   # `${root}/name-${f}`, f"{root}/name"
+        g = [x for x in tpl.groups() if x is not None]
+        js = e[:1] == "\x60"
+        tail, ok = g[1], [True]
+        def var(m):
+            ok[0] = ok[0] and interp_listed(code, m.group(1))
+            return "X"
+        tail = re.sub(r"\$\{([A-Za-z_]\w*)\}" if js else r"\{([A-Za-z_]\w*)\}", var, tail)
+        return ok[0] and not re.search(r"\$\{" if js else r"[{}]", tail) and interp_tail_ok(tail) \
+            and (interp_temp_root(code, g[0].strip()) or interp_temp_child(code, g[0].strip(), depth + 1))
+    parts = interp_parts(e, "+")
+    if parts and len(parts) > 1:   # root + "/name" + f
+        if not (interp_temp_root(code, parts[0]) or interp_temp_child(code, parts[0], depth + 1)):
+            return False
+        tail = ""
+        for a in parts[1:]:
+            lit = INTERP_LIT.fullmatch(a)
+            if lit and a[:1] in "\x27\x22":
+                tail += lit.group(1) if lit.group(1) is not None else lit.group(2)
+            elif re.fullmatch(r"[A-Za-z_]\w*", a) and interp_listed(code, a):
+                tail += "X"
+            else:
+                return False
+        return interp_tail_ok(tail)
+    return False
+
+@_memo
+def interp_sets_tmp(c):
+    return INTERP_TMP_SET.search(c) is not None
+
+def interp_temp_target(code, arg):
+    """True when the delete target arg is under a temp root this program names (see above); never when the command sets the temp folder."""
+    if interp_sets_tmp(cmd):
+        return False
+    tpl = re.fullmatch(r"\\?\$\((.*)\)", arg, re.S)   # a JS template literal as rm_walk hands it over: its backticks are $( ) by now
+    if tpl:
+        arg = "\x60" + re.sub(r"\\$", "", tpl.group(1).replace("\\$", "$")) + "\x60"
+    if interp_temp_child(code, arg):
+        return True
+    if not re.fullmatch(r"[A-Za-z_]\w*", arg) or interp_bound(code, arg):
+        return False
+    made = lambda a: (interp_args(a) or ("", 0))[0] and re.fullmatch(r"(?:[\w.]+\.)?" + INTERP_TEMP, interp_args(a)[0]) is not None
+    assigns = interp_assigns(code, arg)
+    return bool(assigns) and all(interp_temp_child(code, a) or made(a) for a in assigns)
+
+# (14/11) An interpreter that hands a command line to a shell or starts a program: os.system("…"), subprocess.run([…]) / run("…",
+# shell=True), os.popen, child_process.execSync, ruby / perl system(…). The command is read from the string literals of the call (the
+# first one alone: a command line; all of them joined: an argument list) and judged by rm_problem, the same way as the script of bash -c.
+# A command built at run time (a variable, a format) cannot be read: not judged here (ponytail: the git guard reads such programs raw).
+INTERP_SINK = re.compile(r"\b(?:os\.(?:system|popen)|subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput)"
+                         r"|Popen|check_output|check_call|execSync|execFileSync|spawnSync|spawn|exec|system|popen|shell_exec|passthru"
+                         r"|IO\.popen)\b[ \t]*(\(|(?=[\x27\x22]))")
+INTERP_STR = re.compile(r"\x27((?:[^\x27\\\n]|\\.)*)\x27|\x22((?:[^\x22\\\n]|\\.)*)\x22")
+
+def interp_commands(code):
+    """The command lines the sink calls of the program text code start (see above)."""
+    out = []
+    for m in INTERP_SINK.finditer(code):
+        depth, q, j, end = 0, None, m.end(), min(len(code), m.end() + 600)
+        while j < end:   # the arguments: up to the closing parenthesis of the call, or the end of the statement
+            c = code[j]
+            if q:
+                if c == "\\":
+                    j += 1
+                elif c == q:
+                    q = None
+            elif c in "\x27\x22":
+                q = c
+            elif c in "([{":
+                depth += 1
+            elif c in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif depth == 0 and c in ";\n":
+                break
+            j += 1
+        lits = [re.sub(r"\\(.)", r"\1", a if a else b) for a, b in INTERP_STR.findall(code[m.end():j])]
+        if lits:
+            out.append(lits[0])
+            if len(lits) > 1:
+                out.append(" ".join(shlex.quote(x) for x in lits))
+    return out
+
+# (OCR review 15/11) The inline program of an interpreter command: the word after -c / -e / -p / -E / -r / --eval / --print (alone or
+# ending a flag cluster: -Ic, -lne), a flag word with text glued to it (-c"…" lexes as one word), --eval=…, and the words after a
+# here-string. A script name, a module and its arguments (python3 tools/rm_rf.py, -m pytest -k "rm_rf or tmp") are not a program.
+# (OCR delta 15/11) The word after such a flag is taken but NOT skipped: a flag that ends in one of these letters without a program of its
+# own (python3 -E, perl -p / -i -p, node -c / -p) is followed by the real -c / -e, which is read in its turn. A program that runs text it
+# is given (exec / eval / compile …: python3 -c 'exec(sys.argv[1])' CODE) has every word read, as before the inline rule.
+INLINE_FLAG = re.compile(r"-[A-Za-z]*[ceEpr]|--eval|--print")
+INLINE_RUNS_ARGS = re.compile(r"\b(?:exec|execfile|eval|compile|instance_eval|class_eval|module_eval|instance_exec|runpy|Function)\b")
+
+def inline_programs(rest):
+    out = []
+    for k, a in enumerate(rest):
+        if INLINE_FLAG.fullmatch(a) and k + 1 < len(rest):
+            out.append(rest[k + 1])
+        if a.startswith("<<<"):
+            out.extend(rest[k:k + 2])
+        elif (a.startswith("-") and not a.startswith("--")) or a.startswith(("--eval=", "--print=")):
+            out.append(a)
+    if any(INLINE_RUNS_ARGS.search(a) for a in out):
+        return list(rest)
+    return out
+
+# A ruby / perl call without parentheses (FileUtils.rm_rf '/', x = rm_rf "/", true && rm_rf "/") is read unless it is a word of a regex
+# (.scan(/rm_rf/), print if /rm_rf \//: a slash right before it). OCR delta 2 (15/11): a '…' / "…" string is NOT data here: eval,
+# instance_eval, send(:eval), binding.eval and InstructionSequence.compile run it. Declared residual: puts "FileUtils.rm_rf /" is refused.
+def interp_bare_data(code, pos):
+    """True when the call name at code[pos] (no parentheses) is a word of a regex: right after a slash."""
+    return code[pos - 1:pos] == "/"
+
+def interp_rm_problem(code, cwds, env, strict, bare=True):
+    """Why a recursive delete in the interpreter program text code is refused, or None (see above). bare: a call without parentheses
+    is read too (ruby / perl)."""
+    for m in INTERP_RM.finditer(code):
+        api, paren = m.group(1), bool(m.group(2))
+        if not paren and not (bare and api.startswith("rm_r") and not interp_bare_data(code, m.start())):
+            continue   # only ruby FileUtils.rm_rf / rm_r are called without parentheses
+        if api in ("rmSync", "rmdirSync") and "recursive" not in code[m.end():m.end() + 300]:
+            continue   # fs.rmSync(file): one file
+        raw = arg = interp_first_arg(code, m.end(), paren)
+        arg = INTERP_CWD.sub("\x27.\x27", INTERP_HOME.sub("\x27~\x27", arg))
+        for _ in range(3):   # Path(os.path.expanduser("~")) …
+            arg = INTERP_WRAP.sub(lambda w: w.group(1) or w.group(2), arg)
+        lit = INTERP_LIT.fullmatch(arg)
+        if lit:
+            why = rm_target_problem(lit.group(1) if lit.group(1) is not None else lit.group(2), cwds, env, True)
+            if why:
+                return why + f" ({api}: xoá đệ quy trong chương trình của interpreter)"
+        elif re.fullmatch(r"[A-Za-z_]\w*", arg) and interp_temp_var(code, arg):
+            continue   # d = tempfile.mkdtemp(); shutil.rmtree(d): a temp folder the program made itself
+        elif strict and arg and interp_temp_target(code, raw):
+            continue   # (14/11 round 2) fs.rmSync(path.join(os.tmpdir(), name)): a child of the temp root, built in this program
+        elif strict and arg:
+            return (f"{api}({arg[:60]}): xoá đệ quy trong chương trình nội tuyến của interpreter mà đích không phải chuỗi literal — cổng không "
+                    f"đọc được đích. Viết đường dẫn bằng chữ, hoặc dùng rm -rf <đường dẫn> để cổng xét")
+    return None
 
 # ── One reading of a simple command for every rm rule (2026-10-13, tests/gates/test_guard_shell_norm.sh; the reading itself is
 # hooks/shell_norm.py since 14/10, shared with block-dangerous-git.sh) ───────────────────────────────────────────────────────
@@ -1834,7 +2393,14 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         return None
     if prog in shell_norm.SHELLS or prog == "su":
         scripts = shell_scripts(rest)
-        for s in scripts:
+        # (14/11, C4b) the text a shell reads on its stdin is its script too: bash <<< STR, and a literal echo / printf piped into a shell
+        # that takes no -c and no script file (echo "rm -rf ~" | bash passed while bash -c "rm -rf ~" was refused)
+        fed = []
+        if prog in shell_norm.SHELLS:
+            fed += shell_norm.here_string_words(rest)
+            if feed and shell_norm.reads_stdin_script(rest):
+                fed += shell_norm.literal_feed([FIND_ESC.get(x, x) for x in feed]) or []
+        for s in list(scripts) + [f for f in fed if f.strip()]:
             why = rm_problem(s, cwds, depth + 1, remote)
             if why:
                 return why
@@ -1895,6 +2461,17 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
             why = rm_segment_problem(["rm", "-rf", "--"] + starts, cwds, env, depth + 1, None, remote)
             if why:
                 return why + " (find -delete)"
+        # (14/11) a filter that narrows no longer switches the start-point check off (find_start_problem): -delete, or an rm that
+        # -exec / -execdir / -ok runs (as the command, or in the script of a shell it starts)
+        def exec_rm(j):
+            sub = rest[j + 1:next((k for k in range(j + 1, len(rest)) if rest[k] in (";", "+")), len(rest))]
+            k = shell_norm.prefix_end(sub)
+            p = os.path.basename(sub[k]).lower() if k < len(sub) else ""
+            return p == "rm" or (p in shell_norm.SHELLS and re.search(r"\brm\b", " ".join(sub[k + 1:])) is not None)
+        if named and ("-delete" in rest or any(a in ("-exec", "-execdir", "-ok", "-okdir") and exec_rm(j) for j, a in enumerate(rest))):
+            why = next(filter(None, (find_start_problem(s, cwds, env, remote) for s in starts)), None)
+            if why:
+                return why
         for j, a in enumerate(rest):
             if a in ("-exec", "-execdir", "-ok", "-okdir"):
                 sub = []
@@ -1938,6 +2515,16 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
     if prog in ("source", ".") and rest:   # #427 vòng 3: script chạy trong shell này
         script_links(rest[0], cwds, depth, remote, False)
         return None
+    if (shell_norm.INTERPRETER.fullmatch(prog) or prog in shell_norm.RUNNERS) and not remote and not COLLECT[0]:
+        bare = any(re.fullmatch(r"(?:j|truffle)?ruby[\d.]*|perl[\d.]*", os.path.basename(w)) for w in [prog] + rest)
+        why = next(filter(None, (interp_rm_problem(a, cwds, env, True, bare) for a in inline_programs(rest) if "rm" in a)), None)   # (14/11, C4c)
+        if why:
+            return why
+        for a in rest:   # (14/11) os.system("…"), subprocess.run([…]), execSync("…"): the command line, judged like the script of bash -c
+            for c in (interp_commands(a) if "(" in a or "system" in a else ()):
+                why = rm_problem(c, cwds, depth + 1, remote)
+                if why:
+                    return why
     if (shell_norm.INTERPRETER.fullmatch(prog) or prog in shell_norm.RUNNERS) and any(SYMLINK_API.search(a) for a in rest):
         LINKS_MADE.add("*")   # #427 vòng 2: chương trình nội tuyến (-c / -e) của interpreter tạo link (os.symlink …): tên không đọc được
         return None
@@ -1963,7 +2550,10 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
     rec = "r" in flags or "R" in flags or "--recursive" in longs
     force = rec and ("f" in flags or "--force" in longs)   # an rm that find makes recursive is judged as rm -r (no -f)
     if xargs:
-        fed, from_find = (None, False) if xargs_file else feed_paths(feed)
+        fed, from_find, narrowed = (None, False, []) if xargs_file else feed_paths(feed)
+        why = next(filter(None, (find_start_problem(s, cwds, env, remote) for s in narrowed)), None)   # (14/11) find … -name X | xargs rm
+        if why:
+            return why
         if not rec and not from_find:
             return None
         if fed is None and force:
@@ -2041,6 +2631,12 @@ def rm_problem(text, cwds, depth=0, remote="", _pass=0, env=None):
         # được duyệt như lệnh (ln của nó có tên), thân "data" không bao giờ chạy
         if any(h.kind not in ("shell", "data") and (SYMLINK_API if h.kind == "interp" else SYMLINK_CALL).search(h.body(text)) for h in docs):
             LINKS_MADE.add("*")
+        # (14/11, C4c) a recursive delete of a literal path in an interpreter program (python3 - <<EOF … shutil.rmtree("/")): judged like rm -rf
+        if not remote and not COLLECT[0]:
+            for h in docs:
+                why = interp_rm_problem(h.body(text), cwds, {"HOME": os.path.expanduser("~")}, False) if h.kind == "interp" and "rm" in h.body(text) else None
+                if why:
+                    return why
         # a body that stays is not quote-scoped (15/10 r6): the quote characters of its lines that do not close them are dropped, or they pair with a quote of another
         # body and hide the command between them from drop_comments and the lexer
         text, _open = shell_norm.scan_text(text, lambda h: h.kind == "data" or shell_norm.program_cut(h, text), docs)
@@ -2158,11 +2754,70 @@ def late_traps(traps, level, depth):
                 return why + " (thân trap chạy lúc thoát, ở thư mục hiện tại lúc đó)"
     return None
 
+def fed_scripts(toks):
+    """(round 3) The texts echo / printf write that a shell then runs, beyond the one case rm_command_problem reads (a literal echo right
+    before the shell): through any number of pipe stages (echo … | cat | bash, | tee /dev/stderr | sh), out of a group ({ echo …; } | sh,
+    (echo …) | bash), with a variable in the text (echo "rm -rf $HOME" | bash), into xargs sh -c; and the text of a group whose output goes
+    to a file ({ echo …; } > x.sh). Each is judged like the script of bash -c. Only adds verdicts: every other rule still runs.
+    ponytail: one flat pass, a text is kept until the pipeline (or the group) it was written in ends; a filter between (grep, sed) is
+    read as passing the text on."""
+    out, acc, seg, groups, closed = [], [], [], [], False
+    def flush(tk):
+        nonlocal acc, closed
+        words = list(seg)
+        while words and words[0] in ("{", "}", "!", "then", "do", "else"):
+            if words[0] == "{":
+                groups.append("grp")
+            elif words[0] == "}" and groups:
+                groups.pop()
+                closed = True
+            words = words[1:]
+        piped_in = flush.prev_pipe
+        i = shell_norm.prefix_end(words)
+        prog, rest = (os.path.basename(words[i]), words[i + 1:]) if i < len(words) else ("", [])
+        if closed and acc and writes_file(words):   # { echo …; } > x.sh, ( echo … ) > x.sh
+            out.extend(acc)
+        if prog in ("echo", "printf"):
+            args = [a for k, a in enumerate(rest) if not shell_norm.REDIRECT.match(a)
+                    and not (k and shell_norm.REDIRECT_ALONE.fullmatch(rest[k - 1]))]
+            while prog == "echo" and args and re.fullmatch(r"-[neE]+", args[0]):
+                args = args[1:]
+            acc.extend(t for t in (shell_norm.literal_feed(words[i:]) or [" ".join(args)]) if t.strip())
+        elif piped_in and acc and ((prog in shell_norm.SHELLS and shell_norm.reads_stdin_script(rest))
+                                   or (prog == "xargs" and any(os.path.basename(a) in shell_norm.SHELLS for a in rest))):
+            out.extend(acc)
+        pipe = "|" in tk and "||" not in tk
+        closed = False
+        for ch in tk:
+            if ch == "(":
+                groups.append("sub" if seg and seg[-1].endswith("$") else "grp")
+            elif ch == ")" and groups:
+                closed = groups.pop() == "grp"
+        flush.prev_pipe = pipe
+        if not pipe and not groups and not closed:
+            acc = []   # the pipeline ended outside every group: its text reached no shell
+    flush.prev_pipe, glue = False, False
+    for tk in toks + [";"]:
+        if tk == "&" and seg and re.fullmatch(r"\d*(?:>>?|<)", seg[-1]):   # N>&M: the lexer cuts the & and the descriptor off the operator
+            seg[-1], glue = seg[-1] + "&", True
+        elif glue:
+            seg[-1], glue = seg[-1] + tk, False
+        elif set(tk) <= SEP_CHARS:
+            flush(tk)
+            seg = []
+        else:
+            seg.append(tk)
+    return list(dict.fromkeys(out))
+
 def rm_walk(text, cwds, depth, remote, env):
     """rm_problem of one reading of the text (comments already cut, continuations already decided)."""
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
     # (unresolvable, refused) while the inner command is walked as its own segment.
-    text = re.sub(r"`([^`]*)`?", r"$(\1)", text)
+    # (14/11 round 2) not a data backtick (data_backticks: inside a closed '…' that echo, grep, git commit, gh pr … only print or store)
+    data = data_backticks(text)
+    if data:
+        text = "".join(DATA_MARK if k in data else c for k, c in enumerate(text.replace(DATA_MARK, " ")))
+    text = re.sub(r"`([^`]*)`?", r"$(\1)", text).replace(DATA_MARK, "`")
     text = mktemp_rewrite(text)   # NAME=$(mktemp …) → NAME=__MKTEMP_<n>__ (assign)
     text = FIND_OP.sub(lambda m: (m.group(1) or "") + FIND_OP_WORD[m.group(2) or m.group(3) or m.group(4)], text)
     text = zsh_qualifiers(text)
@@ -2172,6 +2827,11 @@ def rm_walk(text, cwds, depth, remote, env):
         toks = literal_dollar_words(text, shell_norm.lex_words(text))   # (#1159) "$"rm: a literal $, not a variable
     except ValueError:   # a quote left open: split at blanks, a newline is a separator of its own (it is no blank here)
         toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text.replace("\n", " ; ")) if x and x.strip()]
+    if depth < 5:   # (round 3) text of echo / printf that reaches a shell through a group or several pipe stages: a script
+        for s in fed_scripts(toks):
+            why = rm_problem(s, cwds, depth + 1, remote)
+            if why:
+                return why
     stack, seg, pending, feed = [], [], None, None
     regions, nseg, open_loops = loop_regions(toks), -1, []   # review vòng 2 (thêm): tên gán trong vùng lặp — loop_regions
     # Review vòng 2 (thêm, P0 có từ trước): phép gán không chắc chạy, hay chạy ở shell con, từng đặt biến cho các lệnh sau như phép gán chắc
@@ -2213,7 +2873,8 @@ def rm_walk(text, cwds, depth, remote, env):
                     env.pop(name, None)
             for tok_seg in seg:  # "$(…)" / `…` inside a quoted word runs too — #427 vòng 2: trước lệnh chứa nó (chạy trước), như shell
                 if "(" in tok_seg and depth < 5:
-                    why = rm_problem(tok_seg.split("(", 1)[1].rstrip(")"), cwds, depth + 1, remote)
+                    # a backtick still in a word of this walk was inside a closed '…' (every other one is $( now): data here as well
+                    why = rm_problem(tok_seg.split("(", 1)[1].rstrip(")").replace("`", ""), cwds, depth + 1, remote)
                     if why and not COLLECT[0]:
                         return why
             if head in CD_WORDS:   # review vòng 3: cả chdir (cd của zsh)

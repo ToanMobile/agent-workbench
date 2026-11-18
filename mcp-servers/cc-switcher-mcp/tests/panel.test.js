@@ -51,7 +51,7 @@ test('panel state: du 6 tai khoan, cooldown, chi phi, phan bo repo, lich su va s
     const repos = tempRepos(tmp.dir);
     const st = await buildPanelState({ stateDir: tmp.dir, repos, daemonProbe: noDaemon });
     assert.equal(st.ok, true);
-    assert.equal(st.profiles.length, 7);
+    assert.equal(st.profiles.length, 6); // 17/11: go Grok
     assert.equal(st.activeProfileId, 'finos_toan');
     assert.equal(st.activeProfile.id, 'finos_toan');
     assert.deepEqual(st.backupOrder, BACKUP_ORDER);
@@ -71,7 +71,9 @@ test('panel state: du 6 tai khoan, cooldown, chi phi, phan bo repo, lich su va s
         assert.ok(k in p, `profile ${p.id} thieu ${k}`);
       }
     }
-    assert.equal(st.profiles.find((p) => p.id === 'grok').backupPriority, 1);
+    assert.equal(st.profiles.find((p) => p.id === 'antigravity_ultra').backupPriority, 1);
+    assert.equal(st.profiles.find((p) => p.id === 'antigravity_pro').backupPriority, 2);
+    assert.equal(st.profiles.some((p) => p.id === 'grok'), false, '17/11: Grok da go');
     assert.equal(st.profiles.find((p) => p.id === 'finos_toan').backupPriority, 0);
   } finally {
     tmp.cleanup();
@@ -257,17 +259,17 @@ test('gio reset hien ca khi utilization = 0 (con 100%)', async () => {
   }
 });
 
-test('thu tu du phong khac hang Grok -> AGY Ultra -> AGY Pro; 429 tren Claude de xuat Grok', async () => {
+test('thu tu du phong khac hang AGY Ultra -> AGY Pro (17/11 go Grok); 429 tren Claude de xuat AGY Ultra', async () => {
   const tmp = createTempDir();
   try {
     const text = formatStatusText(getStatusReport({ stateDir: tmp.dir }));
-    const iG = text.indexOf('Dự phòng 1 · 6. Grok CLI');
-    const iU = text.indexOf('Dự phòng 2 · 4. Antigravity Ultra');
-    const iP = text.indexOf('Dự phòng 3 · 5. Antigravity Pro');
-    assert.ok(iG > 0 && iU > iG && iP > iU);
+    const iU = text.indexOf('Dự phòng 1 · 4. Antigravity Ultra');
+    const iP = text.indexOf('Dự phòng 2 · 5. Antigravity Pro');
+    assert.ok(iU > 0 && iP > iU);
+    assert.doesNotMatch(text, /Grok/);
     assert.match(text, /ai-factory\.localhost:4317\/cc-switcher/);
     assert.doesNotMatch(text, /BẢNG ĐIỀU KHIỂN/);
-    assert.equal(reportRateLimit({ stateDir: tmp.dir, nowMs: 1_700_000_000_000 }).nextProfile.id, 'grok');
+    assert.equal(reportRateLimit({ stateDir: tmp.dir, nowMs: 1_700_000_000_000 }).nextProfile.id, 'antigravity_ultra');
   } finally {
     tmp.cleanup();
   }
@@ -281,13 +283,16 @@ test('CLI --panel-json / --panel-action: mot dong JSON tren stdout, loi dau vao 
     const a = run(['--panel-json', '--no-sync']);
     assert.equal(a.status, 0, a.stderr);
     const st = JSON.parse(a.stdout);
-    assert.equal(st.profiles.length, 7);
+    assert.equal(st.profiles.length, 6);
 
-    const b = run(['--panel-action', 'switch', '--target', 'grok']);
+    const b = run(['--panel-action', 'switch', '--target', 'antigravity_pro']);
     assert.equal(b.status, 0, b.stderr);
     const res = JSON.parse(b.stdout);
     assert.equal(res.ok, true);
-    assert.equal(res.state.activeProfileId, 'grok');
+    assert.equal(res.state.activeProfileId, 'antigravity_pro');
+    // 17/11: Grok da go — switch sang grok hay so 6 bi tu choi
+    assert.notEqual(run(['--panel-action', 'switch', '--target', 'grok']).status, 0);
+    assert.notEqual(run(['--panel-action', 'switch', '--target', '6']).status, 0);
 
     const c = run(['--panel-action', 'cooldown', '--minutes', 'x']);
     assert.equal(c.status, 2);

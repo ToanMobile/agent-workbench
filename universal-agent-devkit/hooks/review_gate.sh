@@ -589,7 +589,7 @@ if tp and os.path.exists(tp):
                 _tt = _rec_time(rec)
                 if _tt is not None:
                     tool_times.append((idx, _tt))
-                if name in ("Edit", "Write", "NotebookEdit"):
+                if name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):   # MultiEdit: its path is file_path too (2026-11-15)
                     fp = inp.get("file_path") or inp.get("notebook_path") or ""
                     if isinstance(fp, str) and fp.endswith(CODE_EXTS):
                         hit = in_diff(fp)

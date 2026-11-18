@@ -1,8 +1,11 @@
-# QA #1160 v1 (PR #1172, head 4de4b0cc)
+# QA #1160 · PR #1177 · v1 · head 1d514c06 (base = origin/main 8fa63472, đã chứa)
 
-- 4 test mới (closed_duplicate, diff_too_large, red_on_base_null_matrix, scratch_config_node_modules): XANH trên head (rc=0 cả 4).
-- Cùng 4 test trên bản `origin/main` cũ (git archive, thư mục tạm): ĐỎ (rc=1, 1, 1, 2).
-- 8 test `test_github_read*.sh` có sẵn: XANH (rc=0).
-- `diff` 3 file bin với OfficeReader main (github-read.py) và GeelyEx2 main (verify-flags.sh, scratch-config.sh): rỗng.
-- Cổng: `post-fix-gate.py --run-tests --scoped --brief --json | super-board-qa-exit2.sh` in `pass`, rc=0.
-- Không sửa test có sẵn. Log thô ở /tmp/qa-agent-workbench-1160-*.log.
+| AC | Lệnh | Kết quả |
+|---|---|---|
+| 1. Hai test mới ĐỎ trên main cũ, XANH sau sửa | `bash tests/super-board/test_github_read_closed_duplicate.sh`; `..._diff_too_large.sh` (script main cũ + test mới) | main cũ: exit 1 cả hai (`✖ rejects DUPLICATE`; `ReadHalted ... HTTP 406`). Head: exit 0 cả hai |
+| 2. 8 test `test_github_read*.sh` có sẵn XANH | chạy từng file `tests/super-board/test_github_read*.sh` | 10/10 exit 0 (8 có sẵn + 2 mới) |
+| 3. `diff` với OfficeReader origin/main rỗng | `diff .claude/bin/super-board-github-read.py <OfficeReader origin/main>` | rỗng, exit 0 |
+| 4. drift: `super-board-github-read.py` không còn trong changed | `super-board-drift.py --source . --target <OfficeReader>` | không có trong `changed` (còn 8 file khác, không thuộc thẻ) |
+
+Security pass: `local_pr_diff` gọi git bằng danh sách đối số, sha kiểm `[0-9a-f]{40}` trước khi vào lệnh git, timeout 60/120 s, lỗi trả CompletedProcess non-zero (không nuốt lỗi). Không phát hiện lỗ hổng.
+Ảnh: không cần (công cụ CLI, không lên màn hình).

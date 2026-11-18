@@ -4476,6 +4476,150 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "qa-report-issue-decision",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-decision.py",
+        "tests/super-board/test_merge_gate_qa_report_issue_decision.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-QA-ISSUE-DECISION-01",
+          "name": "#1175: preflight qa-report của merge gate nhận [decision] hợp lệ trên issue thẻ (mới hơn report QA theo createdAt) như trên PR; cũ hơn, người lạ, marker lane khác, thiếu thời gian, DANH SÁCH DỪNG, đọc issue lỗi, decision_policy tắt vẫn exit 11; report sạch không đọc issue",
+          "command": "bash tests/super-board/test_merge_gate_qa_report_issue_decision.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-github-read-malformed-halt",
+      "watch_files": [
+        ".claude/bin/super-board-github-read.py",
+        "tests/super-board/test_github_read_malformed_halt.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-GITHUB-READ-MALFORMED-HALT-01",
+          "name": "14/11 07:00 (board đứng 2 giờ): lệnh đọc có --owner rỗng/null hoặc số project không phải số nguyên dương không ghi halt của board; halt dị dạng có sẵn bị check_halt và --resume (watchdog) cất sang github-halt-malformed-*.json; lệnh đọc hợp lệ không nêu repo vẫn halt",
+          "command": "bash tests/super-board/test_github_read_malformed_halt.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-install-no-grok",
+      "watch_files": [
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/tests/installer/test_install_no_grok.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-INSTALL-NO-GROK-01",
+          "name": "17/11 chủ repo gỡ Grok: install.sh không còn agent grok/xai (help, menu, all); đường chỉ ghi AGENTS.md là agents-md và re-init giữ đúng đường đó",
+          "command": "bash universal-agent-devkit/tests/installer/test_install_no_grok.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "runner-reclaim-reset-on-clean-exit-1276",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_reclaim_reset_on_clean_exit.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1276-RECLAIM-RESET-01",
+          "name": "#1266/#1276: worker build thoát sạch và builder đã comment sau dispatch thì xoá sổ reclaim; crash, lane khác, result lỗi, no-op thì giữ",
+          "command": "bash tests/super-board/test_runner_reclaim_reset_on_clean_exit.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-ci-cancel-rerun-1021",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_ci_cancel_rerun.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1021-MERGE-GATE-CI-CANCEL-01",
+          "name": "#1021: check CI bucket cancel không tính đỏ: chạy lại một lần rồi chờ; huỷ mãi thì exit 4, không exit 11; check fail vẫn exit 11",
+          "command": "bash tests/super-board/test_merge_gate_ci_cancel_rerun.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "workbench-active-profile-current-1266",
+      "watch_files": [
+        ".agents/active-profile.json",
+        "universal-agent-devkit/profiles/backend/profile.json",
+        "tests/super-board/test_workbench_active_profile_current.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1266-ACTIVE-PROFILE-CURRENT-01",
+          "name": "#1266: .agents/active-profile.json đã commit khớp profile của kit, cài DevKit không làm bẩn cây review (audit Antigravity ghi được phạm vi)",
+          "command": "bash tests/super-board/test_workbench_active_profile_current.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-full-close-proven-cards-1275",
+      "watch_files": [
+        "universal-agent-devkit/bin/gate_full.py",
+        "universal-agent-devkit/tests/gates/test_gate_full_close_proven_cards.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1275-GATE-FULL-CLOSE-PROVEN-01",
+          "name": "#1275: sau lượt gate_full, thẻ gate-full còn mở mà suite PASS ở lượt đó được comment bằng chứng, gỡ ac-open, đóng completed; suite còn đỏ, không chạy, thẻ khác, comment lỗi thì giữ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_full_close_proven_cards.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "runner-reload-absorbed-ff-1285",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_self_reload_absorbed_ff.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1285-RELOAD-ABSORBED-FF-01",
+          "name": "#1285: sửa tay runner đã có trên origin thì main fast-forward lên origin (không chỉ thay file runner); file khác chặn ff thì thay runner, giữ file đó; sửa tay origin chưa có thì giữ và cảnh báo",
+          "command": "bash tests/super-board/test_runner_self_reload_absorbed_ff.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-full-dup-card-on-board-1287",
+      "watch_files": [
+        "universal-agent-devkit/bin/gate_full.py",
+        "universal-agent-devkit/scripts/governance/create_task.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1287-GATE-FULL-DUP-CARD-ON-BOARD-01",
+          "name": "#1287: gate_full comment vào thẻ đỏ còn mở thì gọi --ensure-on-board; comment lỗi thì không gọi; ensure lỗi thì ghi log",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_full_dup_card_on_board.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-1287-CREATE-TASK-ENSURE-ON-BOARD-01",
+          "name": "#1287: create_task --ensure-on-board đưa issue ngoài board vào Backlog, để yên issue đã có trên board, gh lỗi thì exit khác 0",
+          "command": "bash universal-agent-devkit/tests/verification/test_create_task_ensure_on_board.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

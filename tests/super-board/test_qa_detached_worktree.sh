@@ -201,7 +201,8 @@ if [ "$rc" = 0 ]; then
   echo evidence8 > "$QA8/evidence8.txt" && G "$QA8" add evidence8.txt && G "$QA8" commit -qm evidence8
   sha8="$(G "$QA8" rev-parse HEAD)"
   # the two commands come out of the hint text, so a wrong hint fails here
-  ffcmd="${hint#*git -C }"; ffcmd="${ffcmd%% (*}"
+  # (#1102: the hint now also names `git -C .claude/worktrees/issue-<N>-qa checkout --detach …` first, so anchor on the ff command itself)
+  ffcmd="<build worktree> merge${hint#*git -C <build worktree> merge}"; ffcmd="${ffcmd%% (*}"
   pushbr="${hint#*then git push origin }"; pushbr="${pushbr%%[.;]*}"
   ffcmd="${ffcmd//<build worktree>/$B8WT}"; ffcmd="${ffcmd//<sha>/$sha8}"; pushbr="${pushbr//<PR branch>/$B8}"
   [ "$(hk "$QA8" "git push origin HEAD:$B8")" = 2 ] && [ "$(hk "$QA8" "git -C $ffcmd")" = 0 ] \

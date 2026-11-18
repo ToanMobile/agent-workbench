@@ -979,7 +979,7 @@ def _runner(project: Path, cwd: str, seg: str):
 def _command_lines(text: str) -> list:
     """The command lines of a wrapper script or task: no comment, no heredoc body; a quoted
     string is kept only as a path-like word ("$X…" → $Q, prose → Q)."""
-    out, end = [], None
+    out, end, cont = [], None, ""
     for line in text.splitlines():
         if end is not None:
             if line.strip() == end:
@@ -991,8 +991,15 @@ def _command_lines(text: str) -> list:
         code = re.sub(r"(?:^|\s)#.*$", "", line).strip()
         code = re.sub(r"(['\"])(.*?)\1", lambda q: "$Q" if "$" in q.group(2) else
                       ("Q" if re.search(r"\s", q.group(2)) else q.group(2)), code)
+        # #1102: a backslash-continued line is one command — the next line's first word is an argument, not a command
+        if code.endswith("\\") and not code.endswith("\\\\") and end is None:
+            cont += code[:-1].rstrip() + " "
+            continue
+        code, cont = (cont + code).strip(), ""
         if code:
             out.append(code)
+    if cont.strip():
+        out.append(cont.strip())
     return out
 
 
@@ -2367,8 +2374,14 @@ def find_bug(data: dict, title: str, component: str = "-", *, open_only: bool = 
     return None
 
 
+TOUCH_REFRESH_S = 3600   # cùng phiên chạm lại trong khoảng này: touched_at giữ nguyên (auto-close tính theo ngày)
+
+
 def touch_session(item: dict, session: str | None) -> None:
     if session:
+        recent = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - TOUCH_REFRESH_S))
+        if session in (item.get("sessions") or []) and str(item.get("touched_at") or "") >= recent:
+            return   # prompt bug lặp của cùng phiên: dòng không đổi ⇒ hook không ghi sổ, không spawn git (#1127; touched_at theo giây làm CI đỏ oan)
         item["touched_at"] = _now()
         if session not in item.setdefault("sessions", []):
             item["sessions"] = (item["sessions"] + [session])[-SESSIONS_LIMIT:]
