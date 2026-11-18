@@ -699,6 +699,8 @@ Local tests: npx playwright test e2e/streaming
 
 A pass uses the same table with screenshots of the **working** UI per AC.
 
+An AC only the Review lane can prove (independent review by a non-author) never goes under `❌ Not done:` (the merge gate blocks it and the card loops to `rebuild_cap`): write `✅ Done: ACn passed; independent review pending` and `Next: reviewer` (#1298; writing-standard.md § QA report).
+
 Reviewer merge (issue; posted by the merge gate itself on direct calls, by the merge queue otherwise — never by hand):
 
 ```
