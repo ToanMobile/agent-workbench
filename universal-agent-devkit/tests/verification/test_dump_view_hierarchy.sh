@@ -60,6 +60,9 @@ reset
 bash "$DUMP" "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?
 if [ "$rc" -eq 0 ] && [ -s "$TMP/out.xml" ]; then ok "one device -> exit 0 and XML written"; else bad "one device -> exit $rc, xml=$(ls "$TMP/out.xml" 2>&1)"; fi
 grep -q '^density=420' "$TMP/log" && ok "prints density=420 for px -> dp" || bad "no density line: $(cat "$TMP/log")"
+reset   # OCR review round 2: a successful dump creates a missing output folder (mkdir must stay before the pull)
+bash "$DUMP" "$TMP/fresh/sub/out.xml" >"$TMP/log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ -s "$TMP/fresh/sub/out.xml" ] && ok "dump into a missing folder creates it" || bad "missing folder -> exit $rc: $(tail -2 "$TMP/log")"
 unscoped=$(grep -v -e '^devices' -e '^-s emu-1 ' "$TMP/calls" || true)
 [ -z "$unscoped" ] && ok "every device call carries -s emu-1" || bad "adb calls without -s: $unscoped"
 
