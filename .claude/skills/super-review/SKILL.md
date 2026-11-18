@@ -15,19 +15,9 @@ Say **merge-ready** only when review evidence is clean and verification passed; 
 
 ## When to use
 
-Use this skill for:
+PR or branch readiness review and the Review lane of a `super-board run`; where to route fixes: [references/when-to-use.md](references/when-to-use.md).
 
-- PR or branch review before merge.
-- Code, architecture, security, data-model, or migration judgment.
-- Release-readiness checks after Super Build, Super QA, or a human's `/ui-refine-loop` pass.
-- The Review lane of a `super-board run`, or a final pass summarizing risks, blockers and human gates.
-- Check the PR's Risk block names `Door:` (one-way/two-way) and `Blast radius:`; fix them if the diff disagrees (writing-standard.md § 2).
-
-Do **not** use this as the primary implementation workflow. Route fixes to:
-
-- **Super Build** for feature/task implementation from GitHub Project `Ready` issues.
-- **Super QA** for functional bugs, broken behavior, failing Playwright paths, or missing QA coverage.
-- Visual fidelity, layout, screenshots, wireframes, or design-system drift: file a UI ticket; a human can run `/ui-refine-loop`. The board never triggers it.
+- Check the PR's Risk block names `Door:` (one-way/two-way) and `Blast radius:`; adjust them if the diff disagrees (writing-standard.md § 2).
 
 ## Inputs
 
@@ -127,7 +117,7 @@ once left a six-hour run with zero commits on `main`. In order, no shortcuts:
    the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, write
    the report (`merge-ready`) and leave the card in **Review**: the queue merges it in one train (run.md → Merge
    protocol). Queue off inside the board (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`,
-   where nothing drains the queue — even when the config enables it): after the Antigravity audit pass, `gate_receipt` as above (script first, `jq -r .fp` fallback; empty fp: no comment), post `approved-head`, `approved-by` and `edited-tests:` as its own comment, THEN the merge gate (step 2).
+   where nothing drains the queue — even when the config enables it): after the Antigravity audit pass, `gate_receipt` as above (script first, `jq -r .fp` fallback; empty fp: no comment), post `approved-head` plus `approved-by` plus `edited-tests:` as its own comment, THEN the merge gate (step 2).
 2. Merge through the gate, pinned to the head you reviewed (`merge_policy.default: "human"`
    sends every merge to exit 7 below; a cross-review marker or a human `done` approves it):
    record `gh pr view <PR> --json headRefOid` when review passes, then
