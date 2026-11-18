@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Test hồi quy (18/11, PR #1292 / thẻ #1258 → #1298): QA ghi `❌ Not done: AC4 … review độc lập — chuyển lane Review`; merge gate chặn mãi
+# (exit 11, qa-report) dù reviewer đã duyệt, thẻ chạm rebuild_cap và bị Blocked. Sửa checker TỐI THIỂU, không đọc chữ tự do.
+#  A  dạng #1292 (một dòng, mở đầu `AC4 phần review độc lập`) + [reviewer] ✅ merge-ready đúng head + approved-head 40 ký tự hợp lệ, cả hai mới hơn QA -> exit 0.
+#  B  vẫn exit 1: thiếu approved-head · reviewer ở head khác · reviewer ❌ mới nhất · thiếu --head · approved-head cũ hơn QA · approved-head sai head.
+#  C  vẫn exit 1: AC code ở Not done · mục trộn AC khác · mục nhiều dòng · đuôi mô tả lỗi code (fullmatch) · approved-head trần không approved-by.
+#  D  QA ghi AC review-only ở ✅ Done + Next: reviewer -> exit 0; writing-standard, run.md, super-qa SKILL ghim luật.
+set -u
+export LC_ALL=C LANG=C
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+QA="$ROOT/.claude/bin/super-board-qa-report.py"
+FAILS=0
+ok() { echo "✔ $1"; }
+fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-qarevonly-test.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+HEAD=314e948918ea5d31731c0daef2d55fb176627fa6
+OTHER=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+# mk <file> <done> <not_done> <reviewer line tail> <approved sha|none> [order: ok|approved-first]
+mk() { python3 - "$@" <<'PY'
+import json, os, sys
+f, done, nd, rev, appr, order = sys.argv[1:7]
+body = os.environ.get("BODY") or "## Acceptance criteria\n- [x] AC1 cổng OCR nhận phiên ocr\n  ↳ test exit 0\n- [ ] AC4 reviewer không phải tác giả duyệt PR\n"
+c = lambda t: {"author": {"login": "bot"}, "authorAssociation": "OWNER", "body": t}
+ab = '{"reviewer":"antigravity","builder":"b","task_id":"T0005-audit","gate_receipt":"r"}'
+qa = "[qa] [report] ✅ QA v4 @ d0093822\nDid: test\n✅ Done: " + done + "\n" + (("❌ Not done: " + nd + "\n") if nd else "") + "Next: reviewer\n"
+r = c("[reviewer] [report] " + rev)
+a = (c("approved-head:%s" % appr) if os.environ.get("BARE") else c("approved-head:%s\napproved-by: %s" % (appr, ab))) if appr != "none" else None
+cm = [c(qa)]
+if order == "approved-first" and a: cm = [a] + cm + [r]
+else: cm += [r] + ([a] if a else [])
+ex = os.environ.get("EXTRA")
+if ex:
+    assoc, login, txt = ex.split("|", 2)
+    cm.append({"author": {"login": login}, "authorAssociation": assoc, "body": txt.replace("\\n", "\n")})
+json.dump({"body": body, "author": {"login": "bot"}, "comments": cm}, open(f, "w"))
+PY
+}
+run() { python3 "$QA" --meta "$1" ${2-"--head"} ${3-$HEAD} >"$TMP/out" 2>&1; echo $?; }
+RO="AC4 phần review độc lập (không phải tác giả) — chuyển lane Review"
+MR="✅ merge-ready · round 3 · head ${HEAD:0:8}"
+expect() { [ "$1" = "$2" ] && ok "$3" || { fail "$3 (rc=$1, muốn $2)"; cat "$TMP/out"; }; }
+
+mk "$TMP/a.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok
+expect "$(run "$TMP/a.json")" 0 "A: dạng #1292 + reviewer + approved-head đúng head qua"
+
+BODY=$'## Acceptance criteria\n- [ ] AC4 reviewer (không phải tác giả) duyệt\n' mk "$TMP/a2.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok
+expect "$(run "$TMP/a2.json")" 0 "A2: mục AC thân PR viết 'reviewer (không phải tác giả)' vẫn được gỡ"
+mk "$TMP/b1.json" "AC1 pass" "$RO" "$MR" none ok;                    expect "$(run "$TMP/b1.json")" 1 "B1: thiếu approved-head vẫn chặn"
+mk "$TMP/b2.json" "AC1 pass" "$RO" "✅ merge-ready · head ${OTHER:0:8}" "$HEAD" ok; expect "$(run "$TMP/b2.json")" 1 "B2: reviewer ở head khác vẫn chặn"
+mk "$TMP/b3.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok; expect "$(run "$TMP/b3.json")" 1 "B3: reviewer ❌ mới nhất vẫn chặn"
+expect "$(python3 "$QA" --meta "$TMP/a.json" >"$TMP/out" 2>&1; echo $?)" 1 "B4: thiếu --head vẫn chặn"
+mk "$TMP/b5.json" "AC1 pass" "$RO" "$MR" "$HEAD" approved-first;     expect "$(run "$TMP/b5.json")" 1 "B5: approved-head cũ hơn QA vẫn chặn"
+mk "$TMP/b6.json" "AC1 pass" "$RO" "$MR" "$OTHER" ok;                expect "$(run "$TMP/b6.json")" 1 "B6: approved-head sai head vẫn chặn"
+
+BARE=1 mk "$TMP/b7.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok;           expect "$(run "$TMP/b7.json")" 1 "B7: approved-head trần (không approved-by) vẫn chặn"
+
+mk "$TMP/c4.json" "AC1 pass" "AC4 review độc lập, nhưng code crash NPE khi mở file" "$MR" "$HEAD" ok; expect "$(run "$TMP/c4.json")" 1 "C4: đuôi mô tả lỗi code vẫn chặn"
+mk "$TMP/c5.json" "AC1 pass" "AC4 review độc lập (không phải tác giả; crash NPE)" "$MR" "$HEAD" ok;   expect "$(run "$TMP/c5.json")" 1 "C5: ngoặc kèm mô tả lỗi vẫn chặn"
+mk "$TMP/c6.json" "AC1 pass" "AC1 phần review độc lập; AC1 test cổng OCR còn đỏ, crash NPE" "$MR" "$HEAD" ok; expect "$(run "$TMP/c6.json")" 1 "C6: đuôi chữ sau dạng chuẩn (cùng mã AC lặp lại) vẫn chặn"
+# F4: tác giả PR / người ngoài không thu hồi được ❌ của reviewer, không tự tạo ✅
+EXTRA="NONE|bot|[reviewer] [report] ✅ merge-ready · head ${HEAD:0:8}" mk "$TMP/e1.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok
+expect "$(run "$TMP/e1.json")" 1 "E1: comment authorAssociation NONE ghi ✅ sau reviewer ❌ vẫn chặn"
+EXTRA="NONE|rando|[reviewer] [report] ✅ merge-ready · head ${HEAD:0:8}" mk "$TMP/e2.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok
+expect "$(run "$TMP/e2.json")" 1 "E2: người ngoài ghi ✅ vẫn chặn"
+EXTRA='NONE|rando|```\n[reviewer] [report] ✅ merge-ready · head 314e9489\n```' mk "$TMP/e3.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok
+expect "$(run "$TMP/e3.json")" 1 "E3: dòng reviewer trong khối code không tính"
+mk "$TMP/c7.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok; expect "$(run "$TMP/c7.json")" 1 "C7: AC code (thân PR không nói review) gọi là review độc lập vẫn chặn"
+BODY=$'## Acceptance criteria\n- [ ] AC1 sửa crash parser\n## Checklist\n- [ ] AC1 review độc lập\n' mk "$TMP/c8.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c8.json")" 1 "C8: dòng review nằm ngoài khối AC không gỡ AC code"
+BODY=$'## Acceptance criteria\n- [ ] AC1 code review of parser fix\n' mk "$TMP/c9.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c9.json")" 1 "C9: chữ review tình cờ trong AC code không đủ"
+BODY=$'## Acceptance criteria\n- [ ] AC10 reviewer không phải tác giả duyệt PR\n' mk "$TMP/c10.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c10.json")" 1 "C10: AC10 không thay cho AC1"
+BODY=$'## Acceptance criteria\n- [ ] AC2 bot không phải tác giả commit vẫn push được\n' mk "$TMP/c11.json" "AC4 pass" "AC2 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c11.json")" 1 "C11: 'không phải tác giả' trần trong AC code không đủ"
+BODY=$'## Acceptance criteria\n- [ ] AC1 sửa parser; AC4 review độc lập\n' mk "$TMP/c12.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c12.json")" 1 "C12: mục AC thân PR có nhiều mã AC không gỡ mã đầu"
+BODY=$'## Acceptance criteria\n- [ ] AC2 code review (không phải tác giả của file) sửa parser\n' mk "$TMP/c13.json" "AC4 pass" "AC2 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c13.json")" 1 "C13: 'code review (không phải tác giả …)' trong AC code không đủ"
+BODY=$'## Acceptance criteria\n- [ ] AC2 preview không phải tác giả commit\n' mk "$TMP/c14.json" "AC4 pass" "AC2 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c14.json")" 1 "C14: 'preview không phải tác giả' (không ranh giới từ) không đủ"
+# F ReDoS: dòng AC `AC4 reviewer` + 60000 khoảng trắng + x (regex cũ \s*[..]?\s* chạy O(n^2): ~10 s); phải xong trong 5 s và vẫn chặn
+BODY="## Acceptance criteria"$'\n'"- [ ] AC4 reviewer$(printf '%60000s' '')x"$'\n' mk "$TMP/f1.json" "AC1 pass" "AC4 review độc lập" "$MR" "$HEAD" ok
+timeout 5 python3 "$QA" --meta "$TMP/f1.json" --head "$HEAD" >"$TMP/out" 2>&1; expect "$?" 1 "F1: khoảng trắng dài sau 'reviewer' không treo regex (timeout 5 s)"
+BODY="## Acceptance criteria"$'\n'"- [ ] AC$(printf '%60000s' '')x"$'\n' mk "$TMP/f2.json" "AC1 pass" "AC4 review độc lập" "$MR" "$HEAD" ok
+timeout 5 python3 "$QA" --meta "$TMP/f2.json" --head "$HEAD" >"$TMP/out" 2>&1; expect "$?" 1 "F2: khoảng trắng dài sau 'AC' trong thân PR không treo AC_ID (timeout 5 s)"
+BODY=$'## Acceptance criteria\n- [ ] AC4 reviewer – không phải tác giả duyệt\n' mk "$TMP/a3.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok
+expect "$(run "$TMP/a3.json")" 0 "A3: 'reviewer – không phải tác giả' (en dash) vẫn được gỡ"
+# F3/F4 (DoS đo thời gian): comment QA 3800 dòng `  ❌ Not done: AC1` thụt lề (is_stop quét O(n²)) · 2000 mục review-only x thân PR 30000 dòng AC (quét lại thân mỗi mục)
+python3 - "$TMP/f3.json" "$TMP/f4.json" "$HEAD" <<'PY'
+import json, sys
+f3, f4, head = sys.argv[1:4]
+c = lambda t: {"author": {"login": "bot"}, "authorAssociation": "OWNER", "body": t}
+ab = '{"reviewer":"antigravity","builder":"b","task_id":"T0005-audit","gate_receipt":"r"}'
+tail = [c("[reviewer] [report] ✅ merge-ready · head " + head[:8]), c("approved-head:%s\napproved-by: %s" % (head, ab))]
+ac = "## Acceptance criteria\n- [ ] AC1 cổng OCR nhận phiên ocr\n"
+qa3 = "[qa] [report] ✅ QA @ d0093822\n❌ Not done: AC1\n" + "  ❌ Not done: AC1\n" * 3800
+json.dump({"body": ac, "author": {"login": "bot"}, "comments": [c(qa3)] + tail}, open(f3, "w"))
+body4 = "## Acceptance criteria\n" + "- [ ] AC9 mục phụ cổng\n" * 30000 + "- [ ] AC4 reviewer không phải tác giả duyệt PR\n"
+qa4 = "[qa] [report] ✅ QA @ d0093822\n" + "❌ Not done: AC4 review độc lập\n" * 2000
+json.dump({"body": body4, "author": {"login": "bot"}, "comments": [c(qa4)] + tail}, open(f4, "w"))
+PY
+timeout 5 python3 "$QA" --meta "$TMP/f3.json" --head "$HEAD" >"$TMP/out" 2>&1; rc=$?; [ "$rc" != 124 ] && ok "F3: 3800 dòng Not done thụt lề xong trong 5 s (rc=$rc)" || fail "F3: treo quá 5 s"
+timeout 5 python3 "$QA" --meta "$TMP/f4.json" --head "$HEAD" >"$TMP/out" 2>&1; rc=$?; [ "$rc" != 124 ] && ok "F4: 2000 mục review-only x thân PR lớn xong trong 5 s (rc=$rc)" || fail "F4: treo quá 5 s"
+BODY=$'## Acceptance criteria\n- [ ] 4 review độc lập\n- [ ] AC4 sửa crash parser\n' mk "$TMP/g1.json" "AC1 pass" "AC       4 review độc lập" "$MR" "$HEAD" ok
+timeout 10 python3 "$QA" --meta "$TMP/g1.json" --head "$HEAD" >"$TMP/out" 2>&1; expect "$?" 1 "G1: 'AC' + 7 dấu cách + số không làm checker nổ (exit 1, không phải 2)"
+BODY=$'## Acceptance criteria\n- [ ] AC1 reviewer không phải tác giả duyệt\n- [ ] AC1 sửa crash parser\n' mk "$TMP/g2.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/g2.json")" 1 "G2: số AC trùng giữa mục review và mục code không gỡ AC code"
+mk "$TMP/c1.json" "AC4 pass" "AC1 test cổng OCR còn đỏ" "$MR" "$HEAD" ok;  expect "$(run "$TMP/c1.json")" 1 "C1: AC code ở Not done vẫn chặn"
+mk "$TMP/c2.json" "AC1 pass" "AC4 phần review độc lập; AC1 test còn đỏ" "$MR" "$HEAD" ok; expect "$(run "$TMP/c2.json")" 1 "C2: mục trộn AC khác vẫn chặn"
+mk "$TMP/c3.json" "AC1 pass" "AC4 phần review độc lập
+  - AC4 code còn lỗi crash" "$MR" "$HEAD" ok;                            expect "$(run "$TMP/c3.json")" 1 "C3: mục nhiều dòng vẫn chặn"
+
+mk "$TMP/d.json" "AC1 pass; AC4 passed, independent review pending" "" "$MR" none ok
+expect "$(run "$TMP/d.json")" 0 "D1: AC review-only ở Done + Next: reviewer qua"
+for f in .claude/skills/super-board/references/writing-standard.md .claude/skills/super-board/references/run.md .claude/skills/super-qa/SKILL.md; do
+  grep -q "independent review pending" "$ROOT/$f" && grep -q "Next: reviewer" "$ROOT/$f" && grep -q "#1298" "$ROOT/$f" && ok "D: $f ghim luật" || fail "D: $f thiếu luật AC review-only"
+done
+
+[ "$FAILS" -eq 0 ] && echo "✅ test_qa_report_review_only_ac: all passed" || { echo "❌ $FAILS failed"; exit 1; }

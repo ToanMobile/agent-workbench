@@ -261,3 +261,5 @@ card you work on, under any header: when a choice is needed, write the Block (bl
 orchestrator decide (run.md → "Owner's standing decision"). In your `[qa] [report]` list an AC settled that way
 under ✅ with a link to the decision, never under ❌ Not done: the merge gate skips only the ❌ items of reports older
 than the decision.
+
+**Review-lane-only AC.** An AC only the Review lane can prove (independent review by a non-author) is never listed under `❌ Not done:`: the merge-gate `qa-report` check blocks every Not done item that names an AC, and only a newer `[decision]` clears it, so the card would loop to `rebuild_cap` (#1258 / PR #1292). Put it under `✅ Done:` as `ACn passed; independent review pending` and end the report with `Next: reviewer` (#1298).
