@@ -1792,6 +1792,17 @@ preflight_gate() {
       log "preflight ${verdict}/${tag} for #${issue}: ${reason} — waiting on $(printf '%s' "$wlabels" | jq -r 'map(sub("^waiting-on:"; "")) | join(", ")' 2>/dev/null), stays in Ready (labelled waiting-on), not dispatched"
       return 1 ;;
     hold)
+      # #1321: thẻ `session` (hook session_card.sh) là thẻ theo dõi, không phải ticket build: thiếu AC thì về Backlog, không Blocked ❓ chờ người.
+      if [ "$tag" = unclear ] && printf '%s' "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" 'any(.items[]?; .content.number == $n and
+          ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("session")))' >/dev/null 2>&1; then
+        item_id=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+        log "preflight hold/unclear for #${issue}: session card without AC — not dispatched, card to Backlog (no comment)"
+        gh_checkpoint
+        if [ -z "$item_id" ] || ! set_card_status "$item_id" "Backlog"; then
+          log "⚠ preflight: could not move session card #${issue} to Backlog — not dispatched, retrying next tick"
+        fi
+        return 1
+      fi
       exact=$(printf '%s' "$v" | jq -r --arg n "$issue" '
         if .tag == "unclear" then "yes"
         elif .tag == "done" or .tag == "in-progress" then
