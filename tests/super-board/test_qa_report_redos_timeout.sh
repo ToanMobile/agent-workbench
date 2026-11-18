@@ -119,5 +119,19 @@ PY
 t0=$(now); timeout 30 python3 "$CHECKER" --meta "$TMP/many.json" >/dev/null 2>&1; rcm=$?; t1=$(now)
 [ "$(secs "$t0" "$t1")" -lt 5 ] && [ "$rcm" -eq 0 ] && ok "checker: 3000 AC x 30000 clauses in $(secs "$t0" "$t1") s" || fail "checker: 3000 AC x 30000 clauses took $(secs "$t0" "$t1") s, exit $rcm"
 
+# 4) AC_ID: `AC` + 32000 khoảng trắng + `x` (hai `\s*` liền nhau quanh `-?`) dưới 5 s; mã AC thật vẫn bị bắt (exit 1).
+for pat in "AC"; do  # đuôi `x` để dòng không bị strip hết khoảng trắng; `AC -` + khoảng trắng đo 0 s nên không đưa vào
+  SP=$(python3 -c 'import sys; print(sys.argv[1] + " " * 32000 + "x")' "$pat")
+  mkmeta "$TMP/acsp.json" "$SP"
+  t0=$(now); timeout 30 python3 "$CHECKER" --meta "$TMP/acsp.json" >/dev/null 2>&1; rca=$?; t1=$(now)
+  [ "$(secs "$t0" "$t1")" -lt 5 ] && [ "$rca" -eq 0 ] && ok "checker: '$pat' + 32000 spaces + x in $(secs "$t0" "$t1") s, exit 0" \
+    || fail "checker: '$pat' + 32000 spaces + x took $(secs "$t0" "$t1") s, exit $rca (want < 5 s, exit 0)"
+done
+for named in "AC2 chưa xong" "AC 2 chưa xong" "AC - 2 chưa xong" "AC-#2 chưa xong" "ac  -  3"; do
+  mkmeta "$TMP/acnamed.json" "$named"
+  timeout 10 python3 "$CHECKER" --meta "$TMP/acnamed.json" >/dev/null 2>&1; rcn=$?
+  [ "$rcn" -eq 1 ] && ok "checker: '$named' still names an AC (exit 1)" || fail "checker: '$named' exit $rcn (want 1)"
+done
+
 [ "$FAILS" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "$FAILS FAILED"; exit 1

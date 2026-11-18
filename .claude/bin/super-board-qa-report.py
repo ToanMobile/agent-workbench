@@ -40,7 +40,7 @@ AC_HEADING = re.compile(r"^#{1,6}\s*(Acceptance criteria|AC\s*\+\s*proof)\b", re
 PROOF_HEADING = re.compile(r"^#{1,6}\s*Acceptance criteria\b", re.I)  # "## AC + proof" mang bằng chứng ngay trên dòng mục, không cần ↳
 AC_ITEM = re.compile(r"^\s*-\s*\[([ xX])\]\s*(.*)$")
 PROOF = re.compile(r"^\s*↳\s*(\S.*)$")
-AC_ID = re.compile(r"\bAC\s*-?\s*#?\d+", re.I)
+AC_ID = re.compile(r"\bAC\s*(?:-\s*)?#?\d+", re.I)  # #1300: một `\s*` mỗi nhánh; `\s*-?\s*` là O(n²) trên `AC` + dãy khoảng trắng dài
 OTHER_REPO_AC = re.compile(r"\(\s*repo\s*:\s*[^)\s][^)]*\)", re.I)  # #1199: AC gắn `(repo: <khác>)` đo ở repo khác, không phải AC của PR này
 SPLIT_WORD = re.compile(r"đã\s+tách|tách\s+sang|thuộc", re.I)        # #1199: lời khai AC đã tách/thuộc repo khác (kèm owner/repo#N)
 # `owner/repo#N`: AC đã tách thành issue ở repo khác. #1300: chặn độ dài (owner ≤ 39, repo ≤ 100) — lớp `[\w.-]+` không chặn là O(n²) trên một dòng dài không có `/`.
