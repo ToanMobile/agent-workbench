@@ -2018,7 +2018,7 @@ EOF
     # later does not exist yet at dispatch, so a first build still starts in main; upgrade: create the lane worktree here with the DevKit.
     ( lane_wt="$REPO_ROOT/.claude/worktrees/issue-${issue}-${lane}"
       [ -d "$lane_wt" ] && cd "$lane_wt"
-      exec nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-argon-high --dangerously-skip-permissions -p "$prompt" ) >> "$worker_log_abs" 2>&1 &
+      exec nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-hydrogen-high --dangerously-skip-permissions -p "$prompt" ) >> "$worker_log_abs" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
     agent_office_args "$worker_log"
     AGENT_OFFICE_NONCE="$AO_NONCE" CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
@@ -2342,12 +2342,32 @@ sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") e
   return 1
 }
 
+builder_reported_since() {
+  # $1 = issue, $2 = ISO time (UTC, `date -u +%FT%TZ`). 0 when the issue's newest comment is a `[builder]` one created at/after $2.
+  # Any GitHub failure or empty input = 1 (the caller then keeps its ledger).
+  local n meta
+  [ -n "${2:-}" ] || return 1
+  n=$(issue_comment_count "$1")
+  [ "${n:-0}" -gt 0 ] || return 1
+  meta=$(python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1/comments?per_page=1&page=$n" --jq '.[0] | .created_at + " " + (.body | .[0:9])' 2>/dev/null) || return 1
+  case "$meta" in *" [builder]") ;; *) return 1 ;; esac
+  [ "${meta%% *}" \> "$2" ] || [ "${meta%% *}" = "$2" ]
+}
+
 note_worker_exit() {
   # $1 = issue; the lock just read (LANE) is the worker that died. Logs its exit record and, unless it exited 0, comments on the card.
   # No record = the wrapper itself was killed (SIGKILL, host asleep) or the worker predates the wrapper.
   local line role
   line=$(worker_exit_line "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}")
   log "worker of #${1} (lane ${LANE:-?}) exit record: ${line:-none — wrapper killed or host asleep}"
+  # #1266: a build worker that ended clean proves the earlier deaths are fixed; drop the card's reclaim ledger so the next
+  # crash starts from zero instead of re-blocking at once (SB_RECLAIM_MAX counts deaths since the last clean run).
+  # Only when it also left a builder report after its dispatch: a clean exit that wrote nothing is a no-op, and the ledger is the only
+  # cap on build no-ops (see the #137 note below), so it must survive that.
+  if [ "${LANE:-}" = build ] && worker_ended_clean "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}" \
+     && builder_reported_since "$1" "$(grep '^=== dispatch ' "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}" 2>/dev/null | tail -1 | sed 's/.* at \(.*\) ===.*/\1/')"; then
+    rm -f "$INFLIGHT_DIR/reclaims/$1" 2>/dev/null || true
+  fi
   # exit=0: finished; exit=143: stopped by the runner itself (super-board stop sends TERM), not a death worth a card comment.
   case "$line" in *"exit=0 "*|*"exit=143 "*) return 0 ;; esac
   case "${LANE:-}" in qa) role=qa ;; review) role=reviewer ;; *) role=builder ;; esac
@@ -3691,6 +3711,16 @@ reload_restore_self() {
   [ -n "${SB_RELOAD_SWAPPED_SUM:-}" ] && [ "$disk" = "$SB_RELOAD_SWAPPED_SUM" ] && git diff --cached --quiet -- "$rel" 2>/dev/null || return 1
   git restore --source=HEAD -- "$rel" 2>/dev/null
 }
+# #1281: sửa tay chưa commit mà phần sửa đó ĐÃ nằm trong bản origin (PR của chính nó vừa merge) làm file dirty nên chặn ff mãi và gây cảnh báo giả.
+# Gộp 3 chiều (đĩa, HEAD, origin): sạch và ra đúng bản origin ⇒ mọi dòng sửa tay đã có trên origin, thay file bằng bản origin không mất gì.
+# $1 = đường dẫn tương đối của runner, $2 = blob origin. Sửa tay có dòng chưa lên origin ⇒ khác 0, giữ nguyên.
+reload_edit_absorbed() {
+  local rel="$1" new="$2" t rc=1
+  t=$(mktemp -d "${TMPDIR:-/tmp}/sb-rl.XXXXXX") || return 1
+  if cp "$RELOAD_SELF" "$t/disk" && git show "HEAD:${rel}" > "$t/base" 2>/dev/null && git show "origin/${BASE_BRANCH}:${rel}" > "$t/orig" 2>/dev/null \
+    && git merge-file -q "$t/disk" "$t/base" "$t/orig" 2>/dev/null && [ "$(git hash-object "$t/disk")" = "$new" ]; then rc=0; fi
+  rm -rf "$t"; return "$rc"
+}
 self_reload_tick() {
   local now new disk rel cur
   [ -n "$RELOAD_RUN_SUM" ] || return 0
@@ -3727,11 +3757,20 @@ self_reload_tick() {
         # đó bằng bản origin (không đụng index, không đụng file dở của người khác); script đang bị sửa tay thì giữ nguyên và cảnh báo.
         # ponytail: bin/ helper khác vẫn là bản cũ tới khi main ff được; nâng lên stash/worktree nếu helper đổi cùng lúc làm hỏng runner mới.
         # "Sạch" = đĩa khớp HEAD và index sạch (reload_restore_self đã trả bản runner tự ghi về HEAD ở trên).
-        [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] \
-          && git diff --cached --quiet -- "$rel" 2>/dev/null \
-          || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
-        reload_swap_self "origin/${BASE_BRANCH}:${rel}" \
-          || { reload_warn "$new" "git merge --ff-only failed and the origin copy of super-board-run.sh could not be swapped in (unreadable or fails bash -n)"; return 0; }
+        # #1285: sửa tay đã nằm trên origin (#1281) ⇒ trả file về HEAD (không mất gì) rồi ff lại, để HEAD và mọi file khác của PR cùng lên
+        # origin; chỉ khi file khác vẫn chặn ff mới thay riêng runner (#623).
+        local ffd=0
+        if [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" != "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] \
+          && git diff --cached --quiet -- "$rel" 2>/dev/null && reload_edit_absorbed "$rel" "$new" \
+          && git restore --source=HEAD -- "$rel" 2>/dev/null \
+          && git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then ffd=1; fi
+        if [ "$ffd" = 0 ]; then
+          [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] \
+            && git diff --cached --quiet -- "$rel" 2>/dev/null \
+            || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
+          reload_swap_self "origin/${BASE_BRANCH}:${rel}" \
+            || { reload_warn "$new" "git merge --ff-only failed and the origin copy of super-board-run.sh could not be swapped in (unreadable or fails bash -n)"; return 0; }
+        fi
       fi
     else
       # Main có commit cục bộ của phiên khác (#308): gộp origin vào main bằng đường finish (worktree tạm + gate + ff), không đụng tay.

@@ -106,7 +106,7 @@ class CcSwitcherPanel(unittest.TestCase):
         self.assertEqual(code, 200, raw[:300])
         st = json.loads(raw)
         self.assertTrue(st["ok"])
-        self.assertEqual(len(st["profiles"]), 7)
+        self.assertEqual(len(st["profiles"]), 6)  # 17/11: gỡ Grok
         self.assertEqual(st["activeProfileId"], "finos_toan")
         self.assertTrue(st["health"]["telegram"]["configured"])
         text = raw.decode("utf-8")
@@ -153,16 +153,17 @@ class CcSwitcherPanel(unittest.TestCase):
         self.assertNotIn(".catch(() => {})", idx)
 
     def test_switch_cooldown_and_validation(self):
-        code, raw = self.post({"action": "switch", "target": "grok"})
+        code, raw = self.post({"action": "switch", "target": "antigravity_pro"})
         self.assertEqual(code, 200, raw[:300])
         res = json.loads(raw)
         self.assertTrue(res["ok"])
-        self.assertEqual(res["state"]["activeProfileId"], "grok")
+        self.assertEqual(res["state"]["activeProfileId"], "antigravity_pro")
         code, raw = self.post({"action": "cooldown", "minutes": 5})
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(raw)["state"]["antiBan"]["cooldownMinutes"], 5)
         for bad in ({"action": "rm"}, {"action": "switch", "target": "../x"}, {"action": "cooldown", "minutes": "5"},
-                    {"action": "cooldown", "minutes": 99999}, {"action": "balance", "mode": "all_finos"}):
+                    {"action": "cooldown", "minutes": 99999}, {"action": "balance", "mode": "all_finos"},
+                    {"action": "switch", "target": "grok"}):  # 17/11: chủ repo gỡ Grok
             code, _ = self.post(bad)
             self.assertEqual(code, 400, bad)
         self.post({"action": "switch", "target": "finos", "force": True})
