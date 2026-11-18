@@ -233,7 +233,7 @@ def _when(comment):
 # #1298: cả dòng phải khớp (fullmatch): đuôi chỉ được là `(không phải tác giả)` và/hoặc `— chuyển lane Review`, mọi chữ khác (mô tả lỗi code) = vẫn chặn.
 REVIEW_ONLY = re.compile(r"AC\s*-?\s*#?\d+(?:\s+phần)?\s+review\s+độc\s+lập(?:\s*\(\s*không\s+phải\s+tác\s+giả\s*\))?"
                          r"(?:\s*[—–-]+\s*chuyển\s+lane\s+Review)?\s*\.?", re.I)
-REVIEW_MARK = re.compile(r"review\s+độc\s+lập|review(?:er)?[\s(:\-]{0,4}không\s+phải\s+tác\s+giả", re.I)  # cụm cố định; chữ "review" trần (code review of X) không đủ
+REVIEW_MARK = re.compile(r"\breview\s+độc\s+lập|\breviewer\s*[(:\-]?\s*không\s+phải\s+tác\s+giả", re.I)  # cụm cố định; chữ "review" trần (code review of X) không đủ
 REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*(✅|❌)\s*(merge-ready)?(.*)$", re.I)
 APPROVED_JQ = Path(__file__).with_name("super-board-approved-head.jq")
 
