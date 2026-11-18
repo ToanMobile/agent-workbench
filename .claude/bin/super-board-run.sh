@@ -3712,10 +3712,20 @@ reload_drop_subsumed_edit() {
   disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || return 1
   [ "$disk" != "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] && [ "$disk" != "${SB_RELOAD_SWAPPED_SUM:-}" ] || return 1
   git diff --cached --quiet -- "$rel" 2>/dev/null || return 1
+  # Mode khác HEAD (chmod tay) cũng là sửa tay: restore sẽ vứt nó mà không ai kiểm ⇒ giữ.
+  case "$(git ls-tree HEAD -- "$rel" 2>/dev/null | cut -c1-6)" in
+    100755) [ -x "$RELOAD_SELF" ] || return 1 ;;
+    100644) [ ! -x "$RELOAD_SELF" ] || return 1 ;;
+    *) return 1 ;;
+  esac
   d=$(mktemp -d 2>/dev/null) || return 1
-  if git cat-file blob "$new" > "$d/cur" 2>/dev/null && git show "HEAD:${rel}" > "$d/base" 2>/dev/null \
-     && cp "$RELOAD_SELF" "$d/other" 2>/dev/null && git merge-file -q "$d/cur" "$d/base" "$d/other" 2>/dev/null \
-     && [ "$(git hash-object "$d/cur" 2>/dev/null)" = "$new" ]; then
+  # Bản origin phải qua bash -n TRƯỚC khi bỏ sửa tay: bỏ rồi mà swap/exec không chạy được thì sửa tay mất vô ích.
+  if git cat-file blob "$new" > "$d/cur" 2>/dev/null && bash -n "$d/cur" 2>/dev/null \
+     && git show "HEAD:${rel}" > "$d/base" 2>/dev/null \
+     && cp "$RELOAD_SELF" "$d/other" 2>/dev/null && [ "$(git hash-object "$d/other" 2>/dev/null)" = "$disk" ] \
+     && git merge-file -q "$d/cur" "$d/base" "$d/other" 2>/dev/null \
+     && [ "$(git hash-object "$d/cur" 2>/dev/null)" = "$new" ] \
+     && [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" = "$disk" ]; then   # TOCTOU: file không đổi từ lúc kiểm tới lúc restore
     rm -rf "$d"
     git restore --source=HEAD -- "$rel" 2>/dev/null || return 1
     log "self-reload: hand edit of super-board-run.sh is already on origin/${BASE_BRANCH}; dropped it to load the new code"

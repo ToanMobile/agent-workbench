@@ -115,5 +115,36 @@ push_v2 hydrogen 's/^return 1$/return 2/' up; self_reload_tick
 [ "$(execs)" = 0 ] && grep -q hydrogen "$RELOAD_SELF" && warned && ! dropped \
   && ok "S8 identical edit next to another origin change (conflict): kept and warned" || fail "S8: exec=$(execs) notify=$(cat "$TMP/notify") log=$(cat "$TMP/log")"
 
+# S9: detached HEAD, hand edit already on origin -> dropped, origin runner swapped in and exec'd (#1107 path)
+mkrepo_m; git checkout -q --detach; sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen; self_reload_tick
+[ "$(execs)" = 1 ] && grep -q v2 "$RELOAD_SELF" && dropped \
+  && ok "S9 detached HEAD + edit on origin: dropped, swapped, exec'd" || fail "S9: exec=$(execs) notify=$(cat "$TMP/notify") log=$(cat "$TMP/log")"
+
+# S10: main has a local commit (HEAD not an ancestor of origin) + edit on origin + finish fails -> edit kept (no reload follows)
+mkrepo_m; ( echo local >> other.txt && git commit -qam local ); sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen; reload_finish_main() { echo x >> "$TMP/finish"; return 3; }; self_reload_tick
+reload_finish_main() { echo x >> "$TMP/finish"; git merge -q --no-edit "origin/${BASE_BRANCH}" >/dev/null 2>&1 || { git merge --abort >/dev/null 2>&1; return 3; }; }
+[ "$(execs)" = 0 ] && grep -q hydrogen "$RELOAD_SELF" && ! dropped \
+  && ok "S10 main with local commits (finish path) + failing finish: edit kept" || fail "S10: exec=$(execs) notify=$(cat "$TMP/notify")"
+
+# S11: whitespace-only difference vs origin (trailing space added by hand) -> kept, warned
+mkrepo_m; echo dirty >> other.txt; sed -i.bak 's/argon$/argon /' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen "" up; self_reload_tick
+[ "$(execs)" = 0 ] && grep -q 'argon $' "$RELOAD_SELF" && ! dropped \
+  && ok "S11 whitespace-only hand edit: kept" || fail "S11: exec=$(execs) notify=$(cat "$TMP/notify")"
+
+# S12: origin runner fails bash -n -> the subsumed edit is NOT dropped (no reload could follow)
+mkrepo_m; echo dirty >> other.txt; sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen 's/^a1$/if then fi(((/' up; self_reload_tick
+[ "$(execs)" = 0 ] && grep -q hydrogen "$RELOAD_SELF" && ! dropped \
+  && ok "S12 origin runner fails bash -n: edit kept" || fail "S12: exec=$(execs) notify=$(cat "$TMP/notify")"
+
+# S13: mode changed by hand (chmod -x) besides a subsumed content edit -> kept
+mkrepo_m; echo dirty >> other.txt; sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak"; chmod 644 "$REL"
+push_v2 hydrogen "" up; self_reload_tick
+[ "$(execs)" = 0 ] && grep -q hydrogen "$RELOAD_SELF" && ! dropped \
+  && ok "S13 hand mode change + subsumed edit: kept" || fail "S13: exec=$(execs) notify=$(cat "$TMP/notify")"
+
 cd "$TMP" || exit 1
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_self_reload_subsumed_edit: all passed" || { echo "❌ test_runner_self_reload_subsumed_edit: $FAILS failed"; exit 1; }
