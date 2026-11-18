@@ -211,4 +211,35 @@ done
 [ -z "$miss" ] && ok "5. held worktree: briefs check held, never remove it, add a suffixed worktree, Block only if that fails" \
   || fail "5. held-worktree guidance missing:$miss"
 
+# ── 6. (#1303 review R1-R4) the exit-3 branch must be deliverable through the REAL DevKit push hook, or end in a Block with the reason.
+#       Oracle: take the push command the build brief names, run it through block-dangerous-git.sh in a repo where another worktree holds
+#       the PR branch; the hook refuses it, so the brief must tell the lane to stop and Block (no retry/force). Review gets a detached worktree.
+b_hint="$(lane_worktree_hint build 5)"; r_hint="$(lane_worktree_hint review 5)"
+miss=""
+pcmd="$(printf '%s' "$b_hint" | grep -o 'git push origin issue-5-<slug>-2:issue-5-<slug>' | head -1 | sed 's/<slug>/x/g')"
+[ -n "$pcmd" ] || miss="$miss build:no-named-push-command"
+case "$b_hint" in *"hook refuses it"*"do not retry, force"*"Block the card with the reason"*) ;; *) miss="$miss build:no-block-when-push-refused" ;; esac
+case "$r_hint" in *"detached worktree"*"review pushes nothing"*) ;; *) miss="$miss review:no-detached-worktree" ;; esac
+case "$r_hint" in *"push origin issue-5"*) miss="$miss review:pushes" ;; esac
+for t in "$b_hint" "$r_hint"; do
+  case "$t" in *"Any other exit of held"*"do not remove it, Block"*) ;; *) miss="$miss no-unknown-held-exit-keep" ;; esac
+done
+grep -q "Any other exit of held" "$WAVE" && grep -q "review pushes nothing" "$WAVE" && grep -q "hook refuses it while the holder" "$WAVE" || miss="$miss wave:no-r1-r3-r4-text"
+if [ -n "$pcmd" ]; then
+  HOOK="$ROOT/universal-agent-devkit/hooks/block-dangerous-git.sh"
+  E="$TMP/hook"; mkdir -p "$E"
+  git init -q --bare "$E/o.git"; git init -q -b main "$E/r"
+  ( cd "$E/r" && git remote add origin ../o.git && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m a && git push -q origin main \
+    && git branch issue-5-x && git worktree add -q ../w2 -b issue-5-x-2 issue-5-x && cd ../w2 && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m new )
+  if [ -f "$HOOK" ] && [ -d "$E/w2" ]; then
+    python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","cwd":sys.argv[2],"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":sys.argv[1],"description":"d"}}))' "$pcmd" "$E/w2" > "$E/in.json"
+    ( cd "$E/w2" && CLAUDE_PROJECT_DIR="$E/w2" bash "$HOOK" < "$E/in.json" > /dev/null 2>&1 ); hrc=$?
+    [ "$hrc" -eq 2 ] || miss="$miss hook-did-not-refuse-named-push(rc=$hrc): brief premise changed"
+  else
+    miss="$miss hook-fixture-failed"
+  fi
+fi
+[ -z "$miss" ] && ok "6. held worktree: build push refused by the real hook => Block with reason, review detached, unknown held exit keeps the worktree" \
+  || fail "6. held-worktree delivery:$miss"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_lane_worktree_kit: all passed" || { echo "❌ test_lane_worktree_kit: $FAILS failed"; exit 1; }
