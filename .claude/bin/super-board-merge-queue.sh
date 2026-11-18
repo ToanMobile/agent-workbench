@@ -582,6 +582,7 @@ Next: a fresh review of the new head, then a new approved-head and the ${LABEL} 
         attempt_retry "$p" "base-moved ${bm} times in a row (origin/${BASE} keeps moving while its train verifies)"; return 0
       fi
       say "PR #${p}: base-moved (origin/${BASE} kept moving during its train, ${bm}/5); stays queued, no attempt counted"; return 0 ;;
+    gate-exit-69) say "PR #${p}: GitHub rate limit (gate-exit-69); label kept, no attempt counted"; return 0 ;;   # #1311
     deferred|timeout|gate-exit-4|*) attempt_retry "$p" "$res"; return 0 ;;
   esac
   if [ "$ok" -ne 0 ]; then
@@ -638,6 +639,9 @@ collect() {
       attempt_retry "$n" "train died without a result" </dev/null
     elif [ "$trc" -eq 79 ]; then
       say "PR #${n}: train exit 79 (GitHub reads halted); nothing routed, label kept"; HALT_RC=79
+    elif [ "$trc" -eq 69 ]; then
+      # #1311: GitHub rate limit sau backoff: tạm thời. Không route, không tính lần thử, không Blocked; nhãn giữ, lượt sau thử lại.
+      say "PR #${n}: train exit 69 (GitHub rate limit); nothing routed, no attempt counted, label kept"
     elif ! grep -q '^train-result: ' "$TOUT" 2>/dev/null; then
       if [ "$trc" -eq 4 ]; then say "PR #${n}: train exit 4 (another train holds this PR); nothing ran, no attempt counted"
       else

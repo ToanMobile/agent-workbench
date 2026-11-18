@@ -223,7 +223,7 @@ for i in "${!LIST[@]}"; do
     # Qua preflight = exit 0 + dòng `preflight: ok`. Exit 0 không có dòng đó = gate thấy PR đã MERGED: rời chuỗi, kết quả `merged`.
     0) if grep -q '^preflight: ok' "$GATE_OUT"; then PF_LIST+=("$p"); PF_REFS+=("${REFS[$i]}"); PF_HEADS+=("${HEADS[$i]}")
        else say "PR #${p} is already merged (preflight exit 0 without 'preflight: ok')"; PREMERGED+=("$p"); fi ;;
-    79|9) echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;
+    79|9|69) echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;   # 69 (#1311): GitHub rate limit sau backoff = tạm thời, không phải PR hỏng
     *) BLOCKED+=("$p:$GRC"); say "PR #${p} fails the gate preflight (exit ${GRC}); it leaves the batch before any tree is built"
        [ "$DRYRC" -ne 0 ] || DRYRC=$GRC ;;
   esac
@@ -620,7 +620,7 @@ prove() {
       fi
       case "$GRC" in
         0) NEWGOOD+=("$p") ;;
-        79|9) early_results; echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;
+        79|9|69) early_results; echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;
         # Base dời giữa dry run: chứng minh lại PR đã qua dry run + PR chưa tới lượt; PR vừa bị chặn ở lượt này (BLOCKED) KHÔNG vào lại
         # (OCR #676: không merge PR đã bị chặn, không in hai kết quả cho một PR).
         12) say "origin/${BASE} moved during the dry run of PR #${p}"; note_unproven
@@ -666,7 +666,7 @@ while [ "${#TODO[@]}" -gt 0 ]; do
       case "$GRC" in
         0)     MERGED_OK+=("$p"); echo "train-result: $p merged"; for t in ${FLAKY[@]+"${FLAKY[@]}"}; do note_flaky "$p" "$t"; done
                for t in ${GUARD_FLAKY[@]+"${GUARD_FLAKY[@]}"}; do note_guard_flaky "$p" "$t"; done ;;
-        79|9)  early_results; echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;   # R7: halt / readiness của gate đi thẳng tới caller
+        79|9|69)  early_results; echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;   # R7: halt / readiness của gate đi thẳng tới caller
         11)    echo "train-result: $p red"; echo "train-red: $p"; GATERED+=("$p")   # R7: verify riêng của gate đỏ = PR về Build, có dòng train-red
                detail_tail "$p" "$GATE_ERR" ;;   # gate in đuôi log verify đỏ ra stderr
         12)    TODO=("${GOOD[@]:$i}"); say "origin/${BASE} moved before PR #${p} merged"; break ;;

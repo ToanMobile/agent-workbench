@@ -195,7 +195,7 @@ items_once() {  # whole board, gh item-list shape, ~1 point per 100 cards
               ... on PullRequest { number title url repository{ nameWithOwner } labels(first:30){ nodes{ name } } }
               ... on DraftIssue { title } } } } } } } }' \
       -F owner="$OWNER" -F number="$NUMBER") || return $?
-  echo "$pages" | no_errors || { echo "board read returned errors" >&2; return 69; }
+  echo "$pages" | no_errors || { echo "board read returned errors" >&2; return 170; }
   echo "$pages" | jq -e '
     [ .[].data.repositoryOwner.projectV2.items ] as $p
     | ($p[0].totalCount) as $total
@@ -212,7 +212,7 @@ items_once() {  # whole board, gh item-list shape, ~1 point per 100 cards
     | if ($items | length) == ([ $p[].nodes[] ] | length) and ([ $p[].nodes[] ] | length) == $total
       then { items: $items, totalCount: $total }
       else error("board read incomplete: \([ $p[].nodes[] ] | length) of \($total) items") end' \
-    || { echo "board read incomplete" >&2; return 69; }
+    || { echo "board read incomplete" >&2; return 170; }
 }
 
 # The board can change between two pages (a card added or moved while paginating), so the item count
@@ -221,7 +221,9 @@ items_once() {  # whole board, gh item-list shape, ~1 point per 100 cards
 items() {
   local rc=0
   items_once && return 0 || rc=$?
-  [ "$rc" -eq 69 ] || return "$rc"
+  # #1311: items_once uses 170 for "board read incomplete" (the only case worth a re-read); 69 from github-read is a rate limit that
+  # already backed off, so it goes straight to the caller instead of multiplying the backoff.
+  [ "$rc" -eq 170 ] || return "$rc"
   echo "board read incomplete; re-reading once (board changed between pages?)" >&2
   local s="${SB_CARD_RETRY_SLEEP:-2}"
   case "$s" in ''|*[!0-9]*|????*) s=2 ;; esac    # giá trị lạ/quá dài không được làm `sleep` lỗi và đổi mã thoát khỏi 69
@@ -229,7 +231,7 @@ items() {
   [ "$s" -eq 0 ] || s=$(( s + RANDOM % (s + 1) ))  # jitter: nhiều board/worker không đọc lại cùng lúc
   [ "$s" -le 30 ] || s=30                         # trần (sau jitter): một lần đọc lại không chặn board quá 30s
   sleep "$s"
-  items_once
+  items_once || { rc=$?; [ "$rc" -ne 170 ] || rc=69; return "$rc"; }
 }
 
 # 07/11: Board #1 chứa thẻ #91 của repo khác; runner đọc theo số trong repo mình, trúng PR #91 và dừng rc=79.
