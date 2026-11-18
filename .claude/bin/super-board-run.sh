@@ -2342,12 +2342,32 @@ sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") e
   return 1
 }
 
+builder_reported_since() {
+  # $1 = issue, $2 = ISO time (UTC, `date -u +%FT%TZ`). 0 when the issue's newest comment is a `[builder]` one created at/after $2.
+  # Any GitHub failure or empty input = 1 (the caller then keeps its ledger).
+  local n meta
+  [ -n "${2:-}" ] || return 1
+  n=$(issue_comment_count "$1")
+  [ "${n:-0}" -gt 0 ] || return 1
+  meta=$(python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1/comments?per_page=1&page=$n" --jq '.[0] | .created_at + " " + (.body | .[0:9])' 2>/dev/null) || return 1
+  case "$meta" in *" [builder]") ;; *) return 1 ;; esac
+  [ "${meta%% *}" \> "$2" ] || [ "${meta%% *}" = "$2" ]
+}
+
 note_worker_exit() {
   # $1 = issue; the lock just read (LANE) is the worker that died. Logs its exit record and, unless it exited 0, comments on the card.
   # No record = the wrapper itself was killed (SIGKILL, host asleep) or the worker predates the wrapper.
   local line role
   line=$(worker_exit_line "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}")
   log "worker of #${1} (lane ${LANE:-?}) exit record: ${line:-none — wrapper killed or host asleep}"
+  # #1266: a build worker that ended clean proves the earlier deaths are fixed; drop the card's reclaim ledger so the next
+  # crash starts from zero instead of re-blocking at once (SB_RECLAIM_MAX counts deaths since the last clean run).
+  # Only when it also left a builder report after its dispatch: a clean exit that wrote nothing is a no-op, and the ledger is the only
+  # cap on build no-ops (see the #137 note below), so it must survive that.
+  if [ "${LANE:-}" = build ] && worker_ended_clean "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}" \
+     && builder_reported_since "$1" "$(grep '^=== dispatch ' "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}" 2>/dev/null | tail -1 | sed 's/.* at \(.*\) ===.*/\1/')"; then
+    rm -f "$INFLIGHT_DIR/reclaims/$1" 2>/dev/null || true
+  fi
   # exit=0: finished; exit=143: stopped by the runner itself (super-board stop sends TERM), not a death worth a card comment.
   case "$line" in *"exit=0 "*|*"exit=143 "*) return 0 ;; esac
   case "${LANE:-}" in qa) role=qa ;; review) role=reviewer ;; *) role=builder ;; esac

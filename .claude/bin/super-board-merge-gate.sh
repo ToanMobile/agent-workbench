@@ -894,6 +894,8 @@ wait_for_holder
 # chỉ đọc lại khi BASE_NOW khác nó: base không dời thì câu trả lời của GitHub vẫn là cho đúng base đó.
 MG_BASE=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}" 2>/dev/null || true)
 mergeable_read
+# #1021: UNKNOWN (GitHub still computing) is no answer for any base: leave MG_BASE empty so the in-lock read happens even if the base never moves.
+case "$MERGEABLE" in MERGEABLE|CONFLICTING) ;; *) MG_BASE="" ;; esac
 AUTOSYNC=0
 if [ "$MERGEABLE" = CONFLICTING ]; then
   if sync_candidate; then
@@ -1198,7 +1200,7 @@ autosync_push() {
   # ponytail: CI is read right after the push and a tree receipt can skip verify, so Y may be merged before GitHub registers its check
   # suite; required checks of branch protection still hold. Upgrade: after a sync, wait (bounded) for Y's check list to be non-empty.
   # GitHub answered for exactly this base: the in-lock mergeable read is only needed if the base moves again.
-  MG_BASE=$BASE_SHA
+  case "$MERGEABLE" in MERGEABLE) MG_BASE=$BASE_SHA ;; *) MG_BASE="" ;; esac   # #1021: only a real answer pins the base
   say "GitHub mergeable after the sync push: ${MERGEABLE:-unreadable}; head ${HEAD_SHA:0:12}"
 }
 if [ "$AUTOSYNC" -eq 1 ]; then
@@ -1939,16 +1941,30 @@ ci_read() {
   local out err try
   err=$(mktemp)
   for try in 1 2 3; do
-    out=$(cd "$REPO_ABS" && gh pr checks "$PR" ${REPO:+--repo "$REPO"} --json name,state,bucket 2>"$err") || true
+    out=$(cd "$REPO_ABS" && gh pr checks "$PR" ${REPO:+--repo "$REPO"} --json name,state,bucket,link 2>"$err") || true
     if printf '%s' "$out" | jq -e 'type == "array" and all(.[]; type == "object")' >/dev/null 2>&1; then CI_JSON=$out; rm -f "$err"; return 0
     elif grep -qi 'no checks reported' "$err"; then CI_JSON='[]'; rm -f "$err"; return 0; fi
     [ "$try" -eq 3 ] || sleep $(( ${SB_GITHUB_RETRY_DELAY:-2} * try ))
   done
   rm -f "$err"; return 1
 }
-# Đỏ = mọi bucket ngoài pass / skipping / pending (fail, cancel, rỗng, lạ): fail-closed.
-ci_failed() { printf '%s' "$CI_JSON" | jq -r '.[] | select((.bucket // "") as $b | ["pass", "skipping", "pending"] | index($b) | not) | "ci-check: \(.name // "?") — \((.state // "") as $s | if $s != "" then $s elif (.bucket // "") != "" then .bucket else "unknown" end)"'; }
-ci_pending() { printf '%s' "$CI_JSON" | jq '[.[] | select(.bucket == "pending")] | length'; }
+# Đỏ = mọi bucket ngoài pass / skipping / pending / cancel (fail, rỗng, lạ): fail-closed.
+# #1021: cancel = GitHub huỷ lượt chạy (concurrency cancel-in-progress, runner mất), không phải phán quyết về code: coi là pending,
+# ci_rerun_cancelled chạy lại một lần; huỷ mãi thì hết AUTO_WAIT_S ⇒ exit 4 (wave sau thử lại), không exit 11 (không rebuild).
+ci_failed() { printf '%s' "$CI_JSON" | jq -r '.[] | select((.bucket // "") as $b | ["pass", "skipping", "pending", "cancel"] | index($b) | not) | "ci-check: \(.name // "?") — \((.state // "") as $s | if $s != "" then $s elif (.bucket // "") != "" then .bucket else "unknown" end)"'; }
+ci_pending() { printf '%s' "$CI_JSON" | jq '[.[] | select(.bucket == "pending" or .bucket == "cancel")] | length'; }
+CI_RERUN_DONE=0
+# ci_rerun_cancelled: một lần mỗi lượt gate thật, `gh run rerun <id>` cho mỗi check bucket=cancel (id lấy từ link .../actions/runs/<id>/).
+# Lỗi rerun chỉ được ghi lại: check vẫn cancel ⇒ chờ tới AUTO_WAIT_S rồi exit 4.
+ci_rerun_cancelled() {
+  local id
+  [ "$CI_RERUN_DONE" -eq 0 ] && [ "$DRY" -ne 1 ] || return 0
+  CI_RERUN_DONE=1
+  for id in $(printf '%s' "$CI_JSON" | jq -r '.[] | select(.bucket == "cancel") | (.link // "") | capture("/actions/runs/(?<id>[0-9]+)").id' 2>/dev/null | sort -u); do
+    if (cd "$REPO_ABS" && gh run rerun "$id" ${REPO:+--repo "$REPO"} >/dev/null 2>&1); then say "CI run ${id} was cancelled (no verdict on the code); re-ran it once"
+    else say "CI run ${id} was cancelled and could not be re-run; waiting for it anyway"; fi
+  done
+}
 # ci_pr_recheck: đọc lại PR như khối sau merge lỗi ở cuối file: MERGED → 0, không còn OPEN → 3, head đổi (push mới lúc chờ) → 6.
 ci_pr_recheck() {
   local now_sha
@@ -1971,7 +1987,27 @@ ci_precheck() {
     say "failing CI check(s) on ${HEAD_SHA:0:12}: never merged with a red check — back to Build"
     exit 11
   fi
+  ci_rerun_cancelled
   ci_pr_recheck   # #890: push rơi giữa lần đọc PR và lần đọc checks (gh pr checks theo số PR, không ghim sha) ⇒ xanh của head cũ; đọc PR lại SAU checks
+}
+# #1021: sau autosync_push trong khoá, check suite của head mới Y thường chưa đăng ký: ci_precheck đọc [] rồi merge. Head cũ có check (prior > 0)
+# ⇒ chờ có hạn (SB_MERGE_SYNC_CI_WAIT_S, mặc định 120 s) tới khi danh sách check của Y khác rỗng; hết hạn ⇒ như CI pending: exit 4, lượt sau thử lại.
+SYNC_CI_WAIT_S=${SB_MERGE_SYNC_CI_WAIT_S:-120}; case "$SYNC_CI_WAIT_S" in ''|*[!0-9]*) SYNC_CI_WAIT_S=120;; esac
+wait_checks_registered() {
+  local start said=0
+  [ "${1:-0}" -gt 0 ] 2>/dev/null || return 0
+  start=$(date +%s)
+  while :; do
+    ci_pr_recheck
+    if ci_read && [ "$(printf '%s' "$CI_JSON" | jq 'length')" -gt 0 ]; then return 0; fi
+    if [ $(( $(date +%s) - start )) -ge "$SYNC_CI_WAIT_S" ]; then
+      say "no CI check registered on the synced head ${HEAD_SHA:0:12} after ${SYNC_CI_WAIT_S}s (the old head had ${1}); not merging — the next wave retries"
+      exit 4
+    fi
+    [ "$said" -eq 1 ] || { say "waiting (at most ${SYNC_CI_WAIT_S}s) for CI checks to register on the synced head ${HEAD_SHA:0:12}"; said=1; }
+    [ "$LOCK_HELD" -eq 0 ] || own_lock_or_stop
+    sleep "$AUTO_POLL_S"
+  done
 }
 # wait_ci_settled: lượt thật chờ hết pending; đang giữ khoá thì own_lock_or_stop làm mới mốc mỗi vòng (ngoài khoá — PR3 — không đụng
 # khoá). Mỗi vòng đọc lại PR TRƯỚC khi đọc CI: push mới trong lúc ngủ → exit 6, không rơi xuống migration.
@@ -2036,7 +2072,8 @@ while :; do
         conflicting_exit
       fi
     fi
-    MG_BASE=$BASE_NOW
+    # #1021 R1: UNKNOWN (GitHub still computing) is no answer for BASE_NOW: leave MG_BASE empty so the next lap (CI pending continue) re-reads.
+    case "$MERGEABLE" in MERGEABLE|CONFLICTING) MG_BASE=$BASE_NOW ;; *) MG_BASE="" ;; esac
   fi
   if [ "$BASE_NOW" != "$BASE_SHA" ]; then
     old_base=$BASE_SHA
@@ -2066,7 +2103,9 @@ while :; do
   # #1012: đồng bộ nhánh PR trong khoá, sau khối base-dời ở trên (verify đỏ thoát 11 trong verify_scratch, trước dòng này). Tới đây thì
   # BASE_NOW = BASE_SHA và SCRATCH = merge(HEAD_SHA, BASE_SHA); autosync_push kiểm lại đúng hai cha đó trước khi đẩy.
   if [ "$AUTOSYNC" -eq 1 ]; then
+    prior_checks=$(printf '%s' "$CI_JSON" | jq 'length' 2>/dev/null || echo 0)
     autosync_push
+    [ "$DRY" -eq 1 ] || wait_checks_registered "$prior_checks"
   fi
   # CI một lần trong khoá (--dry-run: đã đọc trước khoá, không merge nên không đọc lại). Còn pending (check chạy lại): nhả khoá, chờ
   # ngoài khoá, quay lại đầu khối (đọc lại head/base); chế độ bi quan / test bị sửa chờ trong khoá như trước.
