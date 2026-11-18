@@ -645,6 +645,40 @@ def backlog_target(cfg):
     print(f"   ⚠️  Dùng ID cột Backlog dự phòng trong registry ({why}).", file=sys.stderr)
     return fallback
 
+def ensure_on_board(issue_url, repo=None):
+    """Issue không nằm trên board nào ⇒ thêm vào Project, cột Backlog (như thẻ mới); đã có trên board ⇒ để yên (không kéo về Backlog).
+    gate_full dùng lại thẻ đỏ còn mở (#1287): thẻ ngoài board thì comment không tới lane nào. Trả 0 khi xong, khác 0 khi gh lỗi."""
+    res = run_cmd(["gh", "issue", "view", issue_url, "--json", "projectItems"], check=False)
+    try:
+        items = json.loads(res.stdout).get("projectItems") if res.returncode == 0 else None
+    except (ValueError, AttributeError):
+        items = None
+    if items is None:
+        print(f"   ❌ Không đọc được board của {issue_url} (gh issue view thoát {res.returncode}).", file=sys.stderr)
+        return 1
+    if items:
+        print(f"   ✅ {issue_url} đã nằm trên board, giữ nguyên cột.")
+        return 0
+    cfg = resolve_project_config(repo or detect_repo())
+    project_id = cfg.get("project_id", "") or project_node_id(cfg["number"])
+    res_add = run_cmd(["gh", "project", "item-add", str(cfg["number"]), "--owner", PROJECT_OWNER, "--url", issue_url,
+                       "--format", "json"], check=False)
+    try:
+        item_id = json.loads(res_add.stdout).get("id") if res_add.returncode == 0 else None
+    except (ValueError, AttributeError):
+        item_id = None
+    if not item_id:
+        print(f"   ❌ gh project item-add {issue_url} thoát {res_add.returncode}, không có id.", file=sys.stderr)
+        return 1
+    field_id, option_id = backlog_target(cfg)
+    res_edit = run_cmd(["gh", "project", "item-edit", "--id", item_id, "--project-id", project_id, "--field-id", field_id,
+                        "--single-select-option-id", option_id], check=False)
+    if res_edit.returncode != 0:
+        print(f"   ❌ Đã thêm {issue_url} vào board nhưng chưa gán cột Backlog (exit {res_edit.returncode}).", file=sys.stderr)
+        return 1
+    print(f"   🎉 {issue_url} đã vào Backlog của Project #{cfg['number']}.")
+    return 0
+
 def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_you=None, needs_you_next=NEEDS_YOU_NEXT,
                     extra_labels=()):
     repo = repo or detect_repo()
@@ -768,7 +802,11 @@ def main():
     parser.add_argument("--no-needs-you", action="store_true", help="Không tự đánh dấu cần người dù AC khớp cụm từ")
     parser.add_argument("--new-card", metavar="LÝ DO",
                         help="Mở thẻ riêng thay vì nhập vào thẻ Backlog đang có (bắt buộc nêu lý do: việc độc lập, cần PR riêng…)")
+    parser.add_argument("--ensure-on-board", metavar="ISSUE_URL",
+                        help="Issue có sẵn: chưa nằm trên board nào thì đưa vào cột Backlog, đã có thì để yên (gate_full, #1287)")
     args = parser.parse_args()
+    if args.ensure_on_board:
+        sys.exit(ensure_on_board(args.ensure_on_board, args.repo))
     if args.new_card is not None and not args.new_card.strip():
         print("❌ --new-card cần lý do (vì sao việc này không nhập vào thẻ Backlog đang có).", file=sys.stderr)
         sys.exit(64)
