@@ -237,11 +237,15 @@ REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*(✅|❌)\s*(merg
 APPROVED_JQ = Path(__file__).with_name("super-board-approved-head.jq")
 
 
-def review_only_item(parts, text, acs):
-    """#1298: mục Not done MỘT dòng, mở đầu `AC<n> [phần] review độc lập`, chỉ nêu đúng một mã AC và không trích nguyên văn AC nào."""
-    if len(parts) != 1 or len(text) > 160 or not REVIEW_ONLY.fullmatch(text):
+def review_only_item(parts, text, acs, body=""):
+    """#1298: mục Not done MỘT dòng, cả dòng khớp dạng chuẩn `AC<n> [phần] review độc lập…`, không trích nguyên văn AC nào, VÀ mục AC<n> trong thân
+    PR tự nói là việc của reviewer (review / không phải tác giả): QA không gọi AC code là "review độc lập" để qua cổng."""
+    if len(parts) != 1 or len(text) > 160 or not REVIEW_ONLY.fullmatch(text) or any(a in text.lower() for a in acs):
         return False
-    return len({re.sub(r"\D", "", a) for a in AC_ID.findall(text)}) == 1 and not any(a in text.lower() for a in acs)
+    n = re.sub(r"\D", "", AC_ID.search(text).group(0))
+    return any(AC_ID.search(m.group(2)) and re.sub(r"\D", "", AC_ID.search(m.group(2)).group(0)) == n
+               and re.search(r"review|không\s+phải\s+tác\s+giả", m.group(2), re.I)
+               for m in (AC_ITEM.match(l) for l in (body or "").splitlines()) if m)
 
 
 def review_proved(comments, qa_at, pr_author, head):
@@ -252,7 +256,8 @@ def review_proved(comments, qa_at, pr_author, head):
     after = [c for c in (comments or [])[qa_at + 1:] if isinstance(c, dict) and isinstance(c.get("body"), str)]
     verdict = None
     for c in after:
-        # chỉ OWNER/MEMBER/COLLABORATOR: tác giả PR (builder) không tự viết phán quyết reviewer, kể cả khi authorAssociation là NONE
+        # chỉ OWNER/MEMBER/COLLABORATOR (tác giả PR có authorAssociation NONE không tính). Không loại theo login tác giả: builder và reviewer
+        # thường dùng chung một tài khoản; độc lập reviewer ≠ builder dựa vào `approved-by` (jq) + biên bản audit do merge queue đối chiếu.
         if c.get("authorAssociation") in TRUSTED_ASSOC:
             for line in visible_lines(c["body"]):
                 m = REVIEWER_REPORT.match(line)
@@ -262,11 +267,17 @@ def review_proved(comments, qa_at, pr_author, head):
     if not verdict:
         return False
     try:
-        out = subprocess.run(["jq", "-r", "-f", str(APPROVED_JQ)], input=json.dumps({"comments": after}), capture_output=True,
-                             text=True, timeout=20).stdout.split("\t")
+        res = subprocess.run(["jq", "-r", "-f", str(APPROVED_JQ)], input=json.dumps({"comments": after}), capture_output=True,
+                             text=True, timeout=20)
+        if res.returncode != 0:
+            print(f"qa-report: jq approved-head thoát {res.returncode}; không gỡ mục review-only", file=sys.stderr)
+            return False
+        out = res.stdout.split("\t")
     except (OSError, subprocess.SubprocessError):
         return False
-    # approved-by (task audit) bắt buộc: approved-head trần của OWNER (`owner`) không đủ để gỡ mục Not done của QA.
+    # approved-by bắt buộc (nguồn `task:`): approved-head trần của OWNER (`owner`) không đủ để gỡ mục Not done của QA.
+    # ponytail: chỉ kiểm DẠNG approved-by (jq); task_id ↔ biên bản audit antigravity-pm do merge queue đối chiếu trước khi gọi gate
+    # (super-board-audit-check.py), checker này giữ thuần, không đọc state ngoài repo. Nâng khi gate gọi checker mà không qua queue.
     return len(out) >= 3 and out[0].strip() == "ok" and out[1].strip() == head and out[2].strip().startswith("task:")
 
 
@@ -302,7 +313,7 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None,
         if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
             # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.
             if (not decided or _DEC.is_stop(text)) and not (
-                    not _DEC.is_stop(text) and review_only_item(parts, text, acs) and review_proved(comments, latest_at, pr_author, head)):
+                    not _DEC.is_stop(text) and review_only_item(parts, text, acs, body) and review_proved(comments, latest_at, pr_author, head)):
                 items.append(text)
     return items
 

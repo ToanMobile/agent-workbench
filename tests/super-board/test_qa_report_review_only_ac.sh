@@ -56,14 +56,17 @@ BARE=1 mk "$TMP/b7.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok;           expect "$(
 
 mk "$TMP/c4.json" "AC1 pass" "AC4 review độc lập, nhưng code crash NPE khi mở file" "$MR" "$HEAD" ok; expect "$(run "$TMP/c4.json")" 1 "C4: đuôi mô tả lỗi code vẫn chặn"
 mk "$TMP/c5.json" "AC1 pass" "AC4 review độc lập (không phải tác giả; crash NPE)" "$MR" "$HEAD" ok;   expect "$(run "$TMP/c5.json")" 1 "C5: ngoặc kèm mô tả lỗi vẫn chặn"
-mk "$TMP/c6.json" "AC1 pass" "AC1 phần review độc lập; AC1 test cổng OCR còn đỏ, crash NPE" "$MR" "$HEAD" ok; expect "$(run "$TMP/c6.json")" 1 "C6: cùng mã AC lặp lại trong mục vẫn chặn"
+mk "$TMP/c6.json" "AC1 pass" "AC1 phần review độc lập; AC1 test cổng OCR còn đỏ, crash NPE" "$MR" "$HEAD" ok; expect "$(run "$TMP/c6.json")" 1 "C6: đuôi chữ sau dạng chuẩn (cùng mã AC lặp lại) vẫn chặn"
 # F4: tác giả PR / người ngoài không thu hồi được ❌ của reviewer, không tự tạo ✅
 EXTRA="NONE|bot|[reviewer] [report] ✅ merge-ready · head ${HEAD:0:8}" mk "$TMP/e1.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok
-expect "$(run "$TMP/e1.json")" 1 "E1: tác giả PR (NONE) ghi ✅ sau reviewer ❌ vẫn chặn"
+expect "$(run "$TMP/e1.json")" 1 "E1: comment authorAssociation NONE ghi ✅ sau reviewer ❌ vẫn chặn"
 EXTRA="NONE|rando|[reviewer] [report] ✅ merge-ready · head ${HEAD:0:8}" mk "$TMP/e2.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok
 expect "$(run "$TMP/e2.json")" 1 "E2: người ngoài ghi ✅ vẫn chặn"
 EXTRA='NONE|rando|```\n[reviewer] [report] ✅ merge-ready · head 314e9489\n```' mk "$TMP/e3.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok
 expect "$(run "$TMP/e3.json")" 1 "E3: dòng reviewer trong khối code không tính"
+mk "$TMP/c7.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok; expect "$(run "$TMP/c7.json")" 1 "C7: AC code (thân PR không nói review) gọi là review độc lập vẫn chặn"
+mk "$TMP/c8.json" "AC1 pass" "AC4 review độc lập
+  - chuyển lane Review" "$MR" "$HEAD" ok; expect "$(run "$TMP/c8.json")" 1 "C8: mục nhiều dòng (nối lại khớp dạng chuẩn) vẫn chặn"
 mk "$TMP/c1.json" "AC4 pass" "AC1 test cổng OCR còn đỏ" "$MR" "$HEAD" ok;  expect "$(run "$TMP/c1.json")" 1 "C1: AC code ở Not done vẫn chặn"
 mk "$TMP/c2.json" "AC1 pass" "AC4 phần review độc lập; AC1 test còn đỏ" "$MR" "$HEAD" ok; expect "$(run "$TMP/c2.json")" 1 "C2: mục trộn AC khác vẫn chặn"
 mk "$TMP/c3.json" "AC1 pass" "AC4 phần review độc lập
