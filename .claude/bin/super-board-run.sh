@@ -2362,6 +2362,35 @@ sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") e
   return 1
 }
 
+# #1316: text of the last result record of the latest dispatch in a worker log (the worker's final words); empty when none.
+worker_result_text() {
+  python3 -c 'import json, sys
+res = ""
+with open(sys.argv[1], errors="replace") as fh:
+    for l in fh:
+        if l.startswith("=== dispatch "):
+            res = ""
+        elif l.startswith("{"):
+            try:
+                r = json.loads(l)
+            except ValueError:
+                continue
+            if r.get("type") == "result" and isinstance(r.get("result"), str):
+                res = r["result"]
+print(res[-2000:])' "$1" 2>/dev/null || true
+}
+
+# #1316: 0 when a clean-ended review worker's final words conclude "not approved" (a bounce it forgot to route).
+review_concluded_bounce() {
+  worker_ended_clean "$1" && worker_result_text "$1" | grep -qiE 'not approved|not merge-ready|không duyệt|chưa duyệt'
+}
+
+# #1316: 0 when a Review card legitimately stays in Review: PR queued (merge-queue + approved-head) or the newest `[reviewer]` comment ends with `blocked-by:` (any value, `-` = a person).
+review_holds_in_review() { # $1 issue, $2 comment count
+  { merge_queue_on && review_approved_head "$1" merge-queue >/dev/null; } && return 0
+  issue_last_comment "$1" "$2" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{exit !(r && l ~ /^blocked-by:/)}'
+}
+
 builder_reported_since() {
   # $1 = issue, $2 = ISO time (UTC, `date -u +%FT%TZ`). 0 when the issue's newest comment is a `[builder]` one created at/after $2.
   # Any GitHub failure or empty input = 1 (the caller then keeps its ledger).
@@ -2549,6 +2578,20 @@ EOF
     count=$(issue_comment_count "$issue")
     [ -n "$count" ] || continue   # GitHub cannot say: conclude nothing
     stall_why=""
+    # #1316: a review worker that ended clean concluding "not approved" but never moved the card is a bounce it forgot to route (also when it
+    # commented): the builder only takes Ready/Building cards, so move it to Ready, not the review-stall ledger or Blocked ❓. A queued PR or a
+    # `[reviewer] … blocked-by:` wait stays in Review; a clean exit with no such conclusion stays a no-op.
+    if [ "$lane" = review ] && [ "$col" = Review ] && [ "$col" = "$from" ] && review_concluded_bounce "$wlog" && ! review_holds_in_review "$issue" "$count"; then
+      item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
+      if [ -n "$item_id" ] && set_card_status "$item_id" "Ready"; then
+        NOOP_MOVED=1
+        rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true
+        [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        gh_checkpoint
+        log "↩ #${issue} Review → Ready: review worker concluded not approved without moving the card (bounce routed by the runner)"
+        continue
+      fi
+    fi
     if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
       rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # it moved the card or wrote something: progress
       [ "$col" = "$from" ] || rm -f "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true   # the card moved: stall ledger starts over
