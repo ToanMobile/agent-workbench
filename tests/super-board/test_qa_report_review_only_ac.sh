@@ -3,7 +3,7 @@
 # (exit 11, qa-report) dù reviewer đã duyệt, thẻ chạm rebuild_cap và bị Blocked. Sửa checker TỐI THIỂU, không đọc chữ tự do.
 #  A  dạng #1292 (một dòng, mở đầu `AC4 phần review độc lập`) + [reviewer] ✅ merge-ready đúng head + approved-head 40 ký tự hợp lệ, cả hai mới hơn QA -> exit 0.
 #  B  vẫn exit 1: thiếu approved-head · reviewer ở head khác · reviewer ❌ mới nhất · thiếu --head · approved-head cũ hơn QA · approved-head sai head.
-#  C  vẫn exit 1: AC code ở Not done · mục trộn AC review-only với AC khác · mục review-only nhiều dòng.
+#  C  vẫn exit 1: AC code ở Not done · mục trộn AC khác · mục nhiều dòng · đuôi mô tả lỗi code (fullmatch) · approved-head trần không approved-by.
 #  D  QA ghi AC review-only ở ✅ Done + Next: reviewer -> exit 0; writing-standard, run.md, super-qa SKILL ghim luật.
 set -u
 export LC_ALL=C LANG=C
@@ -26,7 +26,8 @@ c = lambda t: {"author": {"login": "bot"}, "authorAssociation": "OWNER", "body":
 ab = '{"reviewer":"antigravity","builder":"b","task_id":"T0005-audit","gate_receipt":"r"}'
 qa = "[qa] [report] ✅ QA v4 @ d0093822\nDid: test\n✅ Done: " + done + "\n" + (("❌ Not done: " + nd + "\n") if nd else "") + "Next: reviewer\n"
 r = c("[reviewer] [report] " + rev)
-a = c("approved-head:%s\napproved-by: %s" % (appr, ab)) if appr != "none" else None
+import os
+a = (c("approved-head:%s" % appr) if os.environ.get("BARE") else c("approved-head:%s\napproved-by: %s" % (appr, ab))) if appr != "none" else None
 cm = [c(qa)]
 if order == "approved-first" and a: cm = [a] + cm + [r]
 else: cm += [r] + ([a] if a else [])
@@ -48,6 +49,10 @@ expect "$(python3 "$QA" --meta "$TMP/a.json" >"$TMP/out" 2>&1; echo $?)" 1 "B4: 
 mk "$TMP/b5.json" "AC1 pass" "$RO" "$MR" "$HEAD" approved-first;     expect "$(run "$TMP/b5.json")" 1 "B5: approved-head cũ hơn QA vẫn chặn"
 mk "$TMP/b6.json" "AC1 pass" "$RO" "$MR" "$OTHER" ok;                expect "$(run "$TMP/b6.json")" 1 "B6: approved-head sai head vẫn chặn"
 
+BARE=1 mk "$TMP/b7.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok;           expect "$(run "$TMP/b7.json")" 1 "B7: approved-head trần (không approved-by) vẫn chặn"
+
+mk "$TMP/c4.json" "AC1 pass" "AC4 review độc lập, nhưng code crash NPE khi mở file" "$MR" "$HEAD" ok; expect "$(run "$TMP/c4.json")" 1 "C4: đuôi mô tả lỗi code vẫn chặn"
+mk "$TMP/c5.json" "AC1 pass" "AC4 review độc lập (không phải tác giả; crash NPE)" "$MR" "$HEAD" ok;   expect "$(run "$TMP/c5.json")" 1 "C5: ngoặc kèm mô tả lỗi vẫn chặn"
 mk "$TMP/c1.json" "AC4 pass" "AC1 test cổng OCR còn đỏ" "$MR" "$HEAD" ok;  expect "$(run "$TMP/c1.json")" 1 "C1: AC code ở Not done vẫn chặn"
 mk "$TMP/c2.json" "AC1 pass" "AC4 phần review độc lập; AC1 test còn đỏ" "$MR" "$HEAD" ok; expect "$(run "$TMP/c2.json")" 1 "C2: mục trộn AC khác vẫn chặn"
 mk "$TMP/c3.json" "AC1 pass" "AC4 phần review độc lập

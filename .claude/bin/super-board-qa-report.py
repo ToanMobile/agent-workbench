@@ -230,14 +230,16 @@ def _when(comment):
     return t if t.tzinfo else None
 
 
-REVIEW_ONLY = re.compile(r"^AC\s*-?\s*#?\d+(?:\s+phần)?\s+review\s+độc\s+lập\b", re.I)
+# #1298: cả dòng phải khớp (fullmatch): đuôi chỉ được là `(không phải tác giả)` và/hoặc `— chuyển lane Review`, mọi chữ khác (mô tả lỗi code) = vẫn chặn.
+REVIEW_ONLY = re.compile(r"AC\s*-?\s*#?\d+(?:\s+phần)?\s+review\s+độc\s+lập(?:\s*\(\s*không\s+phải\s+tác\s+giả\s*\))?"
+                         r"(?:\s*[—–-]+\s*chuyển\s+lane\s+Review)?\s*\.?", re.I)
 REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*(✅|❌)\s*(merge-ready)?(.*)$", re.I)
 APPROVED_JQ = Path(__file__).with_name("super-board-approved-head.jq")
 
 
 def review_only_item(parts, text, acs):
     """#1298: mục Not done MỘT dòng, mở đầu `AC<n> [phần] review độc lập`, chỉ nêu đúng một mã AC và không trích nguyên văn AC nào."""
-    if len(parts) != 1 or len(text) > 160 or not REVIEW_ONLY.match(text):
+    if len(parts) != 1 or len(text) > 160 or not REVIEW_ONLY.fullmatch(text):
         return False
     return len({re.sub(r"\D", "", a) for a in AC_ID.findall(text)}) == 1 and not any(a in text.lower() for a in acs)
 
@@ -263,7 +265,8 @@ def review_proved(comments, qa_at, pr_author, head):
                              text=True, timeout=20).stdout.split("\t")
     except (OSError, subprocess.SubprocessError):
         return False
-    return len(out) >= 2 and out[0].strip() == "ok" and out[1].strip() == head
+    # approved-by (task audit) bắt buộc: approved-head trần của OWNER (`owner`) không đủ để gỡ mục Not done của QA.
+    return len(out) >= 3 and out[0].strip() == "ok" and out[1].strip() == head and out[2].strip().startswith("task:")
 
 
 def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None, head=None):
