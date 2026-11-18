@@ -24,6 +24,7 @@ cd "$TMP/w" || exit 1
 G checkout -q -b pr
 commit() { echo "$1" > f; G add f; G commit -q -m "$1"; G push -q origin pr 2>/dev/null; G rev-parse HEAD; }
 C1=$(commit one)
+G push -q origin pr:main 2>/dev/null
 ORIG="$TMP/origin.git"
 run() { (cd "$TMP/w" && SB_QA_HEAD_REMOTE="$ORIG" bash "$HEADCHK" "$@" 2>&1); }
 
@@ -135,6 +136,39 @@ out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S2" --worktree 
 [ "$rc" = 11 ] && printf '%s' "$out" | grep -q "chưa commit" && ok "14: worktree bẩn bị từ chối" || fail "14: dirty rc=$rc out=$out"
 out=$(bash "$SYNC" --branch pr 2>&1); rc=$?
 [ "$rc" = 11 ] && ok "14: thiếu --sha exit 11" || fail "14: thiếu cờ rc=$rc"
+
+# 15. Major 2 (review rebuild-7): bước 4c merge origin/<base> vào nhánh QA; file của main không tính là "extra".
+#     Chỉ commit không-merge ngoài base mà đụng ngoài docs/super-board/runs/ mới bị từ chối.
+G clone -q "$ORIG" "$TMP/qc" 2>/dev/null
+( cd "$TMP/w" && G checkout -q -B main origin/main 2>/dev/null || G checkout -q -b main; echo m1 > main1 && G add main1 && G commit -q -m "main 1" && G push -q origin main 2>/dev/null )
+( cd "$TMP/qc" && G checkout -q -B pr origin/pr && G fetch -q origin main && G merge -q --no-edit origin/main >/dev/null 2>&1 && mkdir -p docs/super-board/runs && echo e > docs/super-board/runs/ev3 && G add -A && G commit -q -m "qa evidence v3" )
+( cd "$TMP/w" && G checkout -q pr && G pull -q --ff-only origin pr 2>/dev/null; echo o3 > o3 && G add o3 && G commit -q -m "other 3" && G push -q origin pr 2>/dev/null )
+S3=$(cd "$TMP/w" && G rev-parse HEAD)
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S3" --base main --worktree "$TMP/qc" 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(cd "$TMP/qc" && G rev-parse HEAD)" = "$S3" ] && ok "15: nhánh có merge main + bằng chứng QA → synced, không Block oan" || fail "15: rc=$rc out=$out"
+
+# 16. Major 1: git diff/log lỗi không được nuốt rồi đặt lại nhánh. Giả lỗi bằng shim git trả exit 1 cho log.
+G clone -q "$ORIG" "$TMP/qd" 2>/dev/null
+( cd "$TMP/qd" && G checkout -q -B pr origin/pr && mkdir -p docs/super-board/runs && echo e > docs/super-board/runs/ev4 && G add -A && G commit -q -m "qa evidence v4" )
+( cd "$TMP/w" && echo o4 > o4 && G add o4 && G commit -q -m "other 4" && G push -q origin pr 2>/dev/null )
+S4=$(cd "$TMP/w" && G rev-parse HEAD); D0=$(cd "$TMP/qd" && G rev-parse HEAD)
+mkdir -p "$TMP/shim"; REALGIT=$(command -v git)
+printf '#!/bin/sh\ncase " $* " in *" log "*|*" diff "*) echo boom >&2; exit 1;; esac\nexec %s "$@"\n' "$REALGIT" > "$TMP/shim/git"; chmod +x "$TMP/shim/git"
+out=$(PATH="$TMP/shim:$PATH" SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S4" --base main --worktree "$TMP/qd" 2>&1); rc=$?
+[ "$rc" = 11 ] && [ "$(cd "$TMP/qd" && G rev-parse HEAD)" = "$D0" ] && ok "16: lỗi git lúc so sánh → exit 11, không đặt lại nhánh" || fail "16: rc=$rc out=$out"
+
+# 17. Major 3: không --worktree và chưa có nhánh cục bộ → tạo nhánh tại <sha>, in synced.
+G clone -q "$ORIG" "$TMP/qe" 2>/dev/null
+( cd "$TMP/qe" && G checkout -q --detach origin/pr )
+out=$(cd "$TMP/qe" && SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch newbr --sha "$S4" --base main 2>&1); rc=$?
+( cd "$TMP/w" && G push -q origin "$S4:refs/heads/newbr" 2>/dev/null )
+out=$(cd "$TMP/qe" && SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch newbr --sha "$S4" --base main 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(cd "$TMP/qe" && G rev-parse refs/heads/newbr)" = "$S4" ] && ok "17: chưa có nhánh cục bộ → tạo tại sha, synced" || fail "17: rc=$rc out=$out"
+
+# 18. Should fix (Historian): mọi chỗ còn viết "ls-remote ≠ sha → Block" phải nhắc 5b / qa-sync.
+for f in "$ROOT/.claude/skills/super-board/references/run.md" "$ROOT/.claude/skills/super-qa/SKILL.md" "$ROOT/.claude/skills/super-qa/references/tester-verifiers-evidence.md" "$ROOT/.claude/workflows/super-board-wave.js"; do
+  if grep -n 'is not <sha>, do not retry or force: Block the card' "$f" | grep -v '5b' | grep -q .; then fail "18: $f còn 'ls-remote ≠ sha → Block' không nhắc 5b"; else ok "18: $(basename "$f") không còn Block thẳng"; fi
+done
 
 echo "---"
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL: $FAILS"; exit 1; }
