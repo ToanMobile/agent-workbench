@@ -233,6 +233,7 @@ def _when(comment):
 # #1298: cả dòng phải khớp (fullmatch): đuôi chỉ được là `(không phải tác giả)` và/hoặc `— chuyển lane Review`, mọi chữ khác (mô tả lỗi code) = vẫn chặn.
 REVIEW_ONLY = re.compile(r"AC\s*-?\s*#?\d+(?:\s+phần)?\s+review\s+độc\s+lập(?:\s*\(\s*không\s+phải\s+tác\s+giả\s*\))?"
                          r"(?:\s*[—–-]+\s*chuyển\s+lane\s+Review)?\s*\.?", re.I)
+REVIEW_MARK = re.compile(r"review\s+độc\s+lập|không\s+phải\s+tác\s+giả", re.I)  # cụm cố định; chữ "review" trần (code review of X) không đủ
 REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*(✅|❌)\s*(merge-ready)?(.*)$", re.I)
 APPROVED_JQ = Path(__file__).with_name("super-board-approved-head.jq")
 
@@ -243,9 +244,16 @@ def review_only_item(parts, text, acs, body=""):
     if len(parts) != 1 or len(text) > 160 or not REVIEW_ONLY.fullmatch(text) or any(a in text.lower() for a in acs):
         return False
     n = re.sub(r"\D", "", AC_ID.search(text).group(0))
-    return any(AC_ID.search(m.group(2)) and re.sub(r"\D", "", AC_ID.search(m.group(2)).group(0)) == n
-               and re.search(r"review|không\s+phải\s+tác\s+giả", m.group(2), re.I)
-               for m in (AC_ITEM.match(l) for l in (body or "").splitlines()) if m)
+    in_ac = False
+    for line in (body or "").splitlines():     # chỉ mục trong khối AC (như ac_texts), không phải mọi `- [ ]` của thân PR
+        if re.match(r"^#{1,6}\s", line):
+            in_ac = bool(AC_HEADING.match(line))
+            continue
+        m = AC_ITEM.match(line) if in_ac else None
+        code = AC_ID.search(m.group(2)) if m else None
+        if code and re.sub(r"\D", "", code.group(0)) == n and REVIEW_MARK.search(m.group(2)):
+            return True
+    return False
 
 
 def review_proved(comments, qa_at, pr_author, head):

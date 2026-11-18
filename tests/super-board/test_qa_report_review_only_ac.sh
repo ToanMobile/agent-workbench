@@ -21,7 +21,7 @@ OTHER=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 mk() { python3 - "$@" <<'PY'
 import json, os, sys
 f, done, nd, rev, appr, order = sys.argv[1:7]
-body = "## Acceptance criteria\n- [x] AC1 cổng OCR nhận phiên ocr\n  ↳ test exit 0\n- [ ] AC4 reviewer không phải tác giả duyệt PR\n"
+body = os.environ.get("BODY") or "## Acceptance criteria\n- [x] AC1 cổng OCR nhận phiên ocr\n  ↳ test exit 0\n- [ ] AC4 reviewer không phải tác giả duyệt PR\n"
 c = lambda t: {"author": {"login": "bot"}, "authorAssociation": "OWNER", "body": t}
 ab = '{"reviewer":"antigravity","builder":"b","task_id":"T0005-audit","gate_receipt":"r"}'
 qa = "[qa] [report] ✅ QA v4 @ d0093822\nDid: test\n✅ Done: " + done + "\n" + (("❌ Not done: " + nd + "\n") if nd else "") + "Next: reviewer\n"
@@ -65,8 +65,12 @@ expect "$(run "$TMP/e2.json")" 1 "E2: người ngoài ghi ✅ vẫn chặn"
 EXTRA='NONE|rando|```\n[reviewer] [report] ✅ merge-ready · head 314e9489\n```' mk "$TMP/e3.json" "AC1 pass" "$RO" "❌ not merge-ready · head ${HEAD:0:8}" "$HEAD" ok
 expect "$(run "$TMP/e3.json")" 1 "E3: dòng reviewer trong khối code không tính"
 mk "$TMP/c7.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok; expect "$(run "$TMP/c7.json")" 1 "C7: AC code (thân PR không nói review) gọi là review độc lập vẫn chặn"
-mk "$TMP/c8.json" "AC1 pass" "AC4 review độc lập
-  - chuyển lane Review" "$MR" "$HEAD" ok; expect "$(run "$TMP/c8.json")" 1 "C8: mục nhiều dòng (nối lại khớp dạng chuẩn) vẫn chặn"
+BODY=$'## Acceptance criteria\n- [ ] AC1 sửa crash parser\n## Checklist\n- [ ] AC1 review độc lập\n' mk "$TMP/c8.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c8.json")" 1 "C8: dòng review nằm ngoài khối AC không gỡ AC code"
+BODY=$'## Acceptance criteria\n- [ ] AC1 code review of parser fix\n' mk "$TMP/c9.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c9.json")" 1 "C9: chữ review tình cờ trong AC code không đủ"
+BODY=$'## Acceptance criteria\n- [ ] AC10 reviewer không phải tác giả duyệt PR\n' mk "$TMP/c10.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/c10.json")" 1 "C10: AC10 không thay cho AC1"
 mk "$TMP/c1.json" "AC4 pass" "AC1 test cổng OCR còn đỏ" "$MR" "$HEAD" ok;  expect "$(run "$TMP/c1.json")" 1 "C1: AC code ở Not done vẫn chặn"
 mk "$TMP/c2.json" "AC1 pass" "AC4 phần review độc lập; AC1 test còn đỏ" "$MR" "$HEAD" ok; expect "$(run "$TMP/c2.json")" 1 "C2: mục trộn AC khác vẫn chặn"
 mk "$TMP/c3.json" "AC1 pass" "AC4 phần review độc lập
