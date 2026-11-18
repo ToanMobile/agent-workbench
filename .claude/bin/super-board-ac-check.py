@@ -159,6 +159,19 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
     return out
 
 
+def synthesize_block(issue_body, pr_body, branch):
+    """#1310: thân PR không có khối sb:ac nhưng đã có đủ dòng AC dạng `- [x]`/`- [ ]` → thân PR kèm cặp thẻ dựng từ các dòng đó.
+    None khi không áp dụng: nhánh không mang thẻ, đã có khối (một khối ngắn hơn AC vẫn bị chặn, không nới cổng), hoặc ít dòng hơn AC của thẻ."""
+    card = CARD_FROM_BRANCH.search(branch or "")
+    if not card or AC_BLOCK.search(pr_body or ""):
+        return None
+    lines = [ln.strip() for ln in FENCE_BLOCK.sub("", pr_body or "").splitlines() if CHECKBOX.match(ln)]
+    need, _ = card_ac(ac_items(issue_body), int(card.group(1)), {})
+    if not lines or len(lines) < need:
+        return None
+    return (pr_body or "").rstrip("\n") + "\n\n<!-- sb:ac -->\n" + "\n".join(lines) + "\n<!-- /sb:ac -->\n"
+
+
 def rewrite_closes(path, card, foreign=False):
     """Đổi từ khoá đóng #card thành `Refs` (foreign=True: đổi mọi thẻ KHÁC #card và mọi Closes của repo khác, giữ Closes của chính
     thẻ). #731: cùng luật repo với check() — `Fixes x/y#<card>` không phải thẻ này; không đổi thì gate exit 11 lại sau verify (log
@@ -186,6 +199,8 @@ def main():
     ap.add_argument("--pr-body")
     ap.add_argument("--msg")
     ap.add_argument("--branch", default="")
+    ap.add_argument("--synthesize-block", action="store_true",
+                    help="#1310: print the PR body plus an sb:ac block built from its AC lines (exit 1, no output: not applicable)")
     ap.add_argument("--rewrite-closes")
     ap.add_argument("--card", type=int)
     ap.add_argument("--foreign", action="store_true", help="with --rewrite-closes: rewrite every card but --card, and every Closes of another repo (keeps this repo's --card)")
@@ -194,6 +209,12 @@ def main():
         if a.card is None:
             ap.error("--rewrite-closes needs --card")
         print("rewritten" if rewrite_closes(a.rewrite_closes, a.card, a.foreign) else "unchanged")
+        return 0
+    if a.synthesize_block:
+        new = synthesize_block(read(a.issue_body), read(a.pr_body), a.branch)
+        if new is None:
+            return 1
+        sys.stdout.write(new)
         return 0
     extra, batch = {}, {}
     for flag, specs, into in (("--extra-issue-body", a.extra_issue_body, extra), ("--batch-member-body", a.batch_member_body, batch)):

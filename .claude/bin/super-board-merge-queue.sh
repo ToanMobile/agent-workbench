@@ -205,6 +205,22 @@ unproven_ac() {   # unproven_ac <PR> <issue>: in các dòng AC chưa tick của 
   rm -f "$QDIR/ac-pr-$1.md"
   return $rc
 }
+# #1310: ac_autofix <PR> <issue> <detail>: 0 khi MỌI lý do gate-exit-11 là ac-check "ít dòng sb:ac hơn AC" VÀ thân PR chưa có khối mà đã có đủ
+# dòng AC → đăng thân PR kèm khối dựng sẵn (không phải lỗi code: không loop:rebuild-N, không Blocked). 1 = không áp dụng; 79 đi thẳng lên.
+ac_autofix() {
+  local p="$1" k="$2" det="$3" body ibody rc=0 new="$QDIR/ac-fix-$1.md"
+  grep -qE "^ac-check: card #[0-9]+ has [0-9]+ acceptance criteria" <<<"$det" || return 1
+  ! grep -E '^[a-z-]+:' <<<"$det" | grep -qvE '^ac-check: card #[0-9]+ has [0-9]+ acceptance criteria' || return 1
+  body=$(python3 "$GITHUB_READ" --kind body -- pr view "$p" ${REPO:+--repo "$REPO"} --json body,headRefOid) || return $?
+  ibody=$(issue_json "$k") || return $?
+  printf '%s' "$body" | jq -r '.body' > "$QDIR/ac-pr-$p.md"
+  printf '%s' "$ibody" | jq -r '.body' > "$QDIR/ac-issue-$p.md"
+  python3 "$HERE/super-board-ac-check.py" --synthesize-block --issue-body "$QDIR/ac-issue-$p.md" --pr-body "$QDIR/ac-pr-$p.md" \
+    --branch "$(awk -v p="$p" '$2 == p {print $4; exit}' <<<"$ROUTE_ROWS")" > "$new" || rc=1
+  [ "$rc" -ne 0 ] || gh_w pr edit "$p" ${REPO:+--repo "$REPO"} --body-file "$new" || rc=1
+  rm -f "$new" "$QDIR/ac-pr-$p.md" "$QDIR/ac-issue-$p.md"
+  return $rc
+}
 reopen_issue() { [ "$2" = OPEN ] || gh_w issue reopen "$1" ${REPO:+--repo "$REPO"} || true; }   # reopen_issue <issue> <state>
 card_move() {   # card_move <issue> <Status>: lỗi log rồi trả 1 (nhãn giữ lại, lượt sau route lại); 79 nhớ halt, thoát 79 sau khi route xong
   local rc=0
@@ -431,7 +447,13 @@ Did: merged through the merge queue (one verify for the batch)
             # là QA chạy lại, không phải Build: thẻ Review → QA, không nhãn loop:rebuild-N, không tính vòng rebuild.
             # #1235: verify đỏ chỉ vì CHƯA XÁC MINH (test đã có bị sửa, chưa có audit có phạm vi) không phải đỏ thật: lần đầu cho một head, thẻ về
             # Review kèm chỉ dẫn audit đúng cách, KHÔNG tăng loop:rebuild-N, KHÔNG Blocked. Lần hai cùng head: đường cũ (rebuild_cap / Blocked).
-            if [ -n "$k" ] && unverified_edited_first "$p" "$head" "$det"; then
+            if [ "$res" = gate-exit-11 ] && [ -n "$k" ] && ac_autofix "$p" "$k" "$det"; then
+              # #1310: thân PR thiếu khối sb:ac nhưng đủ dòng AC → đã dựng khối; PR ở lại hàng đợi, không tính lần thử, không rebuild.
+              [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] 🔧 sb:ac block rebuilt · ${res}
+Did: the PR body had the AC lines but no <!-- sb:ac --> pair; the queue added it from those lines (no code change, no rebuild counted)
+Next: the next batch merges it" || true
+              say "PR #${p}: sb:ac block rebuilt from its AC lines; stays queued, no rebuild counted"; return 0
+            elif [ -n "$k" ] && unverified_edited_first "$p" "$head" "$det"; then
               [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ⏳ unverified · PR #${p} back to Review, no rebuild counted
 Did: the verify found an existing test edited without a cross-review (UNVERIFIED, not red)
 ❌ Not done: no scoped Antigravity audit is recorded for head ${head:0:7}
