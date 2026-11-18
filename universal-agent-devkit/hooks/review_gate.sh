@@ -552,9 +552,10 @@ def _result_text(blk):
     return ""
 
 
-# #1301: a review result "has P0/P1" when a line names one without a negation ("Không có P0/P1", "no P0", "0 P1").
+# #1301: a review result "has P0/P1" when a line names one without a negation ("Không có P0/P1", "no P0", "0 P1"); words like "không"/"no"/"clean" elsewhere in the line are a description, not a negation.
 _SEVERE = re.compile(r"\bP[01]\b")
-_NEGATED = re.compile(r"\b(no|none|zero|without)\b|\b0\s+P[01]|kh\u00f4ng|s\u1ea1ch|clean", re.I)
+_NEGATED = re.compile(r"\b(?:kh\u00f4ng(?:\s+c\u00f3)?|no|none|zero|without|0)\s+P[01]\b"   # a negation right before the label
+                      r"|\bP[01](?:\s*(?:/|or|and|,|v\u00e0)\s*P[01])?\s*[:=-]?\s*(?:none|0|kh\u00f4ng(?:\s+c\u00f3)?)\s*[.;]?$", re.I)
 
 
 def _severe(txt):

@@ -52,5 +52,22 @@ stop c3; rc=$?
 stop c4; rc=$?
 [ "$rc" = 2 ] && ok "C4. file auth: vẫn giữ" || fail "C4. rc $rc"
 
+rm -f "$P/auth.py"   # C4 để lại file nhạy cảm: không để nó che kết quả của C5/C6
+# C5. dòng P0/P1 thật có chữ "không"/"no"/"clean" trong mô tả lỗi vẫn là P0/P1 (reviewer bounce 18/11).
+n=0
+for sev in "P1: không kiểm tra x=0 (app.py:1)" "P0: no auth check on endpoint" "P1: SQL injection, input not clean"; do
+  n=$((n + 1))
+  : > "$TR"; ev edit e1 "$P/app.py"; ev review r1 "$CLEAN"; ev edit e2 "$P/app.py"; ev review r2 "$sev"; ev edit e3 "$P/app.py"
+  stop c5$n; rc=$?
+  [ "$rc" = 2 ] && ok "C5.$n. '$sev' vẫn giữ" || fail "C5.$n. rc $rc cho '$sev'"
+done
+
+# C6. phủ định đúng nhãn vẫn tính là sạch.
+for neg in "Không có P0/P1." "No P0 or P1 found." "0 P1, 0 P0"; do
+  : > "$TR"; ev edit e1 "$P/app.py"; ev review r1 "$neg"; ev edit e2 "$P/app.py"; ev review r2 "$neg"; ev edit e3 "$P/app.py"
+  stop "c6$((n += 1))"; rc=$?
+  [ "$rc" = 0 ] && ok "C6. '$neg' tính là sạch" || fail "C6. rc $rc cho '$neg'"
+done
+
 [ "$FAILS" = 0 ] && { echo "test_review_gate_round_cap: PASS"; exit 0; }
 echo "test_review_gate_round_cap: FAIL ($FAILS)"; exit 1
