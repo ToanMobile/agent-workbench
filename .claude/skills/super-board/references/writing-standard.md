@@ -343,6 +343,7 @@ Next: <owner>
 ```
 
 An AC measurable only in another repo is split into an issue there (`gh issue create -R <owner/repo>`) and replaced by the reference. In the card/PR AC list mark it `(repo: <other>)`; in `❌ Not done:` cite `<owner/repo>#N`. The merge-gate `qa-report` check (#1199) then does not count it as an open AC of this repo.
+An AC only the Review lane can prove (independent review by a non-author) goes under `❌ Not done:` with the words `review độc lập` or `lane Review`, and `Next: reviewer`. The `qa-report` check (#1298) clears such an item once a trusted `[reviewer] [report] ✅ merge-ready … head <sha>` and `approved-head:<head sha40>` for the PR head are both newer than that QA report; any other AC item keeps blocking.
 
 | Field | Values |
 |---|---|

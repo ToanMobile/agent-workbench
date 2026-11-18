@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Test hồi quy (18/11, PR #1292 / thẻ #1258 → #1298): report QA ghi `❌ Not done: AC4 phần review độc lập … — chuyển lane Review`, AC chỉ lane
+# Review chứng minh được. Lane Review đã đăng `approved-head:<head>` + `[reviewer] ✅ merge-ready … head <sha7>`, nhưng merge gate vẫn exit 11
+# (qa-report) → thẻ chạm rebuild_cap và bị Blocked. Chỉ mục review-only được gỡ, khi có CẢ merge-ready lẫn approved-head đúng head, mới hơn report QA.
+#  A  dạng PR #1292 -> exit 0.
+#  B  Not done của AC code (không nói review độc lập), reviewer + approved-head đủ -> vẫn exit 1.
+#  C  merge-ready ở head KHÁC head PR (approved-head đúng head) -> exit 1.
+#  D  có merge-ready đúng head nhưng THIẾU approved-head -> exit 1.
+#  E  reviewer + approved-head CŨ hơn report QA -> exit 1.
+#  F  mục lẫn `AC1 chưa đạt; AC4 review độc lập` -> exit 1 (vế AC1 vẫn chặn).
+#  G  không có --head -> exit 1 (fail closed).
+#  H  comment reviewer của người không đáng tin -> exit 1.
+set -u
+export LC_ALL=C LANG=C
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+QA="${SB_TEST_QA_REPORT:-$ROOT/.claude/bin/super-board-qa-report.py}"
+FAILS=0
+ok() { echo "✔ $1"; }
+fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-qarevonly-test.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+HEAD=314e948918ea5d31731c0daef2d55fb176627fa6
+OTHER=9b538126aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+# mk <file> <not-done> <mode>   mode: ok | otherhead | noapproval | old | untrusted
+mk() { python3 - "$1" "$2" "$3" "$HEAD" "$OTHER" <<'PY'
+import json, sys
+f, nd, mode, head, other = sys.argv[1:6]
+body = "## Acceptance criteria\n- [x] AC1 cổng OCR nhận phiên ocr\n  ↳ test exit 0\n- [ ] AC4 độc lập: reviewer không phải tác giả duyệt\n"
+def c(text, assoc="OWNER", login="bot"):
+    return {"author": {"login": login}, "authorAssociation": assoc, "body": text}
+qa = c("[qa] [report] ✅ QA v4 · PR #1292 @ d0093822\nDid: test\n" + nd + "\nNext: reviewer\n")
+rev_head = other[:8] if mode == "otherhead" else head[:8]
+rev = c("<!-- super-review:report -->\n[reviewer] [report] ✅ merge-ready · round 3 · head %s\nDid: đọc AC\n" % rev_head)
+app = c("approved-head:%s\napproved-by: {\"reviewer\":\"antigravity\"}" % head)
+if mode == "untrusted":
+    rev = c(rev["body"], "NONE", "stranger"); app = c(app["body"], "NONE", "stranger")
+comments = [rev, app, qa] if mode == "old" else [qa, rev, app]
+if mode == "noapproval":
+    comments = [qa, rev]
+json.dump({"body": body, "author": {"login": "bot"}, "comments": comments}, open(f, "w"))
+PY
+}
+run() { python3 "$QA" --meta "$1" ${2:+--head "$2"} >"$TMP/out" 2>&1; echo $?; }
+
+ND='❌ Not done: AC4 phần review độc lập (không phải tác giả) — chuyển lane Review'
+mk "$TMP/a.json" "$ND" ok
+[ "$(run "$TMP/a.json" "$HEAD")" = 0 ] && ok "A: dạng PR #1292 không còn chặn" || { fail "A: bị chặn"; cat "$TMP/out"; }
+
+mk "$TMP/b.json" '❌ Not done: AC1 test cổng OCR chưa đạt, còn 3 lỗi' ok
+[ "$(run "$TMP/b.json" "$HEAD")" = 1 ] && ok "B: AC code vẫn chặn" || { fail "B: bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/c.json" "$ND" otherhead
+[ "$(run "$TMP/c.json" "$HEAD")" = 1 ] && ok "C: merge-ready ở head khác không gỡ" || { fail "C: bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/d.json" "$ND" noapproval
+[ "$(run "$TMP/d.json" "$HEAD")" = 1 ] && ok "D: thiếu approved-head không gỡ" || { fail "D: bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/e.json" "$ND" old
+[ "$(run "$TMP/e.json" "$HEAD")" = 1 ] && ok "E: reviewer cũ hơn report QA không gỡ" || { fail "E: bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/f.json" '❌ Not done: AC1 chưa đạt; AC4 phần review độc lập — chuyển lane Review' ok
+[ "$(run "$TMP/f.json" "$HEAD")" = 1 ] && ok "F: vế AC1 trong mục lẫn vẫn chặn" || { fail "F: bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/g.json" "$ND" ok
+[ "$(run "$TMP/g.json")" = 1 ] && ok "G: không --head thì không gỡ" || { fail "G: bị lọt"; cat "$TMP/out"; }
+
+mk "$TMP/h.json" "$ND" untrusted
+[ "$(run "$TMP/h.json" "$HEAD")" = 1 ] && ok "H: reviewer không đáng tin không gỡ" || { fail "H: bị lọt"; cat "$TMP/out"; }
+
+[ "$FAILS" -eq 0 ] && echo "✅ test_qa_report_review_only_ac: all passed" || { echo "❌ $FAILS failed"; exit 1; }
