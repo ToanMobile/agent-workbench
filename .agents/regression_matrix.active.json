@@ -4620,6 +4620,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "gate-full-provable-ac-1290",
+      "watch_files": [
+        "universal-agent-devkit/bin/gate_full.py",
+        "universal-agent-devkit/tests/gates/test_gate_full_card_ac_provable.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1290-GATE-FULL-PROVABLE-AC-01",
+          "name": "#1290: thẻ gate-full mới không mang AC 'lượt gate_full kế tiếp'; đỏ kinh niên có thẻ đã đóng mà không thẻ mở thì mở thẻ mới; còn thẻ mở hoặc chưa từng có thẻ thì không",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_full_card_ac_provable.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
