@@ -51,6 +51,7 @@ CLI: push_gate.py <dir> [<rev>] [--tag-remote <name>] [--dst <remote> <branch>] 
 100% standard library.
 """
 import calendar
+import datetime
 import glob
 import json
 import os
@@ -872,6 +873,16 @@ OCR_TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|androidtest|unittest|integra
 OCR_OK_SEVERITY = ("low", "medium", "info", "nit")      # anything else (high, critical, unknown) blocks
 
 
+def _same_repo(a, b):
+    """True when two directories belong to one repository (same git-common-dir): the main checkout, a linked worktree and the merge
+    gate's .merge-scratch-* all share it, so an OCR session made in any of them is for this repo."""
+    def common(d):
+        rc, out = git(d, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        return os.path.realpath(out.strip()) if rc == 0 and out.strip() else None
+    ca = common(a) if a and os.path.isdir(a) else None
+    return ca is not None and ca == common(b)
+
+
 def _ocr_json(binary, top, sub, session_id):
     try:
         res = subprocess.run([binary, "session", sub, "--json", "--repo", top, session_id], capture_output=True, text=True,
@@ -912,7 +923,7 @@ def ocr_review(top, session_id, head):
     if man.get("terminal_state") != "complete" or summ.get("aborted") or summ.get("legacy") or summ.get("failed_files") \
             or summ.get("llm_failures") or man["coverage"].get("failed"):
         return False, "ocr: session not complete"
-    if os.path.realpath(str(summ.get("repo_dir") or "")) != os.path.realpath(top) or inp.get("resolved_head") != head:
+    if not _same_repo(str(summ.get("repo_dir") or ""), top) or inp.get("resolved_head") != head:
         return False, "ocr: session is for another repo or head"
     trunk = _trunk_ref(top)
     rc, mb = git(top, "merge-base", trunk, head) if trunk else (1, "")
@@ -921,14 +932,16 @@ def ocr_review(top, session_id, head):
         return False, "ocr: session base is not merge-base(trunk, head)"
     rc, ct = git(top, "log", "-1", "--format=%ct", head)
     try:
-        started = calendar.timegm(time.strptime(str(summ.get("start_time"))[:19], "%Y-%m-%dT%H:%M:%S"))
-        if rc != 0 or started < int(ct):
+        st = datetime.datetime.fromisoformat(str(summ.get("start_time")).replace("Z", "+00:00"))
+        if st.tzinfo is None:
+            return False, "ocr: start_time has no timezone"
+        if rc != 0 or st.timestamp() < int(ct):
             return False, "ocr: session started before the head commit"
     except ValueError:
         return False, "ocr: unreadable start_time"
-    rc, names = git(top, "diff", "--name-only", "--diff-filter=MDR", f"{mb}..{head}")
+    rc, names = git(top, "diff", "--name-only", "--diff-filter=MDR", "--no-renames", "-z", f"{mb}..{head}")
     done = {c.get("path") for c in man["coverage"].get("completed") or [] if isinstance(c, dict)}
-    missing = [f for f in names.split("\n") if f and OCR_TEST_PATH.search(f) and f not in done] if rc == 0 else ["?"]
+    missing = [f for f in names.split("\0") if f and OCR_TEST_PATH.search(f) and f not in done] if rc == 0 else ["?"]
     if missing:
         return False, f"ocr: edited test not covered: {missing[0]}"
     comments = _ocr_json(binary, top, "comments", session_id)
