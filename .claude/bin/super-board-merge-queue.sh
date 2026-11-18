@@ -189,10 +189,12 @@ resolve_card() {   # resolve_card <PR>: gán CARD_OF = số thẻ trên board ("
 head_of() { awk -v p="$1" '$2 == p {print $3; exit}' <<<"$ROUTE_ROWS"; }
 # #637: lỗi đọc GitHub trong lượt route chỉ bỏ PR đó (nhãn giữ, lượt sau route lại), các PR còn lại và merge-queue.attempts vẫn được ghi.
 # github-read thoát 79 (halt) thì nhớ lại: route nốt phần không cần đọc rồi thoát 79 (như exit 9 của train).
-# ROUTE_HALT: lượt route_one hiện tại gặp halt (đọc hay card_move) ⇒ ghi pending nhưng không tính lần thử (như exit 79 của train).
+# ROUTE_HALT: lượt route_one hiện tại gặp halt (79) hoặc rate limit (69) ở bước đọc hay card_move ⇒ ghi pending nhưng không tính lần thử.
+# Chỉ 79 đặt READ_HALT=1 (thoát 79 sau khi route xong); 69 giữ READ_HALT=0 để hàng đợi không dừng kiểu halt.
 READ_HALT=0; ROUTE_HALT=0
 read_failed() {   # read_failed <rc> <PR> <đọc gì>
   [ "$1" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; }
+  [ "$1" -ne 69 ] || ROUTE_HALT=1
   say "PR #$2: reading $3 failed (github-read exit $1); label kept, the next run routes it again"
 }
 issue_json() { python3 "$GITHUB_READ" --kind issue -- issue view "$1" ${REPO:+--repo "$REPO"} --json number,title,body,labels,state,comments; }
@@ -225,10 +227,11 @@ ac_autofix() {
   return $rc
 }
 reopen_issue() { [ "$2" = OPEN ] || gh_w issue reopen "$1" ${REPO:+--repo "$REPO"} || true; }   # reopen_issue <issue> <state>
-card_move() {   # card_move <issue> <Status>: lỗi log rồi trả 1 (nhãn giữ lại, lượt sau route lại); 79 nhớ halt, thoát 79 sau khi route xong
+card_move() {   # card_move <issue> <Status>: lỗi log rồi trả 1 (nhãn giữ lại, lượt sau route lại); 79 nhớ halt, 69 dừng route không tính lần thử
   local rc=0
   bash "$CARD" --config "$CONFIG" move "$1" "$2" >/dev/null || rc=$?
   [ "$rc" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; say "card move #$1 $2: GitHub reads halted"; return 1; }
+  [ "$rc" -ne 69 ] || { ROUTE_HALT=1; say "card move #$1 $2: GitHub rate limit (exit 69)"; return 1; }
   [ "$rc" -eq 0 ] || { say "card move #$1 $2 failed (exit ${rc})"; return 1; }
 }
 UNLABELED=" "   # #676: PR đã gỡ nhãn trong lượt này (trễ nhất quán của nhãn trên GitHub): không phóng train cho nó nữa
@@ -360,12 +363,12 @@ attempt_retry() {
   n=$((n + 1))
   { awk -v p="$p" '$1 != p' "$ATTEMPTS" 2>/dev/null || true; echo "$p $head $n $(date +%s)"; } > "$ATTEMPTS.tmp" && mv -f "$ATTEMPTS.tmp" "$ATTEMPTS"
   if [ "$n" -lt "$ATTEMPT_MAX" ]; then say "PR #${p}: ${res}; stays queued for the next batch (try ${n}/${ATTEMPT_MAX})"; return 0; fi
-  # Chỉ tra thẻ khi đã chạm trần (n < trần không dùng thẻ). Nếu card.sh halt (79): dừng ngay trước block_comment để không ghi nhầm lên
-  # issue ngoài board, giữ nhãn + dòng attempts; lỗi khác 79 (69/66): k="" để PR vẫn rời hàng mà không đụng issue chưa xác minh.
+  # Chỉ tra thẻ khi đã chạm trần (n < trần không dùng thẻ). Nếu card.sh halt (79) hoặc rate limit (69): dừng ngay trước block_comment để
+  # không ghi nhầm lên issue ngoài board hoặc gỡ nhãn oan, giữ nhãn + dòng attempts; lỗi khác (vd 66): k="" để PR vẫn rời hàng mà không đụng issue chưa xác minh.
   if resolve_card "$p"; then
     k=$CARD_OF
   elif [ "$ROUTE_HALT" -eq 1 ]; then
-    say "PR #${p}: GitHub reads halted while checking its card at the retry cap; label kept, the next run retries"
+    say "PR #${p}: GitHub reads halted or rate-limited while checking its card at the retry cap; label kept, the next run retries"
     return 0
   else
     ok=1
@@ -376,9 +379,8 @@ attempt_retry() {
       "a person looks at why its batches keep ending in ${res}, then labels the PR ${LABEL} again or drags the card to Ready"
     card_move "$k" Blocked || ok=1
   fi
-  # Halt (79) khi chuyển thẻ: như bản cũ thoát 79 ngay tại card_move — PR giữ nhãn và dòng attempts, chưa comment rời hàng (thẻ chưa
-  # Blocked); lượt sau (sau --resume) chạm trần lần nữa và chuyển thẻ (comment blocker trên thẻ có thể lặp một lần, như bản cũ).
-  if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted while moving card #${k} to Blocked; label kept, the next run retries"; return 0; fi
+  # Halt (79) hoặc rate limit (69) khi chuyển thẻ: PR giữ nhãn và dòng attempts, chưa comment rời hàng (thẻ chưa Blocked); lượt sau thử lại.
+  if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted or rate-limited while moving card #${k} to Blocked; label kept, the next run retries"; return 0; fi
   gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 left the queue · 🛡 ${why}
 Next: a person looks at why, then labels the PR ${LABEL} again${k:+ (card #$k is Blocked)}" || true
   # Trần: PR rời hàng dù card_move / tra thẻ lỗi, để không route lại vô hạn mỗi tick.
@@ -414,9 +416,9 @@ route_one() {
         ij=$(issue_json "$k") || { read_failed $? "$p" "card #${k}"; return 0; }
         if printf '%s' "$ij" | jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' >/dev/null; then
           say "PR #${p} merged; card #${k} carries ac-open: left open (the gate moved it to Ready)"
-        elif unticked=$(unproven_ac "$p" "$k"); urc=$?; [ "$urc" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; }; [ "$urc" -ne 0 ]; then
+        elif unticked=$(unproven_ac "$p" "$k"); urc=$?; [ "$urc" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; }; [ "$urc" -ne 69 ] || ROUTE_HALT=1; [ "$urc" -ne 0 ]; then
           # #531 R5: an ac-check failure other than 79 fails this PR only (retried next pass), never the whole pass.
-          say "PR #${p} merged; card #${k}: ac-check failed (exit ${urc}), retry next pass"; ok=1
+          say "PR #${p} merged; card #${k}: ac-check failed (exit ${urc}), retry next pass"; CARD_UNKNOWN=1; ok=1
         elif [ -n "$unticked" ]; then
           # #531: the gate labels ac-open only after the merge and only warns when that fails; an unticked sb:ac line is the proof gap itself.
           say "PR #${p} merged; card #${k}: sb:ac still has unticked line(s): left open, labelled ac-open"
@@ -461,8 +463,8 @@ Next: the next batch merges it" || true
               attempt_clear "$p"
               say "PR #${p}: sb:ac block rebuilt from its AC lines; stays queued, no rebuild counted"; return 0
             elif [ "$af" -ne 1 ]; then
-              # Lỗi đọc/ghi tạm hay halt (79): bước bắt buộc hỏng, giữ nhãn, route lại lượt sau; không rơi xuống rebuild_cap.
-              read_failed "$af" "$p" "or rewriting its sb:ac block"; ok=1
+              # Lỗi đọc/ghi tạm, rate limit (69) hay halt (79): bước bắt buộc hỏng, chưa ghi gì lên PR/thẻ (CARD_UNKNOWN=1 -> u), giữ nhãn, route lại lượt sau.
+              read_failed "$af" "$p" "or rewriting its sb:ac block"; CARD_UNKNOWN=1; ok=1
               continue_route=0
             elif [ -n "$k" ] && unverified_edited_first "$p" "$head" "$det"; then
               [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ⏳ unverified · PR #${p} back to Review, no rebuild counted
@@ -592,7 +594,7 @@ Next: a fresh review of the new head, then a new approved-head and the ${LABEL} 
     fi
     local col=$LABEL_DONE; [ "$CARD_UNREAD" -eq 0 ] || col=r; [ "$CARD_UNKNOWN" -eq 0 ] || col=u
     { awk -v p="$p" '$1 != p' "$PENDING" 2>/dev/null || true; echo "$p $head $res $col"; } > "$PENDING.new" && mv -f "$PENDING.new" "$PENDING"
-    if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted; not counted as a try"; return 0; fi
+    if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted or rate-limited; not counted as a try"; return 0; fi
     attempt_retry "$p" "routing ${res} failed"
     return 0
   fi

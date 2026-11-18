@@ -21,7 +21,7 @@
 #   K. #637 (audit r2): PR nhánh fix-… đóng #21 ngoài board gặp gate-exit-7 khi card.sh halt (79) ⇒ dừng trước mọi ghi PR/issue,
 #      lưu pending cột u + detail, không tính lần thử, thoát 79, #21 không bị gắn needs-you/comment; lượt sau --resume đăng đủ
 #      comment + detail trên PR, gỡ nhãn, #21 vẫn không bị đụng.
-#   L. #637 (audit r2): card.sh lỗi tạm 69 (khác 3 và 79) ở trần lần thử ⇒ PR vẫn rời hàng ở trần nhưng không ghi lên issue #21 chưa xác minh.
+#   L. #637 (audit r2): card.sh lỗi khác 3, 69 và 79 (vd 66) ở trần lần thử ⇒ PR vẫn rời hàng ở trần nhưng không ghi lên issue #21 chưa xác minh.
 # Chạy offline: gh (python giả), train / card.sh / needs-you.py / notify.py là stub; github-read.py là bản thật. Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -64,7 +64,7 @@ while [ "${1#--}" != "$1" ]; do shift 2; done
 # của card.sh hỏng (ghi file halt, 79); $FAKE/offboard-<K>: issue K không nằm trên board (exit 3).
 [ ! -f "$SB_GITHUB_HALT_FILE" ] || exit 79
 [ ! -f "$FAKE/card-halt" ] || { : > "$SB_GITHUB_HALT_FILE"; exit 79; }
-[ ! -f "$FAKE/card-err-$2" ] || exit 69
+[ ! -f "$FAKE/card-err-$2" ] || exit 66
 [ ! -f "$FAKE/offboard-$2" ] || exit 3
 echo "card $*" >> "$FAKE/writes"
 SH
@@ -322,7 +322,7 @@ run_q; rc=$?
   && ok "K next run: PR 4 gets full human-gate detail on PR, leaves queue, off-board #21 untouched" \
   || fail "K next: rc=$rc writes=$(cat "$F/writes") pr4=$(cat "$F/pr-comment-4.txt" 2>/dev/null)"
 
-# ── L. PR 4 nhánh fix-bar đóng #21 gặp lỗi tạm card.sh exit 69 ở trần lần thử: PR rời hàng, không đụng issue #21 chưa xác minh.
+# ── L. PR 4 nhánh fix-bar đóng #21 gặp lỗi card.sh exit 66 (khác 3, 69, 79) ở trần lần thử: PR rời hàng, không đụng issue #21 chưa xác minh.
 reset
 pr 4 fix-bar 20 "[$(ref 21)]"; issue 21; : > "$F/card-err-21"
 mkdir -p "$COMMON/super-board"; echo "4 $(sha 4) 2 $(date +%s)" > "$ATT"
@@ -330,7 +330,7 @@ printf 'train-result: 4 deferred\n' > "$F/train.out"; echo 0 > "$F/train.rc"
 run_q; rc=$?
 [ "$rc" -eq 0 ] && has_w "pr-unlabel 4 merge-queue" && has_w "pr-comment 4 [merge-queue] [blocker] 🛑 left the queue" \
   && ! has_w "issue-comment 21" && ! has_w "card move 21" \
-  && ok "L item-id exit 69 at cap: PR 4 leaves queue without touching unverified issue #21" || fail "L rc=$rc writes=$(cat "$F/writes")"
+  && ok "L item-id exit 66 at cap: PR 4 leaves queue without touching unverified issue #21" || fail "L rc=$rc writes=$(cat "$F/writes")"
 
 # ── M. Đường không cần thẻ (head-moved, deferred lúc n < trần) không gọi card.sh item-id (không kích hoạt card-halt oan trong subshell).
 reset

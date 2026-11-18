@@ -20,6 +20,11 @@ case "$GH_MODE" in
   limit-then-ok) [ "$n" -le "$GH_FAILS" ] && { echo 'GraphQL: API rate limit already exceeded for user ID 1. (graphql_rate_limit)' >&2; exit 1; }
                  echo '{"number":5,"title":"t","body":"b"}' ;;
   limit-always)  echo 'You have exceeded a secondary rate limit.' >&2; exit 1 ;;
+  gql-limit-then-ok) [ "$n" -le "$GH_FAILS" ] && { echo '{"data":null,"errors":[{"type":"RATE_LIMITED","message":"API rate limit already exceeded for user ID 1."}]}'; exit 0; }
+                     echo '{"number":5,"title":"t","body":"b"}' ;;
+  gql-limit-always)  echo '{"data":null,"errors":[{"type":"RATE_LIMITED","message":"You have exceeded a secondary rate limit."}]}'; exit 0 ;;
+  gql-perm-data-rl)  echo '{"data":{"issue":{"body":"see rate limit docs"}},"errors":[{"message":"Cannot query field x on type Query"}]}'; exit 0 ;;
+  gql-bad-data-rl)   echo '{"data":{"note":"already exceeded rate limit"}}'; exit 0 ;;
   permanent)     echo 'HTTP 401: requires authentication' >&2; exit 1 ;;
   perm-stdout)   echo 'HTTP 401: requires authentication' >&2; echo '{"message":"see the rate limit docs"}'; exit 1 ;;
 esac
@@ -53,6 +58,27 @@ rc=$(run perm-stdout 0)
 { [ "$rc" = 79 ] && [ -s "$HALT" ] && [ "$(cat "$GH_COUNT")" = 1 ]; } \
   && ok "permanent error whose stdout mentions 'rate limit': halts on the first read" \
   || fail "perm-stdout: rc=$rc halt=$([ -e "$HALT" ] && echo yes || echo no) calls=$(cat "$GH_COUNT")"
+
+# #1311 R2: gh api graphql exits 0 with rate-limit JSON errors -> back off, do not halt; permanent error or bad data still halts.
+rc=$(run gql-limit-then-ok 3)
+{ [ "$rc" = 0 ] && [ ! -e "$HALT" ] && [ "$(cat "$GH_COUNT")" = 4 ]; } \
+  && ok "exit 0 GraphQL errors rate limit x3 then ok: backs off, 4th read passes, no halt" \
+  || fail "gql-limit-then-ok: rc=$rc halt=$([ -e "$HALT" ] && echo yes || echo no) calls=$(cat "$GH_COUNT") ($(tail -1 "$TMP/err"))"
+
+rc=$(SB_GITHUB_RATE_RETRIES=2 run gql-limit-always 0)
+{ [ "$rc" = 69 ] && [ ! -e "$HALT" ] && [ "$(cat "$GH_COUNT")" = 3 ]; } \
+  && ok "exit 0 GraphQL errors rate limit never lifts: exit 69 after bounded backoff, no halt" \
+  || fail "gql-limit-always: rc=$rc halt=$([ -e "$HALT" ] && echo yes || echo no) calls=$(cat "$GH_COUNT")"
+
+rc=$(run gql-perm-data-rl 0)
+{ [ "$rc" = 79 ] && [ -s "$HALT" ] && [ "$(cat "$GH_COUNT")" = 1 ]; } \
+  && ok "exit 0 GraphQL permanent error with 'rate limit' in data: halts on first read" \
+  || fail "gql-perm-data-rl: rc=$rc halt=$([ -e "$HALT" ] && echo yes || echo no) calls=$(cat "$GH_COUNT")"
+
+rc=$(run gql-bad-data-rl 0)
+{ [ "$rc" = 79 ] && [ -s "$HALT" ] && [ "$(cat "$GH_COUNT")" = 3 ]; } \
+  && ok "exit 0 malformed payload with 'rate limit' outside errors: not treated as rate limit, halts after 3 shape fails" \
+  || fail "gql-bad-data-rl: rc=$rc halt=$([ -e "$HALT" ] && echo yes || echo no) calls=$(cat "$GH_COUNT")"
 
 # P1 (runner): issue_is_open must pass exit 69 through, never turn it into 79 (a RUNNER_HALT_CODES halt).
 RUN="${GHR_RUN:-$ROOT/.claude/bin/super-board-run.sh}"

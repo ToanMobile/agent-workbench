@@ -380,7 +380,7 @@ class RateLimited(Exception):
     never a halt, only a caller error after the backoff ran out."""
 
 
-RATE_LIMITED = re.compile(r'rate limit|already exceeded|graphql_rate_limit|secondary rate|abuse detection', re.I)
+RATE_LIMITED = re.compile(r'rate limit|already exceeded|graphql_rate_limit|\bRATE_LIMITED\b|secondary rate|abuse detection', re.I)
 
 
 def permanent_error(text, limit_text=None):
@@ -725,15 +725,22 @@ def read(args, kind='json', meta=None, recovering=False):
             if not result.returncode and kind == 'metadata' and args[:2] == ['pr', 'view']:
                 result.stdout, rest_error = complete_pr_files(args, result.stdout)
             diagnostic = result.stderr
+            errors_text = ''
             if result.returncode:
                 diagnostic += result.stdout
             elif kind != 'diff':
                 try:
                     payload = json.loads(result.stdout)
-                    diagnostic += json.dumps([p.get('errors', []) for p in (payload if isinstance(payload, list) else [payload]) if isinstance(p, dict)])
+                    errors = [p.get('errors') for p in (payload if isinstance(payload, list) else [payload])
+                              if isinstance(p, dict) and p.get('errors')]
+                    if errors:
+                        errors_text = json.dumps(errors)
+                        diagnostic += errors_text
                 except ValueError:
                     pass
-            if result.returncode and RATE_LIMITED.search(result.stderr):
+            # Chỉ bắt RATE_LIMITED trên stderr (khi lỗi) hoặc trên mảng errors của GraphQL (khi gh thoát 0), không bắt trên stdout tự do.
+            rate_text = result.stderr if result.returncode else errors_text
+            if rate_text and RATE_LIMITED.search(rate_text):
                 if rate_hits >= rate_waits:
                     raise RateLimited(f'GitHub rate limit still active after {rate_hits} backoffs; nothing was halted, try again later')
                 wait = min(300.0, rate_base * 2 ** rate_hits) * (1 + random.random() / 4)
@@ -742,7 +749,7 @@ def read(args, kind='json', meta=None, recovering=False):
                 print(f'[github-read] GitHub rate limit; backing off {wait:.0f}s ({rate_hits}/{rate_waits})', file=sys.stderr)
                 time.sleep(max(0, wait))
                 continue
-            if permanent_error(diagnostic, result.stderr if result.returncode else None):
+            if permanent_error(diagnostic, result.stderr if result.returncode else (errors_text or None)):
                 halt('GitHub rejected a required read (query, authentication, or permission error); fix it before restarting', attempt, operation)
             if result.returncode:
                 # Lỗi cú pháp của người gọi (thông báo của gh 2.100, cobra): báo exit 64, không halt cả board. Áp dụng
