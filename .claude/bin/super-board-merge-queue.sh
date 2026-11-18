@@ -795,8 +795,8 @@ while read -r at n head ref; do
                reject "$n" "approved-by task_id ${vwhy#task:} has no antigravity-pm audit pass with auditedHead ${head:0:7}" "$ref"; continue
              fi ;;
     # #1328: biên bản claude-verify (audit-check chuyển cho claude_verify.py check: verdict pass, head + tree, reviewer ≠ builder).
-    cv:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" --pr "$n" "${vwhy#cv:}" "$head" ) 2>/dev/null; then
-             reject "$n" "approved-by task_id ${vwhy#cv:} has no claude-verify pass record for head ${head:0:7} (verdict pass, same tree, reviewer session != builder session)" "$ref"; continue
+    cv:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" --pr "$n" --branch "$ref" "${vwhy#cv:}" "$head" ) 2>/dev/null; then
+             reject "$n" "approved-by task_id ${vwhy#cv:} has no claude-verify pass record for head ${head:0:7} (verdict pass, same tree, card of the PR branch, reviewer session from the runner ledger and != builder session)" "$ref"; continue
            fi ;;
     *) reject "$n" "approved-head ${approved:0:7}: approval source unreadable" "$ref"; continue ;;
   esac

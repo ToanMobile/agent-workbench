@@ -1199,7 +1199,9 @@ MQ_LABEL = "merge-queue"
 MQ_MSG = "gắn nhãn merge-queue khi PR chưa có approved-head khớp head"
 MQ_HELPER = os.path.join(".claude", "bin", "super-board-queue-label.sh")
 MQ_HELPER_DEPS = [os.path.join(".claude", "bin", "super-board-approved-head.jq"), os.path.join(".claude", "bin", "super-board-audit-check.py"),
-                  os.path.join("universal-agent-devkit", "bin", "push_gate.py"), os.path.join(".agents", "devkit", "bin", "push_gate.py")]
+                  os.path.join("universal-agent-devkit", "bin", "push_gate.py"), os.path.join(".agents", "devkit", "bin", "push_gate.py"),
+                  # #1328: audit-check chuyển id CV… cho claude_verify.py (bản kit hoặc .agents/devkit)
+                  os.path.join("universal-agent-devkit", "bin", "claude_verify.py"), os.path.join(".agents", "devkit", "bin", "claude_verify.py")]
 MQ_BUDGET_S = 9.0   # tổng thời gian của guard khi có lời gọi helper: dưới timeout 10 s của hook ở Codex/Gemini/Cursor
 # Cờ KHÔNG mang giá trị của gh pr edit / issue edit / pr create (gh 2.103.3 --help); mọi cờ dài khác mang giá trị.
 MQ_BOOL_LONG = {"--remove-milestone", "--remove-parent", "--remove-type", "--draft", "--dry-run", "--editor", "--fill",

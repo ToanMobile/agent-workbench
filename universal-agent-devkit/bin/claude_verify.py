@@ -1,50 +1,65 @@
 #!/usr/bin/env python3
 """Biên bản duyệt chéo `claude-verify` (#1328): nguồn duyệt của merge queue ngoài antigravity-pm.
 
-Phiên reviewer (KHÁC phiên builder) review diff merge-base(trunk, head)..head, ghi báo cáo JSON rồi niêm phong:
-  seal --repo DIR --head SHA40 --report FILE   báo cáo {head, base, findings:[{id, severity, file, line, snippet, class}], reviewed_at}
-  check TASK_ID SHA40 [--top DIR] [--pr N]     exit 0 = biên bản pass đúng head/tree, reviewer ≠ builder; 1 = mọi trường hợp khác
-`seal` kiểm: head sha40 có trong repo và == báo cáo; base == merge-base(trunk, head) (push_gate._trunk_ref); mỗi finding có
-severity important|nit|pre-existing, file thuộc diff base..head, line nằm trong hunk thêm ở head (pre-existing được ngoài hunk) và
-snippet là chuỗi con của đúng dòng đó ở head. verdict = pass khi không có finding important. task_id = CV<yyyymmdd>T<HHMMSS>-<head12>.
+  register --lane build|review --repo DIR --issue N --session SID   runner ghi sổ phiên TRƯỚC khi chạy worker (chỉ thêm, không xoá)
+  seal --repo DIR --head SHA40 --report FILE --branch issue-N-…      exit 0 pass, 4 = có finding important, 2 = báo cáo/phiên bị từ
+                                                                     chối, 3 = không kiểm được (git/kit lỗi, seal mode bật)
+  check TASK_ID SHA40 [--top DIR] [--pr N] [--branch B]               exit 0 = biên bản pass đúng head/tree, phiên hợp lệ; 1 = còn lại
 
-Phiên: reviewer = env CLAUDE_CODE_SESSION_ID (rỗng → từ chối). Builder = session_id trong devkit-session.lock của mọi worktree đang
-đứng trên MỘT NHÁNH (không detached) có HEAD == head: đó là worktree build của PR; worktree review/qa của board là detached nên
-không bị nhầm thành builder. Reviewer trùng builder → từ chối (cả lúc seal lẫn lúc check).
+`seal` kiểm báo cáo {head, base, findings:[{id, severity, file, line, snippet, class}], reviewed_at}: head sha40 == --head và là đỉnh
+của nhánh --branch (refs/remotes/origin/<b> hoặc refs/heads/<b>); base == merge-base(trunk, head) (push_gate._trunk_ref); finding có
+severity important|nit|pre-existing, file thuộc diff, dòng trong hunk thêm ở head (pre-existing được ngoài hunk), snippet khớp dòng đó.
+task_id = CV<yyyymmdd>T<HHMMSS>-<head12>-<6 hex ngẫu nhiên>, ghi O_EXCL (không đè biên bản khác).
 
-Biên bản: <home của uid>/.claude-verify/records/<task_id>.json = {"payload": "<JSON chuẩn>", "sig": base64|null}. Seal mode
+Phiên (kiểm cả lúc seal lẫn lúc check): thẻ N lấy từ nhánh issue-N-…. Tập builder = sổ builders của thẻ N (runner ghi --session-id
+của worker build trước khi nó chạy, nên builder không tránh được) ∪ session_id trong devkit-session.lock của worktree còn sống đứng trên
+nhánh có HEAD == head. Tập builder rỗng, hay lỗi đọc git/sổ → từ chối (fail closed). Reviewer = env CLAUDE_CODE_SESSION_ID, phải có
+trong sổ reviewers của thẻ N và không thuộc tập builder. Hệ quả: claude-verify chỉ dùng được cho thẻ do board giao; phiên tay ngoài
+board đi Antigravity hoặc chủ repo duyệt.
+
+Biên bản: <home của uid>/.claude-verify/records/<task_id>.json = {"payload": "<JSON chuẩn>", "sig": base64|null}; sổ ở
+<home>/.claude-verify/{builders,reviewers}/<repo-key>/issue-<N>.jsonl (repo-key = sha256(git common dir)[:16]). Seal mode
 (verdict_seal.seal_mode: chủ repo cài pubkey root-owned) BẬT → chỉ nhận biên bản có chữ ký Ed25519 hợp lệ của pubkey tin cậy; agent
-không tự ký được nên `seal` báo "cần chủ repo cài signer claude-verify" và fail closed. Seal mode TẮT → nhận biên bản không ký.
+không tự ký được nên `seal` báo "cần chủ repo cài signer claude-verify" (exit 3). Seal mode TẮT → nhận biên bản không ký.
 
-Rủi ro còn lại (ghi rõ, cùng mức biên bản ~/.antigravity-pm khi seal mode tắt): một agent cùng uid tự viết file biên bản dưới ~;
-worktree build đã bị xoá (không còn lock) thì không biết builder, chỉ còn kiểm reviewer khác phiên đang giữ worktree đó.
-Thư mục biên bản lạ (CLAUDE_VERIFY_HOME) chỉ nhận trong fixture test: DEVKIT_PM_HOME_TEST=1, thư mục dưới gốc tạm cố định VÀ repo
-cũng dưới gốc tạm (như push_gate._seal_fixture); ngoài fixture mà đặt biến này → từ chối hết. Không theo $HOME (đọc pwd).
+Rủi ro còn lại (cùng mức biên bản ~/.antigravity-pm khi seal mode tắt): agent cùng uid CỐ Ý sửa sổ phiên / biên bản dưới ~ (vd tự thêm
+một phiên giả vào sổ reviewers rồi đặt env theo nó). Thư mục lạ (CLAUDE_VERIFY_HOME) chỉ nhận trong fixture test: DEVKIT_PM_HOME_TEST=1,
+thư mục dưới gốc tạm cố định VÀ repo cũng dưới gốc tạm (như push_gate._seal_fixture); ngoài fixture → từ chối hết. Không theo $HOME.
 """
 import base64
 import datetime
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 
-TASK_ID = re.compile(r"\ACV[0-9]{8}T[0-9]{6}-[0-9a-f]{12}\Z")
+TASK_ID = re.compile(r"\ACV[0-9]{8}T[0-9]{6}-[0-9a-f]{12}-[0-9a-f]{6}\Z")
 SHA40 = re.compile(r"\A[0-9a-f]{40}\Z")
 SESSION = re.compile(r"\A[A-Za-z0-9._:-]{1,128}\Z")
+BRANCH = re.compile(r"\Aissue-([0-9]{1,9})(?:-[A-Za-z0-9._/-]{1,200})?\Z")
 SEVERITIES = ("important", "nit", "pre-existing")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 MAX_BYTES = 2_000_000
 HERE = os.path.dirname(os.path.realpath(__file__))
 
 
+class Unchecked(Exception):
+    """Không kiểm được (git / kit / sổ lỗi): người gọi từ chối, không bao giờ coi là đạt."""
+
+
 def _load(name):
-    """Module của kit cạnh file này (đường thật, không theo env)."""
-    spec = importlib.util.spec_from_file_location("cv_" + name, os.path.join(HERE, name + ".py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    """Module của kit cạnh file này (đường thật, không theo env); lỗi nạp → Unchecked."""
+    try:
+        spec = importlib.util.spec_from_file_location("cv_" + name, os.path.join(HERE, name + ".py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception as e:   # noqa: BLE001 - kit thiếu/hỏng: báo rõ, không traceback
+        raise Unchecked(f"không nạp được {name}.py của kit ({e.__class__.__name__})") from None
 
 
 def git(top, *args, timeout=30):
@@ -64,24 +79,61 @@ def _fixture(top):
     return vs._under_tmp(home) and vs.fixture_repo(top)
 
 
-def store(top):
-    """Thư mục biên bản, hoặc None khi CLAUDE_VERIFY_HOME đặt mà không phải fixture (fail closed)."""
+def root(top):
+    """Thư mục gốc claude-verify; CLAUDE_VERIFY_HOME ngoài fixture → Unchecked (fail closed)."""
     if os.environ.get("CLAUDE_VERIFY_HOME"):
-        return os.path.join(os.environ["CLAUDE_VERIFY_HOME"], "records") if _fixture(top) else None
+        if not _fixture(top):
+            raise Unchecked("CLAUDE_VERIFY_HOME chỉ dùng trong fixture test")
+        return os.environ["CLAUDE_VERIFY_HOME"]
     try:
         import pwd  # noqa: PLC0415 - chỉ POSIX
-        home = pwd.getpwuid(os.getuid()).pw_dir
+        return os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".claude-verify")
     except (ImportError, KeyError):
-        return None
-    return os.path.join(home, ".claude-verify", "records")
+        raise Unchecked("không đọc được home của uid") from None
 
 
-def builder_sessions(top, head):
-    """session_id trong lock của các worktree đứng trên một nhánh (không detached) có HEAD == head."""
+def _ledger(top, lane, issue):
+    rc, common = git(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if rc != 0 or not common.strip():
+        raise Unchecked("git rev-parse --git-common-dir lỗi")
+    key = hashlib.sha256(os.path.realpath(common.strip()).encode()).hexdigest()[:16]
+    return os.path.join(root(top), "builders" if lane == "build" else "reviewers", key, f"issue-{int(issue)}.jsonl")
+
+
+def ledger_sessions(top, lane, issue):
+    """Các session id trong sổ; không có file = rỗng; dòng hỏng / lỗi đọc → Unchecked."""
+    path = _ledger(top, lane, issue)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            rows = [json.loads(line) for line in fh if line.strip()]
+    except FileNotFoundError:
+        return set()
+    except (OSError, ValueError, RecursionError) as e:
+        raise Unchecked(f"sổ {lane} hỏng ({e.__class__.__name__})") from None
+    if not all(isinstance(r, dict) and isinstance(r.get("session"), str) and SESSION.fullmatch(r["session"]) for r in rows):
+        raise Unchecked(f"sổ {lane} có dòng sai dạng")
+    return {r["session"] for r in rows}
+
+
+def register(top, lane, issue, session):
+    if lane not in ("build", "review") or not SESSION.fullmatch(session or "") or not 0 < int(issue) < 10 ** 9:
+        raise Unchecked("register: lane/issue/session sai dạng")
+    path = _ledger(top, lane, issue)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    line = json.dumps({"session": session, "ts": datetime.datetime.now(datetime.timezone.utc).isoformat()}) + "\n"
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, line.encode())
+    finally:
+        os.close(fd)
+
+
+def lock_builders(top, head):
+    """session_id trong lock của worktree còn sống đứng trên một nhánh (không detached) có HEAD == head; git lỗi → Unchecked."""
     rc, out = git(top, "worktree", "list", "--porcelain")
-    found = set()
     if rc != 0:
-        return found
+        raise Unchecked("git worktree list lỗi")
+    found = set()
     sl = _load("session_lock")
     for block in out.split("\n\n"):
         f = dict(line.split(" ", 1) for line in block.splitlines() if " " in line)
@@ -93,6 +145,21 @@ def builder_sessions(top, head):
         if isinstance(sid, str) and sid.strip():
             found.add(sid.strip())
     return found
+
+
+def session_problem(top, head, issue, reviewer, recorded_builders=()):
+    """Lý do từ chối phiên reviewer của thẻ `issue`, hoặc None; lỗi kiểm → Unchecked."""
+    builders = ledger_sessions(top, "build", issue) | lock_builders(top, head) | set(recorded_builders)
+    builders.discard("")
+    if not builders:
+        return f"không biết phiên builder của thẻ #{issue} (sổ builders rỗng): claude-verify chỉ dùng cho thẻ board giao"
+    if not isinstance(reviewer, str) or not SESSION.fullmatch(reviewer):
+        return "không rõ phiên reviewer"
+    if reviewer in builders:
+        return "phiên reviewer là phiên builder của thẻ: tự duyệt không tính"
+    if reviewer not in ledger_sessions(top, "review", issue):
+        return f"phiên reviewer không có trong sổ reviewers của thẻ #{issue} (runner chưa giao review cho phiên này)"
+    return None
 
 
 def added_lines(top, base, head):
@@ -143,13 +210,25 @@ def _tree(top, head):
     return out.strip() if rc == 0 else None
 
 
-def seal(repo, head, report_path):
+def _branch_tip(top, branch):
+    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+        rc, out = git(top, "rev-parse", "--verify", "-q", ref + "^{commit}")
+        if rc == 0:
+            yield out.strip()
+
+
+def seal(repo, head, report_path, branch):
+    """(exit, lý do lỗi|None)."""
     top = os.path.realpath(repo)
     reviewer = (os.environ.get("CLAUDE_CODE_SESSION_ID") or "").strip()
     if not SESSION.fullmatch(reviewer):
         return 2, "CLAUDE_CODE_SESSION_ID rỗng hoặc sai dạng: không biết phiên reviewer"
     if not isinstance(head, str) or not SHA40.fullmatch(head) or _tree(top, head) is None:
         return 2, "--head phải là sha40 của một commit có trong repo"
+    m = BRANCH.fullmatch(branch or "")
+    if not m or head not in set(_branch_tip(top, branch)):
+        return 2, f"--branch {branch} phải là nhánh issue-<N>-… có đỉnh đúng bằng head"
+    issue = int(m.group(1))
     try:
         with open(report_path, encoding="utf-8") as fh:
             rep = json.load(fh)
@@ -163,38 +242,42 @@ def seal(repo, head, report_path):
         return 2, "base của báo cáo không phải merge-base(trunk, head)"
     lines = added_lines(top, mb.strip(), head)
     if lines is None:
-        return 2, "git diff base..head lỗi"
+        return 3, "git diff base..head lỗi"
     for f in rep["findings"]:
         why = _finding_problem(top, head, f, lines)
         if why:
             return 2, why
-    builders = builder_sessions(top, head)
-    if reviewer in builders:
-        return 2, "phiên reviewer là phiên builder (giữ worktree nhánh của head): tự duyệt không tính"
-    vs = _load("verdict_seal")
-    if vs.seal_mode(_fixture(top)):
+    why = session_problem(top, head, issue, reviewer)
+    if why:
+        return 2, why
+    if _load("verdict_seal").seal_mode(_fixture(top)):
         return 3, "seal mode bật: cần chủ repo cài signer claude-verify (agent không tự ký được biên bản)"
-    st = store(top)
-    if st is None:
-        return 2, "CLAUDE_VERIFY_HOME chỉ dùng trong fixture test"
+    builders = sorted(ledger_sessions(top, "build", issue) | lock_builders(top, head))
     now = datetime.datetime.now(datetime.timezone.utc)
-    task_id = f"CV{now:%Y%m%dT%H%M%S}-{head[:12]}"
+    task_id = f"CV{now:%Y%m%dT%H%M%S}-{head[:12]}-{secrets.token_hex(3)}"
     verdict = "fail" if any(f["severity"] == "important" for f in rep["findings"]) else "pass"
     payload = {"v": 1, "kind": "claude-verify", "task_id": task_id, "head": head, "tree": _tree(top, head), "base": mb.strip(),
-               "verdict": verdict, "findings": rep["findings"], "reviewer_session": reviewer,
-               "builder_session": ",".join(sorted(builders)) or None, "ts": now.isoformat()}
+               "verdict": verdict, "findings": rep["findings"], "reviewer_session": reviewer, "builder_session": ",".join(builders),
+               "issue": issue, "branch": branch, "ts": now.isoformat()}
+    st = os.path.join(root(top), "records")
     os.makedirs(st, mode=0o700, exist_ok=True)
     path = os.path.join(st, task_id + ".json")
-    tmp = f"{path}.tmp{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as fh:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)   # không bao giờ đè biên bản đã có
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump({"payload": json.dumps(payload, sort_keys=True, ensure_ascii=False), "sig": None}, fh)
-    os.replace(tmp, path)
     print(f"task_id={task_id} verdict={verdict} → {path}")
     return (0 if verdict == "pass" else 4), None
 
 
-def check(task_id, sha, top, pr=None):
-    """(True, lý do) khi biên bản claude-verify `task_id` là pass đúng head/tree `sha` trong repo `top`; (False, lý do) mọi trường hợp khác."""
+def check(task_id, sha, top, pr=None, branch=None):
+    """(True, lý do) khi biên bản claude-verify `task_id` hợp lệ cho head `sha` trong repo `top`; (False, lý do) mọi trường hợp khác."""
+    try:
+        return _check(task_id, sha, top, pr, branch)
+    except Unchecked as e:
+        return False, str(e)
+
+
+def _check(task_id, sha, top, pr, branch):
     if not isinstance(task_id, str) or not TASK_ID.fullmatch(task_id) or not isinstance(sha, str) or not SHA40.fullmatch(sha):
         return False, "task_id hoặc sha sai dạng"
     top = os.path.realpath(top)
@@ -203,11 +286,8 @@ def check(task_id, sha, top, pr=None):
     tree = _tree(top, sha)
     if tree is None:
         return False, f"head {sha[:12]} không có trong repo"
-    st = store(top)
-    if st is None:
-        return False, "CLAUDE_VERIFY_HOME chỉ dùng trong fixture test"
     try:
-        path = os.path.join(st, task_id + ".json")
+        path = os.path.join(root(top), "records", task_id + ".json")
         if os.path.getsize(path) > MAX_BYTES:
             return False, "biên bản quá lớn"
         with open(path, encoding="utf-8") as fh:
@@ -235,37 +315,57 @@ def check(task_id, sha, top, pr=None):
     if payload.get("verdict") != "pass" or not isinstance(findings, list) \
             or any(not isinstance(f, dict) or f.get("severity") == "important" for f in findings):
         return False, "verdict không phải pass"
-    reviewer, builder = payload.get("reviewer_session"), payload.get("builder_session")
-    builders = set((builder or "").split(",")) if isinstance(builder, str) else set()
-    if not isinstance(reviewer, str) or not SESSION.fullmatch(reviewer) or reviewer in builders \
-            or reviewer in builder_sessions(top, sha):
-        return False, "reviewer trùng builder hoặc không rõ phiên reviewer"
-    return True, "claude-verify pass"
+    issue = payload.get("issue")
+    if type(issue) is not int or issue <= 0:
+        return False, "biên bản không ghi thẻ (issue)"
+    if branch is not None:
+        m = BRANCH.fullmatch(branch)
+        if not m or int(m.group(1)) != issue:
+            return False, f"nhánh PR {branch} không thuộc thẻ issue #{issue} của biên bản"
+    recorded = payload.get("builder_session")
+    why = session_problem(top, sha, issue, payload.get("reviewer_session"),
+                          recorded.split(",") if isinstance(recorded, str) else ())
+    return (False, why) if why else (True, "claude-verify pass")
 
 
 def main(argv):
     import argparse  # noqa: PLC0415
     ap = argparse.ArgumentParser(prog="claude_verify.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    g = sub.add_parser("register")
+    g.add_argument("--lane", required=True, choices=("build", "review"))
+    g.add_argument("--repo", default=".")
+    g.add_argument("--issue", required=True, type=int)
+    g.add_argument("--session", required=True)
     s = sub.add_parser("seal")
     s.add_argument("--repo", default=".")
     s.add_argument("--head", required=True)
     s.add_argument("--report", required=True)
+    s.add_argument("--branch", required=True)
     c = sub.add_parser("check")
     c.add_argument("task_id")
     c.add_argument("sha")
     c.add_argument("--top", default=".")
     c.add_argument("--pr", type=int)
+    c.add_argument("--branch")
     a = ap.parse_args(argv)
-    if a.cmd == "seal":
-        rc, why = seal(a.repo, a.head, a.report)
-        if why:
-            print(f"claude-verify: {why}", file=sys.stderr)
-        return rc
-    ok, why = check(a.task_id, a.sha, a.top, a.pr)
-    if not ok:
-        print(f"claude-verify: {a.task_id}: {why}", file=sys.stderr)
-    return 0 if ok else 1
+    if a.cmd == "check":
+        ok, why = check(a.task_id, a.sha, a.top, a.pr, a.branch)
+        if not ok:
+            print(f"claude-verify: {a.task_id}: {why}", file=sys.stderr)
+        return 0 if ok else 1
+    try:
+        if a.cmd == "register":
+            register(os.path.realpath(a.repo), a.lane, a.issue, a.session)
+            return 0
+        rc, why = seal(a.repo, a.head, a.report, a.branch)
+    except Unchecked as e:
+        rc, why = 3, str(e)
+    except OSError as e:
+        rc, why = 3, f"ghi biên bản/sổ lỗi ({e.__class__.__name__})"
+    if why:
+        print(f"claude-verify: {why}", file=sys.stderr)
+    return rc
 
 
 if __name__ == "__main__":

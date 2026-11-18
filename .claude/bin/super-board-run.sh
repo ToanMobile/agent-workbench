@@ -1616,6 +1616,28 @@ agent_office_args() {
   printf 'agent_office: session_id=%s\n' "$sid" >> "$1" 2>/dev/null || true
 }
 
+worker_session_args() {
+  # #1328: $1 = lane, $2 = issue, $3 = log worker. Mọi worker claude có --session-id do runner gán (Agent Office đã gán thì dùng đúng sid
+  # đó, không gán 2 lần). Lane build/review: ghi sid vào sổ claude-verify (claude_verify.py register) TRƯỚC khi worker chạy, nên builder
+  # không tránh được việc bị ghi; seal/check của claude-verify đòi reviewer có trong sổ reviewers và không thuộc sổ builders của thẻ.
+  # Ghi sổ hỏng chỉ cảnh báo: thẻ đó không dùng được claude-verify (fail closed ở seal/check), worker vẫn chạy.
+  local sid="" i cv
+  for ((i = 0; i < ${#AO_ARGS[@]}; i++)); do [ "${AO_ARGS[$i]}" = --session-id ] && sid="${AO_ARGS[$((i + 1))]:-}"; done
+  if [ -z "$sid" ]; then
+    sid=$(python3 -I -S -c 'import uuid; print(uuid.uuid4())' 2>/dev/null) || return 0
+    [ -n "$sid" ] || return 0
+    AO_ARGS+=(--session-id "$sid")
+    printf 'worker: session_id=%s\n' "$sid" >> "$3" 2>/dev/null || true
+  fi
+  case "$1" in build|review) ;; *) return 0 ;; esac
+  for cv in "$SCRIPT_DIR/../../universal-agent-devkit/bin/claude_verify.py" "$SCRIPT_DIR/../../.agents/devkit/bin/claude_verify.py"; do
+    [ -f "$cv" ] || continue
+    python3 -I "$cv" register --lane "$1" --repo "${REPO_ROOT:-.}" --issue "$2" --session "$sid" 2>>"$3" \
+      || log "⚠ claude-verify: could not record the ${1} session of #${2}; that card cannot use claude-verify"
+    return 0
+  done
+}
+
 hold_for_open_pr() {
   # #556: $1 = issue, $2 = verdict JSON. Trả 0 khi đã giữ thẻ (caller không giao). Trả 1 khi không có conflictWith
   # để nhánh sequence cũ (waiting-on theo issue) chạy tiếp. Nhãn chỉ là dấu; sweep_file_wait hỏi lại preflight.
@@ -2030,10 +2052,10 @@ EOF
       [ -d "$lane_wt" ] && cd "$lane_wt"
       exec nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-hydrogen-high --dangerously-skip-permissions -p "$prompt" ) >> "$worker_log_abs" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
-    agent_office_args "$worker_log"
+    agent_office_args "$worker_log"; worker_session_args "$lane" "$issue" "$worker_log"
     AGENT_OFFICE_NONCE="$AO_NONCE" CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
   else
-    agent_office_args "$worker_log"
+    agent_office_args "$worker_log"; worker_session_args "$lane" "$issue" "$worker_log"
     AGENT_OFFICE_NONCE="$AO_NONCE" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
   fi
   pid=$!

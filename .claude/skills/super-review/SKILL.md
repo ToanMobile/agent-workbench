@@ -109,11 +109,14 @@ once left a six-hour run with zero commits on `main`. In order, no shortcuts:
 1. `gh pr ready <PR>` — idempotent, safe on an already-ready PR.
    **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` (its runner drains
    the queue every tick) or `"workflow"` (the launchd schedule `super-board-queue-schedule.sh` does), without `--codex`): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, the cross-review is **claude-verify** by default (#1328):
-   your session (never the builder's: the seal refuses the session holding the PR branch's worktree) writes the review as JSON
+   claude-verify only works for cards the board dispatched: the runner records the build and review worker session ids before they
+   start, and the seal requires your session in the card's reviewer ledger and not in its builder ledger (a manual session outside the
+   board takes the Antigravity path or the owner's approval). A PR that edits or deletes an existing test (edited_existing) still
+   needs the Antigravity path below until #1331 lands: a claude-verify approval does not approve edited tests. Your session writes the review as JSON
    `{head, base: merge-base(origin/<base>, head), findings: [{id, severity: important|nit|pre-existing, file, line, snippet, class}], reviewed_at}`
    (every finding cites a line the PR added at head; `pre-existing` may cite any line of a changed file), then runs
-   `python3 .agents/devkit/bin/claude_verify.py seal --repo <review worktree> --head <sha40> --report <file>`: exit 0 prints `task_id=CV…`
-   (verdict pass), exit 4 = an `important` finding (no approval: route the fix), exit 2/3 = refused (fix the report; 3 = seal mode on
+   `python3 .agents/devkit/bin/claude_verify.py seal --repo <review worktree> --head <sha40> --report <file> --branch <PR branch>`: exit 0 prints `task_id=CV…`
+   (verdict pass), exit 4 = an `important` finding (no approval: route the fix), exit 2 = refused (report, branch or session; fix it or take the Antigravity path), exit 3 = cannot check (git/kit error, or seal mode on
    without the owner's claude-verify signer: `blocked-by: agent`). On exit 0 post `approved-head:<sha40>` with
    `approved-by: {"reviewer":"claude-verify","builder":"<builder lane id>","task_id":"CV…","gate_receipt":"<impacted task receipt id>"}`.
    Antigravity is optional: only when config `review_tiers` names `antigravity` or `SB_REVIEW_ANTIGRAVITY=1`, run an Antigravity audit of

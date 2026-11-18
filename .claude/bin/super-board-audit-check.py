@@ -9,8 +9,9 @@ pm home lạ (ANTIGRAVITY_PM_STATE_HOME, HOME=/tmp/x) không phải fixture test
 pm_home_test_fixture, audit T0066 vòng 3). `--pr N`: head chưa có object trong repo thì fetch refs/pull/N/head trước (lỗi → không duyệt).
 
 CLI: super-board-audit-check.py <task_id> <sha40> [--top DIR] [--pr N]   exit 0 = khớp, 1 = không khớp / không kiểm được.
-     #1328: task_id dạng CV<yyyymmdd>T<HHMMSS>-<head12> là biên bản claude-verify: chuyển cho claude_verify.check của kit (tìm theo
-     vị trí thật của script, như push_gate()); một trong hai nguồn (antigravity-pm hoặc claude-verify) là đủ.
+     #1328: task_id dạng CV<yyyymmdd>T<HHMMSS>-<head12>-<hex6> là biên bản claude-verify: chuyển cho claude_verify.check của kit (tìm theo
+     vị trí thật của script, như push_gate()); một trong hai nguồn (antigravity-pm hoặc claude-verify) là đủ. `--branch B` (nhánh PR):
+     thẻ issue-<N> của nhánh phải trùng thẻ ghi trong biên bản claude-verify.
 CLI: super-board-audit-check.py --chain-audit <sha40> --base <ref> [--top DIR]   (04/11, merge gate / train --has-edited-tests)
      exit 0 = PR sửa/xoá file đã có mà gate có thể coi là test (edited_existing) VÀ có biên bản audit pass của antigravity-pm với
      auditedHead thuộc <base>..<sha40> (duyệt test sửa tra thẳng biên bản, post-fix-gate _pm_audit_cross_review);
@@ -29,7 +30,7 @@ import sys
 from pathlib import Path
 
 TASK_ID = re.compile(r"T\d{4,}-[a-z0-9-]{1,48}\Z")   # antigravity-pm TASK_ID_RE (src/tasks.js), như push_gate.APPROVED_VALUE
-CV_TASK_ID = re.compile(r"CV[0-9]{8}T[0-9]{6}-[0-9a-f]{12}\Z")   # #1328: id biên bản claude_verify.py (khớp super-board-approved-head.jq)
+CV_TASK_ID = re.compile(r"CV[0-9]{8}T[0-9]{6}-[0-9a-f]{12}-[0-9a-f]{6}\Z")   # #1328: id biên bản claude_verify.py (khớp super-board-approved-head.jq)
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 _PUSH_GATE = []
 
@@ -267,12 +268,13 @@ def main():
     ap.add_argument("sha")
     ap.add_argument("--top", help="repo chứa biên bản (mặc định: git toplevel của cwd)")
     ap.add_argument("--pr", type=int, help="số PR: head chưa có trong repo thì fetch refs/pull/<pr>/head trước khi đối chiếu")
+    ap.add_argument("--branch", help="#1328: nhánh PR; với id claude-verify thì thẻ của nhánh phải trùng thẻ của biên bản")
     args = ap.parse_args()
     if CV_TASK_ID.fullmatch(args.task_id):
         top = args.top or repo_top()
         try:
             cv = claude_verify()
-            ok, why = cv.check(args.task_id, args.sha, top, args.pr) if cv is not None and top else (False, "kit has no claude_verify.py")
+            ok, why = cv.check(args.task_id, args.sha, top, args.pr, args.branch) if cv is not None and top else (False, "kit has no claude_verify.py")
         except Exception as error:   # noqa: BLE001 - biên bản / kit hỏng không bao giờ thành duyệt
             ok, why = False, error.__class__.__name__
         if not ok:
