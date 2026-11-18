@@ -3703,22 +3703,24 @@ reload_swap_self() {
 }
 # #623: bản runner do lần swap trước ghi (đĩa lệch HEAD) làm file dirty nên chặn ff và `worktree finish` mãi mãi. Trả file về HEAD trước khi
 # ff/finish (runner đang chạy giữ inode cũ). Chỉ khi đĩa đúng bản runner tự ghi và index sạch: sửa tay (kể cả đã stage) thì không đụng.
-# 18/11 (#1266 Blocked lại vì runner kẹt code cũ): sửa tay runner mà origin đã chứa (gộp 3 chiều HEAD/đĩa/origin ra đúng bản origin) không
-# phải lý do giữ code cũ: trả file về HEAD để ff/swap đi tiếp. Sửa đã stage hoặc origin chưa chứa thì không đụng (#623 7d). $1 = rel, $2 = blob origin.
+# 18/11 (#1266 Blocked lại vì runner kẹt code cũ): sửa tay runner mà origin đã chứa không phải lý do giữ code cũ: trả file về HEAD để ff/swap
+# đi tiếp. "Đã chứa" = gộp 3 chiều với origin làm phía chính (git merge-file current=origin base=HEAD other=đĩa) sạch và ra ĐÚNG bản origin,
+# tức áp phần sửa tay lên origin không đổi gì. Xung đột hay khác origin (sửa chỉ-xoá, dòng trùng chỗ khác, sửa origin chưa có) ⇒ giữ, cảnh báo
+# như #623 7d: thà kẹt code cũ còn hơn vứt sửa tay. Sửa đã stage thì không đụng. $1 = rel, $2 = blob origin.
 reload_drop_subsumed_edit() {
-  # "origin đã chứa" = bản vá sửa tay không ngữ cảnh (git diff -U0 HEAD) áp NGƯỢC được lên bản origin: mọi dòng sửa tay đã có ở origin
-  # (đo 18/11: bản dùng git merge-file làm ca S1/S2 của test_runner_self_reload_subsumed_edit.sh đỏ, vì origin sửa giống hệt sát dòng khác).
-  local rel="$1" new="$2" d
+  local rel="$1" new="$2" d disk
+  disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || return 1
+  [ "$disk" != "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] && [ "$disk" != "${SB_RELOAD_SWAPPED_SUM:-}" ] || return 1
   git diff --cached --quiet -- "$rel" 2>/dev/null || return 1
   d=$(mktemp -d 2>/dev/null) || return 1
-  mkdir -p "$d/t/$(dirname "$rel")" 2>/dev/null
-  if git diff -U0 --no-color --no-ext-diff HEAD -- "$rel" > "$d/p" 2>/dev/null && [ -s "$d/p" ] \
-     && git cat-file blob "$new" > "$d/t/$rel" 2>/dev/null \
-     && ( cd "$d/t" && git apply -R --check --unidiff-zero "$d/p" ) >/dev/null 2>&1; then
+  if git cat-file blob "$new" > "$d/cur" 2>/dev/null && git show "HEAD:${rel}" > "$d/base" 2>/dev/null \
+     && cp "$RELOAD_SELF" "$d/other" 2>/dev/null && git merge-file -q "$d/cur" "$d/base" "$d/other" 2>/dev/null \
+     && [ "$(git hash-object "$d/cur" 2>/dev/null)" = "$new" ]; then
     rm -rf "$d"
-    log "self-reload: hand edit of super-board-run.sh is already on origin/${BASE_BRANCH}; dropping it to load the new code"
-    git restore --source=HEAD -- "$rel" 2>/dev/null
-    return $?
+    git restore --source=HEAD -- "$rel" 2>/dev/null || return 1
+    log "self-reload: hand edit of super-board-run.sh is already on origin/${BASE_BRANCH}; dropped it to load the new code"
+    board_notify send --card "$CONFIG_SLUG" --text "runner: sửa tay chưa commit ở super-board-run.sh đã có sẵn trên origin/${BASE_BRANCH}, đã bỏ để nạp code mới"
+    return 0
   fi
   rm -rf "$d"; return 1
 }
@@ -3744,11 +3746,12 @@ self_reload_tick() {
   [ "$new" != "$RELOAD_RUN_SUM" ] || return 0
   disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
   if [ "$disk" != "$new" ]; then
-    if [ "$disk" != "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] && [ "$disk" != "${SB_RELOAD_SWAPPED_SUM:-}" ] \
-       && reload_drop_subsumed_edit "$rel" "$new"; then
-      disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
-    fi
     cur=$(git symbolic-ref -q --short HEAD 2>/dev/null) || cur=""
+    # Bỏ sửa tay đã có trên origin CHỈ ở nhánh chắc chắn nạp lại: detached (#1107 swap) hoặc base fast-forward được. Nhánh khác hay main có
+    # commit cục bộ (finish có thể hỏng) thì giữ nguyên để sửa tay không mất mà runner vẫn kẹt.
+    if [ -z "$cur" ] || { [ "$cur" = "$BASE_BRANCH" ] && git merge-base --is-ancestor HEAD "origin/${BASE_BRANCH}" 2>/dev/null; }; then
+      reload_drop_subsumed_edit "$rel" "$new" && { disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""; }
+    fi
     if [ -z "$cur" ] \
       && [ "$disk" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] && git diff --cached --quiet -- "$rel" 2>/dev/null; then
       # #1107: detached HEAD (gate/review dừng giữa chừng) không có nhánh để ff; runner trên đĩa sạch ⇒ chỉ thay đúng file runner bằng bản origin.

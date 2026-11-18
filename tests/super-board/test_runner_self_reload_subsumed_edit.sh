@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Regression (18/11, board agent-workbench): the main checkout's super-board-run.sh carried an uncommitted hand edit
+# Regression (#1283, 18/11 board agent-workbench): the main checkout's super-board-run.sh carried an uncommitted hand edit
 # (agy --model argon -> hydrogen) that #1264 had since merged on origin/main, and .agents/instincts.md had another
-# session's uncommitted lesson. self_reload_tick saw "runner differs from HEAD" and refused to reload on every tick
-# ("git merge --ff-only failed (uncommitted edits in the way?)"), so merged fixes (#1277) never reached the running board
-# and #1266 was Blocked again by the very bug #1277 fixed.
-# Rule: a hand edit of the runner that origin/<base> already contains (3-way merge HEAD/disk/origin == origin) is not a
-# reason to keep old code: drop it and reload. A hand edit origin does not contain is still kept and warned (#623 7d).
+# session's uncommitted lesson. self_reload_tick refused to reload on every tick ("git merge --ff-only failed (uncommitted
+# edits in the way?)"), so merged fixes (#1277) never reached the running board and #1266 was Blocked again.
+# Rule: a hand edit of the runner whose changes origin/<base> already has (git merge-file current=origin base=HEAD
+# other=disk is clean and equals origin) is dropped and the runner reloads, with a notice. Anything else is kept and warned
+# (#623 7d): an edit origin lacks, a deletion-only edit, an edit whose new line exists elsewhere in origin, an adjacent
+# identical edit that conflicts, a staged edit, or a checkout where no reload follows (non-base branch).
 # Same offline harness as test_runner_self_reload.sh. bash 3.2 compatible.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -49,47 +50,70 @@ push_other() {   # push_other <nội dung script>: đẩy bản mới của scri
 execs() { wc -l < "$TMP/exec" | tr -d ' '; }
 notes() { wc -l < "$TMP/notify" | tr -d ' '; }
 
-V1=$'#!/usr/bin/env bash\necho v1\n# model=argon'
-mkrepo_m() {   # mkrepo with a runner that has a "# model=argon" line (the line the hand edit changes)
+FILL=$'a1\na2\na3\na4\na5\na6\na7\na8'
+V1=$'#!/usr/bin/env bash\necho v1\n'"$FILL"$'\n# model=argon\nreturn 1\nkeep-me'
+mkrepo_m() {   # runner with filler lines so the version line and the "# model=" line are far apart
   mkrepo
   printf '%s\n' "$V1" > "$REL" && git commit -qam v1m && git push -q origin HEAD:main 2>/dev/null
   ( cd "$C/other" && git pull -q origin main 2>/dev/null )
   RELOAD_RUN_SUM=$(git hash-object "$RELOAD_SELF")
 }
+push_v2() {   # push_v2 <model> [extra sed on the pushed copy]: origin = v2 + given model line (+ optional extra edit), other.txt bumped when $3=up
+  ( cd "$C/other" && printf '%s\n' "$V1" | sed -e 's/echo v1/echo v2/' -e "s/argon/$1/" ${2:+-e "$2"} > "$REL" \
+      && { [ "${3:-}" != up ] || echo up >> other.txt; } && git add -A && git commit -qm n && git push -q origin HEAD:main 2>/dev/null )
+}
+warned() { grep -q 'keeps the old code' "$TMP/log"; }
+dropped() { grep -q 'đã bỏ' "$TMP/notify"; }
 
-# S1: runner hand edit already on origin + another dirty file blocks the ff -> reload origin's runner, other edit kept
-mkrepo_m; echo dirty >> other.txt
-sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak"
-( cd "$C/other" && echo up >> other.txt && printf '%s\n' $'#!/usr/bin/env bash\necho v2\n# model=hydrogen' > "$REL" && git add -A && git commit -qm n && git push -q origin HEAD:main 2>/dev/null )
-self_reload_tick
-[ "$(execs)" = 1 ] && [ "$(notes)" = 0 ] && grep -q v2 "$RELOAD_SELF" && grep -q dirty other.txt \
-  && ok "S1 hand edit already on origin + dirty other file: runner reloaded, other edit kept, no warning" \
-  || fail "S1: exec=$(execs) notify=$(notes) log=$(cat "$TMP/log")"
+# S1: hand edit already on origin + another dirty file blocks the ff -> runner reloaded, other edit kept, drop notice, no "old code" warning
+mkrepo_m; echo dirty >> other.txt; sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen "" up; self_reload_tick
+[ "$(execs)" = 1 ] && grep -q v2 "$RELOAD_SELF" && grep -q dirty other.txt && dropped && ! warned \
+  && ok "S1 hand edit already on origin + dirty other file: runner reloaded, other edit kept, drop noticed" \
+  || fail "S1: exec=$(execs) notify=$(cat "$TMP/notify") log=$(cat "$TMP/log")"
 
-# S2: runner hand edit already on origin, nothing else dirty -> fast-forward and reload
-mkrepo_m
-sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak"
-( cd "$C/other" && printf '%s\n' $'#!/usr/bin/env bash\necho v2\n# model=hydrogen' > "$REL" && git add -A && git commit -qm n && git push -q origin HEAD:main 2>/dev/null )
-self_reload_tick
-[ "$(execs)" = 1 ] && [ "$(notes)" = 0 ] && grep -q v2 "$RELOAD_SELF" && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \
+# S2: hand edit already on origin, nothing else dirty -> fast-forward and reload
+mkrepo_m; sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen; self_reload_tick
+[ "$(execs)" = 1 ] && grep -q v2 "$RELOAD_SELF" && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && ! warned \
   && ok "S2 hand edit already on origin: main fast-forwarded and runner reloaded" \
-  || fail "S2: exec=$(execs) notify=$(notes) log=$(cat "$TMP/log")"
+  || fail "S2: exec=$(execs) notify=$(cat "$TMP/notify") log=$(cat "$TMP/log")"
 
-# S3: control (#623 7d) — hand edit origin does NOT contain -> kept, warned, no exec
-mkrepo_m; echo dirty >> other.txt
-sed -i.bak 's/argon/neon/' "$REL" && rm -f "$REL.bak"
-( cd "$C/other" && echo up >> other.txt && printf '%s\n' $'#!/usr/bin/env bash\necho v2\n# model=hydrogen' > "$REL" && git add -A && git commit -qm n && git push -q origin HEAD:main 2>/dev/null )
-self_reload_tick
-[ "$(execs)" = 0 ] && [ "$(notes)" = 1 ] && grep -q neon "$RELOAD_SELF" \
-  && ok "S3 hand edit not on origin: kept and warned" || fail "S3: exec=$(execs) notify=$(notes)"
+# S3: hand edit origin does NOT contain -> kept, warned, no exec
+mkrepo_m; echo dirty >> other.txt; sed -i.bak 's/argon/neon/' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen "" up; self_reload_tick
+[ "$(execs)" = 0 ] && grep -q neon "$RELOAD_SELF" && warned && ! dropped \
+  && ok "S3 hand edit not on origin: kept and warned" || fail "S3: exec=$(execs) notify=$(cat "$TMP/notify")"
 
 # S4: staged hand edit (even if on origin) is someone's in-flight commit -> not touched
-mkrepo_m; echo dirty >> other.txt
-sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak" && git add "$REL"
-( cd "$C/other" && echo up >> other.txt && printf '%s\n' $'#!/usr/bin/env bash\necho v2\n# model=hydrogen' > "$REL" && git add -A && git commit -qm n && git push -q origin HEAD:main 2>/dev/null )
-self_reload_tick
-[ "$(execs)" = 0 ] && grep -q hydrogen "$RELOAD_SELF" && ! grep -q v2 "$RELOAD_SELF" \
-  && ok "S4 staged hand edit: not touched, no exec" || fail "S4: exec=$(execs) notify=$(notes)"
+mkrepo_m; echo dirty >> other.txt; sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak" && git add "$REL"
+push_v2 hydrogen "" up; self_reload_tick
+[ "$(execs)" = 0 ] && grep -q hydrogen "$RELOAD_SELF" && ! grep -q v2 "$RELOAD_SELF" && ! dropped \
+  && ok "S4 staged hand edit: not touched, no exec" || fail "S4: exec=$(execs) notify=$(cat "$TMP/notify")"
+
+# S5: deletion-only hand edit (keep-me deleted; origin still has it) -> kept, warned
+mkrepo_m; echo dirty >> other.txt; sed -i.bak '/keep-me/d' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen "" up; self_reload_tick
+[ "$(execs)" = 0 ] && ! grep -q keep-me "$RELOAD_SELF" && warned && ! dropped \
+  && ok "S5 deletion-only hand edit origin lacks: kept and warned" || fail "S5: exec=$(execs) notify=$(cat "$TMP/notify") log=$(cat "$TMP/log")"
+
+# S6: hand edit's new line exists elsewhere in origin (return 1 -> return 0; origin adds a different 'return 0' line but keeps 'return 1')
+mkrepo_m; echo dirty >> other.txt; sed -i.bak 's/^return 1$/return 0/' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen 's/^a4$/return 0/' up; self_reload_tick
+[ "$(execs)" = 0 ] && grep -q '^return 0$' "$RELOAD_SELF" && ! grep -q '^return 1$' "$RELOAD_SELF" && warned && ! dropped \
+  && ok "S6 hand edit whose new line exists elsewhere in origin: kept and warned" || fail "S6: exec=$(execs) notify=$(cat "$TMP/notify") log=$(cat "$TMP/log")"
+
+# S7: checkout on a non-base branch, hand edit already on origin -> no reload follows, so the edit is not dropped
+mkrepo_m; git checkout -q -b side; sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen; self_reload_tick
+[ "$(execs)" = 0 ] && grep -q hydrogen "$RELOAD_SELF" && ! dropped \
+  && ok "S7 non-base branch: subsumed edit kept (no reload follows)" || fail "S7: exec=$(execs) notify=$(cat "$TMP/notify")"
+
+# S8: identical edit but origin also changed the adjacent line (merge-file conflict) -> kept, warned (safe side)
+mkrepo_m; echo dirty >> other.txt; sed -i.bak 's/argon/hydrogen/' "$REL" && rm -f "$REL.bak"
+push_v2 hydrogen 's/^return 1$/return 2/' up; self_reload_tick
+[ "$(execs)" = 0 ] && grep -q hydrogen "$RELOAD_SELF" && warned && ! dropped \
+  && ok "S8 identical edit next to another origin change (conflict): kept and warned" || fail "S8: exec=$(execs) notify=$(cat "$TMP/notify") log=$(cat "$TMP/log")"
 
 cd "$TMP" || exit 1
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_self_reload_subsumed_edit: all passed" || { echo "❌ test_runner_self_reload_subsumed_edit: $FAILS failed"; exit 1; }
