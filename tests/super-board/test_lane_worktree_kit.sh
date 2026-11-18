@@ -199,5 +199,68 @@ else
 fi
 [ -z "$bad" ] && ok "4. no lane brief or lane file removes a worktree with a plain git worktree remove" \
   || fail "4. plain git worktree remove instructions left:$bad"
+# ── 5. (#1303) a worktree held by another session is never removed: build/review briefs (runner and wave) ask `worktree held` first, exit 3
+#       means make an own worktree (suffixed name) for the same PR branch, and Block only when that add fails (with the reason).
+miss=""
+for pair in "runner:$hint_text" "wave:$wave_text"; do
+  t="${pair#*:}"
+  case "$t" in *"worktree.py held"*|*"worktree held"*) ;; *) miss="$miss ${pair%%:*}:no-held-check" ;; esac
+  case "$t" in *"never remove"*) ;; *) miss="$miss ${pair%%:*}:no-never-remove-held" ;; esac
+  case "$t" in *"-2"*"Block"*|*"-2"*"blocked"*) ;; *) miss="$miss ${pair%%:*}:no-suffixed-worktree-or-block-on-add-failure" ;; esac
+done
+[ -z "$miss" ] && ok "5. held worktree: briefs check held, never remove it, add a suffixed worktree, Block only if that fails" \
+  || fail "5. held-worktree guidance missing:$miss"
+
+# ── 6. (#1303 review R1-R4) the exit-3 branch must be deliverable through the REAL DevKit push hook, or end in a Block with the reason.
+#       Oracle: take the push command the build brief names, run it through block-dangerous-git.sh in a repo where another worktree holds
+#       the PR branch; the hook refuses it, so the brief must tell the lane to stop and Block (no retry/force). Review gets a detached worktree.
+b_hint="$(lane_worktree_hint build 5)"; r_hint="$(lane_worktree_hint review 5)"
+miss=""
+pcmd="$(printf '%s' "$b_hint" | grep -o 'git push origin issue-5-<slug>-2:issue-5-<slug>' | head -1 | sed 's/<slug>/x/g')"
+[ -n "$pcmd" ] || miss="$miss build:no-named-push-command"
+case "$b_hint" in *"hook refuses it"*"do not retry, force"*"Block the card with the reason"*) ;; *) miss="$miss build:no-block-when-push-refused" ;; esac
+case "$r_hint" in *"detached worktree"*"review pushes nothing"*) ;; *) miss="$miss review:no-detached-worktree" ;; esac
+case "$r_hint" in *"push origin issue-5"*) miss="$miss review:pushes" ;; esac
+for t in "$b_hint" "$r_hint"; do
+  case "$t" in *"Any other exit of held"*"do not remove it, Block"*) ;; *) miss="$miss no-unknown-held-exit-keep" ;; esac
+done
+grep -q "Any other exit of held" "$WAVE" && grep -q "review pushes nothing" "$WAVE" && grep -q "hook refuses it while the holder" "$WAVE" || miss="$miss wave:no-r1-r3-r4-text"
+if [ -n "$pcmd" ]; then
+  HOOK="$ROOT/universal-agent-devkit/hooks/block-dangerous-git.sh"
+  E="$TMP/hook"; mkdir -p "$E"
+  git init -q --bare "$E/o.git"; git init -q -b main "$E/r"
+  ( cd "$E/r" && git remote add origin ../o.git && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m a && git push -q origin main \
+    && git branch issue-5-x && git worktree add -q ../w2 -b issue-5-x-2 issue-5-x && cd ../w2 && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m new )
+  if [ -f "$HOOK" ] && [ -d "$E/w2" ]; then
+    python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","cwd":sys.argv[2],"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":sys.argv[1],"description":"d"}}))' "$pcmd" "$E/w2" > "$E/in.json"
+    ( cd "$E/w2" && CLAUDE_PROJECT_DIR="$E/w2" bash "$HOOK" < "$E/in.json" > /dev/null 2>&1 ); hrc=$?
+    [ "$hrc" -eq 2 ] || miss="$miss hook-did-not-refuse-named-push(rc=$hrc): brief premise changed"
+  else
+    miss="$miss hook-fixture-failed"
+  fi
+fi
+[ -z "$miss" ] && ok "6. held worktree: build push refused by the real hook => Block with reason, review detached, unknown held exit keeps the worktree" \
+  || fail "6. held-worktree delivery:$miss"
+
+# ── 7. (#1303 review R6/R7) the `agent-kit worktree add` command of the exit-3 branch must RUN: take it from the brief, swap the
+#       placeholders, execute the real worktree.py add in a repo, expect rc 0 and a worktree at the named path (build: suffixed branch;
+#       review: detached). `--lane` refuses a `-2` folder name (BOARD_WT_RE), so the brief must not pass it there.
+WT_PY="$ROOT/universal-agent-devkit/scripts/git/worktree.py"
+miss=""
+for lane in build review; do
+  h="$(lane_worktree_hint "$lane" 7)"
+  acmd="$(printf '%s' "$h" | grep -o 'worktree add .claude/worktrees/issue-7-'"$lane"'-2[^,]*' | head -1 | sed -e 's/^worktree //' -e 's/ (review.*//' -e 's/<slug>/x/g' -e 's/<that branch>/main/' -e 's/<PR branch>/main/')"
+  if [ -z "$acmd" ]; then miss="$miss $lane:no-add-command"; continue; fi
+  if [ -d "$E/r" ] && [ -f "$WT_PY" ]; then
+    out="$( cd "$E/r" && eval "python3 -I $WT_PY ${acmd} --no-init" 2>&1 )"; arc=$?
+    [ "$arc" -eq 0 ] || miss="$miss $lane:add-rc=$arc($(printf '%s' "$out" | tr '\n' ' ' | cut -c1-120))"
+    [ -d "$E/r/.claude/worktrees/issue-7-$lane-2" ] || miss="$miss $lane:no-worktree-dir"
+  else
+    miss="$miss $lane:fixture-failed"
+  fi
+done
+grep -q -- 'issue-${n}-${lane}-2[^`]*--lane' "$WAVE" && miss="$miss wave:still-passes---lane-to-the--2-path"
+[ -z "$miss" ] && ok "7. held worktree: the suffixed add command from the brief really creates the worktree" \
+  || fail "7. suffixed add command does not run:$miss"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_lane_worktree_kit: all passed" || { echo "❌ test_lane_worktree_kit: $FAILS failed"; exit 1; }
