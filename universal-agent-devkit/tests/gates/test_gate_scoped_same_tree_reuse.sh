@@ -47,7 +47,7 @@ c = lambda name: f"echo run >> '{tmp}/count.{name}'"
 json.dump({"project": "t", "rules": [
     {"component": "Core", "watch_files": ["src/*.py"],
      "mandatory_regression_tests": [
-         {"id": "REG-A", "name": "a", "command": c("A") + "; bash tests/test_a.sh"},
+         {"id": "REG-A", "name": "a", "command": c("A") + f"; if [ -f '{tmp}/flagA' ]; then rm -f '{tmp}/flagA'; false; else bash tests/test_a.sh; fi"},
          {"id": "REG-G", "name": "g", "command": c("G") + "; : gradle; grep -q = src/g.py"},
          {"id": "REG-B", "name": "b", "command": c("B") + f"; test ! -f '{tmp}/flagB' && bash tests/test_b.sh"}]}]}, open(path, "w"))
 PY
@@ -132,6 +132,36 @@ b0="$(snap)"; scoped; s="$(dlt "$b0" "$(snap)")"
 [ "$RC" = 0 ] && [ "$s" = "0 0 1" ] && ok "f. --scoped sau chỉ chạy B, exit 0" || { fail "f. --scoped exit $RC, số lần chạy A G B = $s (mong 0, 0 0 1)"; show; }
 [ "$(rcpt scoped_pass.json REG-G)" = "UNTESTED/cached" ] && ok "f. biên nhận scoped ghi REG-G (PASS cùng cây) UNTESTED/cached" \
   || fail "f. biên nhận scoped: REG-G=$(rcpt scoped_pass.json REG-G) (mong UNTESTED/cached: PASS hạn 1 h không vào biên nhận 3 ngày)"
+
+# ── g. #1008: lượt kiểu Stop (GATE_TOTAL_BUDGET_S, không sổ khoá) chạy THẬT REG-A và nó chập chờn (đỏ rồi PASS khi chạy lại) trên cùng cây, khoá khác (HEAD khác)
+#    ⇒ PASS cùng cây cũ của A hết dùng lại (void): lượt sau khoá như lượt đầu phải chạy lại A, không che suite chập chờn tới 1 h.
+#    Chặn: REG-A xoá cờ ngoài cây (flagA) rồi đỏ ở lần đầu, PASS ở lần chạy lại.
+echo "a = 8" > src/a.py; git commit -qam "g base"; git commit -q --allow-empty -m "g tip"
+stopx()  { OUT="$(env GATE_TOTAL_BUDGET_S=900 "$@" CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --run-tests --diff main --no-checklist $EXTRA 2>&1)"; RC=$?; }
+EXTRA=""; : > "$TMP/flagB"; stopx; rm -f "$TMP/flagB"            # lượt 1 (đầu nhánh): A, G PASS ghi cùng cây, B đỏ
+git switch -q --detach HEAD~1                                      # HEAD khác, cây y nguyên: khoá khác
+: > "$TMP/flagA"; : > "$TMP/flagB"; stopx FLAKY_RETRY=1; rm -f "$TMP/flagA" "$TMP/flagB"   # lượt 2 (B đỏ: không có biên nhận / budget): A đỏ rồi PASS (chập chờn) ⇒ phải void PASS cũ của A
+git switch -q feat                                                 # về đầu nhánh: khoá như lượt 1
+b0="$(snap)"; EXTRA=""; stopx; s="$(dlt "$b0" "$(snap)")"
+if [ "${s%% *}" = "1" ]; then ok "g. lượt Stop thấy A chập chờn (sc=None) void PASS cùng cây cũ: lượt sau chạy lại REG-A"
+else fail "g. số lần chạy A G B = $s (mong A=1: PASS cũ của A bị void sau lần chạy chập chờn)"; show; fi
+
+# ── h. ca đỏ khoá: HEAD khác, base khác, lệnh/ma trận khác, merge check, slot priority merge ⇒ không dùng lại PASS cùng cây
+echo "a = 9" > src/a.py
+EXTRA=""; : > "$TMP/flagB"; stopx; rm -f "$TMP/flagB"            # ghi A, G PASS cùng cây
+reran() { b0="$(snap)"; "$@"; s="$(dlt "$b0" "$(snap)")"; set -- $s; [ "$1" = 1 ] && [ "$2" = 1 ]; }
+git commit -q --allow-empty -m "same content other HEAD"          # HEAD khác, cây y nguyên
+EXTRA=""; reran stopx && ok "h. HEAD khác cùng nội dung: A, G chạy lại" || fail "h. HEAD khác: số lần chạy A G B = $s (mong A=1 G=1)"
+EXTRA=""; : > "$TMP/flagB"; stopx; rm -f "$TMP/flagB"
+EXTRA="--diff HEAD~1"; reran stopx && ok "h. base khác: A, G chạy lại" || fail "h. base khác: số lần chạy A G B = $s (mong A=1 G=1)"
+EXTRA=""; : > "$TMP/flagB"; stopx; rm -f "$TMP/flagB"
+reran stopx DEVKIT_GATE_MERGE_CHECK=1 && ok "h. DEVKIT_GATE_MERGE_CHECK=1: A, G chạy lại" || fail "h. merge check: số lần chạy A G B = $s (mong A=1 G=1)"
+EXTRA=""; : > "$TMP/flagB"; stopx; rm -f "$TMP/flagB"
+# DEVKIT_SLOT_PRIORITY=merge chỉ đổi hàng chờ slot (không nằm trong khoá, không tắt dùng lại): PASS cùng cây vẫn dùng lại được
+reran stopx DEVKIT_SLOT_PRIORITY=merge; set -- $s; [ "$1" = 0 ] && [ "$2" = 0 ] && ok "h. DEVKIT_SLOT_PRIORITY=merge: chỉ ưu tiên slot, A, G vẫn dùng lại" || fail "h. slot merge: số lần chạy A G B = $s (mong A=0 G=0)"
+EXTRA=""; : > "$TMP/flagB"; stopx; rm -f "$TMP/flagB"
+sed -i.bak 's/echo run >> /echo run  >> /' matrix.json; rm -f matrix.json.bak   # lệnh/ma trận khác
+reran stopx && ok "h. lệnh/ma trận khác: A, G chạy lại" || fail "h. lệnh khác: số lần chạy A G B = $s (mong A=1 G=1)"
 
 echo
 [ "$FAILS" = 0 ] && { echo "PASS: test_gate_scoped_same_tree_reuse"; exit 0; }
