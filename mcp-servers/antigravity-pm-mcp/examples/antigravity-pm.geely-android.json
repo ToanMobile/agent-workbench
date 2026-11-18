@@ -1,6 +1,6 @@
 {
   "projectName": "Geely EX2",
-  "defaultModel": "gemini-4-argon-high",
+  "defaultModel": "gemini-4-hydrogen-high",
   "testCommand": "./scripts/test.sh",
   "auditCommands": [
     "./scripts/verify-docs.sh",

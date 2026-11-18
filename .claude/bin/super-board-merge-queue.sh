@@ -221,19 +221,13 @@ add_label() {   # add_label <issue> <label> [--remove-label X …]: tạo nhãn 
   gh_w issue edit "$k" ${REPO:+--repo "$REPO"} --add-label "$l" "$@"
 }
 block_comment() {   # block_comment <issue> <PR> <emoji> <one-line reason> <evidence> <to-unblock>
+  # Ngắn, người đọc được trong 10 giây: lý do, bằng chứng (đã cắt), việc cần làm. Giữ dòng máy `Reason tag:` / `blocked-by:` (deps.sh đọc).
   gh_w issue comment "$1" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · $3 $4
-Card:        #$1
-PR:          #$2
+PR #$2
 Reason tag:  $3
 Why blocked: $4
 Evidence:    $5
-Checked:     the merge queue ran super-board-merge-train.sh on this PR
-What blocks: $6
-Why I (bot) cannot decide:
-             the merge queue cannot finish this PR on its own; only the step below changes that
 To unblock:  [ ] $6
-Owner:       repo owner
-Move back:   drag this card to Ready after the steps above are done
 blocked-by: -" || true
 }
 # Trần body (#470): GitHub từ chối comment > 65536 ký tự. Mỗi dòng ≤ 400 ký tự, cả khối ≤ 12000 ký tự; dòng đầu (kết luận, suite đỏ) giữ, phần dư cắt
@@ -249,11 +243,12 @@ detail_lines() {
     return 0
   fi
   [ -n "$raw" ] || return 0
-  LC_ALL=C awk -v max=12000 '
-    { l = substr($0, 1, 400); if (length($0) > 400) l = l " …"
-      if (used + length(l) + 1 > max) { cut = 1; next }
+  LC_ALL=C awk -v max=12000 -v maxl=6 '
+    { l = substr($0, 1, 200); if (length($0) > 200) l = l " …"
+      if (n >= maxl || used + length(l) + 1 > max) { cut = 1; next }
+      n++
       print l; used += length(l) + 1 }
-    END { if (cut) print "… (detail truncated: the full train log is in the merge-queue output)" }' <<<"$raw"
+    END { if (cut) print "… (rest of the gate log is in the merge-queue output)" }' <<<"$raw"
 }
 # rebuild_or_rebase <PR> <issue> <rebuild|rebase> <why> [tag] [did]: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
 # tag / did: chữ đầu và dòng Did của comment rebuild (mặc định của verify đỏ; preflight exit 11 truyền chữ riêng, #639).

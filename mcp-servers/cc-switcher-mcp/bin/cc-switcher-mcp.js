@@ -99,13 +99,13 @@ process.on('uncaughtException', (err) => {
 });
 
 if (argv.includes('--help') || argv.includes('-h')) {
-  process.stdout.write(`cc-switcher-mcp — MCP Server & Auto-Switcher Daemon chong ban cho 7 profile CC Switch
+  process.stdout.write(`cc-switcher-mcp — MCP Server & Auto-Switcher Daemon chong ban cho 6 profile CC Switch
 
 Cach dung:
   (khong tham so)           Chay MCP server qua giao thuc stdio
   --daemon                  Chay Daemon theo doi log 429 & gui canh bao Telegram (dieu khien qua web /cc-switcher)
-  --doctor / --status       In trang thai 7 profile, Cooldown va thong ke token/chi phi
-  --switch <1..7|id>        Chuyen nhanh sang profile chi dinh
+  --doctor / --status       In trang thai 6 profile, Cooldown va thong ke token/chi phi
+  --switch <1..5|7|id>      Chuyen nhanh sang profile chi dinh
   --rotate                  Xoay vong sang profile an toan tiep theo
   --panel-json              In JSON trang thai cho bang dieu khien web (Agent Office /cc-switcher)
       [--refresh] [--no-sync] [--state-dir <dir>]

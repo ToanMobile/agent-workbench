@@ -120,7 +120,7 @@ bash "$DEVKIT_DIR/bin/install.sh" -t "$K" -p none -y --no-githooks > "$TMP/k.out
 F="$TMP/f"; mkdir -p "$F" && (cd "$F" && git init -q)
 bash "$DEVKIT_DIR/bin/install.sh" -t "$F" -p none -y --no-githooks >/dev/null 2>&1
 [ -f "$F/.codex/hooks.json" ] && [ -f "$F/.cursor/hooks.json" ] && [ ! -e "$F/.grok" ] \
-  && ok "a first install with -y still sets up every agent, and Grok adds no directory" || fail "first install missed agents"
+  && ok "a first install with -y still sets up every agent, and no .grok/ directory appears (Grok removed 17/11)" || fail "first install missed agents"
 
 # --- uninstall takes .agents/devkit and the generated context away -----------------------
 _uninst="$DEVKIT_DIR/scripts/governance/devkit_uninstall.py"; [ -f "$_uninst" ] || _uninst="$DEVKIT_DIR/scripts/devkit_uninstall.py"

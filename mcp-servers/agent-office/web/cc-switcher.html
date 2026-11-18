@@ -74,9 +74,8 @@
   section > h2 small { color: var(--muted); font-weight: 400; font-size: 12.5px; }
   .grid { display: grid; gap: 12px; }
   .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  @media (max-width: 980px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .g3 { grid-template-columns: 1fr; } }
+  @media (max-width: 980px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 620px) { .g4, .g2 { grid-template-columns: 1fr; } header.top { position: static; } }
 
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; min-width: 0; }
@@ -206,8 +205,8 @@
     </section>
 
     <section aria-labelledby="h-backup">
-      <h2 id="h-backup">Dự phòng khác hãng <small>hết limit tự xoay: Grok CLI → AGY Ultra → AGY Pro · không lo ban</small></h2>
-      <div class="grid g3" id="backup"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+      <h2 id="h-backup">Dự phòng khác hãng <small>hết limit tự xoay: AGY Ultra → AGY Pro · không lo ban</small></h2>
+      <div class="grid g2" id="backup"><div class="skel"></div><div class="skel"></div></div>
     </section>
 
     <section aria-labelledby="h-act">
@@ -231,7 +230,7 @@
             <button type="submit" class="btn">Đặt</button>
           </form>
         </div>
-        <p class="hint">Đổi giữa hai tài khoản Claude phải chờ hết thời gian nghỉ (chống quét nhiều tài khoản). Đổi sang Antigravity / Grok không cần chờ.</p>
+        <p class="hint">Đổi giữa hai tài khoản Claude phải chờ hết thời gian nghỉ (chống quét nhiều tài khoản). Đổi sang Antigravity không cần chờ.</p>
       </div>
     </section>
 
@@ -454,7 +453,7 @@
       el('div', null, [el('span', { class: 'badge b-prio', text: 'Ưu tiên ' + p.backupPriority }), ' ', badgeFor(p)])
     ]));
     card.appendChild(facts([
-      ['Hãng', p.vendor === 'google' ? 'Google (Antigravity)' : p.vendor === 'xai' ? 'xAI (Grok)' : p.vendor],
+      ['Hãng', p.vendor === 'google' ? 'Google (Antigravity)' : p.vendor],
       ['Trạng thái', p.isFrozen ? ('Đóng băng, mở ' + (p.resetTimeFormatted || (p.freezeRemainMin + ' phút'))) : 'Đổi ngay, không cần chờ'],
       p.isFrozen && p.frozenUntilMs ? ['Đóng băng tới', fmtTime(p.frozenUntilMs, true)] : null
     ]));
@@ -651,7 +650,7 @@
     var sw = e.target.closest('[data-switch]');
     if (sw && !sw.disabled) {
       var id = sw.dataset.switch;
-      confirmDlg('Chuyển sang ' + profileName(id) + '?', 'CC Switch sẽ dùng tài khoản này cho phiên Claude Code / Antigravity / Grok mới. Phiên đang mở giữ nguyên tài khoản cũ.', 'Chuyển').then(function (ok) {
+      confirmDlg('Chuyển sang ' + profileName(id) + '?', 'CC Switch sẽ dùng tài khoản này cho phiên Claude Code / Antigravity mới. Phiên đang mở giữ nguyên tài khoản cũ.', 'Chuyển').then(function (ok) {
         if (!ok) return;
         act({ action: 'switch', target: id }, sw).then(function (res) {
           if (!res) return;
@@ -668,7 +667,7 @@
     if (!a || a.disabled) return;
     var kind = a.dataset.act;
     var cfg = {
-      rotate: ['Đổi sang tài khoản kế tiếp?', 'Xoay vòng theo thứ tự 1 → 7, bỏ qua tài khoản đang đóng băng. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đổi', false],
+      rotate: ['Đổi sang tài khoản kế tiếp?', 'Xoay vòng theo thứ tự 1 → 5 rồi 7 (số 6 bỏ trống), bỏ qua tài khoản đang đóng băng. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đổi', false],
       limit: ['Báo tài khoản hiện tại chạm 429?', 'Đóng băng "' + (state ? profileName(state.activeProfileId) : '') + '" ' + (state ? Math.round(state.antiBan.rateLimitFreezeSec / 3600 * 10) / 10 : 5) + ' giờ và chuyển ngay sang tài khoản an toàn kế tiếp. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đóng băng & đổi', true],
       unfreeze: ['Mở khóa toàn bộ?', 'Xóa mọi đóng băng 429 và đặt lại thời gian nghỉ chống ban về 0. Chỉ làm khi chắc quota đã hồi.', 'Mở khóa', true],
       balance: a.dataset.mode === 'swap'
