@@ -119,7 +119,7 @@ for nd in '❌ Not done: AC1 chưa đạt và AC4 review độc lập' '❌ Not 
 done
 
 # P2 vòng 3: mục mở đầu bằng "AC<n> review độc lập" nhưng còn tả lỗi code (cùng dòng hay dòng nối tiếp) không được gỡ.
-for nd in '❌ Not done: AC1 review độc lập (AC2 unit test parse còn đỏ)' '❌ Not done: AC1 review độc lập （AC2 test đỏ）' '❌ Not done: AC1 review độc lập (test 413 vẫn đỏ)' '❌ Not done: AC1 phần review độc lập chưa có, phần code: test 413 vẫn đỏ' '❌ Not done: AC1 review độc lập — test 413 vẫn đỏ, payload 2 MB trả 500'; do
+for nd in '❌ Not done: AC1 review độc lập (không phải tác giả; test 413 vẫn đỏ, AC2 parse còn đỏ)' '❌ Not done: AC1 review độc lập (AC2 unit test parse còn đỏ)' '❌ Not done: AC1 review độc lập （AC2 test đỏ）' '❌ Not done: AC1 review độc lập (test 413 vẫn đỏ)' '❌ Not done: AC1 phần review độc lập chưa có, phần code: test 413 vẫn đỏ' '❌ Not done: AC1 review độc lập — test 413 vẫn đỏ, payload 2 MB trả 500'; do
   mk "$TMP/p.json" "$nd" ok
   [ "$(run "$TMP/p.json" "$HEAD")" = 1 ] && ok "P: '$nd' vẫn chặn" || { fail "P: '$nd' bị lọt"; cat "$TMP/out"; }
 done
@@ -128,6 +128,18 @@ mk "$TMP/p2.json" '❌ Not done: AC1 review độc lập chưa có
 [ "$(run "$TMP/p2.json" "$HEAD")" = 1 ] && ok "P: dòng nối tiếp mô tả lỗi code vẫn chặn" || { fail "P: dòng nối tiếp bị lọt"; cat "$TMP/out"; }
 mk "$TMP/p4.json" "$ND" revokedcase
 [ "$(run "$TMP/p4.json" "$HEAD")" = 1 ] && ok "P: [Reviewer] [report] ❌ viết hoa vẫn thu hồi" || { fail "P: thu hồi viết hoa bị lọt"; cat "$TMP/out"; }
+# ReDoS: chuỗi phân cách dài không được làm checker treo (giới hạn 5 s).
+python3 - "$TMP/rd.json" "$HEAD" <<'PY'
+import json, sys
+head = sys.argv[2]
+c = lambda t: {"author": {"login": "bot"}, "authorAssociation": "OWNER", "body": t}
+ab = '{"reviewer":"antigravity","builder":"b","task_id":"T0005-audit","gate_receipt":"r"}'
+qa = c("[qa] [report] ✅ QA\n❌ Not done: AC1 review độc lập" + " ." * 20000 + " x\n")
+json.dump({"body": "## Acceptance criteria\n- [ ] AC1 độc lập\n", "author": {"login": "bot"},
+  "comments": [qa, c("[reviewer] [report] ✅ merge-ready · head " + head[:8] + "\n"), c("approved-head:%s\napproved-by: %s" % (head, ab))]}, open(sys.argv[1], "w"))
+PY
+RC=$(timeout 5 python3 "$QA" --meta "$TMP/rd.json" --head "$HEAD" >"$TMP/out" 2>&1; echo $?)
+[ "$RC" = 1 ] && ok "P: chuỗi phân cách dài xử lý nhanh và vẫn chặn" || { fail "P: ReDoS/lọt (rc=$RC)"; cat "$TMP/out"; }
 mk "$TMP/p3.json" '❌ Not done: AC4 phần review độc lập (không phải tác giả) chưa có, chuyển sang lane Review.' ok
 [ "$(run "$TMP/p3.json" "$HEAD")" = 0 ] && ok "P: 'chưa có, chuyển sang lane Review' vẫn qua" || { fail "P: bị chặn"; cat "$TMP/out"; }
 

@@ -55,7 +55,7 @@ SHA_TOKEN = re.compile(r"\b[0-9a-f]{7,40}\b")
 # #1298: mục review-only = mã AC rồi NGAY SAU là "review độc lập" (cho phép "phần/việc"); chữ review nơi khác trong mục không tính.
 REVIEW_ONLY = re.compile(r"^\s*(AC\s*-?\s*#?\d+)\s+(?:(?:phần|việc|mục)\s+)?review\s+độc\s+lập\b", re.I)
 # Phần còn lại hợp lệ của mục review-only: chỉ lời "chưa có / chuyển lane Review", KHÔNG mang tả lỗi code nào (#1298 review P2).
-REVIEW_ONLY_TAIL = re.compile(r"^[\s.,;—–-]*(?:chưa\s+(?:có|xong|được))?[\s.,;—–-]*(?:(?:chuyển(?:\s+sang)?|chờ|cần)\s+(?:lane\s+)?(?:review|reviewer))?[\s.,;—–-]*$", re.I)
+REVIEW_ONLY_TAIL = re.compile(r"^(?:chưa (?:có|xong|được))? ?(?:(?:chuyển(?: sang)?|chờ|cần) (?:lane )?(?:review|reviewer))?$", re.I)  # đuôi đã chuẩn hoá dấu cách/phân cách (không backtrack)
 REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]", re.I)
 REVIEWER_READY = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*✅\s*merge-ready\s*[·|]\s*(?:.*?)(?:\bhead|@)\s+([0-9a-f]{7,40})\b", re.I)
 TASK_ID = re.compile(r"\AT[0-9]{4,}-[a-z0-9-]{1,48}\Z")
@@ -310,8 +310,9 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None,
         # #1298: chỉ gỡ mục MỘT dòng MỞ ĐẦU bằng `AC<n> [phần] review độc lập` mà phần còn lại chỉ là lời "chưa có / chuyển lane Review"
         # (không mô tả lỗi code), và không thuộc DANH SÁCH DỪNG; mọi dạng khác (AC code, hai AC trong một mục, "và/nên lane Review") vẫn chặn.
         ro = REVIEW_ONLY.match(text)
-        tail = re.sub(r"[(（]\s*(?:không\s+phải|khác)\s+tác\s+giả[^()（）]*[)）]", " ", text[ro.end():], flags=re.I) if ro else ""  # chỉ ngoặc "(không phải tác giả)" được bỏ; ngoặc khác (kể cả mã AC, full-width) làm đuôi không hợp lệ
-        if reviewed and ro and len(parts) == 1 and REVIEW_ONLY_TAIL.match(tail) and not names_ac(tail, acs) and not _DEC.is_stop(text):
+        tail = re.sub(r"[(（]\s*(?:không\s+phải|khác)\s+tác\s+giả\s*[)）]", " ", text[ro.end():], flags=re.I) if ro else ""  # chỉ ngoặc "(không phải tác giả)" được bỏ; ngoặc khác (kể cả mã AC, full-width) làm đuôi không hợp lệ
+        tail = re.sub(r"[\s.,;—–-]+", " ", tail).strip().lower()   # chuẩn hoá trước khi so: regex đuôi không backtrack
+        if reviewed and ro and len(parts) == 1 and len(tail) < 120 and REVIEW_ONLY_TAIL.match(tail) and not names_ac(tail, acs) and not _DEC.is_stop(text):
             continue
         if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
             # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.
