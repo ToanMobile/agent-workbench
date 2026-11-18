@@ -230,7 +230,43 @@ def _when(comment):
     return t if t.tzinfo else None
 
 
-def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None):
+REVIEW_ONLY = re.compile(r"^AC\s*-?\s*#?\d+(?:\s+phần)?\s+review\s+độc\s+lập\b", re.I)
+REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*(✅|❌)\s*(merge-ready)?(.*)$", re.I)
+APPROVED_JQ = Path(__file__).with_name("super-board-approved-head.jq")
+
+
+def review_only_item(parts, text, acs):
+    """#1298: mục Not done MỘT dòng, mở đầu `AC<n> [phần] review độc lập`, chỉ nêu đúng một mã AC và không trích nguyên văn AC nào."""
+    if len(parts) != 1 or len(text) > 160 or not REVIEW_ONLY.match(text):
+        return False
+    return len({re.sub(r"\D", "", a) for a in AC_ID.findall(text)}) == 1 and not any(a in text.lower() for a in acs)
+
+
+def review_proved(comments, qa_at, pr_author, head):
+    """#1298: sau report QA, báo cáo `[reviewer] [report]` mới nhất của người đáng tin là `✅ merge-ready … head <sha>` đúng head
+    VÀ approved-head đủ 40 ký tự (luật super-board-approved-head.jq) đúng head. Thiếu head / jq / bằng chứng = không gỡ (fail closed)."""
+    if not head or not re.fullmatch(r"[0-9a-f]{40}", head):
+        return False
+    after = [c for c in (comments or [])[qa_at + 1:] if isinstance(c, dict) and isinstance(c.get("body"), str)]
+    verdict = None
+    for c in after:
+        if trusted(c, pr_author):
+            for line in visible_lines(c["body"]):
+                m = REVIEWER_REPORT.match(line)
+                if m:
+                    shas = re.findall(r"\bhead\s+([0-9a-f]{7,40})\b", m.group(3), re.I)
+                    verdict = bool(m.group(1) == "✅" and m.group(2) and shas and head.startswith(shas[-1].lower()))
+    if not verdict:
+        return False
+    try:
+        out = subprocess.run(["jq", "-r", "-f", str(APPROVED_JQ)], input=json.dumps({"comments": after}), capture_output=True,
+                             text=True, timeout=20).stdout.split("\t")
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return len(out) >= 2 and out[0].strip() == "ok" and out[1].strip() == head
+
+
+def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None, head=None):
     latest, latest_at = latest_qa(comments, pr_author)
     if latest is None:
         return []
@@ -261,7 +297,8 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None)
         # #1199: mỗi dòng/bullet của mục kiểm riêng, để dòng dẫn issue repo khác không che AC cục bộ ở dòng kia.
         if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
             # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.
-            if not decided or _DEC.is_stop(text):
+            if (not decided or _DEC.is_stop(text)) and not (
+                    review_only_item(parts, text, acs) and review_proved(comments, latest_at, pr_author, head)):
                 items.append(text)
     return items
 
@@ -314,7 +351,7 @@ def run(meta_path, head=None, repo=".", base=None, issue_comments_path=None):
         data = data.get("comments") if isinstance(data, dict) else data
         issue_comments = [c for c in data if isinstance(c, dict)] if isinstance(data, list) else []
     problems = [f"qa-report: report QA mới nhất còn việc chưa xong: {t[:200]}"
-                for t in latest_qa_unfinished(meta.get("comments"), pr_author, body, issue_comments)]
+                for t in latest_qa_unfinished(meta.get("comments"), pr_author, body, issue_comments, head)]
     problems += [f"qa-report: AC đã tích [x] nhưng không có dòng bằng chứng '↳': {t[:200]}" for t in ac_without_proof(body)]
     stale = stale_qa(meta.get("comments"), pr_author, head, repo, base) if head and base else None
     if stale:

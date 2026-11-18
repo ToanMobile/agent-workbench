@@ -343,7 +343,7 @@ Next: <owner>
 ```
 
 An AC measurable only in another repo is split into an issue there (`gh issue create -R <owner/repo>`) and replaced by the reference. In the card/PR AC list mark it `(repo: <other>)`; in `❌ Not done:` cite `<owner/repo>#N`. The merge-gate `qa-report` check (#1199) then does not count it as an open AC of this repo.
-An AC only the Review lane can prove (independent review by a non-author) is never listed under `❌ Not done:`: the merge-gate `qa-report` check blocks every Not done item that names an AC, and only a newer `[decision]` clears it, so the card would loop to `rebuild_cap` (#1258 / PR #1292). Put it under `✅ Done:` as `ACn passed; independent review pending` and end the report with `Next: reviewer` (#1298).
+An AC only the Review lane can prove (independent review by a non-author) is never listed under `❌ Not done:`: the merge-gate `qa-report` check blocks every Not done item that names an AC, and only a newer `[decision]` clears it, so the card would loop to `rebuild_cap` (#1258 / PR #1292). Put it under `✅ Done:` as `ACn passed; independent review pending` and end the report with `Next: reviewer` (#1298). If QA still writes it as one `❌ Not done:` line starting `AC<n> [phần] review độc lập`, the `qa-report` check clears that line only when the newest `[reviewer] [report] ✅ merge-ready … head <sha>` and the newest valid `approved-head:<sha40>` for the PR head are both newer than the QA report; any other AC item keeps blocking.
 
 | Field | Values |
 |---|---|
