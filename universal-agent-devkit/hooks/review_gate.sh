@@ -560,6 +560,7 @@ _NEG_BEFORE = re.compile(r"\b" + _NEG + r"\s+(?:P[01]" + _SEP + r")*$", re.I)   
 _NEG_AFTER = re.compile(r"^(?:" + _SEP + r"P[01])*\s*[:=-]?\s*" + _NEG + r"\s*[.;]?$", re.I)   # "P1: none" closing the line
 
 
+# ponytail: R10 only P0/P1 labels count as severe; unlabelled "Critical:"/"High:" results read as clean, upgrade when reviewers emit other severity words.
 def _severe(txt):
     # each label is judged on its own: a negation of one label never hides another label in the same line
     for l in txt.splitlines():
@@ -575,16 +576,17 @@ _SENSITIVE_SUBSTR = re.compile(r"secret|credential|token|password|payment|billin
 
 def _sensitive(path):
     # R6: auth is matched on filename tokens (snake/kebab/dot/slash and camelCase boundaries): `author`/`authority` are not auth;
-    # `authorization`, `userAuth`, `JwtAuth`, `reauth`, `oauth*` are.
+    # `authorization`, `userAuth`, `JwtAuth`, `reauth`, `oauth*`, `OAuth2` (-> o|auth2), `auth0` are (R9: digit suffix).
     if _SENSITIVE_SUBSTR.search(path):
         return True
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", path)
     for t in re.split(r"[^A-Za-z0-9]+", spaced.lower()):
-        if t in ("auth", "authn", "authz", "reauth") or t.startswith(("oauth", "authoriz", "authentic")):
+        if re.fullmatch(r"(?:re)?auth[nz]?\d*", t) or t.startswith(("oauth", "authoriz", "authentic")):
             return True
     return False
 
 
+# ponytail: R11 the cap does not check that required OCR ran on the final code (ocr_missing is judged elsewhere), upgrade if a capped Stop must also prove OCR.
 CLEAN_ROUNDS_CAP = 2
 _REVIEW_NOT_READ = re.compile(r"async agent launched|agent (?:is )?running in (?:the )?background", re.I)
 if tp and os.path.exists(tp):

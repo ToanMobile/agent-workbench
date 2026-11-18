@@ -97,7 +97,7 @@ stop c85; rc=$?; [ "$rc" = 2 ] && ok "C8.5 oauth_client.py vẫn nhạy cảm: g
 rm -f "$P/author.py" "$P/oauth_client.py"
 
 # C9. vùng auth khớp theo token của tên file: authorization/authorize/userAuth/JwtAuth/reauth giữ; author/authority thả (R6).
-for nm in authorization.py authorize.ts userAuth.kt JwtAuth.kt reauth.py; do
+for nm in authorization.py authorize.ts userAuth.kt JwtAuth.kt reauth.py OAuth2.py auth0.js; do
   echo "x = 1" > "$P/$nm"; : > "$TR"; ev edit e1 "$P/$nm"; ev review r1 "$CLEAN"; ev edit e2 "$P/$nm"; ev review r2 "$CLEAN"; ev edit e3 "$P/$nm"
   stop "c9$nm"; rc=$?; [ "$rc" = 2 ] && ok "C9. $nm nhạy cảm: giữ" || fail "C9. rc $rc cho $nm"
   rm -f "$P/$nm"
