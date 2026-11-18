@@ -4584,6 +4584,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "runner-reload-absorbed-ff-1285",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_self_reload_absorbed_ff.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1285-RELOAD-ABSORBED-FF-01",
+          "name": "#1285: sửa tay runner đã có trên origin thì main fast-forward lên origin (không chỉ thay file runner); file khác chặn ff thì thay runner, giữ file đó; sửa tay origin chưa có thì giữ và cảnh báo",
+          "command": "bash tests/super-board/test_runner_self_reload_absorbed_ff.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

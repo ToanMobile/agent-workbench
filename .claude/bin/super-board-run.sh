@@ -3715,11 +3715,11 @@ reload_restore_self() {
 # Gộp 3 chiều (đĩa, HEAD, origin): sạch và ra đúng bản origin ⇒ mọi dòng sửa tay đã có trên origin, thay file bằng bản origin không mất gì.
 # $1 = đường dẫn tương đối của runner, $2 = blob origin. Sửa tay có dòng chưa lên origin ⇒ khác 0, giữ nguyên.
 reload_edit_absorbed() {
-  local rel="$1" new="$2" d b o rc=1
-  d=$(mktemp "${TMPDIR:-/tmp}/sb-rl-disk.XXXXXX") && b=$(mktemp "${TMPDIR:-/tmp}/sb-rl-base.XXXXXX") && o=$(mktemp "${TMPDIR:-/tmp}/sb-rl-orig.XXXXXX") || { rm -f "${d:-}" "${b:-}"; return 1; }
-  if cp "$RELOAD_SELF" "$d" && git show "HEAD:${rel}" > "$b" 2>/dev/null && git show "origin/${BASE_BRANCH}:${rel}" > "$o" 2>/dev/null \
-    && git merge-file -q "$d" "$b" "$o" 2>/dev/null && [ "$(git hash-object "$d")" = "$new" ]; then rc=0; fi
-  rm -f "$d" "$b" "$o"; return "$rc"
+  local rel="$1" new="$2" t rc=1
+  t=$(mktemp -d "${TMPDIR:-/tmp}/sb-rl.XXXXXX") || return 1
+  if cp "$RELOAD_SELF" "$t/disk" && git show "HEAD:${rel}" > "$t/base" 2>/dev/null && git show "origin/${BASE_BRANCH}:${rel}" > "$t/orig" 2>/dev/null \
+    && git merge-file -q "$t/disk" "$t/base" "$t/orig" 2>/dev/null && [ "$(git hash-object "$t/disk")" = "$new" ]; then rc=0; fi
+  rm -rf "$t"; return "$rc"
 }
 self_reload_tick() {
   local now new disk rel cur
@@ -3757,12 +3757,20 @@ self_reload_tick() {
         # đó bằng bản origin (không đụng index, không đụng file dở của người khác); script đang bị sửa tay thì giữ nguyên và cảnh báo.
         # ponytail: bin/ helper khác vẫn là bản cũ tới khi main ff được; nâng lên stash/worktree nếu helper đổi cùng lúc làm hỏng runner mới.
         # "Sạch" = đĩa khớp HEAD và index sạch (reload_restore_self đã trả bản runner tự ghi về HEAD ở trên).
-        { [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] \
-          || reload_edit_absorbed "$rel" "$new"; } \
-          && git diff --cached --quiet -- "$rel" 2>/dev/null \
-          || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
-        reload_swap_self "origin/${BASE_BRANCH}:${rel}" \
-          || { reload_warn "$new" "git merge --ff-only failed and the origin copy of super-board-run.sh could not be swapped in (unreadable or fails bash -n)"; return 0; }
+        # #1285: sửa tay đã nằm trên origin (#1281) ⇒ trả file về HEAD (không mất gì) rồi ff lại, để HEAD và mọi file khác của PR cùng lên
+        # origin; chỉ khi file khác vẫn chặn ff mới thay riêng runner (#623).
+        local ffd=0
+        if [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" != "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] \
+          && git diff --cached --quiet -- "$rel" 2>/dev/null && reload_edit_absorbed "$rel" "$new" \
+          && git restore --source=HEAD -- "$rel" 2>/dev/null \
+          && git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then ffd=1; fi
+        if [ "$ffd" = 0 ]; then
+          [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] \
+            && git diff --cached --quiet -- "$rel" 2>/dev/null \
+            || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
+          reload_swap_self "origin/${BASE_BRANCH}:${rel}" \
+            || { reload_warn "$new" "git merge --ff-only failed and the origin copy of super-board-run.sh could not be swapped in (unreadable or fails bash -n)"; return 0; }
+        fi
       fi
     else
       # Main có commit cục bộ của phiên khác (#308): gộp origin vào main bằng đường finish (worktree tạm + gate + ff), không đụng tay.
