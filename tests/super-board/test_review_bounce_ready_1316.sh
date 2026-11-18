@@ -60,6 +60,31 @@ turn 1403
 if ! grep -q " Ready" "$TMP/writes"; then ok "C: an approving conclusion is not bounced to Ready"
 else fail "C: writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200)"; fi
 
+# E: bounce comment posted (count > c0) + not approved, card left in Review -> Ready, not the review-stall ledger.
+reset_case; set_card 1404; wlog 1404 "Not approved. Bounced to builder."
+turn_c() { printf 'PID=%s\nLANE=review\nSTARTED=2026-11-19T12:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=%s\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-$1.log" "$2" > "$INFLIGHT_DIR/$1"; reap_finished_locks; block_noop_workers; }
+turn_c 1404 2
+if grep -qx "move PVTI_1404 Ready" "$TMP/writes" && [ ! -e "$INFLIGHT_DIR/review-stall/1404" ]; then ok "E: commented bounce left in Review -> Ready, no stall ledger"
+else fail "E: writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200)"; fi
+
+# F: reviewer comment ends with blocked-by: agent / - while the summary says not approved -> stays in Review.
+for v in agent -; do
+  reset_case; set_card 1405; wlog 1405 "Not approved yet, chưa duyệt, blocked-by: $v"
+  issue_last_comment() { printf '[reviewer] [report] waiting\nblocked-by: %s\n' "$v"; }
+  turn_c 1405 2
+  if ! grep -q "move PVTI_1405 Ready" "$TMP/writes"; then ok "F: blocked-by: $v wait is not bounced to Ready"
+  else fail "F($v): writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200)"; fi
+done
+issue_last_comment() { printf '%s' ""; }
+
+# G: queued PR (merge-queue + approved-head) with not-approved wording -> stays in Review.
+reset_case; set_card 1406; wlog 1406 "not approved? no: queued"
+merge_queue_on() { return 0; }; review_approved_head() { return 0; }
+turn 1406
+if ! grep -q "move PVTI_1406 Ready" "$TMP/writes"; then ok "G: merge-queue card is not bounced to Ready"
+else fail "G: writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200)"; fi
+merge_queue_on() { return 1; }; review_approved_head() { return 1; }
+
 if grep -q 'ends every bounce' "$ROOT/.claude/skills/super-review/SKILL.md" \
    && grep -q 'super-board-card.sh --config <cfg> move <N> Ready' "$ROOT/.claude/skills/super-review/SKILL.md"; then ok "D: review prompt pins the mandatory move … Ready line on bounce"
 else fail "D: super-review SKILL.md lacks the mandatory move <N> Ready line"; fi
