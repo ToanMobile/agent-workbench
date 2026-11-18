@@ -24,8 +24,9 @@
 #     [--label <l>]... [--yes]          # e.g. --label needs-triage --label ux
 #   super-collect-file.sh --config <cfg.json> --adopt <issue#> --type bug|feature|refactor [--yes]
 #
-# Stdout: dry-run → one `would-file|duplicate|recurrence|would-adopt` plan line;
-#         --yes   → the issue number (new, existing on a dedupe hit, or adopted).
+# Stdout: dry-run → one `would-file|duplicate|recurrence|out-of-scope|would-adopt` plan line;
+#         --yes   → the issue number (new, existing on a dedupe hit, the NOT_PLANNED issue that
+#                   keeps it out of scope, or adopted).
 # Exits:  0 ok · 64 bad args · 65 no holding column · 66 unreadable/weak body
 #         70 gh failure · 71 filed but not placed (number still on stdout)
 #         79 repository paused (existing issue number still on stdout after discovery)
@@ -199,13 +200,20 @@ fi
 
 # --- dedupe -----------------------------------------------------------------
 # Repo-wide, any label, any state. An open hit is a duplicate; a closed-only hit
-# is a recurrence — file again, but name the issue that claimed the fix.
+# is a recurrence — file again, but name the issue that claimed the fix — unless the
+# newest closed hit was closed as NOT_PLANNED: the owner rejected it, so it is not filed again.
 # Exact match on a whitespace-delimited token: `err|sentry|441` must not hit `err|sentry|4411`.
 ISSUES_JSON=$(python3 "$GITHUB_READ" --issue-history "$REPO_NAME") || exit $?
-HITS=$(printf '%s' "$ISSUES_JSON" | jq -r --arg fp "$FP" '[.[] | select(any(.body | splits("\\s+"); . == $fp))] | sort_by(.state != "OPEN") | map("\(.number) \(.state)") | .[]') || exit 70
+HITS=$(printf '%s' "$ISSUES_JSON" | jq -r --arg fp "$FP" '[.[] | select(any(.body | splits("\\s+"); . == $fp))] | sort_by(.state != "OPEN", -.number) | map("\(.number) \(.state) \(.stateReason // "-")") | .[]') || exit 70
 
 OPEN_HIT=$(echo "$HITS" | awk '$2=="OPEN"{print $1; exit}')
 CLOSED_HIT=$(echo "$HITS" | awk '$2!="OPEN" && $1!=""{print $1; exit}')
+CLOSED_REASON=$(echo "$HITS" | awk '$2!="OPEN" && $1!=""{print $3; exit}')
+
+if [ -z "$OPEN_HIT" ] && [ "$CLOSED_REASON" = NOT_PLANNED ]; then
+  if [ "$YES" -ne 1 ]; then echo "out-of-scope|#${CLOSED_HIT}|${TYPE}|${TITLE}"; exit 0; fi
+  echo "$CLOSED_HIT"; exit 0
+fi
 
 if [ -n "$OPEN_HIT" ]; then
   if [ "$YES" -ne 1 ]; then echo "duplicate|#${OPEN_HIT}|${TYPE}|${TITLE}"; exit 0; fi

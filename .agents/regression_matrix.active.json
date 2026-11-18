@@ -946,6 +946,21 @@
       ]
     },
     {
+      "component": "android-dexscan",
+      "watch_files": [
+        "universal-agent-devkit/profiles/android/scripts/qa/dexscan.py",
+        "universal-agent-devkit/tests/verification/test_dexscan.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-DEXSCAN-1308-01",
+          "name": "dexscan: aab, method count, exported, exit codes",
+          "command": "bash universal-agent-devkit/tests/verification/test_dexscan.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-preflight-numbered-ac",
       "watch_files": [
         ".claude/bin/super-board-preflight.sh",
@@ -2494,6 +2509,23 @@
       ]
     },
     {
+      "component": "antigravity-hook-bridge",
+      "watch_files": [
+        "universal-agent-devkit/hooks/agent_bridge.sh",
+        "universal-agent-devkit/scripts/context/agent_hooks.py",
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/tests/verification/test_agent_bridge_antigravity.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ANTIGRAVITY-BRIDGE-1308-01",
+          "name": "Antigravity .agents/hooks.json destructive-command guards",
+          "command": "bash universal-agent-devkit/tests/verification/test_agent_bridge_antigravity.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "review-wait-receipt-671",
       "trigger_files": [
         ".claude/bin/super-board-gate-receipt.sh",
@@ -3771,6 +3803,22 @@
       ]
     },
     {
+      "component": "super-collect-not-planned-dedupe",
+      "watch_files": [
+        ".claude/skills/super-collect/scripts/super-collect-file.sh",
+        ".claude/bin/super-board-github-read.py",
+        "tests/super-board/test_collect_file_not_planned.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-COLLECT-NOT-PLANNED-1308-01",
+          "name": "super-collect skips issues closed NOT_PLANNED",
+          "command": "bash tests/super-board/test_collect_file_not_planned.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "merge-gate-autosync-pm-approval",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
@@ -3962,6 +4010,22 @@
           "id": "REG-DK-CHECKLIST-OVERLAY-TTL-3D-992-01",
           "name": "#992: regression_checklist._overlay_fresh mặc định 3 ngày như hạn PASS của gate (2 ngày tin, 4 ngày không); DEVKIT_GATE_CACHE_MAX_S vẫn ghi đè",
           "command": "bash universal-agent-devkit/tests/gates/test_checklist_overlay_ttl_3d.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "android-dump-view-hierarchy",
+      "watch_files": [
+        "universal-agent-devkit/profiles/android/scripts/qa/dump-view-hierarchy.sh",
+        "universal-agent-devkit/profiles/android/scripts/qa/adb-safe-exec.sh",
+        "universal-agent-devkit/tests/verification/test_dump_view_hierarchy.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-DUMP-VIEW-1308-01",
+          "name": "dump-view-hierarchy: no silent pass, device policy, density",
+          "command": "bash universal-agent-devkit/tests/verification/test_dump_view_hierarchy.sh",
           "parallel_safe": true
         }
       ]
