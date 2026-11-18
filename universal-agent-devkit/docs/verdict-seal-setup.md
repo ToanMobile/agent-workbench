@@ -52,21 +52,6 @@ Daily use (agents): after an Antigravity audit pass on a PR head, run
 `python3 <kit>/bin/verdict_seal.py request --repo . --head <sha40>` (`<kit>` = `universal-agent-devkit` here, `.agents/devkit` in app repos). The seal lands in
 `~/.antigravity-pm/seals/<head>.json`. Gates read it from there.
 
-OpenCodeReview delegation review (#1258, second reviewer, `DEVKIT_OCR_CROSS_REVIEW=0` turns it off): a fresh reviewer session writes a
-report (auditedHead, verdict, reviewer, reviewed_at, files_reviewed, citations and findings with file:line + verbatim snippet), then
-`agent-kit approve-tests --ocr-delegate <report.json> <task-id>` has the SAME entry verify it and sign reviewer `ocr-delegate` into
-`seals/ocr-delegate/<head>.json`; the gate accepts the trailer `Test-approved-by: ocr-delegate <task-id>`. It needs seal mode on and the
-updated `verdict-seal-audit` re-installed (`sudo install -o root -g wheel -m 755 "$KIT/libexec/verdict-seal-audit" /private/etc/devkit/libexec/`).
-The seal (v2) proves the machine checks passed (citations verbatim inside the changed hunks at head and the deleted ones at base) and the
-report was not hand-edited; it signs the report's own `reviewer_label` and `report_sha256`. It does NOT prove the reviewer is independent
-(process trust): the gate refuses a label equal to the session agent or to a `Co-Authored-By` name of base..head, but a label is a word,
-and an agent with shell access can call `sudo -n -u _devkitseal .../verdict-seal-audit --repo R --head H --ocr-report - --task T` itself
-with any other label. So `ocr-delegate` does NOT guarantee that an edited test was approved by another agent; the owner accepts that
-residual risk. Every signing appends a line (time, uid, SUDO_USER, head, task, reviewer label) to `~_devkitseal/verdict-ledger/ocr-signings.log`
-BEFORE the seal is printed (tamper-evident only while that dir is owned by `_devkitseal`, mode 0700, which the entry creates but this kit
-cannot verify); ocr signings do not use the agy attempt counters. The entry runs git with an empty HOME and no global config: the PR's own
-`.gitconfig` / `.gitattributes` never take effect. One seal per head: sealing the same head for a second task id replaces the first file.
-
 Emergency off switch: `sudo rm /private/etc/devkit/verdict-seal.pub`. No environment variable can turn seal mode off.
 
 Known limits:

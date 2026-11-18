@@ -223,9 +223,8 @@ def pm_state_home():
     return os.path.expanduser(os.environ.get("ANTIGRAVITY_PM_STATE_HOME") or os.path.join("~", ".antigravity-pm"))
 
 
-def seal_path(head, sub=""):
-    """sub "ocr-delegate" (#1258): that reviewer's seals live in their own dir, so one never replaces or stands in for the other."""
-    return os.path.join(pm_state_home(), "seals", *([sub] if sub else []), f"{head}.json")
+def seal_path(head):
+    return os.path.join(pm_state_home(), "seals", f"{head}.json")
 
 
 def _git(top, *args):
@@ -233,9 +232,9 @@ def _git(top, *args):
     return r.returncode, r.stdout.strip()
 
 
-def verify(top, head, test_fixture=False, sub=""):
+def verify(top, head, test_fixture=False):
     """Signed payload (dict) of the seal of `head` when it is valid for repo `top`; None otherwise (also when seal mode is off).
-    Valid = Ed25519 signature of the trusted pubkey over payload, v == 1 (v == 2 in the ocr-delegate dir, #1258: an old kit reads v 1 only), payload.head == head, payload.tree == tree(head) in top,
+    Valid = Ed25519 signature of the trusted pubkey over payload, v == 1, payload.head == head, payload.tree == tree(head) in top,
     base a sha40, edited a list of str, verdict in (pass, fail)."""
     if not isinstance(head, str) or not SHA40.fullmatch(head):
         return None
@@ -243,7 +242,7 @@ def verify(top, head, test_fixture=False, sub=""):
     if not on or pub is None:
         return None
     try:
-        path = seal_path(head, sub)
+        path = seal_path(head)
         st = os.stat(path)
         if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_SEAL_BYTES:
             return None
@@ -253,17 +252,13 @@ def verify(top, head, test_fixture=False, sub=""):
         if not isinstance(payload_s, str) or not ed25519_verify(pub, payload_s.encode("utf-8"), sig):
             return None
         payload = json.loads(payload_s)
-        if not isinstance(payload, dict) or payload.get("v") != (2 if sub else 1) or payload.get("head") != head:
+        if not isinstance(payload, dict) or payload.get("v") != 1 or payload.get("head") != head:
             return None
         base, edited = payload.get("base"), payload.get("edited")
         attempts = payload.get("attempts")
         if not isinstance(base, str) or not SHA40.fullmatch(base) or not isinstance(edited, list) \
                 or not all(isinstance(e, str) for e in edited) or payload.get("verdict") not in ("pass", "fail") \
                 or not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 1:
-            return None
-        # #1258: the seal kind is signed. The antigravity dir takes no payload that carries kind / reviewer / task_id (an ocr seal
-        # copied there), the ocr dir only payloads whose kind is that dir's name (an agy-shaped seal copied there).
-        if (payload.get("kind") != sub if sub else any(k in payload for k in ("kind", "reviewer", "task_id"))):
             return None
         rc, tree = _git(top, "rev-parse", "--verify", "-q", head + "^{tree}")
         if rc != 0 or not isinstance(payload.get("tree"), str) or tree != payload["tree"]:
@@ -279,36 +274,16 @@ def sealed_pass(top, head, test_fixture=False):
     return p if p and p["verdict"] == "pass" and p["attempts"] <= MAX_ATTEMPTS else None
 
 
-def ocr_delegate_seals(top, task_id, test_fixture=False, hints=()):
-    """Payloads of the valid PASS ocr-delegate seals (#1258) signed for `task_id` in repo `top`: the seals of the `hints` (heads the
-    caller guesses, e.g. the parent of the trailer commit; looked up directly) MERGED with a scan of the whole seals/ocr-delegate/
-    directory (no cap: a flood of junk files must not push the real seal out). Only that dir is read: an antigravity seal never
-    counts here."""
-    try:
-        names = [n[:-5] for n in os.listdir(os.path.join(pm_state_home(), "seals", "ocr-delegate")) if n.endswith(".json")]
-    except OSError:
-        names = []
-    out = []
-    for h in dict.fromkeys([*hints, *names]):
-        p = verify(top, h, test_fixture, "ocr-delegate")
-        if p and p["verdict"] == "pass" and p["attempts"] <= MAX_ATTEMPTS and p.get("reviewer") == "ocr-delegate" and p.get("task_id") == task_id:
-            out.append(p)
-    return out
-
-
-def request(repo, head, report=None, task=None):
-    """Run the owner-installed audit entry as _devkitseal (sudo -n, no password) and store its seal; exit code of the run.
-    report (#1258) = text of an ocr-delegate review report: the entry machine-verifies it (no agy run) and signs reviewer
-    ocr-delegate for `task`; the seal goes under seals/ocr-delegate/."""
+def request(repo, head):
+    """Run the owner-installed audit entry as _devkitseal (sudo -n, no password) and store its seal; exit code of the run."""
     if not SHA40.fullmatch(head or ""):
         print("verdict-seal: --head must be a sha40", file=sys.stderr)
         return 2
     if not os.path.isfile(AUDIT_ENTRY):
         print(f"verdict-seal: {AUDIT_ENTRY} not installed (owner one-time setup: docs/verdict-seal-setup.md)", file=sys.stderr)
         return 3
-    extra = ["--ocr-report", "-", "--task", task] if report is not None else []
-    r = subprocess.run(["sudo", "-n", "-H", "-u", SEAL_USER, AUDIT_ENTRY, "--repo", os.path.realpath(repo), "--head", head, *extra],
-                       capture_output=True, text=True, timeout=1800, input=report)
+    r = subprocess.run(["sudo", "-n", "-H", "-u", SEAL_USER, AUDIT_ENTRY, "--repo", os.path.realpath(repo), "--head", head],
+                       capture_output=True, text=True, timeout=1800)
     if r.returncode != 0:
         print(f"verdict-seal: audit run failed (exit {r.returncode}): {r.stderr.strip()[-2000:]}", file=sys.stderr)
         return r.returncode or 1
@@ -319,7 +294,7 @@ def request(repo, head, report=None, task=None):
     except (ValueError, AttributeError) as e:
         print(f"verdict-seal: audit run printed no seal ({e})", file=sys.stderr)
         return 1
-    path = seal_path(head, "ocr-delegate" if report is not None else "")
+    path = seal_path(head)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + f".tmp{os.getpid()}"
     with open(tmp, "w", encoding="utf-8") as f:

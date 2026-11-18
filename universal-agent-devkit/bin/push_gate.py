@@ -50,6 +50,7 @@ CLI: push_gate.py <dir> [<rev>] [--tag-remote <name>] [--dst <remote> <branch>] 
 → exit 0 covered · 2 not covered (reason on stdout).
 100% standard library.
 """
+import calendar
 import glob
 import json
 import os
@@ -71,8 +72,8 @@ INTEGRATE = ("push lên trunk / release/* chỉ qua `agent-kit integrate` (đi�
              "Repo đi PR: push nhánh PR bằng tên (`git push origin <nhánh>`), merge gate lo phần còn lại")
 APPROVED = "Test-approved-by:"
 # 13/11 (chủ repo bỏ Grok): chỉ reviewer antigravity duyệt test sửa; chữ trong trailer phải khớp audit_reviewer().
-# #1258: `ocr-delegate <task-id>` = an OpenCodeReview delegation-mode review sealed by verdict-seal-audit (the id only points at the seal).
-APPROVED_VALUE = re.compile(r"(antigravity|ocr-delegate)\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
+# #1258: `ocr <session-uuid>` is the second cross-reviewer (OpenCodeReview LLM range review, ocr_review below); one of the two is enough.
+APPROVED_VALUE = re.compile(r"(antigravity|ocr)\s+(T\d{4,}-[a-z0-9-]{1,48}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
 HEX_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
@@ -865,96 +866,82 @@ def _repo_tasks(top, task_id=None, any_project=False):
         yield task
 
 
-def reviewer_is_author(top, label, rng):
-    """False only when reviewer `label` is neither this session's agent nor a Co-Authored-By name of `rng`, compared whole and by first
-    word ("claude opus 5.5", "claude-review" ~ claude); True when it is; None when the author list cannot be read or the label is empty
-    (both = no approval). One rule for the gate (_ocr_approval_head) and for `approve-tests --ocr-delegate`, so a label the gate would
-    refuse is refused before it is sealed."""
-    label = normalize_reviewer(label if isinstance(label, str) else "")
-    names = author_names(top, rng)
-    if not label or names is None:
-        return None
-    authors = session_agents() | {normalize_reviewer(n) for n in names}
-    first = lambda v: (re.split(r"[\s._-]+", v.strip(" ._-\t")) or [""])[0]
-    return label in authors or first(label) in {first(a) for a in authors}
+OCR_BINS = ("/opt/homebrew/bin/ocr", "/usr/local/bin/ocr", "/usr/bin/ocr")    # fixed install paths: an author-edited $PATH never picks the binary
+OCR_TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec)/|(^|[/_.-])tests?[_.-]|\.(test|spec)\.")
+OCR_OK_SEVERITY = ("low", "medium", "info", "nit")      # anything else (high, critical, unknown) blocks
 
 
-def ocr_seal_heads(top):
-    """[(task_id, head)] of the valid PASS ocr-delegate seals for repo `top` (every task id), as audited_heads lists the PM audits: the
-    replay guard of post-fix-gate (a NEWER review of the same file on the branch voids an older one) must see both kinds (#1258)."""
-    lib = _seal_lib()
-    if not lib or os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0":
-        return []
+def _ocr_json(binary, top, sub, session_id):
     try:
-        names = [n[:-5] for n in os.listdir(os.path.join(lib.pm_state_home(), "seals", "ocr-delegate")) if n.endswith(".json")]
-    except OSError:
-        return []
-    out = []
-    for h in names:
-        try:   # a seal of another repo (or a junk name): skip before the signature check; a git timeout skips that seal, never the gate
-            if not HEX_SHA.fullmatch(h) or git(top, "cat-file", "-e", f"{h}^{{commit}}")[0] != 0:
-                continue
-        except (subprocess.SubprocessError, OSError):
-            continue
-        p = lib.verify(top, h, _seal_fixture(top), "ocr-delegate")
-        if p and p["verdict"] == "pass" and p.get("reviewer") == "ocr-delegate" and isinstance(p.get("task_id"), str):
-            out.append((p["task_id"], h))
-    return out
-
-
-def author_names(top, rng):
-    """Casefolded names of the `Co-Authored-By:` trailers of the commits in `rng` (the PR's own authors besides the git author); None
-    when git cannot read the range."""
-    rc, out = git(top, "log", "--format=%(trailers:key=Co-Authored-By,valueonly,separator=%x0a)", rng)
-    if rc != 0:
-        return None   # unreadable author list is no approval (the caller refuses), never an empty set
-    names = set()
-    for ln in out.splitlines():
-        n = re.sub(r"\s*<[^>]*>\s*$", "", ln).strip().casefold()
-        if n:
-            names.add(n)
-    return names
-
-
-def approval_head(top, word, ident, sha=None):
-    """The reviewed commit a `Test-approved-by: <word> <ident>` trailer (on commit `sha`) points at, or None. antigravity: the PM
-    record's auditedHead. ocr-delegate (#1258, kill switch DEVKIT_OCR_CROSS_REVIEW=0): the head of a valid ocr-delegate seal signed
-    for task `ident` (verdict_seal.ocr_delegate_seals: Ed25519 signature of the owner's key, so seal mode must be on; an agent that
-    edits the report or the seal file gets nothing) whose signed tree equals the tree of `sha` (several seals may share a task id:
-    amend, rebase, another agent) and whose SIGNED base equals merge-base(trunk, head), as sealed_scope demands for the other seal.
-    Threat model: the seal proves a report passed the machine checks (verdict-seal-audit verify_ocr_report: head, every edited file
-    reviewed, citations verbatim at that head inside the changed and the deleted hunks, no blocker/major, not stale) and was not
-    hand-edited; it does NOT prove the reviewer was independent of the author. That is process trust (a fresh reviewer session). The
-    reviewer-label check is only in the unprivileged wrapper (approve-tests --ocr-delegate): an author with shell access can call the
-    sealing entry through sudo directly and seal a report it wrote itself. Residual risk, accepted by the owner; the entry logs every
-    signing (ocr-signings.log in its ledger) so it can be audited afterwards. Hardening (review of #1258): the seal is v2 and signs
-    the report's own reviewer_label + report_sha256; a label equal to this session's agent or to a Co-Authored-By of base..sha never
-    approves, so an author must at least put a different name on the report (still a label, not an identity: process trust)."""
-    if word != "ocr-delegate":
-        return audited_head(top, ident)
-    try:
-        return _ocr_approval_head(top, ident, sha)
-    except (subprocess.TimeoutExpired, OSError, ValueError):   # a git timeout is "no approval", never an exception into the hook
+        res = subprocess.run([binary, "session", sub, "--json", "--repo", top, session_id], capture_output=True, text=True,
+                             timeout=30, stdin=subprocess.DEVNULL)
+        return json.loads(res.stdout) if res.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
 
 
-def _ocr_approval_head(top, ident, sha):
-    lib = _seal_lib()
-    if not lib or not sha or os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0":
-        return None
-    rc, out = git(top, "rev-parse", f"{sha}^{{tree}}", f"{sha}^")
-    tree, parent = (out.split() + ["", ""])[:2] if rc == 0 else ("", "")
+def ocr_review(top, session_id, head):
+    """(True, why) when OpenCodeReview's OWN session store holds an independent LLM review of exactly `head`; (False, why) otherwise
+    (#1258; fail closed on every doubt). Kill switch: DEVKIT_OCR_CROSS_REVIEW=0. Accepted only when ALL hold: `head` is 40 hex; the
+    session is read through `ocr session show|comments --json` (never a file in the repo or scratch dir); review_mode is `range` with
+    a model recorded (so `ocr delegate`, where the host agent is the author, and workspace mode never count); the run completed with
+    no failed file / LLM failure / abort; resolved_head == head and resolved_base == merge-base(trunk, head); the session started
+    after the head commit; every edited (M/D/R) test file of base..head is in its completed coverage; no critical/high/unknown finding.
+    Threat model: the author agent cannot make a session by writing evidence into the work tree, only through the `ocr` it
+    does not control (fixed binary path; DEVKIT_OCR_BIN is honoured only in the test fixture). A same-uid agent that edits ocr's
+    store under ~ can still forge a session: that residual is accepted here, as it is for a hand-written ~/.antigravity-pm record."""
+    if os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0":
+        return False, "DEVKIT_OCR_CROSS_REVIEW=0"
+    if not isinstance(head, str) or not SHA40.fullmatch(head) or not re.fullmatch(r"[0-9a-f-]{36}", str(session_id)):
+        return False, "ocr: head must be 40 hex and the session a uuid"
+    binary = os.environ.get("DEVKIT_OCR_BIN") if pm_home_test_fixture() else None
+    binary = binary or next((b for b in OCR_BINS if os.access(b, os.X_OK)), None)
+    if not binary or not os.access(binary, os.X_OK):
+        return False, "ocr: binary not found"
+    show = _ocr_json(binary, top, "show", session_id)
+    summ = show.get("summary") if isinstance(show, dict) else None
+    man = summ.get("run_manifest") if isinstance(summ, dict) else None
+    if not isinstance(man, dict) or not isinstance(man.get("input"), dict) or not isinstance(man.get("coverage"), dict):
+        return False, f"ocr: no readable session {session_id}"
+    inp = man["input"]
+    if summ.get("review_mode") != "range" or inp.get("mode") != "range" or not summ.get("model"):
+        return False, "ocr: not an LLM range review (delegate/workspace/no model)"
+    if man.get("terminal_state") != "complete" or summ.get("aborted") or summ.get("legacy") or summ.get("failed_files") \
+            or summ.get("llm_failures") or man["coverage"].get("failed"):
+        return False, "ocr: session not complete"
+    if os.path.realpath(str(summ.get("repo_dir") or "")) != os.path.realpath(top) or inp.get("resolved_head") != head:
+        return False, "ocr: session is for another repo or head"
     trunk = _trunk_ref(top)
-    for payload in lib.ocr_delegate_seals(top, ident, _seal_fixture(top), hints=(parent, sha)) if trunk and tree else []:
-        rc_m, mb = git(top, "merge-base", trunk, payload["head"])
-        if payload["tree"] != tree or rc_m != 0 or mb.strip() != payload["base"]:
-            continue
-        # The label the report carries is the reviewer's own word (not an identity), but it must not be the author: this session, or a
-        # Co-Authored-By of the PR (whole name, or its first word: "Claude Sonnet 5.5" ~ claude).
-        if reviewer_is_author(top, payload.get("reviewer_label") or "", f"{payload['base']}..{sha}") is not False:
-            continue
-        return payload["head"]
-    return None
+    rc, mb = git(top, "merge-base", trunk, head) if trunk else (1, "")
+    mb = mb.strip()
+    if rc != 0 or inp.get("resolved_base") != mb or not SHA40.fullmatch(mb):
+        return False, "ocr: session base is not merge-base(trunk, head)"
+    rc, ct = git(top, "log", "-1", "--format=%ct", head)
+    try:
+        started = calendar.timegm(time.strptime(str(summ.get("start_time"))[:19], "%Y-%m-%dT%H:%M:%S"))
+        if rc != 0 or started < int(ct):
+            return False, "ocr: session started before the head commit"
+    except ValueError:
+        return False, "ocr: unreadable start_time"
+    rc, names = git(top, "diff", "--name-only", "--diff-filter=MDR", f"{mb}..{head}")
+    done = {c.get("path") for c in man["coverage"].get("completed") or [] if isinstance(c, dict)}
+    missing = [f for f in names.split("\n") if f and OCR_TEST_PATH.search(f) and f not in done] if rc == 0 else ["?"]
+    if missing:
+        return False, f"ocr: edited test not covered: {missing[0]}"
+    comments = _ocr_json(binary, top, "comments", session_id)
+    if not isinstance(comments, list) or any(not isinstance(c, dict) or str(c.get("severity", "")).lower() not in OCR_OK_SEVERITY
+                                             for c in comments):
+        return False, "ocr: comments unreadable or a blocking/unknown finding"
+    return True, "ocr review"
+
+
+def trailer_head(top, word, ident, sha):
+    """The reviewed commit an accepted `Test-approved-by: <word> <ident>` trailer (on commit `sha`) points at: antigravity -> the PM
+    record's auditedHead; ocr -> the parent of the (empty) trailer commit, which approved() already matched to the session head."""
+    if word == "ocr":
+        rc, out = git(top, "rev-parse", f"{sha}^")
+        return out.strip() if rc == 0 and SHA40.fullmatch(out.strip()) else None
+    return audited_head(top, ident)
 
 
 def approved(top, rng):
@@ -981,36 +968,42 @@ def approved(top, rng):
             whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task`)")
             continue
         word, task_id = m.group(1), m.group(2)
-        if word == "ocr-delegate":   # #1258: head from the sealed report (approval_head); the tree rule below is the same
-            head = approval_head(top, word, task_id, sha)
-            if not head:
-                whys.append(f"{APPROVED} {word} {task_id}: no valid sealed ocr-delegate record for this task (seal mode off, tampered, base moved or kill switch)")
-                continue
-        else:
-            # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
-            # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
-            if pm_home_overridden() and not pm_home_test_fixture():
-                whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
-                continue
-            ok, why = audit_record(top, task_id)
-            if not ok:
-                whys.append(why)
-                continue
-            # Đợt 2 lane A: chữ reviewer của trailer phải đúng reviewer PM đã ghi (audit_reviewer).
-            reviewer = audit_reviewer(top, task_id, legacy=True)
-            if reviewer != word:
-                whys.append(f"{APPROVED} {word} {task_id}: biên bản PM ghi reviewer {reviewer or 'không xác định'}, khác `{word}`")
-                continue
-            # Review cuối F-1: luật H4 cho mọi đường gọi (fallback push, _covered, since_test_weakened), không chỉ _trailer_cross_review.
-            if reviewer in session_agents():
-                whys.append(f"{APPROVED} {word} {task_id}: reviewer {reviewer} thuộc danh tính phiên (tự duyệt)")
-                continue
-            # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
-            # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
-            # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.
-            # ponytail: merge main vào nhánh sau audit đổi cây đầu range → push cần audit lại; merge gate (scratch) không bị ảnh hưởng
-            # vì nó duyệt theo blob từng file ở auditedHead (post-fix-gate _trailer_cross_review). Nới khi việc audit lại thành phiền.
-            head = audited_head(top, task_id)
+        if word == "ocr":
+            # #1258: the standard flow is an empty trailer commit on top of the reviewed head: its parent is the session's head, and the
+            # trailer commit's tree and the range tip's tree must equal the parent's (any later change needs a new review).
+            rc_tip, tip_out = git(top, "rev-list", "-1", rng)
+            trees = git(top, "rev-parse", f"{sha}^{{tree}}", f"{sha}^^{{tree}}", f"{tip_out.strip()}^{{tree}}", f"{sha}^") if rc_tip == 0 else (1, "")
+            got = trees[1].split() if trees[0] == 0 else []
+            lows = range_lower_bounds(top, rng)
+            ok, why = ocr_review(top, task_id, got[3]) if len(got) == 4 and len(set(got[:3])) == 1 else (False, "tree differs from the reviewed head")
+            if ok and lows and all(head_after(top, low, got[3]) for low in lows):
+                return True, f"{APPROVED} {word} {task_id} ({why})"
+            whys.append(f"{APPROVED} {word} {task_id}: {why if not ok else 'reviewed head is not after the range base'}")
+            continue
+        # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
+        # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
+        if pm_home_overridden() and not pm_home_test_fixture():
+            whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
+            continue
+        ok, why = audit_record(top, task_id)
+        if not ok:
+            whys.append(why)
+            continue
+        # Đợt 2 lane A: chữ reviewer của trailer phải đúng reviewer PM đã ghi (audit_reviewer).
+        reviewer = audit_reviewer(top, task_id, legacy=True)
+        if reviewer != word:
+            whys.append(f"{APPROVED} {word} {task_id}: biên bản PM ghi reviewer {reviewer or 'không xác định'}, khác `{word}`")
+            continue
+        # Review cuối F-1: luật H4 cho mọi đường gọi (fallback push, _covered, since_test_weakened), không chỉ _trailer_cross_review.
+        if reviewer in session_agents():
+            whys.append(f"{APPROVED} {word} {task_id}: reviewer {reviewer} thuộc danh tính phiên (tự duyệt)")
+            continue
+        # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
+        # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
+        # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.
+        # ponytail: merge main vào nhánh sau audit đổi cây đầu range → push cần audit lại; merge gate (scratch) không bị ảnh hưởng
+        # vì nó duyệt theo blob từng file ở auditedHead (post-fix-gate _trailer_cross_review). Nới khi việc audit lại thành phiền.
+        head = audited_head(top, task_id)
         if tip is None:
             rc_tip, tip_out = git(top, "rev-list", "-1", rng)
             tip = tip_out.strip() if rc_tip == 0 else ""
@@ -1020,7 +1013,7 @@ def approved(top, rng):
         lows = range_lower_bounds(top, rng) if head else None
         after = bool(lows) and all(head_after(top, low, head) for low in lows)
         if len(got) == 3 and len(set(got)) == 1 and after:
-            return True, f"{APPROVED} {word} {task_id} ({'sealed ocr-delegate review' if word == 'ocr-delegate' else 'antigravity-pm audit pass'})"
+            return True, f"{APPROVED} {word} {task_id} (antigravity-pm audit pass)"
         whys.append(f"{APPROVED} {word} {task_id}: " + (
             "biên bản audit không ghi `auditedHead: <sha>` (hoặc sha không có trong repo)" if not head else
             f"auditedHead {head[:10]} không nằm sau mốc dưới của range (audit một cây cũ trước base): cần audit lại" if not after else

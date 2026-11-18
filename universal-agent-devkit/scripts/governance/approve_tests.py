@@ -17,7 +17,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -38,47 +37,9 @@ def refuse(msg):
     return 2
 
 
-def seal_ocr_delegate(report_path, task_id):
-    """#1258: `agent-kit approve-tests --ocr-delegate <report.json> <task-id>` — hand the report of an OpenCodeReview delegation-mode
-    review to the sealing entry (verdict_seal.request: it machine-verifies the report and signs reviewer ocr-delegate, which
-    push_gate.approval_head reads via the trailer `Test-approved-by: ocr-delegate <task-id>`). Refuses here: kill switch
-    DEVKIT_OCR_CROSS_REVIEW=0, no session identity, a reviewer label that is this session's own (an author sealing its own PR), an
-    unreadable or oversized report. Process trust: a label is not an identity, see push_gate.approval_head."""
-    if os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0":
-        return refuse("DEVKIT_OCR_CROSS_REVIEW=0: duyệt chéo ocr-delegate đang tắt")
-    pg = _gate()._push_gate()
-    author = pg.session_agent()
-    if not author or not re.fullmatch(r"T\d{4,}-[a-z0-9-]{1,48}", task_id):
-        return refuse("thiếu danh tính phiên (author) hoặc task-id sai dạng T0001-ten-task")
-    try:
-        text = Path(report_path).read_text(encoding="utf-8")
-        report = json.loads(text) if len(text) <= 1_000_000 else None
-        reviewer = pg.normalize_reviewer(report["reviewer"])
-        head = report["auditedHead"]
-        if not isinstance(head, str):
-            raise TypeError("auditedHead")
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return refuse(f"{report_path} không đọc được thành báo cáo ocr-delegate (JSON ≤ 1 MB có reviewer, auditedHead)")
-    if not reviewer or reviewer == pg.normalize_reviewer(author) or reviewer in pg.session_agents():
-        return refuse(f"reviewer {reviewer or '?'} trùng author {author} / danh tính phiên (tự duyệt)")
-    trunk = pg._trunk_ref(str(_gate().get_repo_root()))
-    if not trunk or pg.reviewer_is_author(str(_gate().get_repo_root()), report["reviewer"], f"{trunk}..{head}") is not False:
-        return refuse(f"reviewer {reviewer} trùng agent phiên / Co-Authored-By của {trunk}..{head[:10]} hoặc không đọc được danh sách author: gate sẽ từ chối (tự duyệt)")
-    seal = _gate()._push_gate()._seal_lib()
-    if seal is None:
-        return refuse("verdict_seal.py không có trong kit")
-    rc = seal.request(str(_gate().get_repo_root()), head, text, task_id)
-    if rc == 0:
-        print(f"approve-tests: đã niêm phong; commit rỗng với trailer `Test-approved-by: ocr-delegate {task_id}` trên head {head[:12]}")
-    return rc
-
-
 def main(argv):
-    if len(argv) == 3 and argv[0] == "--ocr-delegate":
-        return seal_ocr_delegate(argv[1], argv[2].strip())
     if len(argv) != 1 or argv[0].startswith("-"):
-        print("usage: agent-kit approve-tests <task-id>   (reviewer, auditedHead: từ biên bản antigravity-pm; author: danh tính phiên)\n"
-              "       agent-kit approve-tests --ocr-delegate <report.json> <task-id>",
+        print("usage: agent-kit approve-tests <task-id>   (reviewer, auditedHead: từ biên bản antigravity-pm; author: danh tính phiên)",
               file=sys.stderr)
         return 2
     task_id = argv[0].strip()

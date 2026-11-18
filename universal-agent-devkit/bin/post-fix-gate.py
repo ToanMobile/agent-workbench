@@ -948,7 +948,7 @@ def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = Fa
     for sha in res.stdout.split():                    # newest first
         ok, note = _push_gate().approved(root, f"{sha}^!")
         m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None   # `antigravity <task-id>`
-        head = _push_gate().approval_head(root, m.group(1), m.group(2), sha) if m else None
+        head = _push_gate().trailer_head(root, m.group(1), m.group(2), sha) if m else None
         # auditedHead trước `since` (task cũ, commit rỗng ở nhánh phụ gộp vào range) kéo base lùi về cây yếu cũ: không duyệt.
         if head and _push_gate().head_after(root, since, head):
             base = sha
@@ -1183,7 +1183,7 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
     if rc_c != 0 or not cur or rc_h != 0 or at_head != cur:
         return False, f"nội dung khác cây đã audit (auditedHead {h10})"
     if top not in _APPROVAL_AUDITS:
-        _APPROVAL_AUDITS[top] = _push_gate().audited_heads(top) + _push_gate().ocr_seal_heads(top)   # #1258: ocr reviews count too
+        _APPROVAL_AUDITS[top] = _push_gate().audited_heads(top)
     for tid2, h2 in _APPROVAL_AUDITS[top]:
         if h2 == head or not _on_audit_chain(top, ch, h2):
             continue
@@ -1235,7 +1235,7 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
         for sha in res.stdout.split():
             ok, note = _push_gate().approved(root, f"{sha}^!")
             m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None
-            head = _push_gate().approval_head(root, m.group(1), m.group(2), sha) if m else None
+            head = _push_gate().trailer_head(root, m.group(1), m.group(2), sha) if m else None
             if head and m.group(1) not in agents:
                 audited.append((head, m.group(1), m.group(2)))
         out = {}
