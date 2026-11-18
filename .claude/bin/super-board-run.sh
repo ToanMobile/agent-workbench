@@ -3721,6 +3721,34 @@ reload_edit_absorbed() {
     && git merge-file -q "$t/disk" "$t/base" "$t/orig" 2>/dev/null && [ "$(git hash-object "$t/disk")" = "$new" ]; then rc=0; fi
   rm -rf "$t"; return "$rc"
 }
+# 18/11: runner blob đã mới (lần trước chỉ swap runner vì file khác của phiên khác chặn ff) thì `new == RELOAD_RUN_SUM` từng thoát sớm,
+# nên main kẹt sau origin cả ngày và mọi bản sửa kit chạy bằng code cũ. Đây là lượt đuổi kịp: đang ở <base>, HEAD là tổ tiên của origin
+# và HEAD != origin ⇒ thử ff lại (trả bản runner tự swap về HEAD trước). Vẫn bị chặn ⇒ đặt lại bản runner của origin, KHÔNG exec (không
+# restart-loop), không stash/autostash (stash dùng chung các worktree), một cảnh báo cho mỗi sha origin kèm đúng các file đang chặn.
+RELOAD_CATCHUP_WARNED=""
+reload_catchup_ff() {
+  local rel="$1" new="$2" cur head orig blockers
+  cur=$(git symbolic-ref -q --short HEAD 2>/dev/null) || return 0
+  [ "$cur" = "$BASE_BRANCH" ] || return 0
+  head=$(git rev-parse -q --verify HEAD 2>/dev/null) || return 0
+  orig=$(git rev-parse -q --verify "origin/${BASE_BRANCH}" 2>/dev/null) || return 0
+  [ "$head" != "$orig" ] || return 0
+  git merge-base --is-ancestor HEAD "origin/${BASE_BRANCH}" 2>/dev/null || return 0
+  reload_restore_self "$rel" || true
+  if git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then
+    log "♻ self-reload: main caught up with origin/${BASE_BRANCH} (${head:0:7} → ${orig:0:7}); the runner was already current"
+    return 0
+  fi
+  # bị chặn: chỉ đặt lại runner origin khi đĩa đang sạch so với HEAD (không đè sửa tay), không exec
+  if [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] && git diff --cached --quiet -- "$rel" 2>/dev/null; then
+    reload_swap_self "origin/${BASE_BRANCH}:${rel}" || true
+  fi
+  [ "$RELOAD_CATCHUP_WARNED" != "$orig" ] || return 0
+  RELOAD_CATCHUP_WARNED="$orig"
+  blockers=$(comm -12 <(git diff --name-only "$head" "$orig" 2>/dev/null | sort) <(git status --porcelain 2>/dev/null | cut -c4- | sort) | tr '\n' ' ')
+  log "⚠ self-reload: main stays ${head:0:7} behind origin/${BASE_BRANCH} ${orig:0:7}: uncommitted edits in the way: ${blockers:-unknown}"
+  board_notify send --card "$CONFIG_SLUG" --text "main chưa ff được tới origin/${BASE_BRANCH} ${orig:0:7} (kit chạy code cũ): file sửa dở chặn: ${blockers:-không rõ}. Commit hoặc bỏ các file đó (không stash, stash dùng chung worktree)."
+}
 self_reload_tick() {
   local now new disk rel cur
   [ -n "$RELOAD_RUN_SUM" ] || return 0
@@ -3732,7 +3760,7 @@ self_reload_tick() {
   git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 fetch -q origin "$BASE_BRANCH" >/dev/null 2>&1 \
     || { log "⚠ self-reload: git fetch origin ${BASE_BRANCH} failed; retrying next check"; return 0; }
   new=$(git rev-parse -q --verify "origin/${BASE_BRANCH}:${rel}" 2>/dev/null) || return 0
-  [ "$new" != "$RELOAD_RUN_SUM" ] || return 0
+  [ "$new" != "$RELOAD_RUN_SUM" ] || { reload_catchup_ff "$rel" "$new"; return 0; }
   disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
   if [ "$disk" != "$new" ]; then
     cur=$(git symbolic-ref -q --short HEAD 2>/dev/null) || cur=""
