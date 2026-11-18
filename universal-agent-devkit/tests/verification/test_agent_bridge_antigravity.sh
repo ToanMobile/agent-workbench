@@ -120,9 +120,11 @@ R="$TMP/r"; mkdir -p "$R"; (cd "$R" && git init -q)
 bash "$DEVKIT_DIR/bin/install.sh" -t "$R" -a claude,gemini -p none -y >"$TMP/out" 2>&1 || { fail "install failed"; tail -20 "$TMP/out"; }
 grep -q "agent_bridge.sh antigravity" "$R/.agents/hooks.json" 2>/dev/null \
   && ok "install -a claude,gemini registers the Antigravity guards" || fail "no .agents/hooks.json after install -a claude,gemini"
-# QA 2026-11-19 (AC2): a repo installed with -a claude,gemini is healthy.
-(cd "$R" && bash "$DEVKIT_DIR/bin/agent-kit" health >"$TMP/health" 2>&1); hrc=$?
-[ "$hrc" = 0 ] && ok "agent-kit health exits 0 on a repo installed with -a claude,gemini" || fail "agent-kit health rc=$hrc: $(tail -5 "$TMP/health")"
+# QA 2026-11-19 (AC2): a repo installed with -a claude,gemini and a profile is healthy (no profile = no regression matrix = FAIL by design).
+H="$TMP/h"; mkdir -p "$H"; (cd "$H" && git init -q)
+bash "$DEVKIT_DIR/bin/install.sh" -t "$H" -a claude,gemini -p backend -y >"$TMP/out3" 2>&1
+(cd "$H" && bash "$DEVKIT_DIR/bin/agent-kit" health >"$TMP/health" 2>&1); hrc=$?
+[ "$hrc" = 0 ] && ok "agent-kit health exits 0 on a repo installed with -a claude,gemini -p backend" || fail "agent-kit health rc=$hrc: $(sed 's/\x1b\[[0-9;]*m//g' "$TMP/health" | grep '✖' | head -3)"
 # Antigravity audit 2026-11-19: a plain re-init (-y, no -a) keeps the guards; a broken .agents/hooks.json is never overwritten.
 bash "$DEVKIT_DIR/bin/install.sh" -t "$R" -p none -y >"$TMP/out2" 2>&1
 grep -q "agent_bridge.sh antigravity" "$R/.agents/hooks.json" 2>/dev/null && ok "re-init -y keeps the Antigravity guards" \
