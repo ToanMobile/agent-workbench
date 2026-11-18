@@ -54,9 +54,10 @@ MIN_AC_TEXT = 12  # AC ngắn hơn thế quá dễ trùng chữ thường trong 
 SHA_TOKEN = re.compile(r"\b[0-9a-f]{7,40}\b")
 # #1298: mục review-only = mã AC rồi NGAY SAU là "review độc lập" (cho phép "phần/việc"); chữ review nơi khác trong mục không tính.
 REVIEW_ONLY = re.compile(r"^\s*(AC\s*-?\s*#?\d+)\s+(?:(?:phần|việc|mục)\s+)?review\s+độc\s+lập\b", re.I)
+# Phần còn lại hợp lệ của mục review-only: chỉ lời "chưa có / chuyển lane Review", KHÔNG mang tả lỗi code nào (#1298 review P2).
+REVIEW_ONLY_TAIL = re.compile(r"^[\s.,;—–-]*(?:chưa\s+(?:có|xong|được))?[\s.,;—–-]*(?:(?:chuyển(?:\s+sang)?|chờ|cần)\s+(?:lane\s+)?(?:review|reviewer))?[\s.,;—–-]*$", re.I)
 REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]")
 REVIEWER_READY = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*✅\s*merge-ready\s*[·|]\s*(?:.*?)(?:\bhead|@)\s+([0-9a-f]{7,40})\b", re.I)
-APPROVED_BY = re.compile(r"^approved-by:[ \t]*(.*?)\s*$")
 TASK_ID = re.compile(r"\AT[0-9]{4,}-[a-z0-9-]{1,48}\Z")
 EVIDENCE_DIR = "docs/super-board/runs"  # commit bằng chứng QA (bin/tree_fp.py cũng bỏ thư mục này khỏi dấu vân tay cây)
 
@@ -241,11 +242,11 @@ def _when(comment):
 
 def _approval_ok(body, assoc):
     """Luật super-board-approved-head.jq: không `approved-by:` thì chỉ OWNER; có thì JSON đủ 4 trường, reviewer khác builder, task_id đúng dạng."""
-    m = next((APPROVED_BY.match(l) for l in body.splitlines() if APPROVED_BY.match(l)), None)
+    m = re.search(r"(?m)^approved-by:[ \t]*([^\n]*)$", body)    # như jq: chỉ tách ở \n (splitlines tách cả U+2028…)
     if m is None:
         return assoc == "OWNER"
     try:
-        o = json.loads(m.group(1))
+        o = json.loads(m.group(1).rstrip())
     except ValueError:
         return False
     if not isinstance(o, dict) or not all(isinstance(o.get(k), str) and o[k].strip() for k in ("reviewer", "builder", "task_id", "gate_receipt")):
@@ -306,10 +307,11 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None,
         if text.strip(" .").lower() in EMPTY_VALUES:
             continue
         # #1199: mỗi dòng/bullet của mục kiểm riêng, để dòng dẫn issue repo khác không che AC cục bộ ở dòng kia.
-        # #1298: chỉ gỡ mục MỞ ĐẦU bằng `AC<n> [phần] review độc lập` mà phần còn lại không nêu AC nào (mã AC khác hay nguyên văn AC), và
-        # không thuộc DANH SÁCH DỪNG; mọi dạng khác (AC code, hai AC trong một mục, "và/nên lane Review") vẫn chặn.
+        # #1298: chỉ gỡ mục MỘT dòng MỞ ĐẦU bằng `AC<n> [phần] review độc lập` mà phần còn lại chỉ là lời "chưa có / chuyển lane Review"
+        # (không mô tả lỗi code), và không thuộc DANH SÁCH DỪNG; mọi dạng khác (AC code, hai AC trong một mục, "và/nên lane Review") vẫn chặn.
         ro = REVIEW_ONLY.match(text)
-        if reviewed and ro and not names_ac(text[ro.end():], acs) and not _DEC.is_stop(text):
+        tail = re.sub(r"[(（][^()（）]*[)）]", " ", text[ro.end():]) if ro else ""
+        if reviewed and ro and len(parts) == 1 and REVIEW_ONLY_TAIL.match(tail) and not names_ac(tail, acs) and not _DEC.is_stop(text):
             continue
         if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
             # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.

@@ -116,4 +116,15 @@ for nd in '❌ Not done: AC1 chưa đạt và AC4 review độc lập' '❌ Not 
   [ "$(run "$TMP/o.json" "$HEAD")" = 1 ] && ok "O: '$nd' vẫn chặn" || { fail "O: '$nd' bị lọt"; cat "$TMP/out"; }
 done
 
+# P2 vòng 3: mục mở đầu bằng "AC<n> review độc lập" nhưng còn tả lỗi code (cùng dòng hay dòng nối tiếp) không được gỡ.
+for nd in '❌ Not done: AC1 phần review độc lập chưa có, phần code: test 413 vẫn đỏ' '❌ Not done: AC1 review độc lập — test 413 vẫn đỏ, payload 2 MB trả 500'; do
+  mk "$TMP/p.json" "$nd" ok
+  [ "$(run "$TMP/p.json" "$HEAD")" = 1 ] && ok "P: '$nd' vẫn chặn" || { fail "P: '$nd' bị lọt"; cat "$TMP/out"; }
+done
+mk "$TMP/p2.json" '❌ Not done: AC1 review độc lập chưa có
+  - test 413 vẫn đỏ' ok
+[ "$(run "$TMP/p2.json" "$HEAD")" = 1 ] && ok "P: dòng nối tiếp mô tả lỗi code vẫn chặn" || { fail "P: dòng nối tiếp bị lọt"; cat "$TMP/out"; }
+mk "$TMP/p3.json" '❌ Not done: AC4 phần review độc lập (không phải tác giả) chưa có, chuyển sang lane Review.' ok
+[ "$(run "$TMP/p3.json" "$HEAD")" = 0 ] && ok "P: 'chưa có, chuyển sang lane Review' vẫn qua" || { fail "P: bị chặn"; cat "$TMP/out"; }
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_qa_report_review_only_ac: all passed" || { echo "❌ $FAILS failed"; exit 1; }
