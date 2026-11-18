@@ -432,6 +432,8 @@ idx = 0
 # nobody reviewed yet) or a plain `ocr review … -o <file>` must be an OCR JSON report (an object with a `comments` list) written
 # after the newest file this session edited. `--help` / `-h` / `--version`: not a review.
 OCR_CMD = re.compile(r"(?:^|[;&|(\n]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:python3?\s+)?(?:\S*/)?(ocr-review|ocr\s+(?:review|r))\b")
+review_pending = {}   # #1301: tool_use id of an agent/skill review -> its transcript index
+review_rounds = []    # #1301: (index, has P0/P1) per agent review whose result was read
 ocr_pending = {}   # tool_use id -> (transcript index, "helper" | "plain", command)
 ocr_reports = []   # (transcript index, report path) of OCR runs that named a report
 ocr_fallbacks = []   # (transcript index, spec, argv) of ocr-review runs that ASKED the LLM and fell back to delegation for want of an endpoint
@@ -548,6 +550,45 @@ def _result_text(blk):
     if isinstance(c, list):
         return "\n".join(x.get("text", "") for x in c if isinstance(x, dict))
     return ""
+
+
+# #1301: a review result "has P0/P1" when a line names one without a negation ("Không có P0/P1", "no P0", "0 P1"); words like "không"/"no"/"clean" elsewhere in the line are a description, not a negation.
+_SEVERE = re.compile(r"\bP[01]\b", re.I)
+_SEP = r"(?:\s*(?:/|or|and|,|v\u00e0)\s*)"
+_NEG = r"(?:kh\u00f4ng(?:\s+c\u00f3)?|no|none|zero|without|0)"
+_NEG_BEFORE = re.compile(r"\b" + _NEG + r"\s+(?:P[01]" + _SEP + r")*$", re.I)   # "no P0", "Kh\u00f4ng c\u00f3 P0/" before the label
+_NEG_AFTER = re.compile(r"^(?:" + _SEP + r"P[01])*\s*[:=-]?\s*" + _NEG + r"\s*[.;]?$", re.I)   # "P1: none" closing the line
+
+
+# ponytail: R10 only P0/P1 labels count as severe; unlabelled "Critical:"/"High:" results read as clean, upgrade when reviewers emit other severity words.
+def _severe(txt):
+    # each label is judged on its own: a negation of one label never hides another label in the same line
+    for l in txt.splitlines():
+        for m in _SEVERE.finditer(l):
+            if not (_NEG_BEFORE.search(l[:m.start()]) or _NEG_AFTER.search(l[m.end():].strip())):
+                return True
+    return False
+
+
+# #1301: files in these areas are never capped (auth, secrets, payment, migrations).
+_SENSITIVE_SUBSTR = re.compile(r"secret|credential|token|password|payment|billing|migrat", re.I)
+
+
+def _sensitive(path):
+    # R6: auth is matched on filename tokens (snake/kebab/dot/slash and camelCase boundaries): `author`/`authority` are not auth;
+    # `authorization`, `userAuth`, `JwtAuth`, `reauth`, `oauth*`, `OAuth2` (-> o|auth2), `auth0` are (R9: digit suffix).
+    if _SENSITIVE_SUBSTR.search(path):
+        return True
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", path)
+    for t in re.split(r"[^A-Za-z0-9]+", spaced.lower()):
+        if re.fullmatch(r"(?:re)?auth[nz]?\d*", t) or t.startswith(("oauth", "authoriz", "authentic")):
+            return True
+    return False
+
+
+# ponytail: R11 the cap does not check that required OCR ran on the final code (ocr_missing is judged elsewhere), upgrade if a capped Stop must also prove OCR.
+CLEAN_ROUNDS_CAP = 2
+_REVIEW_NOT_READ = re.compile(r"async agent launched|agent (?:is )?running in (?:the )?background", re.I)
 if tp and os.path.exists(tp):
     with open(tp) as fh:
         for rawline in fh:
@@ -567,6 +608,12 @@ if tp and os.path.exists(tp):
                     _run = bash_open.pop(blk.get("tool_use_id"))   # a run moved to the background ends when it ends: no end time
                     if not BASH_BACKGROUND.match(_result_text(blk)):   # a result with no readable time: the run ended within seconds
                         _run[2] = _rec_time(rec) or _run[1] + BASH_SLACK_S
+                if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("tool_use_id") in review_pending:
+                    _ridx = review_pending.pop(blk.get("tool_use_id"))
+                    _rtxt = _result_text(blk).strip()
+                    # R3: a failed, empty or backgrounded review read nothing: not a clean round, and it resets nothing
+                    if not blk.get("is_error") and _rtxt and not _REVIEW_NOT_READ.match(_rtxt):
+                        review_rounds.append((_ridx, _severe(_rtxt)))
                 if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("tool_use_id") in ocr_pending:
                     at, kind, ocmd = ocr_pending.pop(blk.get("tool_use_id"))
                     _rp = "" if blk.get("is_error") or _short_circuited(ocmd) else _ocr_report_path(kind, ocmd, _result_text(blk))
@@ -602,6 +649,8 @@ if tp and os.path.exists(tp):
                     if st in REVIEW_AGENTS:
                         last_review_idx = idx
                         review_marks.append(idx)
+                        if blk.get("id"):
+                            review_pending[blk.get("id")] = idx
                 elif name == "Skill":
                     sk = inp.get("skill", "") or inp.get("command", "")
                     if sk in REVIEW_SKILLS:
@@ -966,6 +1015,28 @@ if reviewed_after_edits:
     reset_attempts()
     logline(f"[{ts}] review ran after last .kt edit "
             f"(edit#{last_edit_idx} < review#{last_review_idx}) — pass")
+    sys.exit(0)
+
+# #1301 round cap: every review finds something new, so a PR head never settles (#1298: 12 rounds, 9 heads). After CLEAN_ROUNDS_CAP
+# trailing agent reviews with no P0/P1, the gate lets the stop go and hands the rest to the QA lane / merge gate. The first round, any
+# P0/P1 in the latest round and sensitive files (auth, secret, payment, migration) are never capped.
+# ponytail: counts rounds of the whole session, not of one file set; per-file rounds when a long session mixes unrelated work.
+# R5: a round is a review after an edit; reviews launched together (no edit between them) are one round, severe if any is.
+_rounds = []
+for _ri, _sv in sorted(review_rounds):
+    if not any(_e < _ri for _e in edit_marks):   # R7: a review before the first edit reviewed nothing of this change
+        continue
+    if _rounds and not any(_rounds[-1][0] < _e < _ri for _e in edit_marks):
+        _rounds[-1] = (_ri, _rounds[-1][1] or _sv)
+    else:
+        _rounds.append((_ri, _sv))
+_trail = 0
+for _ri, _sv in _rounds:
+    _trail = 0 if _sv else _trail + 1
+if _trail >= CLEAN_ROUNDS_CAP and not any(_sensitive(f) for f in session_unreviewed | set(changed)):
+    reset_attempts()
+    logline(f"[{ts}] round cap: {_trail} clean review rounds (no P0/P1), edits after the last one — pass")
+    sys.stderr.write(f"REVIEW-GATE: {_trail} vòng review sạch (không còn P0/P1), không giữ thêm; review tiếp do lane QA / merge gate.\n")
     sys.exit(0)
 
 # ── 3) would block — apply loop-guard (attempt_file hoisted above) ──
