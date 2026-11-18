@@ -4,14 +4,14 @@ description: Reviewer lane of the super-board pipeline and standalone PR/branch 
 ---
 
 **For a board worker, before writes or worktree creation:** follow [skill readiness](../super-board/references/skills-readiness.md).
-Resolve this lane for the actual host, load the report's files/fallbacks, halt
-on missing requirements and recheck each conditional helper before use.
+Resolve this lane for the host, load the report's files/fallbacks, halt on
+missing requirements and recheck each conditional helper before use.
 
 # Super Review — PR/code readiness reviewer
 
-**Super Review** is the super-board reviewer. It checks whether a branch or PR is safe to merge: it forms its own hypotheses before reading the builder's summary, remembers prior findings and re-checks each with file:line proof, runs an adversarial truth-check on non-trivial diffs, and classes every finding (Gap, Bug, Verification miss, Scope drift, Over-engineering via `ponytail:ponytail-review`). It records actionable findings, merges only through `super-board-merge-gate.sh`, pinned to the reviewed head SHA, and routes other fixes to Super Build or Super QA via the board.
+**Super Review** is the super-board reviewer. It checks whether a branch or PR is safe to merge: it forms its own hypotheses before reading the builder's summary, remembers prior findings and re-checks each with file:line proof, runs an adversarial truth-check on non-trivial diffs, and classes every finding (Gap, Bug, Verification miss, Scope drift, Over-engineering via `ponytail:ponytail-review`). It merges only through `super-board-merge-gate.sh` at the reviewed head SHA and routes other fixes to Super Build or Super QA.
 
-Super Review should be conservative with claims: only say **merge-ready** when review evidence is clean and verification has passed. If evidence is missing, say what is unverified.
+Say **merge-ready** only when review evidence is clean and verification passed; else say what is unverified.
 
 ## When to use
 
@@ -20,9 +20,8 @@ Use this skill for:
 - PR or branch review before merge.
 - Code, architecture, security, data-model, or migration judgment.
 - Release-readiness checks after Super Build, Super QA, or a human's `/ui-refine-loop` pass.
-- The Review lane of a `super-board run`.
-- A final pass that needs risks, blockers, and human gates summarized.
-- Check the PR's Risk block names `Door:` (one-way/two-way) and `Blast radius:`; adjust them if the diff disagrees (writing-standard.md § 2).
+- The Review lane of a `super-board run`, or a final pass summarizing risks, blockers and human gates.
+- Check the PR's Risk block names `Door:` (one-way/two-way) and `Blast radius:`; fix them if the diff disagrees (writing-standard.md § 2).
 
 Do **not** use this as the primary implementation workflow. Route fixes to:
 
@@ -91,8 +90,8 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
 5. **Reviewer-side test rerun (always — closes Tester self-verification gap):**
    - Bring the review worktree to the PR head: `git fetch origin && git -C .claude/worktrees/issue-<N>-review checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the EXACT command from Tester's PR `Local tests:` line.
-   - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the `post-fix-gate.py --run-tests --scoped` exit 0 (its scoped receipt) for this exact head SHA. When `.claude/bin/super-board-qa-exit2.sh` printed `review`, that is the only reason an existing test was edited: do not demand QA exit 0; the card is in Review for Antigravity, not Blocked and not needs-you. The merge point (the merge queue's train; queue off, the merge gate) verifies the merged tree with `--scoped`, which never escalates to `--full` (#741; review `core-touched` files closely; run.md → Merge protocol).
-   - Before `pm_dispatch kind=audit`: `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. True → audit this HEAD. False → move the card Review → Ready with label `loop:rebase` (the Builder on `issue-<N>-build` merges `origin/<base>` and pushes). The Reviewer does not commit and does not push. After the Antigravity audit pass, run `agent-kit approve-tests <that T… id>` (exit 2/3: no approval), do not set `ANTIGRAVITY_PM_STATE_HOME`, then `gate_receipt=$(.claude/bin/super-board-gate-receipt.sh <head sha40>)`: skip the rerun only on exit 0 with this tree's fp, else run `post-fix-gate.py --run-tests --scoped --brief` once (must exit 0) and read it again (empty fp: do not comment; run.md step 5).
+   - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the `post-fix-gate.py --run-tests --scoped` exit 0 (its scoped receipt) for this exact head SHA. When `.claude/bin/super-board-qa-exit2.sh` printed `review`, that is the only reason an existing test was edited: do not demand QA exit 0; the card is in Review for Antigravity, not Blocked, not needs-you. The merge point runs `--scoped`, never `--full` (#741; review `core-touched` files closely; run.md → Merge protocol).
+   - Before `pm_dispatch kind=audit`: `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. True → audit this HEAD. False → move the card Review → Ready with label `loop:rebase` (the Builder merges `origin/<base>` and pushes; the Reviewer never commits or pushes). After the Antigravity audit pass, run `agent-kit approve-tests <that T… id>` (exit 2/3: no approval), do not set `ANTIGRAVITY_PM_STATE_HOME`, then `gate_receipt=$(.claude/bin/super-board-gate-receipt.sh <head sha40>)`: skip the rerun only on exit 0 with this tree's fp, else run `post-fix-gate.py --run-tests --scoped --brief` once (must exit 0), read it again (empty fp: no comment; run.md step 5).
    - Green → continue. Red → open new `[qa]`-prefixed thread quoting failure, move card Review → QA with `loop:rebuild-N`, exit.
    - If QA includes `Runtime checks:`, follow
      [optional runtime verification](../super-qa/references/runtime-verification.md):
@@ -103,33 +102,32 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
 7. Decide per finding. First apply the Over-engineering rule to every finding collected —
    yours, `ponytail:ponytail-review`'s and the truth-check sub-agents': Over-engineering is
    Should fix, never Blocker, and never on its own a reason to bounce or block. Then:
-   - **Deepening opportunity** → `.claude/bin/super-review-file-refactor.sh`, then keep going. It is not a finding for merge purposes and never bounces a card.
+   - **Deepening opportunity** → `.claude/bin/super-review-file-refactor.sh`, then keep going; never a merge finding, never bounces a card.
    - **No findings (Over-engineering aside) + threads clean + truth ≥ threshold + tests green** → run the **merge protocol** (below). Never move a card to Done any other way.
-   - **Over-engineering only** (from `ponytail:ponytail-review`, see super-review step 3) → list it in the report, open no thread, and carry on to the merge decision; it never bounces a card alone. When the card bounces for another finding anyway, open a `[builder]` thread for each Over-engineering finding too, so the rebuild trims it.
+   - **Over-engineering only** (from `ponytail:ponytail-review`, see super-review step 3) → list it in the report, open no thread, carry on to the merge decision; it never bounces a card alone. If the card bounces for another finding, open a `[builder]` thread for each Over-engineering finding too.
    - **Code-side new finding** → new `[builder]`-prefixed thread, move card Review → Ready (`loop:rebuild-N`).
    - **Test-side new finding** → new `[qa]`-prefixed thread, move card Review → QA (`loop:rebuild-N`).
-   - **Blocker finding (destructive schema, contract, money, auth, live-DB migration) or rebuild cap hit** → full §4 Block template, move card Review → Blocked; a block a person must clear also runs `super-board-needs-you.py mark` (block-template.md → "A person must act"). A *clean* PR that merely touches money, auth or schema is not a finding: run the merge protocol, and the gate's `merge_policy` hands it to a human (exit 7 → 🙋 Blocked).
+   - **Blocker finding (destructive schema, contract, money, auth, live-DB migration) or rebuild cap hit** → full §4 Block template, move card Review → Blocked; a block a person must clear also runs `super-board-needs-you.py mark` (block-template.md → "A person must act"). A *clean* PR that only touches money, auth or schema is no finding: run the merge protocol; `merge_policy` hands it to a human (exit 7 → 🙋 Blocked).
 8. Write the Reviewer report (marker `<!-- super-review:report -->`, ids on every finding) — edit the existing report comment in place, post a new one only on the first review. It is the next re-review's `prior_report`.
 9. Clean up worktree.
 
 ### Merge protocol — Done means merged
 
-Builder opens PRs as **drafts**, and GitHub never auto-merges a draft. Skipping the
-`gh pr ready` step is why a six-hour run landed zero commits on `main` while producing
-two complete builds. In order, no shortcuts:
+Builder opens PRs as **drafts**, and GitHub never merges a draft: skipping `gh pr ready`
+once left a six-hour run with zero commits on `main`. In order, no shortcuts:
 
 1. `gh pr ready <PR>` — idempotent, safe on an already-ready PR.
    **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` (its runner drains
    the queue every tick) or `"workflow"` (the launchd schedule `super-board-queue-schedule.sh` does), without `--codex`): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP:
-   `pm_task_create` (project = this card's review worktree `.claude/worktrees/issue-<N>-review`, already at the PR head, never the main checkout; put the focus in its `brief`), `pm_dispatch kind=audit` WITHOUT `message`; the dispatch output must contain `Pham vi:` and must NOT contain `Khong ghi pham vi`, else do not `pm_verdict` (with `message`, or a project not at the PR head, the PM records no scope and the merge gate ignores the audit). Read its `audit-agent.json`, and only on Antigravity's
+   `pm_task_create` (project = this card's review worktree `.claude/worktrees/issue-<N>-review`, already at the PR head, never the main checkout; put the focus in its `brief`), `pm_dispatch kind=audit` WITHOUT `message`; the dispatch output must contain `Pham vi:` and must NOT contain `Khong ghi pham vi`, else do not `pm_verdict` (with `message`, or a project not at the PR head, the PM records no scope and the gate ignores the audit). Read its `audit-agent.json`, and only on Antigravity's
    pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR as its own comment `approved-head:<sha40>`
-   with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}` and NO `edited-tests:` line (queue on only): the queue approves edited tests through the PM audit record from `pm_verdict` above, which still holds after main moves ahead, while an `edited-tests:` line pins the approval to this head and the train answers every main move with gate-exit-2 (rebase, then Build, QA and Review all over again: the RUNAWAY loop of 2026-11-12). `gate_receipt` as above (empty fp: do not comment).
+   with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}` and NO `edited-tests:` line (queue on only): the queue approves edited tests via the PM audit record from `pm_verdict`, which survives main moving ahead; an `edited-tests:` line pins the approval to this head, so every main move forces gate-exit-2 (RUNAWAY loop of 2026-11-12). `gate_receipt` as above (empty fp: do not comment).
    Antigravity unavailable (MCP absent, `pm_dispatch` errors, verdict not pass): no approval, card stays in **Review** with a
    `[reviewer]` comment whose last line is `blocked-by: -` (`blocked-by: agent` if down; a bare `approved-head` is the owner's hand approval; the guard blocks it). Add
    the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, write
    the report (`merge-ready`) and leave the card in **Review**: the queue merges it in one train (run.md → Merge
    protocol). Queue off inside the board (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`,
-   where nothing drains the queue — even when the config enables it): after the Antigravity audit pass, `gate_receipt` as above (script first, `jq -r .fp` fallback) (empty fp: do not comment), post `approved-head` plus `approved-by` plus `edited-tests:` as its own comment, THEN the merge gate (step 2).
+   where nothing drains the queue — even when the config enables it): after the Antigravity audit pass, `gate_receipt` as above (script first, `jq -r .fp` fallback; empty fp: no comment), post `approved-head`, `approved-by` and `edited-tests:` as its own comment, THEN the merge gate (step 2).
 2. Merge through the gate, pinned to the head you reviewed (`merge_policy.default: "human"`
    sends every merge to exit 7 below; a cross-review marker or a human `done` approves it):
    record `gh pr view <PR> --json headRefOid` when review passes, then
@@ -140,7 +138,7 @@ two complete builds. In order, no shortcuts:
    the gate refuses `--standalone` (exit 13). Exit 6 = the head moved after review → your evidence is void;
    leave the card in **Review** with a `[reviewer]` comment naming both shas.
    The gate owns the merge decision (config `merge_policy`, `migrations`):
-   - **Exit 9 — verification-readiness.** Halt the run; preserve card, approval, claims, and worktree. Configure `verify_commands` with the owning project's real checks — or, when the gate says the scratch tree has no `post-fix-gate.py`, repair the main checkout's DevKit install — and restart explicitly. No bounce to Build, rebase retry, approval request, or bare merge.
+   - **Exit 9 — verification-readiness.** Halt the run; preserve card, approval, claims, and worktree. Configure `verify_commands` with the project's real checks (or, when the scratch tree has no `post-fix-gate.py`, repair the main checkout's DevKit install) and restart explicitly. No bounce to Build, rebase retry, approval request, or bare merge.
    - **Exit 2 / 5 / 14 — stale branch or real conflict (14: GitHub reports the PR CONFLICTING; nothing verified).** Rebase pass (run.md → "The rebase pass").
    - **Exit 11 — verify red, branch NOT behind the base.** A rebase changes nothing: open a `[builder]` thread quoting the gate's "verify failed (exit N: …)" line, move Review → Ready with `loop:rebuild-N`.
    - **Exit 7 — a human merges.** `merge_policy` matched (money / auth / schema label,
@@ -163,8 +161,7 @@ two complete builds. In order, no shortcuts:
      permission and the head, then moves it to Review. Re-run the gate; labels do not
      authorize it. For exits 7 and 8, copy `approval-request:` into the canonical
      issue block and link it from the PR (no duplicate request); see block-template.md.
-   - **Cross-review replaces `done` (#605).** After the Antigravity audit pass of the head
-     (step 1: `pm_dispatch kind=audit`, then `pm_verdict`), post on the issue that holds the
+   - **Cross-review replaces `done` (#605).** After the Antigravity audit pass (step 1: `pm_dispatch kind=audit`, then `pm_verdict`), post on the issue that holds the
      request, last (after the Block comment and its request), as its own comment with nothing
      else, besides `approved-head:<sha40>`:
      `cross-review-approved: {"repo":"<owner/name>","pr":<P>,"head":"<sha40>","scope":"<request scope>","reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}`
