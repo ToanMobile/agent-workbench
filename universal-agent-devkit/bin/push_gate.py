@@ -877,7 +877,10 @@ def ocr_seal_heads(top):
         return []
     out = []
     for h in names:
-        if git(top, "cat-file", "-e", f"{h}^{{commit}}")[0] != 0:   # a seal of another repo: skip before the signature check (cost)
+        try:   # a seal of another repo (or a junk name): skip before the signature check; a git timeout skips that seal, never the gate
+            if not HEX_SHA.fullmatch(h) or git(top, "cat-file", "-e", f"{h}^{{commit}}")[0] != 0:
+                continue
+        except (subprocess.SubprocessError, OSError):
             continue
         p = lib.verify(top, h, _seal_fixture(top), "ocr-delegate")
         if p and p["verdict"] == "pass" and p.get("reviewer") == "ocr-delegate" and isinstance(p.get("task_id"), str):
@@ -939,7 +942,7 @@ def _ocr_approval_head(top, ident, sha):
         if names is None:
             return None
         authors = session_agents() | {normalize_reviewer(n) for n in names}
-        first = lambda v: (re.split(r"[\s._-]+", v.strip()) or [""])[0]   # "claude opus 5.5" / "claude-review" ~ claude
+        first = lambda v: (re.split(r"[\s._-]+", v.strip(" ._-\t")) or [""])[0]   # "claude opus 5.5" / "claude-review" ~ claude
         if not label or label in authors or first(label) in {first(a) for a in authors}:
             continue
         return payload["head"]
