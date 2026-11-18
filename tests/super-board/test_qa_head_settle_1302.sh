@@ -13,6 +13,7 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 HEADCHK="$ROOT/.claude/bin/super-board-qa-head.sh"
+SYNC="$ROOT/.claude/bin/super-board-qa-sync.sh"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-qa-head.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -86,7 +87,7 @@ if printf '%s' "$step6" | grep -q "5b" && ! printf '%s' "$step6" | grep -q "is n
 # phải quay về 5b; (2) 5b đưa nhánh cục bộ lên <sha> để lượt K+1 ff được.
 step5b=$(grep -n '^5b\. ' "$RUNMD" | head -1 | cut -d: -f2-)
 if printf '%s' "$step6" | grep -q "non-fast-forward" && ! printf '%s' "$step6" | grep -q "any command exits non-zero, do not retry or force: Block"; then ok "run.md bước 6: push non-ff do đầu đổi → 5b, không Block"; else fail "run.md bước 6 còn Block vô điều kiện khi lệnh thoát khác 0"; fi
-if printf '%s' "$step5b" | grep -q "merge --ff-only" && printf '%s' "$step5b" | grep -q "branch -f"; then ok "run.md 5b đưa nhánh cục bộ lên <sha> trước lượt K+1"; else fail "run.md 5b không cập nhật nhánh cục bộ"; fi
+if printf '%s' "$step5b" | grep -q "super-board-qa-sync.sh"; then ok "run.md 5b đưa nhánh cục bộ lên <sha> trước lượt K+1 (qa-sync)"; else fail "run.md 5b không cập nhật nhánh cục bộ"; fi
 
 # 11. Major audit T0003: chạy git thật vòng push non-ff → 5b → K+1. Bằng chứng QA E1 đã commit vào nhánh
 # cục bộ, push bị từ chối vì phiên khác đẩy S: `merge --ff-only S` lỗi (phân kỳ), 5b phải đặt lại nhánh về S
@@ -101,20 +102,39 @@ out=$(cd "$TMP/qa" && SB_QA_HEAD_REMOTE="$ORIG" bash "$HEADCHK" --branch pr --sh
 [ "$rc" = 10 ] && printf '%s' "$out" | grep -q "rerun $S" && ok "11: helper báo rerun trên $S" || fail "11: helper: rc=$rc out=$out"
 cd "$TMP/qa" && G fetch -q origin
 if G merge --ff-only "$S" >/dev/null 2>&1; then fail "11: ff-only đáng ra phải lỗi (nhánh cục bộ phân kỳ)"; else ok "11: ff-only lỗi vì nhánh cục bộ mang commit QA cũ"; fi
-# Công thức 5b: worktree sạch và nhánh cục bộ chỉ hơn S ở commit bằng chứng QA (docs/super-board/runs/) → reset về S.
-dirty=$(G status --porcelain); extra=$(G diff --name-only "$S...HEAD" | grep -v '^docs/super-board/runs/' || true)
-if [ -z "$dirty" ] && [ -z "$extra" ]; then G reset -q --hard "$S"; fi
+# 5b gọi helper qa-sync (worker không gõ lệnh git bị hook chặn): worktree sạch, chỉ khác S ở commit QA → về S.
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S" --worktree "$TMP/qa" 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "11: qa-sync rc=0 ($out)" || fail "11: qa-sync rc=$rc out=$out"
 [ "$(G rev-parse HEAD)" = "$S" ] && ok "11: 5b đặt lại nhánh về $S" || fail "11: nhánh chưa về S"
 mkdir -p docs/super-board/runs && echo e2 > docs/super-board/runs/ev2
 G add -A && G commit -q -m "qa evidence v2"
 if G push -q origin pr >/dev/null 2>&1 && [ "$(G ls-remote origin refs/heads/pr | cut -f1)" = "$(G rev-parse HEAD)" ]; then ok "11: lượt K+1 đẩy bằng chứng ff được"; else fail "11: lượt K+1 không đẩy được"; fi
 cd "$TMP/w" || exit 1
-# run.md 5b phải nêu công thức đặt lại (reset --hard sau kiểm sạch) cho trường hợp ff lỗi.
-if printf '%s' "$step5b" | grep -q "reset --hard" && printf '%s' "$step5b" | grep -q "status --porcelain"; then ok "11: run.md 5b nêu reset về <sha> sau kiểm worktree sạch"; else fail "11: run.md 5b thiếu công thức reset khi ff lỗi"; fi
+# run.md 5b phải gọi helper qa-sync, không còn lệnh git bị hook chặn.
+if printf '%s' "$step5b" | grep -q "super-board-qa-sync.sh" && ! printf '%s' "$step5b" | grep -Eq "reset --hard|branch -f"; then ok "11: run.md 5b gọi qa-sync, không reset --hard / branch -f"; else fail "11: run.md 5b chưa dùng qa-sync hoặc còn lệnh bị chặn"; fi
 
 # 12. Nit: --attempt 08 không bị hiểu là bát phân.
 out=$(run --branch pr --sha "$C1" --settle 1 --poll 1 --attempt 08 --max-tries 10); rc=$?
 if [ "$rc" = 10 ] && ! printf '%s' "$out" | grep -qi "value too great"; then ok "12: --attempt 08 hiểu là thập phân"; else fail "12: --attempt 08: rc=$rc out=$out"; fi
+
+# 13. Lệnh worker gõ (gọi helper qua bash) đi qua hook block-dangerous-git.sh mà không bị chặn; lệnh thô thì bị chặn.
+HOOK="$ROOT/.claude/hooks/block-dangerous-git.sh"
+hook_rc() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1" | bash "$HOOK" >/dev/null 2>&1; echo $?; }
+[ "$(hook_rc "bash .claude/bin/super-board-qa-sync.sh --branch pr --sha $S --worktree /tmp/w")" = 0 ] && ok "13: hook cho qa-sync chạy" || fail "13: hook chặn qa-sync"
+[ "$(hook_rc "git -C /tmp/w reset --hard $S")" = 2 ] && ok "13: hook vẫn chặn reset --hard thô" || fail "13: hook không chặn reset --hard thô"
+
+# 14. qa-sync từ chối: nhánh mang thay đổi ngoài docs/super-board/runs/; worktree bẩn; thiếu cờ. Không đụng nhánh.
+G clone -q "$ORIG" "$TMP/qb" 2>/dev/null
+( cd "$TMP/qb" && G checkout -q -B pr origin/pr && echo code > code.txt && G add -A && G commit -q -m "code commit" )
+( cd "$TMP/w" && G pull -q --ff-only origin pr 2>/dev/null; echo more > h && G add h && G commit -q -m "other 2" && G push -q origin pr 2>/dev/null )
+S2=$(cd "$TMP/w" && G rev-parse HEAD); B0=$(cd "$TMP/qb" && G rev-parse HEAD)
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S2" --worktree "$TMP/qb" 2>&1); rc=$?
+[ "$rc" = 11 ] && printf '%s' "$out" | grep -q "ngoài docs/super-board/runs" && [ "$(cd "$TMP/qb" && G rev-parse HEAD)" = "$B0" ] && ok "14: nhánh mang code ngoài runs/ bị từ chối, giữ nguyên" || fail "14: rc=$rc out=$out"
+( cd "$TMP/qb" && echo dirty > untracked.txt )
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S2" --worktree "$TMP/qb" 2>&1); rc=$?
+[ "$rc" = 11 ] && printf '%s' "$out" | grep -q "chưa commit" && ok "14: worktree bẩn bị từ chối" || fail "14: dirty rc=$rc out=$out"
+out=$(bash "$SYNC" --branch pr 2>&1); rc=$?
+[ "$rc" = 11 ] && ok "14: thiếu --sha exit 11" || fail "14: thiếu cờ rc=$rc"
 
 echo "---"
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL: $FAILS"; exit 1; }
