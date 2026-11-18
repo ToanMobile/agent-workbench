@@ -587,10 +587,13 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
     tpaths = timing_paths(data.get("matrix_path"), scratch, timing_ref)
     run.info["red_tests"] = {}
     checks, red, env_red, group_b = [], [], [], []
+    run.info["passed"] = []   # #1275: close_proven_cards đóng thẻ gate-full của suite PASS ở lượt này
     for t in data.get("regression_tests") or []:
         if not isinstance(t, dict):
             continue
         st, sid, cmd = t.get("status"), t.get("id") or "?", t.get("command") or ""
+        if st == "PASS":
+            run.info["passed"].append(sid)
         if st == "FAIL" and t.get("env_blocked"):
             env_red.append(sid)
         elif st == "FAIL":
@@ -1124,6 +1127,42 @@ def open_issue_for(slug: str, first: str):
     return ""
 
 
+CARD_SUITE = re.compile(re.escape(CARD_PREFIX) + r" \S+: (\S+) đỏ$")
+
+
+def close_proven_cards(run, slug: str, sha: str) -> None:
+    """#1275: AC cuối của thẻ gate-full là "lượt gate_full.py run kế tiếp không còn <suite> đỏ"; không ai kiểm AC đó nên thẻ nằm Blocked
+    (ac-open) chờ người mãi. Sau lượt: thẻ gate-full còn mở mà suite của nó PASS ở lượt này ⇒ comment bằng chứng, gỡ ac-open, đóng
+    completed (sweep đóng-issue của board chuyển thẻ về Done). gh lỗi ⇒ chỉ log, thẻ giữ nguyên, lượt sau thử lại."""
+    passed = set(run.info.get("passed") or [])
+    if not slug or not passed or not shutil.which("gh"):
+        return
+    rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "open", "--search", '"gate-full đêm" in:title',
+                  "--json", "number,title", "--limit", "50"], timeout=60)
+    try:
+        items = json.loads(out.strip().splitlines()[-1]) if rc == 0 and out.strip() else []
+    except ValueError:
+        items = []
+    if rc != 0:
+        run.log("đóng thẻ đã chứng minh: gh issue list exit %d — lượt sau thử lại" % rc)
+        return
+    for it in items if isinstance(items, list) else []:
+        n, t = (it.get("number"), it.get("title")) if isinstance(it, dict) else (None, None)
+        m = CARD_SUITE.match(t) if isinstance(t, str) else None
+        if not isinstance(n, int) or not m or m.group(1) not in passed:
+            continue
+        sid = m.group(1)
+        body = ("[gate-full] %s %s PASS trên %s @ %s: AC \"Lượt gate_full.py run kế tiếp không còn %s đỏ\" đã chứng minh. Log: %s"
+                % (run.started.strftime("%Y-%m-%d"), sid, run.info.get("ref") or "?", sha[:12], sid, run.log_path))
+        rc1, _ = sh(["gh", "issue", "comment", str(n), "--repo", slug, "--body", body], timeout=60)
+        if rc1 != 0:
+            run.log("thẻ #%d (%s PASS): comment lỗi exit %d — giữ mở, lượt sau thử lại" % (n, sid, rc1))
+            continue
+        sh(["gh", "issue", "edit", str(n), "--repo", slug, "--remove-label", "ac-open"], timeout=60)
+        rc3, _ = sh(["gh", "issue", "close", str(n), "--repo", slug, "--reason", "completed"], timeout=60)
+        run.log("thẻ #%d: %s PASS ⇒ %s" % (n, sid, "đã đóng" if rc3 == 0 else "đóng lỗi exit %d" % rc3))
+
+
 def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
     """Thẻ theo TỪNG đỏ mới (v26 mục 6): suite mới ⇒ thẻ riêng mang tên nó (đã có thẻ mở cùng suite ⇒ comment); ca mới trong suite đỏ
     kinh niên ⇒ comment vào thẻ mở của suite đó, nêu đúng các ca. Đỏ kinh niên không ca mới ⇒ không thẻ, không comment. gh lỗi khi tìm
@@ -1377,6 +1416,10 @@ def cmd_run(args) -> int:
         verdict, checks = collect_red(run, scratch, kit_rel or "universal-agent-devkit", gate_rc, gate_out_full, kit_rc, kit_out,
                                       timing_ref=timing_ref(pg, repo, sha))
         run.info["result"] = verdict
+        try:   # #1275: chỉ đọc kết quả lượt này + ghi GitHub; lỗi không đổi kết luận hay exit
+            close_proven_cards(run, args.slug or origin_slug(repo), sha)
+        except Exception as exc:
+            run.log("đóng thẻ đã chứng minh lỗi: %r" % exc)
         last_green_path = os.path.join(pg, "last_full_green_sha")
         if verdict == "green":
             nightly = os.path.join(pg, "nightly")
