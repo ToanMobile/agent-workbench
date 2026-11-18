@@ -1180,6 +1180,24 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
             run.info.setdefault("notes", []).append("đã đóng thẻ #%d: %s PASS (AC lượt kế không còn đỏ)" % (n, sid))
 
 
+def closed_card_for(slug: str, sid: str) -> str:
+    """URL của thẻ gate-full ĐÃ ĐÓNG cho đúng suite (tiêu đề CARD_PREFIX + ": <sid> đỏ"), "" khi không có hoặc gh lỗi (#1290)."""
+    rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "closed", "--search", '"gate-full đêm" in:title',
+                  "--json", "title,url", "--limit", "100"], timeout=60)
+    if rc != 0:
+        return ""
+    try:
+        items = json.loads(out.strip().splitlines()[-1]) if out.strip() else []
+    except ValueError:
+        return ""
+    for it in items if isinstance(items, list) else []:
+        t = it.get("title") if isinstance(it, dict) and isinstance(it.get("title"), str) else ""
+        m = CARD_SUITE.search(t)
+        if m and m.group(1) == sid:
+            return it.get("url") or "(thẻ đã đóng)"
+    return ""
+
+
 def card_cmd() -> list:
     """Lệnh tạo/đưa thẻ lên board: DEVKIT_GATE_FULL_CARD_CMD (test) hoặc create_task.py của kit."""
     return shlex.split(os.environ["DEVKIT_GATE_FULL_CARD_CMD"]) if os.environ.get("DEVKIT_GATE_FULL_CARD_CMD") \
@@ -1203,6 +1221,17 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
     new = i.get("new_red_detail")
     if new is None:   # người gọi cũ (không tính đỏ mới): mọi suite đỏ
         new = {sid: {"paths": [], "cases": []} for sid in i["red"]}
+    elif slug and shutil.which("gh"):
+        # #1290: thẻ gate-full đóng khi PR sửa merge (AC chỉ còn "chạy lại PASS trên origin/main"). Suite vẫn đỏ ở lượt sau là đỏ
+        # kinh niên so mốc, nên không thành đỏ mới; đã có thẻ gate-full của nó bị đóng mà không còn thẻ mở thì mở thẻ mới.
+        new = dict(new)
+        for sid, sig in (i.get("red_tests") or {}).items():
+            if sid in new:
+                continue
+            closed = closed_card_for(slug, sid)
+            if closed and open_issue_for(slug, sid) == "":
+                new[sid] = {"paths": list((sig or {}).get("paths") or []), "cases": []}
+                run.log("đỏ kinh niên %s: thẻ %s đã đóng mà suite vẫn đỏ, mở thẻ mới" % (sid, closed))
     env = i["result"] == "red-env"
     cards = []
     for sid, d in new.items():
@@ -1240,8 +1269,9 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
             "--new-card", "gate-full đêm", "--labels", "bug",
             "--title", "%s %s: %s đỏ" % (CARD_PREFIX, run.started.strftime("%Y-%m-%d"), sid), "--problem", problem,
             "--fix", "Sửa hoặc revert commit nghi vấn %s cho %s chạy lại PASS trên main." % ((sp.get("sha") or "-")[:12], sid),
+            # #1290: chỉ AC mà PR sửa chứng minh được; AC "lượt gate_full kế tiếp" làm thẻ nằm Blocked tới đêm sau (#1273, #1275).
+            # Lượt đêm sau vẫn kiểm lại: còn đỏ mà không còn thẻ mở thì mở lại thẻ (khối đỏ kinh niên ở đầu hàm).
             "--ac", "%s chạy lại PASS trên origin/main" % sid,
-            "--ac", "Lượt gate_full.py run kế tiếp không còn %s đỏ" % sid,
             "--risk", "🟡 Medium — nhóm b (thời gian thực / môi trường), chưa chứng minh main đỏ" if env else "🔴 High — main đỏ",
             "--blocked-by", "None."]
         rc, out = sh(cmd, cwd=repo, timeout=300)
