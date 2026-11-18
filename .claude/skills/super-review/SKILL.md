@@ -73,6 +73,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    - `[builder]` open → comment, move card Review → Ready.
    - `[qa]` open → comment, move card Review → QA.
    - Both open → bounce to whichever is older.
+   - A bounce is never the last act while the card sits in Review (#1316): the final command that ends every bounce, even when the PR head did not change since the last bounce and you post no duplicate report, is `.claude/bin/super-board-card.sh --config <cfg> move <N> Ready` (`QA` for a `[qa]` finding), pointing to the latest bounce comment. Ending the turn with "not approved, stays in Review" strands the card: the runner blocks it ❓.
    - Clean up worktree, exit.
 3. Read PR + spot-check Tester evidence + read CLAUDE.md / AGENTS.md.
    **3b. Prior-report check** — load `prior_report` (see "Review remembers"); if present, round 1 checks each prior finding; any `not fixed` → re-open its thread, bounce by prefix, post the report, exit.
