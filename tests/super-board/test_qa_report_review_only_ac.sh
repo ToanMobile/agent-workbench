@@ -84,6 +84,8 @@ expect "$(run "$TMP/c14.json")" 1 "C14: 'preview không phải tác giả' (khô
 # F ReDoS: dòng AC `AC4 reviewer` + 60000 khoảng trắng + x (regex cũ \s*[..]?\s* chạy O(n^2): ~10 s); phải xong trong 5 s và vẫn chặn
 BODY="## Acceptance criteria"$'\n'"- [ ] AC4 reviewer$(printf '%60000s' '')x"$'\n' mk "$TMP/f1.json" "AC1 pass" "AC4 review độc lập" "$MR" "$HEAD" ok
 timeout 5 python3 "$QA" --meta "$TMP/f1.json" --head "$HEAD" >"$TMP/out" 2>&1; expect "$?" 1 "F1: khoảng trắng dài sau 'reviewer' không treo regex (timeout 5 s)"
+BODY="## Acceptance criteria"$'\n'"- [ ] AC$(printf '%60000s' '')x"$'\n' mk "$TMP/f2.json" "AC1 pass" "AC4 review độc lập" "$MR" "$HEAD" ok
+timeout 5 python3 "$QA" --meta "$TMP/f2.json" --head "$HEAD" >"$TMP/out" 2>&1; expect "$?" 1 "F2: khoảng trắng dài sau 'AC' trong thân PR không treo AC_ID (timeout 5 s)"
 BODY=$'## Acceptance criteria\n- [ ] AC4 reviewer – không phải tác giả duyệt\n' mk "$TMP/a3.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok
 expect "$(run "$TMP/a3.json")" 0 "A3: 'reviewer – không phải tác giả' (en dash) vẫn được gỡ"
 mk "$TMP/c1.json" "AC4 pass" "AC1 test cổng OCR còn đỏ" "$MR" "$HEAD" ok;  expect "$(run "$TMP/c1.json")" 1 "C1: AC code ở Not done vẫn chặn"
