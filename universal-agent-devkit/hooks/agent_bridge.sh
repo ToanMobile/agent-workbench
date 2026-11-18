@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # agent_bridge.sh — OPT-IN HELPER: run the DevKit's Claude Code hooks from other
-# agents (OpenAI Codex, Gemini CLI, Cursor). Not wired in hooks/hooks.json; the
-# adapters register it in .codex/hooks.json, .gemini/settings.json and
-# .cursor/hooks.json (scripts/agent_hooks.py).
+# agents (OpenAI Codex, Gemini CLI, Cursor, Antigravity). Not wired in hooks/hooks.json; the
+# adapters register it in .codex/hooks.json, .gemini/settings.json, .cursor/hooks.json
+# and .agents/hooks.json (scripts/agent_hooks.py).
 #
-# Usage: agent_bridge.sh <codex|gemini|cursor> <session|prompt|shell|stop> <hook.sh>
+# Usage: agent_bridge.sh <codex|gemini|cursor|antigravity> <session|prompt|shell|stop> <hook.sh>
+#   antigravity: shell only — PreToolUse(run_command), payload toolCall.args.CommandLine, answer
+#   {"decision":"deny","reason":…} on stdout (exit 0); an allowed command prints nothing.
 #   session  SessionStart / sessionStart        → session_context.sh
 #   prompt   UserPromptSubmit / BeforeAgent     → prompt_context.sh
 #   shell    PreToolUse(Bash) / BeforeTool(run_shell_command) / beforeShellExecution
@@ -43,24 +45,32 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 RAW="$(cat)"
 command -v python3 >/dev/null 2>&1 || exit 0
 [ -f "${HERE}/${HOOK}" ] || exit 0
-case "${PLATFORM}:${KIND}" in codex:*|gemini:*|cursor:*) ;; *) exit 0 ;; esac
+case "${PLATFORM}:${KIND}" in codex:*|gemini:*|cursor:*|antigravity:shell) ;; *) exit 0 ;; esac
 
+# Antigravity runs the hook from the folder holding .agents/hooks.json, not the agent's: its cwd comes from the payload.
 ROOT="$(printf '%s' "${RAW}" | python3 -I -c 'import json,sys
 try: d = json.load(sys.stdin)
 except Exception: d = {}
-print(d.get("cwd") or "")' 2>/dev/null)"
+if not isinstance(d, dict): d = {}
+tc = d.get("toolCall") if isinstance(d.get("toolCall"), dict) else {}
+args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+print(d.get("cwd") or args.get("Cwd") or "")' 2>/dev/null)"
 [ -n "${ROOT}" ] && [ -d "${ROOT}" ] || ROOT="$PWD"
 ROOT="$(git -C "${ROOT}" rev-parse --show-toplevel 2>/dev/null || printf '%s' "${ROOT}")"
 
 IN="$(printf '%s' "${RAW}" | KIND="${KIND}" python3 -I -c 'import json,os,sys
 try: d = json.load(sys.stdin)
 except Exception: d = {}
+if not isinstance(d, dict): d = {}
 kind = os.environ["KIND"]
 ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}
+tc = d.get("toolCall") if isinstance(d.get("toolCall"), dict) else {}
+args = tc.get("args") if isinstance(tc.get("args"), dict) else {}  # Antigravity: toolCall.args.CommandLine / Cwd
 if kind == "shell":
-    out = {"tool_name": "Bash", "tool_input": {"command": ti.get("command") or d.get("command") or ""}}
-    if isinstance(d.get("cwd"), str) and d["cwd"]:
-        out["cwd"] = d["cwd"]  # where the command runs: relative rm targets start here
+    out = {"tool_name": "Bash", "tool_input": {"command": ti.get("command") or d.get("command") or args.get("CommandLine") or ""}}
+    cwd = args.get("Cwd") or d.get("cwd")
+    if isinstance(cwd, str) and cwd:
+        out["cwd"] = cwd  # where the command runs: relative rm targets start here
 elif kind == "prompt":
     out = {"prompt": d.get("prompt") or "", "session_id": d.get("session_id") or d.get("conversation_id") or ""}
 elif kind == "stop":
@@ -105,6 +115,11 @@ if kind in ("session", "prompt"):
 if rc != 2:
     sys.exit(0)  # allowed (a hook's own warnings stay in its log)
 reason = err or "blocked by a Universal Agent DevKit gate"
+if platform == "antigravity":
+    # deny on stdout with exit 0 (real run 2026-11-18: "tool call denied by pre-tool hook: <reason>"). Never "allow":
+    # that auto-approves and skips Antigravity's own permission prompt; an allowed command gets an empty stdout.
+    print(json.dumps({"decision": "deny", "reason": reason}, ensure_ascii=False))
+    sys.exit(0)
 if platform == "cursor":
     if kind == "shell":
         print(json.dumps({"permission": "deny", "user_message": reason.splitlines()[0][:300],

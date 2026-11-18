@@ -44,8 +44,10 @@ ls "$QA"   # adb-fps-measure.sh, adb-safe-exec.sh, anr-logcat-triage.sh, dexscan
 ### 2. Trích Xuất & Thẩm Định Phân Cấp Giao Diện (`dump-view-hierarchy.sh`)
 Trích xuất cây UI dạng XML để kiểm tra cấu trúc layout và accessibility:
 ```bash
-"$QA"/dump-view-hierarchy.sh [output_xml_path]
+"$QA"/dump-view-hierarchy.sh [-s SERIAL] [output_xml_path]
 ```
+- Mọi lệnh adb đi qua `adb-safe-exec.sh` (áp `.adb-denylist`). Không có máy, hoặc nhiều máy mà không `-s` ⇒ exit `3` (CHƯA XÁC MINH), không phải "sạch".
+- In `density=<dpi>`: bounds trong XML là px, đổi sang dp bằng `px * 160 / dpi` trước khi so ngưỡng 48 dp.
 - **Tiêu chuẩn nghiệm thu:**
   - Touch Target: Mọi phần tử bấm được (`clickable="true"`) phải có kích thước tối thiểu $\ge 48\times 48\text{dp}$.
   - Content Description: Các nút biểu tượng (icon button) bắt buộc có `content-desc` phục vụ trợ năng.
@@ -81,13 +83,14 @@ Phân tích tệp `/data/tombstones/` và giải mã stack trace native nhị ph
   - Ánh xạ địa chỉ bộ nhớ nhị phân (#00 pc ...) về đúng tệp và dòng code C/C++ bằng `ndk-stack`.
 
 ### 4. Quét Dung Lượng & Giới Hạn Bytecode DEX (`dexscan.py`)
-Phân tích tệp APK/AAB hoặc thư mục build để kiểm tra method count:
+Quét APK / AAB (mọi module) / AAR / DEX: API nguy hiểm, số method mỗi DEX, component exported:
 ```bash
-python3 "$QA"/dexscan.py <path_to_apk_or_dex>
+python3 "$QA"/dexscan.py <apk|aab|aar|dex> [--manifest app/build/intermediates/merged_manifests/release/AndroidManifest.xml]
 ```
 - **Tiêu chuẩn nghiệm thu:**
   - Cảnh báo khi số lượng method trong single DEX vượt quá 60,000 (ngưỡng an toàn trước trần 65,536).
-  - Phát hiện thư viện bên thứ ba phình to bất thường (Bloatware dependencies).
+  - `--manifest` (bản manifest đã merge dạng text): liệt kê component `exported="true"` không có permission (bỏ qua launcher); không truyền thì báo "manifest: chưa kiểm", không phải sạch.
+  - Exit `0` sạch (có thể kèm cảnh báo) · `1` có API nguy hiểm · `2` thiếu file, file hỏng hoặc sai cú pháp.
 
 ### 5. Xuất Báo Cáo Nghiệm Thu HTML Kèm Bằng Chứng (`generate_report_html.py`)
 Tạo báo cáo kiểm thử độc lập, nhúng Base64 screenshot thực tế và bảng kết quả đo lường:
