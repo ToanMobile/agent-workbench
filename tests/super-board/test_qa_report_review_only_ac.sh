@@ -104,6 +104,10 @@ json.dump({"body": body4, "author": {"login": "bot"}, "comments": [c(qa4)] + tai
 PY
 timeout 5 python3 "$QA" --meta "$TMP/f3.json" --head "$HEAD" >"$TMP/out" 2>&1; rc=$?; [ "$rc" != 124 ] && ok "F3: 3800 dòng Not done thụt lề xong trong 5 s (rc=$rc)" || fail "F3: treo quá 5 s"
 timeout 5 python3 "$QA" --meta "$TMP/f4.json" --head "$HEAD" >"$TMP/out" 2>&1; rc=$?; [ "$rc" != 124 ] && ok "F4: 2000 mục review-only x thân PR lớn xong trong 5 s (rc=$rc)" || fail "F4: treo quá 5 s"
+BODY=$'## Acceptance criteria\n- [ ] 4 review độc lập\n- [ ] AC4 sửa crash parser\n' mk "$TMP/g1.json" "AC1 pass" "AC       4 review độc lập" "$MR" "$HEAD" ok
+timeout 10 python3 "$QA" --meta "$TMP/g1.json" --head "$HEAD" >"$TMP/out" 2>&1; expect "$?" 1 "G1: 'AC' + 7 dấu cách + số không làm checker nổ (exit 1, không phải 2)"
+BODY=$'## Acceptance criteria\n- [ ] AC1 reviewer không phải tác giả duyệt\n- [ ] AC1 sửa crash parser\n' mk "$TMP/g2.json" "AC4 pass" "AC1 review độc lập" "$MR" "$HEAD" ok
+expect "$(run "$TMP/g2.json")" 1 "G2: số AC trùng giữa mục review và mục code không gỡ AC code"
 mk "$TMP/c1.json" "AC4 pass" "AC1 test cổng OCR còn đỏ" "$MR" "$HEAD" ok;  expect "$(run "$TMP/c1.json")" 1 "C1: AC code ở Not done vẫn chặn"
 mk "$TMP/c2.json" "AC1 pass" "AC4 phần review độc lập; AC1 test còn đỏ" "$MR" "$HEAD" ok; expect "$(run "$TMP/c2.json")" 1 "C2: mục trộn AC khác vẫn chặn"
 mk "$TMP/c3.json" "AC1 pass" "AC4 phần review độc lập
