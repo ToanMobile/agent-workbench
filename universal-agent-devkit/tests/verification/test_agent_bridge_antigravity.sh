@@ -64,6 +64,12 @@ agt shell_exec '{"A":"echo one","B":"git clean -fdx"}'
 [ "$(decision)" = deny ] && ok "shell_exec: dangerous command in the second string argument -> deny" || fail "two shell_exec args: rc=$RC out=$OUT"
 agt run_command '{"CommandLine":"ls\n\tgit reset --hard"}'
 [ "$(decision)" = deny ] && ok "run_command with newline + tab before git reset --hard -> deny" || fail "run_command newline/tab: rc=$RC out=$OUT"
+# principal review 2026-11-19 (P1): rewriting the command opened a bypass — bash runs `git clea\n -fdx` as `git clean -fdx`
+# (an unquoted backslash-n is just n) but the guard saw `git clea; -fdx`. The original must always be checked as it runs.
+agt run_command '{"CommandLine":"git clea\\n -fdx"}'
+[ "$(decision)" = deny ] && ok "literal backslash inside a word (git clea\\n -fdx) -> deny on the original" || fail "git clea\\n -fdx: rc=$RC out=$OUT"
+agt run_command '{"CommandLine":"git b\\ranch -D main"}'
+[ "$(decision)" = deny ] && ok "git b\\ranch -D -> deny on the original" || fail "git b\\ranch -D: rc=$RC out=$OUT"
 # Probe 2026-11-19: a lone CR (the Enter key typed into a terminal), VT, FF and a literal backslash-n passed the guard.
 for sep in '\r' '\u000b' '\u000c' '\\n' '\\r'; do
   agt send_command_input "{\"CommandId\":\"c1\",\"Input\":\"echo hi${sep}git reset --hard HEAD~1\"}"

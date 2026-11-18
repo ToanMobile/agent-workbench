@@ -74,15 +74,22 @@ ag_cmd = next((args[k] for k in ("CommandLine", "Input", "Command") if isinstanc
 if not ag_cmd and args:
     ag_cmd = "; ".join(v for k, v in args.items()
                        if isinstance(v, str) and v and k not in ("toolSummary", "Cwd", "CommandId"))
-if ag_cmd:
-    # Every line break is a command boundary for the guards: a lone CR is the Enter key typed into a terminal
-    # (send_command_input), and VT/FF or a literal backslash-n/r slipped past the fast path of the guard (board audit + probe
-    # 2026-11-19). Over-splitting can only block more, never let a command through.
-    import re
-    ag_cmd = re.sub(r"\r\n|[\r\n\x0b\x0c]|\\[nr]", "; ", ag_cmd).replace("\t", " ")
+views = []
 if kind == "shell":
-    out = {"tool_name": "Bash", "tool_input": {"command": ti.get("command") or d.get("command") or ag_cmd or ""}}
+    cmd = ti.get("command") or d.get("command") or ag_cmd or ""
+    views = [cmd]  # the command exactly as it will run is ALWAYS checked
+    if ag_cmd and cmd == ag_cmd:
+        # Extra views, each checked SEPARATELY, never instead of the original: a lone CR is the Enter key typed into a
+        # terminal (send_command_input), VT/FF/CR/LF split commands, and a literal backslash-n/r slipped past the fast path
+        # of the guard (board audit + probe 2026-11-19). Rewriting the command itself broke `git clea\n -fdx` (bash runs
+        # git clean): a view can only add a block, never remove one.
+        import re
+        lines = re.sub(r"\r\n|[\r\n\x0b\x0c]", "; ", cmd)
+        for v in (lines, re.sub(r"\\[nr]", "; ", lines)):
+            if v not in views:
+                views.append(v)
     cwd = args.get("Cwd") or d.get("cwd")
+    out = {"tool_name": "Bash", "tool_input": {"command": cmd}}
     if isinstance(cwd, str) and cwd:
         out["cwd"] = cwd  # where the command runs: relative rm targets start here
 elif kind == "prompt":
@@ -99,15 +106,25 @@ elif kind == "stop":
         out["last_assistant_message"] = reply
 else:
     out = {"session_id": d.get("session_id") or "", "hook_event_name": "SessionStart"}
-print(json.dumps(out))' 2>/dev/null)"
+if not views:
+    print(json.dumps(out))
+for v in views:  # one hook input per line (json.dumps escapes every line break)
+    print(json.dumps({**out, "tool_input": {"command": v}}))' 2>/dev/null)"
 
 OUT_F="$(mktemp "${TMPDIR:-/tmp}/devkit-bridge-out.XXXXXX")"; ERR_F="$(mktemp "${TMPDIR:-/tmp}/devkit-bridge-err.XXXXXX")"
 trap 'rm -f "${OUT_F}" "${ERR_F}"' EXIT
 # DEVKIT_AGENT names the platform to the hook (hooks/devkit_harness.py): the prompt hook
 # still records the user's bug prompts (only the prompt's content filters them), and Stop
 # gates use their per-session loop guard.
-printf '%s' "${IN}" | DEVKIT_AGENT="${PLATFORM}" CLAUDE_PROJECT_DIR="${ROOT}" bash "${HERE}/${HOOK}" >"${OUT_F}" 2>"${ERR_F}"
-RC=$?
+# One run per input line: the original command first, then each extra view; the first block (exit 2) wins.
+RC=0
+while IFS= read -r LINE; do
+  printf '%s' "${LINE}" | DEVKIT_AGENT="${PLATFORM}" CLAUDE_PROJECT_DIR="${ROOT}" bash "${HERE}/${HOOK}" >"${OUT_F}" 2>"${ERR_F}"
+  RC=$?
+  [ "${RC}" = 2 ] && break
+done <<EOF_BRIDGE_IN
+${IN}
+EOF_BRIDGE_IN
 
 PLATFORM="${PLATFORM}" KIND="${KIND}" RC="${RC}" OUT_F="${OUT_F}" ERR_F="${ERR_F}" python3 -I - <<'PY'
 import json, os, sys
