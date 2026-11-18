@@ -25,6 +25,7 @@ ponytail: authorAssociation COLLABORATOR gồm cả quyền read (gh pr view kh�
 """
 import argparse
 from datetime import datetime
+import functools
 import importlib.util
 import json
 import os
@@ -238,22 +239,27 @@ REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*(✅|❌)\s*(merg
 APPROVED_JQ = Path(__file__).with_name("super-board-approved-head.jq")
 
 
-def review_only_item(parts, text, acs, body=""):
-    """#1298: mục Not done MỘT dòng, cả dòng khớp dạng chuẩn `AC<n> [phần] review độc lập…`, không trích nguyên văn AC nào, VÀ mục AC<n> trong thân
-    PR tự nói là việc của reviewer (review / không phải tác giả): QA không gọi AC code là "review độc lập" để qua cổng."""
-    if len(parts) != 1 or len(text) > 160 or not REVIEW_ONLY.fullmatch(text) or any(a in text.lower() for a in acs):
-        return False
-    n = re.sub(r"\D", "", AC_ID.search(text).group(0))
-    in_ac = False
+@functools.lru_cache(maxsize=1)
+def _review_ac_numbers(body):
+    """#1298: mã AC của khối AC trong thân PR mà chính mục đó nói là việc của reviewer (một lần cho mỗi thân PR, không quét lại mỗi mục Not done)."""
+    nums, in_ac = set(), False
     for line in (body or "").splitlines():     # chỉ mục trong khối AC (như ac_texts), không phải mọi `- [ ]` của thân PR
         if re.match(r"^#{1,6}\s", line):
             in_ac = bool(AC_HEADING.match(line))
             continue
         m = AC_ITEM.match(line) if in_ac else None
         code = AC_ID.search(m.group(2)) if m else None
-        if code and len(AC_ID.findall(m.group(2))) == 1 and re.sub(r"\D", "", code.group(0)) == n and REVIEW_MARK.search(m.group(2)):
-            return True
-    return False
+        if code and len(AC_ID.findall(m.group(2))) == 1 and REVIEW_MARK.search(m.group(2)):
+            nums.add(re.sub(r"\D", "", code.group(0)))
+    return frozenset(nums)
+
+
+def review_only_item(parts, text, body=""):
+    """#1298: mục Not done MỘT dòng, cả dòng khớp dạng chuẩn `AC<n> [phần] review độc lập…` VÀ mục AC<n> trong thân
+    PR tự nói là việc của reviewer (review độc lập / reviewer không phải tác giả): QA không gọi AC code là "review độc lập" để qua cổng."""
+    if len(parts) != 1 or len(text) > 160 or not REVIEW_ONLY.fullmatch(text):
+        return False
+    return re.sub(r"\D", "", AC_ID.search(text).group(0)) in _review_ac_numbers(body or "")
 
 
 def review_proved(comments, qa_at, pr_author, head):
@@ -304,6 +310,12 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None,
     if not decided and qa_at:
         decided = any(_DEC.is_valid(c, policy) and (_when(c) or qa_at) > qa_at for c in issue_comments)
     acs = ac_texts(body)
+    cache = []
+
+    def proved():   # review_proved chạy jq: một lần cho mỗi report (kết quả như nhau cho mọi mục), không một lần mỗi mục Not done
+        if not cache:
+            cache.append(review_proved(comments, latest_at, pr_author, head))
+        return cache[0]
     items = []
     for i, line in enumerate(latest):
         m = NOT_DONE.match(line)
@@ -320,8 +332,9 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None,
         # #1199: mỗi dòng/bullet của mục kiểm riêng, để dòng dẫn issue repo khác không che AC cục bộ ở dòng kia.
         if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
             # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.
+            # review_only_item trước is_stop: nó chặn độ dài (160) nên is_stop không quét mục dài O(n) lặp lại
             if (not decided or _DEC.is_stop(text)) and not (
-                    not _DEC.is_stop(text) and review_only_item(parts, text, acs, body) and review_proved(comments, latest_at, pr_author, head)):
+                    review_only_item(parts, text, body) and not _DEC.is_stop(text) and proved()):
                 items.append(text)
     return items
 

@@ -88,6 +88,22 @@ BODY="## Acceptance criteria"$'\n'"- [ ] AC$(printf '%60000s' '')x"$'\n' mk "$TM
 timeout 5 python3 "$QA" --meta "$TMP/f2.json" --head "$HEAD" >"$TMP/out" 2>&1; expect "$?" 1 "F2: khoảng trắng dài sau 'AC' trong thân PR không treo AC_ID (timeout 5 s)"
 BODY=$'## Acceptance criteria\n- [ ] AC4 reviewer – không phải tác giả duyệt\n' mk "$TMP/a3.json" "AC1 pass" "$RO" "$MR" "$HEAD" ok
 expect "$(run "$TMP/a3.json")" 0 "A3: 'reviewer – không phải tác giả' (en dash) vẫn được gỡ"
+# F3/F4 (DoS đo thời gian): comment QA 3800 dòng `  ❌ Not done: AC1` thụt lề (is_stop quét O(n²)) · 2000 mục review-only x thân PR 30000 dòng AC (quét lại thân mỗi mục)
+python3 - "$TMP/f3.json" "$TMP/f4.json" "$HEAD" <<'PY'
+import json, sys
+f3, f4, head = sys.argv[1:4]
+c = lambda t: {"author": {"login": "bot"}, "authorAssociation": "OWNER", "body": t}
+ab = '{"reviewer":"antigravity","builder":"b","task_id":"T0005-audit","gate_receipt":"r"}'
+tail = [c("[reviewer] [report] ✅ merge-ready · head " + head[:8]), c("approved-head:%s\napproved-by: %s" % (head, ab))]
+ac = "## Acceptance criteria\n- [ ] AC1 cổng OCR nhận phiên ocr\n"
+qa3 = "[qa] [report] ✅ QA @ d0093822\n❌ Not done: AC1\n" + "  ❌ Not done: AC1\n" * 3800
+json.dump({"body": ac, "author": {"login": "bot"}, "comments": [c(qa3)] + tail}, open(f3, "w"))
+body4 = "## Acceptance criteria\n" + "- [ ] AC9 mục phụ cổng\n" * 30000 + "- [ ] AC4 reviewer không phải tác giả duyệt PR\n"
+qa4 = "[qa] [report] ✅ QA @ d0093822\n" + "❌ Not done: AC4 review độc lập\n" * 2000
+json.dump({"body": body4, "author": {"login": "bot"}, "comments": [c(qa4)] + tail}, open(f4, "w"))
+PY
+timeout 5 python3 "$QA" --meta "$TMP/f3.json" --head "$HEAD" >"$TMP/out" 2>&1; rc=$?; [ "$rc" != 124 ] && ok "F3: 3800 dòng Not done thụt lề xong trong 5 s (rc=$rc)" || fail "F3: treo quá 5 s"
+timeout 5 python3 "$QA" --meta "$TMP/f4.json" --head "$HEAD" >"$TMP/out" 2>&1; rc=$?; [ "$rc" != 124 ] && ok "F4: 2000 mục review-only x thân PR lớn xong trong 5 s (rc=$rc)" || fail "F4: treo quá 5 s"
 mk "$TMP/c1.json" "AC4 pass" "AC1 test cổng OCR còn đỏ" "$MR" "$HEAD" ok;  expect "$(run "$TMP/c1.json")" 1 "C1: AC code ở Not done vẫn chặn"
 mk "$TMP/c2.json" "AC1 pass" "AC4 phần review độc lập; AC1 test còn đỏ" "$MR" "$HEAD" ok; expect "$(run "$TMP/c2.json")" 1 "C2: mục trộn AC khác vẫn chặn"
 mk "$TMP/c3.json" "AC1 pass" "AC4 phần review độc lập
