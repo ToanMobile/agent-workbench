@@ -379,8 +379,8 @@ class RateLimited(Exception):
 RATE_LIMITED = re.compile(r'rate limit|already exceeded|graphql_rate_limit|secondary rate|abuse detection', re.I)
 
 
-def permanent_error(text):
-    if re.search(r'rate limit|secondary rate', text, re.I):
+def permanent_error(text, limit_text=None):
+    if re.search(r'rate limit|secondary rate', text if limit_text is None else limit_text, re.I):
         return False
     return re.search(r'Cannot query field|Unknown (?:argument|type)|Syntax Error|Parse error on|'
                      r'GRAPHQL_VALIDATION_FAILED|undefinedField|variableRequiresValidType|'
@@ -698,7 +698,7 @@ def read(args, kind='json', meta=None, recovering=False):
     rest_error = None  # complete_pr_files: REST hỏng ở lần thử cuối (lỗi của GitHub, không gợi ý "Valid form")
     delay = float(os.environ.get('SB_GITHUB_RETRY_DELAY', '1'))
     # #1311: a rate-limit refusal does not use up the 3 attempts; it waits (doubling, capped) and asks again. ponytail: the
-    # backoff is per call (default 5+10+20+40+60 s); when it runs out the caller gets exit 69 and the runner's next tick
+    # backoff is per call (default 5+10+20+40+80 s, +up to 25% jitter); when it runs out the caller gets exit 69 and the runner's next tick
     # retries. Upgrade to a shared cross-call cooldown file if ticks keep colliding with a long secondary limit.
     rate_waits = int(os.environ.get('SB_GITHUB_RATE_RETRIES', '5'))
     rate_base = float(os.environ.get('SB_GITHUB_RATE_DELAY', '5'))
@@ -729,7 +729,7 @@ def read(args, kind='json', meta=None, recovering=False):
                     diagnostic += json.dumps([p.get('errors', []) for p in (payload if isinstance(payload, list) else [payload]) if isinstance(p, dict)])
                 except ValueError:
                     pass
-            if result.returncode and RATE_LIMITED.search(diagnostic):
+            if result.returncode and RATE_LIMITED.search(result.stderr):
                 if rate_hits >= rate_waits:
                     raise RateLimited(f'GitHub rate limit still active after {rate_hits} backoffs; nothing was halted, try again later')
                 wait = min(300.0, rate_base * 2 ** rate_hits) * (1 + random.random() / 4)
@@ -738,7 +738,7 @@ def read(args, kind='json', meta=None, recovering=False):
                 print(f'[github-read] GitHub rate limit; backing off {wait:.0f}s ({rate_hits}/{rate_waits})', file=sys.stderr)
                 time.sleep(max(0, wait))
                 continue
-            if permanent_error(diagnostic):
+            if permanent_error(diagnostic, result.stderr if result.returncode else None):
                 halt('GitHub rejected a required read (query, authentication, or permission error); fix it before restarting', attempt, operation)
             if result.returncode:
                 # Lỗi cú pháp của người gọi (thông báo của gh 2.100, cobra): báo exit 64, không halt cả board. Áp dụng

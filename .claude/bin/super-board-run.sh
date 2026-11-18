@@ -699,7 +699,7 @@ issue_is_open() {
   # Unreadable is distinct from both OPEN and CLOSED: exit 79 halts the run.
   local state reason raw
   ISSUE_KEPT_CLOSED=0   # #1222: 1 when CLOSED and returned 0 only because it was not reopened — dispatch_lane must not start a lane
-  state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
+  state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || { state=$?; [ "$state" -eq 69 ] && return 69; return 79; }   # #1311: 69 = rate limit that outlasted the backoff: no halt, the runner exits and the next tick retries
   [ "$state" = "CLOSED" ] || return 0
   # T0054: thẻ mang nhãn ac-open đã merge một PR nhưng còn AC chưa chứng minh (merge gate gắn nhãn). Worker vẫn có thể
   # `gh issue close` nó; mọi đường reconcile CLOSED → Done đều qua đây, nên coi nó là OPEN (và mở lại issue) thay vì Done.
