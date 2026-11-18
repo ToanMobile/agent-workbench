@@ -9,6 +9,7 @@ dex(methods=(), fields=(), filler=0, tail=b"") -> bytes
   tail: bytes appended after the string data (header file_size counts them, as d8 would).
 """
 import struct
+import zlib
 
 
 def uleb128(n):
@@ -51,4 +52,6 @@ def dex(methods=(), fields=(), filler=0, tail=b""):
     struct.pack_into("<II", h, 0x58, len(methods), method_ids_off if methods else 0)
     out = bytes(body) + bytes(data) + bytes(tail)
     struct.pack_into("<I", h, 0x20, 0x70 + len(out))  # file_size
-    return bytes(h) + out
+    whole = bytearray(bytes(h) + out)
+    struct.pack_into("<I", whole, 0x08, zlib.adler32(bytes(whole[12:])))  # checksum, as d8 writes it
+    return bytes(whole)

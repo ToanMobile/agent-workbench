@@ -194,10 +194,12 @@ python3 - "$TMP" <<'PY'
 import struct, sys
 h = bytearray(0x70); h[0:8] = b'dex\n035\x00'
 struct.pack_into('<II', h, 0x38, 500, 0x70); struct.pack_into('<II', h, 0x58, 500, 0x5000)
+struct.pack_into('<I', h, 0x20, 0x70)   # right file_size, so the TABLE bounds check is what rejects it
+import zlib; struct.pack_into('<I', h, 0x08, zlib.adler32(bytes(h[12:])))
 open(f'{sys.argv[1]}/trunc.dex', 'wb').write(bytes(h))
 PY
 python3 "$SCAN" "$TMP/trunc.dex" >"$TMP/log" 2>&1; rc=$?
-[ "$rc" -eq 2 ] && ! grep -q 'SẠCH' "$TMP/log" && ok "truncated DEX (tables past EOF) -> exit 2, never clean" || bad "truncated dex -> exit $rc: $(tail -2 "$TMP/log")"
+[ "$rc" -eq 2 ] && grep -q 'table out of range' "$TMP/log" && ok "tables past EOF (size + checksum right) -> exit 2 by the table bounds check" || bad "truncated dex -> exit $rc: $(tail -2 "$TMP/log")"
 
 # principal review round 4 (P2, same class): the id tables sit at the front, so a cut in the string data still passed the
 # table bounds and read as clean. The header's file_size (u32 at 0x20) must equal the real size — any cut is caught.
@@ -212,5 +214,17 @@ python3 "$SCAN" "$TMP/full.dex" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "full DEX with the reference -> exit 1" || bad "full dex -> exit $rc: $(tail -2 "$TMP/log")"
 python3 "$SCAN" "$TMP/cut.dex" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ! grep -q 'SẠCH' "$TMP/log" && ok "same DEX cut inside the string data -> exit 2, never clean" || bad "cut dex -> exit $rc: $(tail -2 "$TMP/log")"
+
+# principal review round 5 (P3): a bare .dex with one byte flipped in its string data keeps its size; the adler32 checksum
+# at 0x08 (over data[12:], written by d8) catches it — and any cut — so it can never read as clean.
+python3 - "$TMP" "$DEVKIT_DIR/tests/verification" <<'PY2'
+import sys
+sys.path.insert(0, sys.argv[2]); import dexbuild
+full = bytearray(dexbuild.dex(methods=[('Ljava/lang/reflect/Method;', 'setAccessible')]))
+i = full.index(b'setAccessible'); full[i] ^= 0x01
+open(f'{sys.argv[1]}/flip.dex', 'wb').write(bytes(full))
+PY2
+python3 "$SCAN" "$TMP/flip.dex" >"$TMP/log" 2>&1; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'checksum' "$TMP/log" && ok "one flipped byte, same size -> checksum mismatch, exit 2" || bad "flip dex -> exit $rc: $(tail -2 "$TMP/log")"
 
 exit $((FAILS > 0))

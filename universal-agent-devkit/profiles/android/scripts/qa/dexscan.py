@@ -195,6 +195,10 @@ def scan_apk_or_dex(target_path, manifest_path=None):
             # A cut anywhere (string data sits after the id tables) must never pass the "no dangerous strings" shortcut.
             unreadable.append(f"{name}: file_size {declared} ≠ {len(data)} byte (DEX bị cắt hoặc hỏng)")
             continue
+        (checksum,) = struct.unpack_from("<I", data, 0x08)  # adler32 of data[12:], written by d8
+        if zlib.adler32(data[12:]) != checksum:
+            unreadable.append(f"{name}: checksum adler32 sai (DEX hỏng)")
+            continue
         try:
             findings += [(name, label, ref) for label, ref in dangerous_refs(data)]
         except (DexError, struct.error) as e:
