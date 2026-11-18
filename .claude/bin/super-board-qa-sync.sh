@@ -34,7 +34,9 @@ fi
 if [ -n "$wt" ]; then
   cur="$(g symbolic-ref -q --short HEAD)" || cur=""
   [ "$cur" = "$branch" ] || { echo "blocked: worktree $wt đang ở '${cur:-detached}', không phải $branch"; exit 11; }
-  [ -z "$(g status --porcelain)" ] || { echo "blocked: worktree $wt có thay đổi chưa commit"; exit 11; }
+  # Kiểm tra mã thoát của git status (fail-closed theo INSTINCT-020) trước khi đọc stdout.
+  st="$(g status --porcelain -uall)" || { echo "blocked: git status trên $wt lỗi"; exit 11; }
+  [ -z "$st" ] || { echo "blocked: worktree $wt có thay đổi chưa commit"; exit 11; }
 fi
 if [ "$local_head" = "$full" ]; then echo "synced $full"; exit 0; fi
 

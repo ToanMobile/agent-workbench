@@ -208,5 +208,19 @@ else
   fail "19b: now trước head_of hoặc lỗi settle: rc=$rc elapsed=${elapsed}s out=$out"
 fi
 
+# 20. R14 (INSTINCT-020): git status trả lỗi (rc != 0, stdout rỗng) không được coi là worktree sạch rồi reset --hard.
+G clone -q "$ORIG" "$TMP/qf" 2>/dev/null
+( cd "$TMP/qf" && G checkout -q -B pr origin/pr && mkdir -p docs/super-board/runs && echo e > docs/super-board/runs/ev5 && G add -A && G commit -q -m "qa evidence v5" )
+( cd "$TMP/w" && echo o5 > o5 && G add o5 && G commit -q -m "other 5" && G push -q origin pr 2>/dev/null )
+S5=$(cd "$TMP/w" && G rev-parse HEAD); F0=$(cd "$TMP/qf" && G rev-parse HEAD)
+mkdir -p "$TMP/shim_status"
+printf '#!/bin/sh\ncase " $* " in *" status "*) exit 1;; esac\nexec %s "$@"\n' "$REALGIT" > "$TMP/shim_status/git"; chmod +x "$TMP/shim_status/git"
+out=$(PATH="$TMP/shim_status:$PATH" SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S5" --base main --worktree "$TMP/qf" 2>&1); rc=$?
+if [ "$rc" = 11 ] && printf '%s' "$out" | grep -q "git status" && [ "$(cd "$TMP/qf" && G rev-parse HEAD)" = "$F0" ]; then
+  ok "20: git status lỗi (rc!=0) → exit 11, không đặt lại nhánh"
+else
+  fail "20: git status lỗi vẫn đi tiếp: rc=$rc head=$(cd "$TMP/qf" && G rev-parse HEAD) out=$out"
+fi
+
 echo "---"
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL: $FAILS"; exit 1; }
