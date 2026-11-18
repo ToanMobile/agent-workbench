@@ -26,9 +26,12 @@ wr = lambda o: open(tr, "a").write(json.dumps(o) + "\n")
 tu = lambda b: {"type": "assistant", "message": {"role": "assistant", "content": [dict(b, type="tool_use")]}}
 if kind == "edit":
     wr(tu({"id": a[0], "name": "Write", "input": {"file_path": a[1], "content": "x"}}))
-else:  # review <id> <text>
+else:  # review <id> <text> [error]
     wr(tu({"id": a[0], "name": "Agent", "input": {"subagent_type": "principal-code-reviewer", "prompt": "review"}}))
-    wr({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": a[0], "content": a[1]}]}})
+    res = {"type": "tool_result", "tool_use_id": a[0], "content": a[1]}
+    if len(a) > 2:
+        res["is_error"] = True
+    wr({"type": "user", "message": {"role": "user", "content": [res]}})
 PY
 ev() { python3 "$TMP/ev.py" "$1" "$TR" "${@:2}"; }
 stop() { printf '{"session_id":"s-%s","transcript_path":"%s","hook_event_name":"Stop"}' "$1" "$TR" \
@@ -68,6 +71,16 @@ for neg in "Không có P0/P1." "No P0 or P1 found." "0 P1, 0 P0"; do
   stop "c6$((n += 1))"; rc=$?
   [ "$rc" = 0 ] && ok "C6. '$neg' tính là sạch" || fail "C6. rc $rc cho '$neg'"
 done
+
+# C7. review lỗi / rỗng / chạy nền không phải vòng sạch: hai kết quả hỏng không thả Stop (R3, reviewer bounce 18/11).
+: > "$TR"; ev edit e1 "$P/app.py"; ev review r1 "429 rate limit" err; ev edit e2 "$P/app.py"; ev review r2 "429 rate limit" err; ev edit e3 "$P/app.py"
+stop c71; rc=$?; [ "$rc" = 2 ] && ok "C7.1 hai review is_error: vẫn giữ" || fail "C7.1 rc $rc"
+: > "$TR"; ev edit e1 "$P/app.py"; ev review r1 ""; ev edit e2 "$P/app.py"; ev review r2 "  "; ev edit e3 "$P/app.py"
+stop c72; rc=$?; [ "$rc" = 2 ] && ok "C7.2 hai review rỗng: vẫn giữ" || fail "C7.2 rc $rc"
+: > "$TR"; ev edit e1 "$P/app.py"; ev review r1 "Async agent launched successfully. agentId: a1"; ev edit e2 "$P/app.py"; ev review r2 "Async agent launched successfully. agentId: a2"; ev edit e3 "$P/app.py"
+stop c73; rc=$?; [ "$rc" = 2 ] && ok "C7.3 hai review chạy nền: vẫn giữ" || fail "C7.3 rc $rc"
+: > "$TR"; ev edit e1 "$P/app.py"; ev review r1 "$CLEAN"; ev edit e2 "$P/app.py"; ev review r2 "boom" err; ev edit e3 "$P/app.py"
+stop c74; rc=$?; [ "$rc" = 2 ] && ok "C7.4 1 sạch + 1 lỗi: chưa đủ 2 vòng, giữ" || fail "C7.4 rc $rc"
 
 [ "$FAILS" = 0 ] && { echo "test_review_gate_round_cap: PASS"; exit 0; }
 echo "test_review_gate_round_cap: FAIL ($FAILS)"; exit 1

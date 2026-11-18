@@ -572,6 +572,7 @@ def _severe(txt):
 # #1301: files in these areas are never capped (auth, secrets, payment, migrations).
 SENSITIVE_PATH = re.compile(r"auth|secret|credential|token|password|payment|billing|migrat", re.I)
 CLEAN_ROUNDS_CAP = 2
+_REVIEW_NOT_READ = re.compile(r"async agent launched|agent (?:is )?running in (?:the )?background", re.I)
 if tp and os.path.exists(tp):
     with open(tp) as fh:
         for rawline in fh:
@@ -592,7 +593,11 @@ if tp and os.path.exists(tp):
                     if not BASH_BACKGROUND.match(_result_text(blk)):   # a result with no readable time: the run ended within seconds
                         _run[2] = _rec_time(rec) or _run[1] + BASH_SLACK_S
                 if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("tool_use_id") in review_pending:
-                    review_rounds.append((review_pending.pop(blk.get("tool_use_id")), _severe(_result_text(blk))))
+                    _ridx = review_pending.pop(blk.get("tool_use_id"))
+                    _rtxt = _result_text(blk).strip()
+                    # R3: a failed, empty or backgrounded review read nothing: not a clean round, and it resets nothing
+                    if not blk.get("is_error") and _rtxt and not _REVIEW_NOT_READ.match(_rtxt):
+                        review_rounds.append((_ridx, _severe(_rtxt)))
                 if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("tool_use_id") in ocr_pending:
                     at, kind, ocmd = ocr_pending.pop(blk.get("tool_use_id"))
                     _rp = "" if blk.get("is_error") or _short_circuited(ocmd) else _ocr_report_path(kind, ocmd, _result_text(blk))
