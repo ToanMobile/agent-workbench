@@ -59,6 +59,9 @@ def seal_ocr_delegate(report_path, task_id):
         return refuse(f"{report_path} không đọc được thành báo cáo ocr-delegate (JSON ≤ 1 MB có reviewer, auditedHead)")
     if not reviewer or reviewer == pg.normalize_reviewer(author) or reviewer in pg.session_agents():
         return refuse(f"reviewer {reviewer or '?'} trùng author {author} / danh tính phiên (tự duyệt)")
+    trunk = pg._trunk_ref(str(_gate().get_repo_root()))
+    if trunk and pg.reviewer_is_author(str(_gate().get_repo_root()), report["reviewer"], f"{trunk}..{head}") is not False:
+        return refuse(f"reviewer {reviewer} trùng agent phiên / Co-Authored-By của {trunk}..{head[:10]} hoặc không đọc được danh sách author: gate sẽ từ chối (tự duyệt)")
     seal = _gate()._push_gate()._seal_lib()
     if seal is None:
         return refuse("verdict_seal.py không có trong kit")

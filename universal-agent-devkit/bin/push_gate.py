@@ -865,6 +865,20 @@ def _repo_tasks(top, task_id=None, any_project=False):
         yield task
 
 
+def reviewer_is_author(top, label, rng):
+    """False only when reviewer `label` is neither this session's agent nor a Co-Authored-By name of `rng`, compared whole and by first
+    word ("claude opus 5.5", "claude-review" ~ claude); True when it is; None when the author list cannot be read or the label is empty
+    (both = no approval). One rule for the gate (_ocr_approval_head) and for `approve-tests --ocr-delegate`, so a label the gate would
+    refuse is refused before it is sealed."""
+    label = normalize_reviewer(label if isinstance(label, str) else "")
+    names = author_names(top, rng)
+    if not label or names is None:
+        return None
+    authors = session_agents() | {normalize_reviewer(n) for n in names}
+    first = lambda v: (re.split(r"[\s._-]+", v.strip(" ._-\t")) or [""])[0]
+    return label in authors or first(label) in {first(a) for a in authors}
+
+
 def ocr_seal_heads(top):
     """[(task_id, head)] of the valid PASS ocr-delegate seals for repo `top` (every task id), as audited_heads lists the PM audits: the
     replay guard of post-fix-gate (a NEWER review of the same file on the branch voids an older one) must see both kinds (#1258)."""
@@ -937,13 +951,7 @@ def _ocr_approval_head(top, ident, sha):
             continue
         # The label the report carries is the reviewer's own word (not an identity), but it must not be the author: this session, or a
         # Co-Authored-By of the PR (whole name, or its first word: "Claude Sonnet 5.5" ~ claude).
-        label = normalize_reviewer(payload.get("reviewer_label") or "")
-        names = author_names(top, f"{payload['base']}..{sha}")
-        if names is None:
-            return None
-        authors = session_agents() | {normalize_reviewer(n) for n in names}
-        first = lambda v: (re.split(r"[\s._-]+", v.strip(" ._-\t")) or [""])[0]   # "claude opus 5.5" / "claude-review" ~ claude
-        if not label or label in authors or first(label) in {first(a) for a in authors}:
+        if reviewer_is_author(top, payload.get("reviewer_label") or "", f"{payload['base']}..{sha}") is not False:
             continue
         return payload["head"]
     return None

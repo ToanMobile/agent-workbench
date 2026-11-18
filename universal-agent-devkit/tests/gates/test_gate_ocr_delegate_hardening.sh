@@ -106,6 +106,10 @@ git checkout -q --detach "$H" && git commit -q --allow-empty -m "co" -m "Co-Auth
 resignv '{"reviewer_label":"claude opus 5.5"}'; [ "$(ah)" = None ] && ok "label 'claude opus 5.5' vs co-author 'Claude Sonnet 5.5' -> refused (first word)" || ko "first-word label accepted: $(ah)"
 resignv '{"reviewer_label":"_claude opus"}'; [ "$(ah)" = None ] && ok "label with a leading separator ('_claude opus') -> refused (first word)" || ko "leading-separator label accepted: $(ah)"
 resignv '{"reviewer_label":"council-reviewer"}'; [ "$(ah)" = "$H" ] && ok "unrelated label accepted next to a Claude co-author" || ko "unrelated label refused: $(ah)"
+# the wrapper refuses the same labels the gate would, BEFORE anything is sealed (no wasted review)
+printf '%s' "$(RH="$(git rev-parse HEAD)" report reviewer='"claude-opus-fresh-review"')" > "$TMP/co.json"
+CLAUDECODE=1 python3 "$DEVKIT_DIR/scripts/governance/approve_tests.py" --ocr-delegate "$TMP/co.json" T0001-x >/dev/null 2>"$TMP/err"; RC=$?
+[ "$RC" = 2 ] && grep -q "tự duyệt" "$TMP/err" && ok "wrapper refuses a label the gate would refuse (co-author first word)" || ko "wrapper accepted a gate-refused label rc=$RC $(cat "$TMP/err")"
 got="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(p.author_names(sys.argv[2], "nonexistent-ref..HEAD"))' "$DEVKIT_DIR/bin" "$TMP/repo" 2>&1 | tail -1)"
 [ "$got" = None ] && ok "author_names: git failure -> None (no silent empty set)" || ko "author_names on git failure: $got"
 git checkout -q --detach "$H"
