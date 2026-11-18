@@ -587,10 +587,17 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
     tpaths = timing_paths(data.get("matrix_path"), scratch, timing_ref)
     run.info["red_tests"] = {}
     checks, red, env_red, group_b = [], [], [], []
+    run.info["passed"] = []   # #1275: close_proven_cards đóng thẻ gate-full của suite PASS ở lượt này
     for t in data.get("regression_tests") or []:
         if not isinstance(t, dict):
             continue
         st, sid, cmd = t.get("status"), t.get("id") or "?", t.get("command") or ""
+        # PASS chứng minh được = cùng tiêu chí "chạy thật" của post-fix-gate (post-fix-gate.py: todo của durations): loại PASS không
+        # chạy lệnh của chính suite (cached, covered, resource, skip-compile, edited) và PASS không tin được (VACUOUS, flaky, infra).
+        if (st == "PASS" and t.get("mode") not in ("cached", "covered", "resource", "skip-compile", "edited")
+                and t.get("label") != "VACUOUS"
+                and not (t.get("flaky") or t.get("infra") or t.get("infra_retry") or t.get("env_blocked"))):
+            run.info["passed"].append(sid)
         if st == "FAIL" and t.get("env_blocked"):
             env_red.append(sid)
         elif st == "FAIL":
@@ -608,6 +615,8 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
                 group_b.append(sid)
         elif st in ("TIMEOUT", "UNTESTED"):
             env_red.append("%s (%s)" % (sid, st))
+    if kit_rc == 0:
+        run.info["passed"].append("agent-kit test")
     if kit_rc not in (None, 0):
         paths = test_paths(kit_out, kit_dir)
         if paths:
@@ -1124,6 +1133,53 @@ def open_issue_for(slug: str, first: str):
     return ""
 
 
+CARD_SUITE = re.compile(re.escape(CARD_PREFIX) + r" \S+: (.+?) đỏ$")   # .+? : "agent-kit test" có dấu cách
+TRUNK_REF = "origin/main"   # mặc định của --ref: ref lượt đêm chạy và thẻ gate-full nói tới
+
+
+def close_proven_cards(run, slug: str, sha: str) -> None:
+    """#1275: AC cuối của thẻ gate-full là "lượt gate_full.py run kế tiếp không còn <suite> đỏ"; không ai kiểm AC đó nên thẻ nằm Blocked
+    (ac-open) chờ người mãi. Sau lượt: thẻ gate-full còn mở mà suite của nó PASS ở lượt này ⇒ comment bằng chứng, gỡ ac-open, đóng
+    completed (sweep đóng-issue của board chuyển thẻ về Done). gh lỗi ⇒ chỉ log, thẻ giữ nguyên, lượt sau thử lại."""
+    passed = set(run.info.get("passed") or [])
+    # Thẻ đêm nói về origin/main: lượt --ref nhánh khác hay lệnh gate thay thế (DEVKIT_GATE_FULL_CMD) không chứng minh AC của nó.
+    if run.info.get("ref") != TRUNK_REF or os.environ.get("DEVKIT_GATE_FULL_CMD"):
+        return
+    if not slug or not passed or not shutil.which("gh"):
+        return
+    rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "open", "--search", '"gate-full đêm" in:title',
+                  "--json", "number,title,labels", "--limit", "50"], timeout=60)
+    try:
+        items = json.loads(out.strip().splitlines()[-1]) if rc == 0 and out.strip() else []
+    except ValueError:
+        run.log("đóng thẻ đã chứng minh: danh sách thẻ không đọc được (JSON hỏng) — lượt sau thử lại")
+        return
+    if rc != 0:
+        run.log("đóng thẻ đã chứng minh: gh issue list exit %d — lượt sau thử lại" % rc)
+        return
+    for it in items if isinstance(items, list) else []:
+        n, t = (it.get("number"), it.get("title")) if isinstance(it, dict) else (None, None)
+        m = CARD_SUITE.match(t) if isinstance(t, str) else None
+        if not isinstance(n, int) or not m or m.group(1) not in passed:
+            continue
+        sid = m.group(1)
+        body = ("[gate-full] %s %s PASS trên %s @ %s: AC \"Lượt gate_full.py run kế tiếp không còn %s đỏ\" đã chứng minh. Log: %s"
+                % (run.started.strftime("%Y-%m-%d"), sid, run.info.get("ref") or "?", sha[:12], sid, run.log_path))
+        # ac-open gỡ trước (sweep của board mở lại thẻ còn ac-open); bằng chứng đi cùng lệnh đóng: đóng lỗi thì lượt sau làm lại cả hai,
+        # không để lại comment bằng chứng lặp trên thẻ còn mở.
+        labels = {(lb.get("name") if isinstance(lb, dict) else lb) for lb in (it.get("labels") or [])}
+        rc2 = 0
+        if "ac-open" in labels:   # chỉ gỡ khi có: repo chưa từng tạo nhãn ac-open thì lệnh gỡ có thể lỗi mãi, chặn mọi lần đóng
+            rc2, _ = sh(["gh", "issue", "edit", str(n), "--repo", slug, "--remove-label", "ac-open"], timeout=60)
+        if rc2 != 0:
+            run.log("thẻ #%d (%s PASS): gỡ ac-open lỗi exit %d — giữ mở, lượt sau thử lại" % (n, sid, rc2))
+            continue
+        rc3, _ = sh(["gh", "issue", "close", str(n), "--repo", slug, "--reason", "completed", "--comment", body], timeout=60)
+        run.log("thẻ #%d: %s PASS ⇒ %s" % (n, sid, "đã đóng" if rc3 == 0 else "đóng lỗi exit %d, lượt sau thử lại" % rc3))
+        if rc3 == 0:
+            run.info.setdefault("notes", []).append("đã đóng thẻ #%d: %s PASS (AC lượt kế không còn đỏ)" % (n, sid))
+
+
 def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
     """Thẻ theo TỪNG đỏ mới (v26 mục 6): suite mới ⇒ thẻ riêng mang tên nó (đã có thẻ mở cùng suite ⇒ comment); ca mới trong suite đỏ
     kinh niên ⇒ comment vào thẻ mở của suite đó, nêu đúng các ca. Đỏ kinh niên không ca mới ⇒ không thẻ, không comment. gh lỗi khi tìm
@@ -1377,6 +1433,10 @@ def cmd_run(args) -> int:
         verdict, checks = collect_red(run, scratch, kit_rel or "universal-agent-devkit", gate_rc, gate_out_full, kit_rc, kit_out,
                                       timing_ref=timing_ref(pg, repo, sha))
         run.info["result"] = verdict
+        try:   # #1275: chỉ đọc kết quả lượt này + ghi GitHub; lỗi không đổi kết luận hay exit
+            close_proven_cards(run, args.slug or origin_slug(repo), sha)
+        except Exception as exc:
+            run.log("đóng thẻ đã chứng minh lỗi: %r" % exc)
         last_green_path = os.path.join(pg, "last_full_green_sha")
         if verdict == "green":
             nightly = os.path.join(pg, "nightly")
