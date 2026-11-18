@@ -14,7 +14,7 @@ import gate_full as g
 
 calls = []
 LIST = [
-    {"number": 1275, "title": g.CARD_PREFIX + " 2026-11-18: REG-A-01 đỏ"},   # passed now -> close
+    {"number": 1275, "title": g.CARD_PREFIX + " 2026-11-18: REG-A-01 đỏ", "labels": [{"name": "bug"}, {"name": "ac-open"}]},   # passed now -> close
     {"number": 1300, "title": g.CARD_PREFIX + " 2026-11-18: REG-B-01 đỏ"},   # still red -> keep
     {"number": 1301, "title": g.CARD_PREFIX + " 2026-11-18: REG-C-01 đỏ"},   # not run -> keep
     {"number": 1302, "title": "🐛 [fix] something else: REG-A-01 đỏ"},       # not a gate-full card -> keep
@@ -110,22 +110,36 @@ gate_json = json.dumps({"regression_tests": [
     {"id": "REG-P-01", "status": "PASS", "command": "true"},
     {"id": "REG-U-01", "status": "PASS", "mode": "skip-compile", "command": "true"},
     {"id": "REG-R-01", "status": "PASS", "mode": "resource", "command": "true"},
+    {"id": "REG-C-01", "status": "PASS", "mode": "covered", "command": "true"},
+    {"id": "REG-K-01", "status": "PASS", "mode": "cached", "command": "true"},
+    {"id": "REG-E-01", "status": "PASS", "mode": "edited", "command": "true"},
+    {"id": "REG-V-01", "status": "PASS", "label": "VACUOUS", "command": "true"},
+    {"id": "REG-Y-01", "status": "PASS", "flaky": True, "command": "true"},
     {"id": "REG-F-01", "status": "FAIL", "command": "false"}]})
 r = Run(); r.info.update(notes=[], red=[], passed=None)
 r.raw = lambda *a, **k: None
 try:
-    g.collect_red(r, tempfile.mkdtemp(), "universal-agent-devkit", 1, gate_json, 0, "", record_notes=False)
+    with tempfile.TemporaryDirectory() as scratch:
+        g.collect_red(r, scratch, "universal-agent-devkit", 1, gate_json, 0, "", record_notes=False)
     got = r.info.get("passed") or []
 except Exception as exc:
     got = ["error: %r" % exc]
 check(got == ["REG-P-01", "agent-kit test"], "L: collect_red passed=%s (want REG-P-01 + agent-kit test only)" % got)
 
 # M: the call site — cmd_run calls close_proven_cards after collect_red sets the verdict
-import ast, inspect
+import inspect
 src = inspect.getsource(g.cmd_run)
 i_collect = src.find("verdict, checks = collect_red(")
 i_close = src.find("close_proven_cards(run,")
 check(0 <= i_collect < i_close, "M: cmd_run calls close_proven_cards after the main collect_red")
+
+# N: card without ac-open (label never created in the repo) closes without a remove-label call that could fail forever
+calls.clear(); LIST[:] = [{"number": 1500, "title": g.CARD_PREFIX + " 2026-11-18: REG-A-01 đỏ", "labels": [{"name": "bug"}]}]
+FAIL_ON.add(("edit", "1500"))
+g.close_proven_cards(Run(), "o/r", "a" * 40)
+check(not any(c[2] == "edit" for c in writes()) and any(c[2] == "close" and c[3] == "1500" for c in writes()),
+      "N: no ac-open label -> no edit call, card still closes")
+FAIL_ON.clear()
 sys.exit(1 if fails else 0)
 PY
 rc=$?
