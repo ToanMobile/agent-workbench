@@ -865,12 +865,6 @@ def _repo_tasks(top, task_id=None, any_project=False):
         yield task
 
 
-def trailer_head(top, word, ident, sha):
-    """The reviewed commit an accepted `Test-approved-by: <word> <ident>` trailer (on commit `sha`) points at: antigravity -> the PM
-    record's auditedHead (#1332: antigravity là người duyệt duy nhất; `word`/`sha` giữ để post-fix-gate gọi như cũ)."""
-    return audited_head(top, ident)
-
-
 def approved(top, rng):
     """(True, note) when a commit of rng ends with the trailer `Test-approved-by: antigravity <task-id>` (git's own trailer
     parsing: the last paragraph, line-anchored) and antigravity-pm recorded an audit pass for that task (audit_record) whose

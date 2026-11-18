@@ -331,27 +331,6 @@ def _ocr_root():
     return _OCR_ROOT[0]
 
 
-def _reviewed(rep_):
-    """An OCR JSON report that reviewed something: an object with a comments list (an error object, another schema or a partial write
-    is no review, OCR 13/10), not `status` skipped/error and not 0 files reviewed (code committed before the run: the workspace diff
-    is empty, review 13/10)."""
-    if not isinstance(rep_, dict) or not isinstance(rep_.get("comments"), list) or rep_.get("status") not in (None, "complete"):
-        return False
-    summ = rep_.get("summary")
-    return not (isinstance(summ, dict) and summ.get("files_reviewed") == 0)
-
-
-def _valid_ocr_report(rp, newest):
-    """rp is an OCR JSON report (an object with a comments list) written after the newest edited file (mtime `newest`)."""
-    try:
-        if os.path.getmtime(rp) < newest:
-            return False
-        with open(rp, encoding="utf-8") as fh:
-            return _reviewed(json.load(fh))
-    except (OSError, ValueError, RecursionError):
-        return False
-
-
 def in_diff(fp):
     """Does an absolute edit path correspond to an uncommitted diff entry?"""
     absolute = os.path.realpath(fp if os.path.isabs(fp) else os.path.join(cwd, fp))
@@ -366,16 +345,14 @@ last_review_idx = -1
 edit_marks, review_marks, push_marks = [], [], []   # every edit / review index, and this turn's handovers (wip_push_start only)
 session_unreviewed = set()   # diff paths edited by me this session
 idx = 0
-# OpenCodeReview (2026-10-13): a FULL review that succeeded counts as the fresh review. The command must START a command segment
-# (`echo ocr review` is not one), and a REPORT decides, never a word in the output (OpenCodeReview of this gate, 13/10: `--help`,
-# `echo mode: review` and other wording passed): the helper's `report: <file>` (in `mode: review`; a delegation spec alone means
-# nobody reviewed yet) or a plain `ocr review … -o <file>` must be an OCR JSON report (an object with a `comments` list) written
-# after the newest file this session edited. `--help` / `-h` / `--version`: not a review.
+# OpenCodeReview (2026-10-13; #1332: LLM của OCR đã gỡ, bin/ocr-review chỉ còn delegation): lệnh phải ĐỨNG ĐẦU một đoạn lệnh
+# (`echo ocr-review` không tính). Không report hay chữ nào trong output được tính là review: report/`mode: review` giờ chỉ có
+# thể do agent tự viết (lỗ P2 PR #1335). Lượt delegation ghi `spec:` của chính nó; một agent review SAU nó mới là review.
+# `--help` / `-h` / `--version`: không phải lượt chạy.
 OCR_CMD = re.compile(r"(?:^|[;&|(\n]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:python3?\s+)?(?:\S*/)?(ocr-review|ocr\s+(?:review|r))\b")
 review_pending = {}   # #1301: tool_use id of an agent/skill review -> its transcript index
 review_rounds = []    # #1301: (index, has P0/P1) per agent review whose result was read
 ocr_pending = {}   # tool_use id -> (transcript index, "helper" | "plain", command)
-ocr_reports = []   # (transcript index, report path) of OCR runs that named a report
 ocr_fallbacks = []   # (transcript index, spec, argv) of ocr-review delegation runs (not --delegate-only) that wrote their own spec
 OCR_NOT_A_RUN = re.compile(r"(?:^|\s)(?:--help|-h|--version)(?:\s|$)")
 bash_runs = []   # [transcript index, start, end, command] of every Bash run with a timestamp: a code change made through it
@@ -395,22 +372,6 @@ def _rec_time(rec_):
     except (TypeError, ValueError):
         return None
 
-
-def _ocr_report_path(kind, cmd, txt):
-    import shlex
-    if OCR_NOT_A_RUN.search(cmd):
-        return ""
-    if kind == "helper":
-        if "mode: review" not in txt:
-            return ""
-        rp = next((l[8:].strip() for l in txt.splitlines() if l.startswith("report: ")), "")
-    else:
-        try:
-            words = shlex.split(cmd)
-        except ValueError:
-            return ""
-        rp = next((words[i + 1] for i, w in enumerate(words[:-1]) if w in ("-o", "--output")), "")
-    return os.path.join(cwd, rp) if rp and not os.path.isabs(rp) else rp
 
 def _helper_argv(cmd):
     """The words of the OCR command itself (from `ocr-review` / `ocr review` up to the next ;, &&, ||, |): a `-c` of `bash -c` or
@@ -556,10 +517,7 @@ if tp and os.path.exists(tp):
                         review_rounds.append((_ridx, _severe(_rtxt)))
                 if isinstance(blk, dict) and blk.get("type") == "tool_result" and blk.get("tool_use_id") in ocr_pending:
                     at, kind, ocmd = ocr_pending.pop(blk.get("tool_use_id"))
-                    _rp = "" if blk.get("is_error") or _short_circuited(ocmd) else _ocr_report_path(kind, ocmd, _result_text(blk))
-                    if _rp:   # a run over a commit range (--from / --commit) or over the workspace: each covers its own code
-                        ocr_reports.append((at, _rp, _helper_argv(ocmd)))
-                    elif kind == "helper" and not blk.get("is_error") and "--delegate-only" not in ocmd and not OCR_NOT_A_RUN.search(ocmd) \
+                    if kind == "helper" and not blk.get("is_error") and "--delegate-only" not in ocmd and not OCR_NOT_A_RUN.search(ocmd) \
                             and not _short_circuited(ocmd):
                         _txt = _result_text(blk)
                         _spec = next((l[6:].strip() for l in _txt.splitlines() if l.startswith("spec: ")), "")
@@ -754,129 +712,13 @@ for _rel in (changed if bash_runs else ()):
         session_unreviewed.add(_rel)
         break
 
-# An OCR report (or a delegation spec) counts only when it is newer than every file this session edited (one from before the last
-# edit is stale).
-last_ocr_ws_idx = last_ocr_range_idx = -1   # newest valid OCR report over the workspace / over a commit range
+# A delegation spec counts only when it is newer than every file this session edited (one from before the last edit is stale).
 _newest = 0.0
 for _f in session_unreviewed:
     try:
         _newest = max(_newest, os.path.getmtime(os.path.join(repo_root, _f)))
     except OSError:
         pass   # deleted since the edit: nothing newer to compare
-# Content map (wave 2 lane D, 03/11): bin/ocr-review writes `content_sha256` {path: sha256 of the bytes it reviewed, hashed before the
-# review} and `content_base` into its own report. Such a report is judged by content only, never by mtime (a map edited by hand gets a
-# fresh mtime): a file is OCR-reviewed when its current sha equals the sha in a report of the same scope — workspace: the working-tree
-# file, base == HEAD now, the session's uncommitted files; range: the blob at HEAD, a run that covers the commits since the verified head
-# (_covers_since) from a base at or before it, every file committed since. Other files are the delta: a run whose map holds their
-# current sha. A report without the map keeps the mtime rule below. The agent review rule does not change: a mapped report counts as a
-# review at its own transcript index only, never earlier, so a file edited back to reviewed bytes still needs a review after that edit.
-# ponytail: a map forged by hand with the current sha is not detected (no more than a forged `comments` list); reusing one --out for two
-# runs overwrites the first report and its coverage (use a new --out, or none); a deleted file has no sha and needs a fresh run.
-def _sha_file(rel):
-    import hashlib
-    try:
-        with open(os.path.join(repo_root, rel), "rb") as fh:
-            return hashlib.sha256(fh.read()).hexdigest()
-    except OSError:
-        return None
-
-
-_HEAD_SHA = {}
-
-
-def _sha_head(rel):
-    if rel not in _HEAD_SHA:
-        import hashlib
-        try:
-            r = subprocess.run(["git", "-C", repo_root, "cat-file", "blob", "HEAD:" + rel], capture_output=True, timeout=10)
-            _HEAD_SHA[rel] = hashlib.sha256(r.stdout).hexdigest() if r.returncode == 0 else None
-        except Exception as e:
-            logline(f"[{ts}] HEAD blob of {rel}: {e!r} — not credited")
-            _HEAD_SHA[rel] = None
-    return _HEAD_SHA[rel]
-
-
-def _at_or_before(a, b):
-    try:
-        return bool(a) and bool(b) and subprocess.run(["git", "-C", repo_root, "merge-base", "--is-ancestor", a, b],
-                                                      capture_output=True, timeout=5).returncode == 0
-    except Exception as e:
-        logline(f"[{ts}] merge-base {a[:12]} {b[:12]}: {e!r} — not credited")
-        return False
-
-
-ws_need = sorted(session_unreviewed & dirty)   # the session's uncommitted code: what a workspace map must hold
-range_need = sorted(since)                     # every file committed since the verified head, as the old range rule
-ws_mapped, range_mapped = set(), set()
-ws_excl, range_excl = set(), set()   # what OCR's own excludes leave out of a run (content_excluded): no map can hold them
-map_ws_idx = map_range_idx = -1   # newest valid map report per scope (nothing left to hold by sha: index rule, as the old one)
-_head_now = _rev("HEAD") if ocr_reports else ""
-for _at, _rp, _argv in list(ocr_reports):
-    try:
-        with open(_rp, encoding="utf-8") as fh:
-            _rep = json.load(fh)
-    except (OSError, ValueError, RecursionError):
-        continue   # the mtime rule below says it is no report
-    if not isinstance(_rep, dict) or "content_sha256" not in _rep:
-        continue
-    ocr_reports.remove((_at, _rp, _argv))   # mapped: judged here only
-    _m, _base = _rep.get("content_sha256"), _rep.get("content_base")
-    if not _reviewed(_rep) or not isinstance(_m, dict) or not isinstance(_base, str) or not _base:
-        logline(f"[{ts}] OCR run at #{_at} named {_rp}: content map malformed or nothing reviewed — not counted")
-        continue
-    _excl = _rep.get("content_excluded")
-    _excl = {x for x in _excl if isinstance(x, str)} if isinstance(_excl, list) else set()
-    # G4 (review 03/11): content_excluded is in a report the agent can write, so a listed file is never exempt by itself — it is
-    # covered only under the old rule: this run came after the last edit and its report is newer than every edited file
-    try:
-        _old_rule = _at > last_edit_idx and os.path.getmtime(_rp) >= _newest
-    except OSError:
-        _old_rule = False
-    if not _old_rule:
-        _excl = set()
-    if any(w in ("--from", "--commit", "-c") for w in _argv[:-1]):
-        if not _covers_since(_argv) or not _at_or_before(_base, since_base):
-            logline(f"[{ts}] OCR run at #{_at}: content map over a range that does not cover the commits since {since_base[:12]} — not counted")
-            continue
-        _hit = {f for f in range_need if _m.get(f) is not None and _m.get(f) == _sha_head(f)}
-        range_mapped |= _hit
-        _excl &= set(range_need)
-        range_excl |= _excl
-        map_range_idx = max(map_range_idx, _at)
-    else:
-        if _base != _head_now:
-            logline(f"[{ts}] OCR run at #{_at}: workspace content map on base {_base[:12]}, HEAD is {_head_now[:12]} — not counted")
-            continue
-        map_ws_idx = max(map_ws_idx, _at)
-        _hit = {f for f in ws_need if _m.get(f) is not None and _m.get(f) == _sha_file(f)}
-        ws_mapped |= _hit
-        _excl &= set(ws_need)
-        ws_excl |= _excl
-    if _hit:   # a review at its own index (an excluded file is no review mark: it never stands in for the agent review)
-        last_review_idx = max(last_review_idx, _at)
-        review_marks.append(_at)
-    logline(f"[{ts}] OCR run at #{_at}: content map matches {sorted(_hit)}")
-# a file OCR excludes by itself is asked of no map: a run of that scope that meets the old rule for it (above) stands for it; a session
-# that edited nothing of that scope keeps the index rule
-_ws_left, _range_left = set(ws_need) - ws_excl, set(range_need) - range_excl
-ws_map_ok = _ws_left <= ws_mapped if ws_need else map_ws_idx > last_edit_idx
-range_map_ok = bool(range_need) and range_mapped >= _range_left
-ocr_delta = sorted(_ws_left - ws_mapped) + [f + " (đã commit)" for f in sorted(_range_left - range_mapped)]
-
-if ocr_reports:
-    for _at, _rp, _argv in ocr_reports:
-        if _valid_ocr_report(_rp, _newest):
-            last_review_idx = max(last_review_idx, _at)
-            review_marks.append(_at)
-            if any(w in ("--from", "--commit", "-c") for w in _argv[:-1]):
-                if _covers_since(_argv):
-                    last_ocr_range_idx = max(last_ocr_range_idx, _at)
-                else:
-                    logline(f"[{ts}] OCR run at #{_at} covers only part of the code committed since {since_base[:12]} — not counted for it")
-            else:
-                last_ocr_ws_idx = max(last_ocr_ws_idx, _at)
-        else:
-            logline(f"[{ts}] OCR run at #{_at} named {_rp}: not a fresh OCR report — not counted")
 
 # A3 (audit 2026-10-25): the reply is work in progress and this turn's push came before more edits. It skips only when every push of
 # the turn carried reviewed code: no edit between the last review before it and it. Edits counted: Edit / Write of a changed code file,
@@ -922,7 +764,7 @@ need_ws = bool(dirty) or not since   # uncommitted code, or nothing committed si
 
 def _fallback_for(ranged_scope):
     """A delegation fallback after the last edit, read by an agent review after it, whose spec is this run's — credited to the
-    scope its run covered, like a report: a workspace run for the uncommitted code, a covering ranged run for the committed."""
+    scope its run covered: a workspace run for the uncommitted code, a covering ranged run for the committed."""
     for i, sp, argv in ocr_fallbacks:
         ranged = any(w in ("--from", "--commit", "-c") for w in argv[:-1])
         if last_edit_idx < i < last_review_idx and _spec_ok(sp) and ranged == ranged_scope and (not ranged or _covers_since(argv)):
@@ -930,8 +772,7 @@ def _fallback_for(ranged_scope):
     return False
 
 
-ocr_done = ((not need_ws or last_ocr_ws_idx > last_edit_idx or _fallback_for(False) or ws_map_ok)
-            and (not since or last_ocr_range_idx > last_edit_idx or _fallback_for(True) or range_map_ok))
+ocr_done = (not need_ws or _fallback_for(False)) and (not since or _fallback_for(True))
 ocr_missing = (reviewed_after_edits and not ocr_done
                and os.environ.get("REVIEW_GATE_OCR", "1") != "0" and os.environ.get("REVIEW_GATE_REQUIRE_OCR", "1") != "0"
                and shutil.which("ocr") is not None)
@@ -1095,8 +936,6 @@ if ocr_missing:   # the agent review is done: say exactly what is left
         "đứng trước), một agent review sau nó là đủ. Đừng cắt output của lệnh (| tail, | head): gate đọc dòng `mode: delegate` và `spec:`.",
         "`--out` viết thẳng đường dẫn (không `$BIẾN`): gate so thư mục của dòng `spec:` với chữ sau --out trong lệnh (#992).",
         "Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
-        *([f"OCR theo nội dung đã phủ {len(ws_mapped) + len(range_mapped)} file; còn lệch: {', '.join(ocr_delta[:10])}"]
-          if (ws_mapped or range_mapped) and ocr_delta else []),
         "",
     ] + [f"  • {f}" for f in unrev[:20]] + ([f"  … +{len(unrev) - 20} file nữa"] if len(unrev) > 20 else [])
 # OpenCodeReview, run by the gate itself on this block path only (2026-10-13, user: run ocr review in every repo): the delegation

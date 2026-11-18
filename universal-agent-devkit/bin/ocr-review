@@ -81,20 +81,18 @@ def ocr(*args, timeout=None):
 
 
 def range_args(argv):
-    """(flags for `ocr review`, flags for `ocr delegate`, the diff command the spec names for one file). -b/--background is a
-    review-only flag: its value never reaches `ocr delegate` as a stray argument."""
-    keep, dkeep, diff = [], [], ["git", "diff"]
+    """(flags for `ocr delegate`, the diff command the spec names for one file). -b/--background là chủ đề của spec: giá trị của nó
+    không bao giờ lọt vào `ocr delegate` thành đối số lạc."""
+    dkeep, diff = [], ["git", "diff"]
     it = iter(argv)
     vals = {}
     for a in it:
         if a in ("--from", "--to", "--commit", "-c", "-b", "--background"):
             v = next(it, "")
-            keep += [a, v]
             if a not in ("-b", "--background"):
                 dkeep += [a, v]
             vals[a] = v
-    if "--from" in vals and "--to" not in vals:   # `ocr review --from X` alone fails ("--to is required"): to HEAD, as the spec reads it
-        keep += ["--to", "HEAD"]
+    if "--from" in vals and "--to" not in vals:   # `--from X` một mình: tới HEAD, như spec đọc
         dkeep += ["--to", "HEAD"]
     if "--commit" in vals or "-c" in vals:
         c = vals.get("--commit") or vals.get("-c")
@@ -103,7 +101,7 @@ def range_args(argv):
         diff = ["git", "diff", vals["--from"] + "..." + vals.get("--to", "HEAD"), "--"]
     else:
         diff = ["git", "diff", "HEAD", "--"]      # workspace: staged + unstaged (new files: read them whole)
-    return keep, dkeep, diff
+    return dkeep, diff
 
 
 VALUED = ("--from", "--to", "--commit", "-c", "-b", "--background", "--out")   # the options range_args / main read, with a value
@@ -138,7 +136,7 @@ def main(argv):
         i = argv.index("--out")
         out = argv[i + 1] if i + 1 < len(argv) else ""
         argv = argv[:i] + argv[i + 2:]
-    _keep, dkeep, diff = range_args([a for a in argv if a != "--delegate-only"])   # --delegate-only: no-op (#1332)
+    dkeep, diff = range_args([a for a in argv if a != "--delegate-only"])   # --delegate-only: no-op (#1332)
     if out:
         os.makedirs(out, mode=0o700, exist_ok=True)
         st = os.lstat(out)   # a folder another user made (or a symlink) at a guessable path would read or redirect the writes
