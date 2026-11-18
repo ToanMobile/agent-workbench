@@ -1939,16 +1939,30 @@ ci_read() {
   local out err try
   err=$(mktemp)
   for try in 1 2 3; do
-    out=$(cd "$REPO_ABS" && gh pr checks "$PR" ${REPO:+--repo "$REPO"} --json name,state,bucket 2>"$err") || true
+    out=$(cd "$REPO_ABS" && gh pr checks "$PR" ${REPO:+--repo "$REPO"} --json name,state,bucket,link 2>"$err") || true
     if printf '%s' "$out" | jq -e 'type == "array" and all(.[]; type == "object")' >/dev/null 2>&1; then CI_JSON=$out; rm -f "$err"; return 0
     elif grep -qi 'no checks reported' "$err"; then CI_JSON='[]'; rm -f "$err"; return 0; fi
     [ "$try" -eq 3 ] || sleep $(( ${SB_GITHUB_RETRY_DELAY:-2} * try ))
   done
   rm -f "$err"; return 1
 }
-# Đỏ = mọi bucket ngoài pass / skipping / pending (fail, cancel, rỗng, lạ): fail-closed.
-ci_failed() { printf '%s' "$CI_JSON" | jq -r '.[] | select((.bucket // "") as $b | ["pass", "skipping", "pending"] | index($b) | not) | "ci-check: \(.name // "?") — \((.state // "") as $s | if $s != "" then $s elif (.bucket // "") != "" then .bucket else "unknown" end)"'; }
-ci_pending() { printf '%s' "$CI_JSON" | jq '[.[] | select(.bucket == "pending")] | length'; }
+# Đỏ = mọi bucket ngoài pass / skipping / pending / cancel (fail, rỗng, lạ): fail-closed.
+# #1021: cancel = GitHub huỷ lượt chạy (concurrency cancel-in-progress, runner mất), không phải phán quyết về code: coi là pending,
+# ci_rerun_cancelled chạy lại một lần; huỷ mãi thì hết AUTO_WAIT_S ⇒ exit 4 (wave sau thử lại), không exit 11 (không rebuild).
+ci_failed() { printf '%s' "$CI_JSON" | jq -r '.[] | select((.bucket // "") as $b | ["pass", "skipping", "pending", "cancel"] | index($b) | not) | "ci-check: \(.name // "?") — \((.state // "") as $s | if $s != "" then $s elif (.bucket // "") != "" then .bucket else "unknown" end)"'; }
+ci_pending() { printf '%s' "$CI_JSON" | jq '[.[] | select(.bucket == "pending" or .bucket == "cancel")] | length'; }
+CI_RERUN_DONE=0
+# ci_rerun_cancelled: một lần mỗi lượt gate thật, `gh run rerun <id>` cho mỗi check bucket=cancel (id lấy từ link .../actions/runs/<id>/).
+# Lỗi rerun chỉ được ghi lại: check vẫn cancel ⇒ chờ tới AUTO_WAIT_S rồi exit 4.
+ci_rerun_cancelled() {
+  local id
+  [ "$CI_RERUN_DONE" -eq 0 ] && [ "$DRY" -ne 1 ] || return 0
+  CI_RERUN_DONE=1
+  for id in $(printf '%s' "$CI_JSON" | jq -r '.[] | select(.bucket == "cancel") | (.link // "") | capture("/actions/runs/(?<id>[0-9]+)").id' 2>/dev/null | sort -u); do
+    if (cd "$REPO_ABS" && gh run rerun "$id" ${REPO:+--repo "$REPO"} >/dev/null 2>&1); then say "CI run ${id} was cancelled (no verdict on the code); re-ran it once"
+    else say "CI run ${id} was cancelled and could not be re-run; waiting for it anyway"; fi
+  done
+}
 # ci_pr_recheck: đọc lại PR như khối sau merge lỗi ở cuối file: MERGED → 0, không còn OPEN → 3, head đổi (push mới lúc chờ) → 6.
 ci_pr_recheck() {
   local now_sha
@@ -1971,6 +1985,7 @@ ci_precheck() {
     say "failing CI check(s) on ${HEAD_SHA:0:12}: never merged with a red check — back to Build"
     exit 11
   fi
+  ci_rerun_cancelled
   ci_pr_recheck   # #890: push rơi giữa lần đọc PR và lần đọc checks (gh pr checks theo số PR, không ghim sha) ⇒ xanh của head cũ; đọc PR lại SAU checks
 }
 # wait_ci_settled: lượt thật chờ hết pending; đang giữ khoá thì own_lock_or_stop làm mới mốc mỗi vòng (ngoài khoá — PR3 — không đụng
