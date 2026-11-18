@@ -26,7 +26,9 @@
 # The command output, the logcat slice and the tombstone are saved under
 # .claude/audit-gate/adb-safe-exec/ (git-ignored).
 #
-# Usage: adb-safe-exec.sh [-s SERIAL] [-p PACKAGE] [--wait SECONDS] [--symbols DIR] -- <adb args…>
+# Usage: adb-safe-exec.sh [-s SERIAL] [-p PACKAGE] [--wait SECONDS] [--symbols DIR] [--no-logcat] -- <adb args…>
+#   --no-logcat: skip steps 5-6 (crash/ANR scan) for a read-only command that starts no app (a UI dump, wm density):
+#   without -p any crash on the device since the command started would fail it. Steps 1-4 still apply.
 #   e.g. adb-safe-exec.sh -p com.example.app --wait 5 -- shell am start -W -n com.example.app/.MainActivity
 #   --symbols DIR also comes from ANDROID_SYMBOLS (e.g. app/build/intermediates/merged_native_libs/debug/out/lib/arm64-v8a)
 # Exit: 0 PASS · 1 FAIL (exit code, error output, crash/ANR) · 2 usage / refused
@@ -39,6 +41,7 @@ SERIAL="${ANDROID_SERIAL:-}"
 PACKAGE=""
 WAIT=3
 SYMBOLS="${ANDROID_SYMBOLS:-}"
+NO_LOGCAT=0
 usage() { sed -n '/^# Usage:/,/^# bash 3.2/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -48,6 +51,7 @@ while [ $# -gt 0 ]; do
     --wait=*) WAIT="${1#*=}"; shift ;;
     --symbols) [ $# -ge 2 ] || usage; SYMBOLS="$2"; shift 2 ;;
     --symbols=*) SYMBOLS="${1#*=}"; shift ;;
+    --no-logcat) NO_LOGCAT=1; shift ;;
     --) shift; break ;;
     -h|--help) usage ;;
     *) echo "✖ adb-safe-exec: unknown option '$1' (adb arguments go after --)" >&2; exit 2 ;;
@@ -116,11 +120,15 @@ RC=$?
 ERR="$(printf '%s\n' "$OUT" | grep -E -m 5 '^[[:space:]]*(Error:|Error type [0-9]|Failure \[|Exception occurred while executing|INSTRUMENTATION_FAILED|INSTRUMENTATION_STATUS_CODE: -[0-9]|FAILURES!!!|Security exception|adb: error)' || true)"
 
 # 5. Crashes / ANRs logged since the command started.
-[ "$WAIT" -gt 0 ] && sleep "$WAIT"
-LOG="$("${ADB[@]}" logcat -d -T "$T0" -b main -b system -b crash 2>&1)"
-LRC=$?
+if [ "$NO_LOGCAT" -eq 1 ]; then
+  LOG="(--no-logcat: crash scan skipped)"; LRC=0
+else
+  [ "$WAIT" -gt 0 ] && sleep "$WAIT"
+  LOG="$("${ADB[@]}" logcat -d -T "$T0" -b main -b system -b crash 2>&1)"
+  LRC=$?
+fi
 CRASH=""
-if [ "$LRC" -eq 0 ]; then
+if [ "$LRC" -eq 0 ] && [ "$NO_LOGCAT" -eq 0 ]; then
   CRASH="$(printf '%s\n' "$LOG" | python3 -I -c '
 import re, sys
 pkg = sys.argv[1]

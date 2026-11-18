@@ -47,8 +47,10 @@ PLATFORMS = {
                "events": [("sessionStart", None, [SESSION]), ("beforeShellExecution", None, [GIT, HW]),
                           ("stop", None, [STOP])]},
     # Antigravity (docs in its language_server; real run 2026-11-18): {"<hook name>": {"PreToolUse": [{matcher, hooks}]}},
-    # timeout in seconds, the command runs from the folder holding hooks.json (.agents/).
-    "antigravity": {"file": ".agents/hooks.json", "events": [("PreToolUse", "run_command", [GIT, HW])]},
+    # timeout in seconds, the command runs from the folder holding hooks.json (.agents/). send_command_input (typing into a
+    # running terminal) and shell_exec also reach a shell (CORTEX_STEP_TYPE_* in its language_server).
+    "antigravity": {"file": ".agents/hooks.json",
+                    "events": [("PreToolUse", "run_command|send_command_input|shell_exec", [GIT, HW])]},
 }
 AG_KEY = "universal-agent-devkit"
 

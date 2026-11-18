@@ -29,6 +29,7 @@ case "\${1:-}" in
            wm) echo "Physical density: 420" ;;
          esac ;;
   pull) printf '<hierarchy rotation="0"/>\n' > "\$3"; echo "1 file pulled" ;;
+  logcat) cat "$TMP/logcat" 2>/dev/null ;;
   *) exit 0 ;;
 esac
 EOF
@@ -38,7 +39,7 @@ export PATH="$TMP/bin:$PATH"
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
-reset() { : > "$TMP/calls"; rm -f "$TMP/out.xml"; export FAKE_DEVICES=1; unset ADB_DENY_SERIALS; }
+reset() { : > "$TMP/calls"; : > "$TMP/logcat"; rm -f "$TMP/out.xml"; export FAKE_DEVICES=1; unset ADB_DENY_SERIALS; }
 
 reset; export FAKE_DEVICES=0
 bash "$DUMP" "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?
@@ -65,6 +66,13 @@ bash "$DUMP" -s emu-2 "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?
 other=$(grep -v -e '^devices' -e '^-s emu-2 ' "$TMP/calls" || true)
 if [ "$rc" -eq 0 ] && [ -s "$TMP/out.xml" ] && [ -z "$other" ]; then ok "-s emu-2 with two devices -> dumps emu-2 into the positional path"
 else bad "-s emu-2 -> exit $rc, other calls: $other"; fi
+
+# OCR review 2026-11-19: adb-safe-exec without -p treats ANY crash in logcat as a failure, so a good dump failed whenever some
+# other app crashed meanwhile (or the app under test had just crashed — a normal reason to dump its screen).
+reset
+printf '09-23 10:00:01.000 E AndroidRuntime: FATAL EXCEPTION: main\n09-23 10:00:01.000 E AndroidRuntime: Process: com.other.app, PID: 7\n' > "$TMP/logcat"
+bash "$DUMP" "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ -s "$TMP/out.xml" ] && ok "a crash of another app in logcat does not fail the dump" || bad "crash in logcat -> exit $rc: $(tail -3 "$TMP/log")"
 
 reset; export ADB_DENY_SERIALS=emu-1
 bash "$DUMP" -s emu-1 "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?

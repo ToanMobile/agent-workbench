@@ -83,9 +83,9 @@ Phân tích tệp `/data/tombstones/` và giải mã stack trace native nhị ph
   - Ánh xạ địa chỉ bộ nhớ nhị phân (#00 pc ...) về đúng tệp và dòng code C/C++ bằng `ndk-stack`.
 
 ### 4. Quét Dung Lượng & Giới Hạn Bytecode DEX (`dexscan.py`)
-Quét APK / AAB (mọi module) / AAR / DEX: API nguy hiểm, số method mỗi DEX, component exported:
+Quét APK / AAB (mọi module) / DEX: tham chiếu API nguy hiểm (đọc bảng method_ids/field_ids của DEX), số method mỗi DEX, component exported. AAR chứa `classes.jar`, không phải DEX: quét APK/AAB có nó.
 ```bash
-python3 "$QA"/dexscan.py <apk|aab|aar|dex> [--manifest app/build/intermediates/merged_manifests/release/AndroidManifest.xml]
+python3 "$QA"/dexscan.py <apk|aab|dex> [--manifest app/build/intermediates/merged_manifests/release/AndroidManifest.xml]
 ```
 - **Tiêu chuẩn nghiệm thu:**
   - Cảnh báo khi số lượng method trong single DEX vượt quá 60,000 (ngưỡng an toàn trước trần 65,536).

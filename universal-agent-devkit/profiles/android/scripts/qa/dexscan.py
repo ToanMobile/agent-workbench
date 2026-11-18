@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
 dexscan.py — Android DEX & Bytecode Policy Scanner
-Scans a compiled .apk / .aab / .aar or a classes.dex for dangerous APIs, counts the methods of each DEX
-(warn at 60,000; one DEX holds at most 65,536) and, with --manifest, lists exported components that no
-permission guards (an SDK can export one without the app's code asking for it).
+Scans a compiled .apk / .aab or a classes.dex for references to dangerous APIs, counts the methods of each DEX
+(warn at 60,000 while a module still has ONE DEX; one DEX holds at most 65,536) and, with --manifest, lists exported
+components that no permission guards (an SDK can export one without the app's code asking for it).
 
-Usage: dexscan.py <apk|aab|aar|dex> [--manifest <merged AndroidManifest.xml>]
+A DEX stores a reference as method_ids / field_ids entries (class -> type_ids -> string, name -> string), never as one
+smali string `Lcls;->name`: this scanner resolves those tables. (Before 2026-11-19 it grepped for the smali text, which
+no real DEX contains — 0 of 32 DEX of OfficeReader's APK — so it reported "clean" for every app.)
+
+Usage: dexscan.py <apk|aab|dex> [--manifest <merged AndroidManifest.xml>]
   --manifest takes the text manifest the build merged, e.g.
   app/build/intermediates/merged_manifests/release/AndroidManifest.xml (the one inside an APK is binary XML).
-Exit: 0 clean (warnings may be printed) · 1 dangerous API found · 2 usage, missing or unreadable input
+  An .aar holds classes.jar (JVM bytecode), not DEX: scan the APK/AAB that includes it.
+Exit: 0 clean (warnings may be printed) · 1 dangerous API referenced · 2 usage, missing or unreadable input
 """
 
 import os
@@ -16,41 +21,118 @@ import re
 import struct
 import sys
 import zipfile
+import zlib
 import xml.etree.ElementTree as ET
 
-DANGEROUS_PATTERNS = [
-    (re.compile(rb"Ljava/lang/reflect/Method;->setAccessible"), "Bypassing Java Access Control (Reflection setAccessible)"),
-    (re.compile(rb"Landroid/os/Build;->SERIAL"), "Restricted Hardware Identifier Access (Build.SERIAL)"),
-    (re.compile(rb"Landroid/telephony/TelephonyManager;->getDeviceId"), "Restricted Device ID Access (IMEI / getDeviceId)"),
-    (re.compile(rb"Landroid/os/Environment;->getExternalStorageDirectory"), "Non-scoped legacy storage API (getExternalStorageDirectory)")
+# (class descriptor, member name, label) — a method or field reference resolved from the DEX tables.
+DANGEROUS_REFS = [
+    (b"Ljava/lang/reflect/Method;", b"setAccessible", "Bypassing Java Access Control (Reflection setAccessible)"),
+    (b"Ljava/lang/reflect/AccessibleObject;", b"setAccessible", "Bypassing Java Access Control (Reflection setAccessible)"),
+    (b"Landroid/os/Build;", b"SERIAL", "Restricted Hardware Identifier Access (Build.SERIAL)"),
+    (b"Landroid/telephony/TelephonyManager;", b"getDeviceId", "Restricted Device ID Access (IMEI / getDeviceId)"),
+    (b"Landroid/os/Environment;", b"getExternalStorageDirectory", "Non-scoped legacy storage API (getExternalStorageDirectory)"),
 ]
-# classes.dex, classes2.dex … in an APK/AAR; <module>/dex/classes*.dex in an AAB (base and feature modules).
-DEX_ENTRY = re.compile(r"^(?:[^/]+/dex/)?classes\d*\.dex$")
+# classes.dex, classes2.dex … in an APK; <module>/dex/classes*.dex in an AAB (base and feature modules).
+DEX_ENTRY = re.compile(r"^(?:([^/]+)/dex/)?classes\d*\.dex$")
 METHOD_WARN = 60000
 METHOD_CAP = 65536
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 COMPONENTS = ("activity", "activity-alias", "service", "receiver", "provider")
+UNREADABLE = (OSError, zipfile.BadZipFile, zlib.error, RuntimeError, NotImplementedError, EOFError)
+USAGE = "Usage: dexscan.py <apk|aab|dex> [--manifest <merged AndroidManifest.xml>]"
+
+
+class DexError(ValueError):
+    """The DEX tables point outside the file."""
 
 
 def usage(message):
-    print(f"✖ {message}\nUsage: dexscan.py <apk|aab|aar|dex> [--manifest <merged AndroidManifest.xml>]", file=sys.stderr)
+    print(f"✖ {message}\n{USAGE}", file=sys.stderr)
     return 2
 
 
 def method_count(data):
     """method_ids_size from the DEX header (uint32 LE at 0x58), or None when this is not a DEX."""
-    if len(data) < 0x5C or data[:4] != b"dex\n":
+    if len(data) < 0x70 or data[:4] != b"dex\n":
         return None
     return struct.unpack_from("<I", data, 0x58)[0]
 
 
+def _table(data, size_at):
+    size, off = struct.unpack_from("<II", data, size_at)
+    return size, off
+
+
+def _string(data, string_ids_off, idx, count):
+    if idx >= count:
+        raise DexError("string index out of range")
+    (pos,) = struct.unpack_from("<I", data, string_ids_off + 4 * idx)
+    shift = 0
+    while True:  # uleb128 utf16 length, then MUTF-8 bytes up to NUL
+        if pos >= len(data):
+            raise DexError("string data out of range")
+        b = data[pos]
+        pos += 1
+        if not b & 0x80:
+            break
+        shift += 7
+        if shift > 28:
+            raise DexError("bad uleb128")
+    end = data.find(b"\0", pos)
+    if end < 0:
+        raise DexError("unterminated string")
+    return data[pos:end]
+
+
+def dangerous_refs(data):
+    """[(label, 'Lcls;->name')] of dangerous references in one DEX. Raises DexError / struct.error on broken tables.
+    Only a DEX holding both pieces of a pair can reference it, so the tables are parsed only then."""
+    wanted = [(c, n, label) for c, n, label in DANGEROUS_REFS if c in data and n in data]
+    if not wanted:
+        return []
+    n_str, str_off = _table(data, 0x38)
+    n_type, type_off = _table(data, 0x40)
+    for size, off, item in ((n_str, str_off, 4), (n_type, type_off, 4)):
+        if off + size * item > len(data):
+            raise DexError("table out of range")
+    pairs = {(c, n): label for c, n, label in wanted}
+    found = []
+    for size_at in (0x50, 0x58):  # field_ids, method_ids: (u16 class_idx, u16 type/proto, u32 name_idx)
+        size, off = _table(data, size_at)
+        if not size:
+            continue
+        if off + size * 8 > len(data):
+            raise DexError("member table out of range")
+        names = {}
+        for i in range(size):
+            class_idx, _, name_idx = struct.unpack_from("<HHI", data, off + 8 * i)
+            if class_idx >= n_type:
+                raise DexError("type index out of range")
+            (desc_idx,) = struct.unpack_from("<I", data, type_off + 4 * class_idx)
+            key = (desc_idx, name_idx)
+            if key in names:
+                continue
+            ref = (_string(data, str_off, desc_idx, n_str), _string(data, str_off, name_idx, n_str))
+            names[key] = ref
+            if ref in pairs:
+                found.append((pairs[ref], ref[0].decode(errors="replace") + "->" + ref[1].decode(errors="replace")))
+    return found
+
+
 def dex_blobs(target_path):
-    """[(name, bytes)] of every DEX in the input; raises OSError / zipfile.BadZipFile on unreadable input."""
+    """[(name, module, bytes)] of every DEX in the input; raises one of UNREADABLE on unreadable input."""
     if zipfile.is_zipfile(target_path):
         with zipfile.ZipFile(target_path, "r") as z:
-            return [(n, z.read(n)) for n in z.namelist() if DEX_ENTRY.match(n)]
+            out = []
+            for n in z.namelist():
+                m = DEX_ENTRY.match(n)
+                if m:
+                    out.append((n, m.group(1) or "", z.read(n)))
+            if not out and "classes.jar" in z.namelist():
+                raise ValueError("an .aar holds classes.jar (JVM bytecode), not DEX — scan the APK/AAB that includes it")
+            return out
     with open(target_path, "rb") as f:
-        return [(os.path.basename(target_path), f.read())]
+        return [(os.path.basename(target_path), "", f.read())]
 
 
 def unguarded_exports(manifest_path):
@@ -73,6 +155,24 @@ def unguarded_exports(manifest_path):
     return found
 
 
+def report_counts(counts):
+    """counts: [(name, module, n)]. d8 fills every DEX of a multidex module close to the cap on purpose (real run on
+    OfficeReader 2026-11-18: 8 of 31), so the 60,000 warning only means something for a module with ONE DEX."""
+    modules = {}
+    for name, module, n in counts:
+        modules.setdefault(module, []).append((name, n))
+    for module, items in sorted(modules.items()):
+        if len(items) == 1:
+            name, n = items[0]
+            if n >= METHOD_WARN:
+                print(f"⚠️ [{name}] {n} method — sát trần {METHOD_CAP} của một DEX (cảnh báo từ {METHOD_WARN}); thêm code sẽ buộc multidex")
+            else:
+                print(f"  [{name}] {n} method")
+        else:
+            where = f"module {module}: " if module else ""
+            print(f"  {where}multidex: {len(items)} DEX, tổng {sum(n for _, n in items)} method (DEX gần đầy là bình thường)")
+
+
 def scan_apk_or_dex(target_path, manifest_path=None):
     print(f"🔍 [DEXSCAN] Đang quét bytecode: {target_path}...")
     if not os.path.isfile(target_path):
@@ -81,32 +181,23 @@ def scan_apk_or_dex(target_path, manifest_path=None):
         return usage(f"--manifest không tồn tại: {manifest_path}")
     try:
         blobs = dex_blobs(target_path)
-    except (OSError, zipfile.BadZipFile) as e:
+    except (*UNREADABLE, ValueError) as e:
         return usage(f"Không đọc được {target_path}: {e}")
     if not blobs:
         return usage(f"Không có classes*.dex nào trong {target_path} — không có gì để quét")
 
-    findings = []
-    counts = []
-    for name, data in blobs:
-        for pat, label in DANGEROUS_PATTERNS:
-            if pat.search(data):
-                findings.append((name, label))
+    findings, counts, unreadable = [], [], []
+    for name, module, data in blobs:
         count = method_count(data)
         if count is None:
-            print(f"⚠️ [{name}] không đọc được header DEX — chưa đếm method")
-        else:
-            counts.append((name, count))
-    # d8 fills every DEX of a multidex app close to the cap on purpose (real run on OfficeReader 2026-11-18: 8 of 31):
-    # the 60,000 warning only means something while the app still has ONE DEX.
-    if len(counts) == 1:
-        name, count = counts[0]
-        if count >= METHOD_WARN:
-            print(f"⚠️ [{name}] {count} method — sát trần {METHOD_CAP} của một DEX (cảnh báo từ {METHOD_WARN}); thêm code sẽ buộc multidex")
-        else:
-            print(f"  [{name}] {count} method")
-    elif counts:
-        print(f"  multidex: {len(counts)} DEX, tổng {sum(c for _, c in counts)} method (DEX gần đầy là bình thường)")
+            print(f"⚠️ [{name}] không đọc được header DEX — chưa đếm method, chưa quét API")
+            continue
+        counts.append((name, module, count))
+        try:
+            findings += [(name, label, ref) for label, ref in dangerous_refs(data)]
+        except (DexError, struct.error) as e:
+            unreadable.append(f"{name}: {e}")
+    report_counts(counts)
 
     if manifest_path is None:
         print("ℹ️ manifest: chưa kiểm (truyền --manifest <merged AndroidManifest.xml> để liệt kê component exported)")
@@ -121,11 +212,13 @@ def scan_apk_or_dex(target_path, manifest_path=None):
             print("  [manifest] không có component exported nào thiếu permission (ngoài launcher)")
 
     if findings:
-        print(f"❌ Phát hiện {len(findings)} cảnh báo bytecode vi phạm chính sách:")
-        for loc, lbl in findings:
-            print(f"  • [{loc}] {lbl}")
+        print(f"❌ Phát hiện {len(findings)} tham chiếu API nguy hiểm:")
+        for loc, lbl, ref in findings:
+            print(f"  • [{loc}] {lbl} — {ref}")
         return 1
-    print("✔ Bytecode SẠCH: 0 vi phạm chính sách API nguy hiểm.")
+    if unreadable:
+        return usage("Không đọc được bảng tham chiếu của DEX, chưa kết luận sạch: " + "; ".join(unreadable))
+    print("✔ Bytecode SẠCH: 0 tham chiếu API nguy hiểm.")
     return 0
 
 
@@ -142,7 +235,7 @@ def main(argv):
         args.append(argv[i])
         i += 1
     if len(args) != 1:
-        return usage("cần đúng một file apk/aab/aar/dex")
+        return usage("cần đúng một file apk/aab/dex")
     return scan_apk_or_dex(args[0], manifest)
 
 

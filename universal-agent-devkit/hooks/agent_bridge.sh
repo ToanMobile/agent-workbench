@@ -66,8 +66,15 @@ kind = os.environ["KIND"]
 ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}
 tc = d.get("toolCall") if isinstance(d.get("toolCall"), dict) else {}
 args = tc.get("args") if isinstance(tc.get("args"), dict) else {}  # Antigravity: toolCall.args.CommandLine / Cwd
+# Antigravity also types into terminals (send_command_input) and runs shell_exec; their argument names are not documented,
+# so a command is looked for under the known names, else in every other string argument (not the model-written summary,
+# the working directory or ids) — an unknown name must not let a command through unread.
+ag_cmd = next((args[k] for k in ("CommandLine", "Input", "Command") if isinstance(args.get(k), str) and args[k]), "")
+if not ag_cmd and args:
+    ag_cmd = "\n".join(v for k, v in args.items()
+                       if isinstance(v, str) and v and k not in ("toolSummary", "Cwd", "CommandId"))
 if kind == "shell":
-    out = {"tool_name": "Bash", "tool_input": {"command": ti.get("command") or d.get("command") or args.get("CommandLine") or ""}}
+    out = {"tool_name": "Bash", "tool_input": {"command": ti.get("command") or d.get("command") or ag_cmd or ""}}
     cwd = args.get("Cwd") or d.get("cwd")
     if isinstance(cwd, str) and cwd:
         out["cwd"] = cwd  # where the command runs: relative rm targets start here

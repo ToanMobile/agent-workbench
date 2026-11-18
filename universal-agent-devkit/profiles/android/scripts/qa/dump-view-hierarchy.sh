@@ -34,8 +34,9 @@ if [ -z "${SERIAL}" ]; then
   SERIAL="${ONLINE}"
 fi
 
-# adb <args> on SERIAL, judged by adb-safe-exec (device policy, error text, exit code).
-safe() { bash "${SAFE}" -s "${SERIAL}" --wait 0 -- "$@"; }
+# adb <args> on SERIAL, judged by adb-safe-exec (device policy, error text, exit code). --no-logcat: these commands start no
+# app, so a crash on the device meanwhile (another app, or the app under test whose screen is being dumped) is not theirs.
+safe() { bash "${SAFE}" -s "${SERIAL}" --wait 0 --no-logcat -- "$@"; }
 
 echo "📱 [UI DUMP] Đang trích xuất cây phân cấp giao diện (UIAutomator dump) trên ${SERIAL}..."
 LOG="$(safe shell uiautomator dump /sdcard/view_dump.xml 2>&1)" || { RC=$?; printf '%s\n' "${LOG}" >&2; exit "${RC}"; }

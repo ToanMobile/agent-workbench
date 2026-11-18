@@ -44,6 +44,21 @@ ag hardware_safety_gate.sh 'adb remount'
 ag block-dangerous-git.sh 'git status'
 [ "$RC" = 0 ] && [ -z "$OUT" ] && ok "safe command -> no decision (never auto-allow)" || fail "git status: rc=$RC out=$OUT"
 
+# OCR review 2026-11-19: Antigravity also has send_command_input (types into a running terminal) and shell_exec
+# (CORTEX_STEP_TYPE_* in its language_server). Their argument names are not documented: the bridge must find the command
+# under CommandLine / Input / Command, else in any string argument but the model-written toolSummary.
+agt() { # tool args-json -> sets OUT, RC
+  local payload
+  payload="$(python3 -c 'import json,sys; print(json.dumps({"toolCall":{"id":"t2","name":sys.argv[2],"args":json.loads(sys.argv[3])},"cwd":sys.argv[1]}))' "$P" "$1" "$2")"
+  OUT="$(cd "$P/.agents" && printf '%s' "$payload" | bash "$BRIDGE" antigravity shell block-dangerous-git.sh 2>/dev/null)"; RC=$?
+}
+agt send_command_input '{"CommandId":"c1","Input":"git reset --hard HEAD~2\n"}'
+[ "$(decision)" = deny ] && ok "send_command_input typing git reset --hard -> deny" || fail "send_command_input: rc=$RC out=$OUT"
+agt shell_exec '{"Shell":"git clean -fdx","WaitMs":100}'
+[ "$(decision)" = deny ] && ok "shell_exec with an unknown arg name -> deny (any string arg)" || fail "shell_exec unknown arg: rc=$RC out=$OUT"
+agt run_command '{"CommandLine":"git status","toolSummary":"explain why git reset --hard is dangerous"}'
+[ -z "$OUT" ] && ok "toolSummary text is not read as the command" || fail "toolSummary read as command: out=$OUT"
+
 # Broken payload: fail open (a broken bridge must not stop the agent), never print allow.
 OUT="$(cd "$P/.agents" && printf 'not json' | bash "$BRIDGE" antigravity shell block-dangerous-git.sh 2>/dev/null)"; RC=$?
 [ "$RC" = 0 ] && ! printf '%s' "$OUT" | grep -q allow && ok "garbage payload -> fail open, no allow" || fail "garbage payload: rc=$RC out=$OUT"
@@ -59,7 +74,7 @@ assert cfg["my-lint"]["PostToolUse"][0]["hooks"][0]["command"] == "./lint.sh", c
 ours = [k for k, v in cfg.items() if "agent_bridge.sh" in json.dumps(v)]
 assert len(ours) == 1, ours
 groups = cfg[ours[0]]["PreToolUse"]
-assert len(groups) == 1 and groups[0]["matcher"] == "run_command", groups
+assert len(groups) == 1 and groups[0]["matcher"] == "run_command|send_command_input|shell_exec", groups
 cmds = [h["command"] for h in groups[0]["hooks"]]
 assert len(cmds) == 2 and any("block-dangerous-git.sh" in c for c in cmds) and any("hardware_safety_gate.sh" in c for c in cmds), cmds
 # runs from .agents/ (Antigravity's hook cwd): the bridge path is relative to it
