@@ -54,7 +54,7 @@ except Exception: d = {}
 if not isinstance(d, dict): d = {}
 tc = d.get("toolCall") if isinstance(d.get("toolCall"), dict) else {}
 args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
-print(d.get("cwd") or args.get("Cwd") or "")' 2>/dev/null)"
+print(args.get("Cwd") or d.get("cwd") or "")' 2>/dev/null)"   # same order as the payload cwd below
 [ -n "${ROOT}" ] && [ -d "${ROOT}" ] || ROOT="$PWD"
 ROOT="$(git -C "${ROOT}" rev-parse --show-toplevel 2>/dev/null || printf '%s' "${ROOT}")"
 

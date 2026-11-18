@@ -22,7 +22,6 @@ if [ "${1:-}" = "-s" ]; then
   SERIAL="$2"; shift 2
 fi
 OUT_FILE="${1:-build/view_hierarchy.xml}"
-mkdir -p "$(dirname "${OUT_FILE}")"
 
 unverified() { echo "⚠️  UNVERIFIED — [DEVICE QA GATE] $1" >&2; exit 3; }
 command -v adb >/dev/null 2>&1 || unverified "adb not found on PATH"
@@ -40,6 +39,7 @@ safe() { bash "${SAFE}" -s "${SERIAL}" --wait 0 --no-logcat -- "$@"; }
 
 echo "📱 [UI DUMP] Đang trích xuất cây phân cấp giao diện (UIAutomator dump) trên ${SERIAL}..."
 LOG="$(safe shell uiautomator dump /sdcard/view_dump.xml 2>&1)" || { RC=$?; printf '%s\n' "${LOG}" >&2; exit "${RC}"; }
+mkdir -p "$(dirname "${OUT_FILE}")"   # only once the device was accepted and dumped: a refused run leaves nothing behind
 LOG="$(safe pull /sdcard/view_dump.xml "${OUT_FILE}" 2>&1)" || { RC=$?; printf '%s\n' "${LOG}" >&2; exit "${RC}"; }
 DENSITY="$(safe shell wm density 2>/dev/null | tr -d '\r' | awk -F': *' '/density:/{d=$2} END{print d}')"
 safe shell rm -f /sdcard/view_dump.xml >/dev/null 2>&1 || echo "⚠️ không xoá được /sdcard/view_dump.xml (bỏ qua)" >&2

@@ -92,8 +92,20 @@ R="$TMP/r"; mkdir -p "$R"; (cd "$R" && git init -q)
 bash "$DEVKIT_DIR/bin/install.sh" -t "$R" -a claude,gemini -p none -y >"$TMP/out" 2>&1 || { fail "install failed"; tail -20 "$TMP/out"; }
 grep -q "agent_bridge.sh antigravity" "$R/.agents/hooks.json" 2>/dev/null \
   && ok "install -a claude,gemini registers the Antigravity guards" || fail "no .agents/hooks.json after install -a claude,gemini"
+# Antigravity audit 2026-11-19: a plain re-init (-y, no -a) keeps the guards; a broken .agents/hooks.json is never overwritten.
+bash "$DEVKIT_DIR/bin/install.sh" -t "$R" -p none -y >"$TMP/out2" 2>&1
+grep -q "agent_bridge.sh antigravity" "$R/.agents/hooks.json" 2>/dev/null && ok "re-init -y keeps the Antigravity guards" \
+  || fail "re-init dropped .agents/hooks.json: $(grep -i 'keeping\|agents' "$TMP/out2" | head -3)"
+grep -q "bash hooks/agent_bridge.sh antigravity" "$R/.agents/hooks.json" && [ "$(grep -c universal-agent-devkit "$R/.agents/hooks.json")" = 1 ] \
+  && ok "re-init does not duplicate the DevKit hook" || fail "re-init duplicated: $(cat "$R/.agents/hooks.json")"
 bash "$DEVKIT_DIR/bin/agent-kit" uninstall "$R" --apply >/dev/null 2>&1
 [ ! -e "$R/.agents/hooks.json" ] && ok "uninstall removes .agents/hooks.json" || fail "uninstall left .agents/hooks.json"
+B="$TMP/broken"; mkdir -p "$B/.agents"; (cd "$B" && git init -q)
+printf '{ "mine": { // jsonc comment\n } }\n' > "$B/.agents/hooks.json"; cp "$B/.agents/hooks.json" "$TMP/broken.json"
+python3 "$AH" install antigravity "$B" >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && cmp -s "$B/.agents/hooks.json" "$TMP/broken.json" && ok "broken .agents/hooks.json: refused (exit 1), file untouched" \
+  || fail "broken hooks.json: rc=$rc, file $(cmp -s "$B/.agents/hooks.json" "$TMP/broken.json" && echo same || echo CHANGED)"
+grep -q 'antigravity' <(bash "$DEVKIT_DIR/bin/install.sh" --help 2>&1) && ok "install.sh --help names antigravity" || fail "install.sh --help omits antigravity"
 
 [ "$FAILS" -eq 0 ] && { echo "antigravity bridge: all checks passed"; exit 0; }
 echo "antigravity bridge: $FAILS FAILED"; exit 1

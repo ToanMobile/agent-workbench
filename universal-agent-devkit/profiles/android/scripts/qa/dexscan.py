@@ -28,6 +28,8 @@ import xml.etree.ElementTree as ET
 DANGEROUS_REFS = [
     (b"Ljava/lang/reflect/Method;", b"setAccessible", "Bypassing Java Access Control (Reflection setAccessible)"),
     (b"Ljava/lang/reflect/AccessibleObject;", b"setAccessible", "Bypassing Java Access Control (Reflection setAccessible)"),
+    (b"Ljava/lang/reflect/Field;", b"setAccessible", "Bypassing Java Access Control (Reflection setAccessible)"),
+    (b"Ljava/lang/reflect/Constructor;", b"setAccessible", "Bypassing Java Access Control (Reflection setAccessible)"),
     (b"Landroid/os/Build;", b"SERIAL", "Restricted Hardware Identifier Access (Build.SERIAL)"),
     (b"Landroid/telephony/TelephonyManager;", b"getDeviceId", "Restricted Device ID Access (IMEI / getDeviceId)"),
     (b"Landroid/os/Environment;", b"getExternalStorageDirectory", "Non-scoped legacy storage API (getExternalStorageDirectory)"),
@@ -191,6 +193,7 @@ def scan_apk_or_dex(target_path, manifest_path=None):
         count = method_count(data)
         if count is None:
             print(f"⚠️ [{name}] không đọc được header DEX — chưa đếm method, chưa quét API")
+            unreadable.append(f"{name}: không phải header DEX")  # never let a skipped entry read as clean
             continue
         counts.append((name, module, count))
         try:

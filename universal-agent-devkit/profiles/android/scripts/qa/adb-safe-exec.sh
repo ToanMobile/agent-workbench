@@ -222,6 +222,10 @@ if [ "$LRC" -ne 0 ]; then
   [ -n "$EVID" ] && echo "  evidence: $EVID"
   unverified "command exited 0 but logcat could not be read (exit $LRC) — crashes not checked"
 fi
-echo "✔ PASS — exit 0, no error output, no crash/ANR${PACKAGE:+ for $PACKAGE} in logcat within ${WAIT}s"
+if [ "$NO_LOGCAT" -eq 1 ]; then
+  echo "✔ PASS — exit 0, no error output (crash/ANR scan skipped: --no-logcat)"
+else
+  echo "✔ PASS — exit 0, no error output, no crash/ANR${PACKAGE:+ for $PACKAGE} in logcat within ${WAIT}s"
+fi
 [ -n "$EVID" ] && echo "  evidence: $EVID"
 exit 0

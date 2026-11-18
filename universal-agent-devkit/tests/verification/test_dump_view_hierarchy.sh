@@ -42,8 +42,10 @@ bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 reset() { : > "$TMP/calls"; : > "$TMP/logcat"; rm -f "$TMP/out.xml"; export FAKE_DEVICES=1; unset ADB_DENY_SERIALS; }
 
 reset; export FAKE_DEVICES=0
-bash "$DUMP" "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?
+bash "$DUMP" "$TMP/newdir/out.xml" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 3 ] && ok "no device -> exit 3 (UNVERIFIED, never a silent pass)" || bad "no device -> exit $rc, expected 3"
+# Antigravity audit 2026-11-19: a refused run must not leave the output folder behind.
+[ ! -e "$TMP/newdir" ] && ok "refused run creates no output folder" || bad "no-device run created $TMP/newdir"
 
 reset; export ADB_DENY_SERIALS=emu-1
 bash "$DUMP" "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?
@@ -73,6 +75,10 @@ reset
 printf '09-23 10:00:01.000 E AndroidRuntime: FATAL EXCEPTION: main\n09-23 10:00:01.000 E AndroidRuntime: Process: com.other.app, PID: 7\n' > "$TMP/logcat"
 bash "$DUMP" "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && [ -s "$TMP/out.xml" ] && ok "a crash of another app in logcat does not fail the dump" || bad "crash in logcat -> exit $rc: $(tail -3 "$TMP/log")"
+# OCR review 2026-11-19 (P3): with --no-logcat the PASS line must not claim logcat was checked.
+out=$(bash "$DEVKIT_DIR/profiles/android/scripts/qa/adb-safe-exec.sh" -s emu-1 --wait 0 --no-logcat -- shell wm density 2>&1)
+printf '%s' "$out" | grep -q 'PASS' && ! printf '%s' "$out" | grep -q 'in logcat within' && ok "--no-logcat PASS line does not claim a logcat scan" \
+  || bad "--no-logcat PASS line: $(printf '%s' "$out" | tail -2)"
 
 reset; export ADB_DENY_SERIALS=emu-1
 bash "$DUMP" -s emu-1 "$TMP/out.xml" >"$TMP/log" 2>&1; rc=$?

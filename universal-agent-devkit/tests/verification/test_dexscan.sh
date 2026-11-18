@@ -65,8 +65,17 @@ python3 "$SCAN" "$TMP/clean.apk" --manifest "$TMP/missing.xml" >"$TMP/log" 2>&1;
 
 printf 'not a dex at all' > "$TMP/short.dex"
 python3 "$SCAN" "$TMP/short.dex" >"$TMP/log" 2>&1; rc=$?
-if [ "$rc" -eq 0 ] && grep -q 'không đọc được header DEX' "$TMP/log" && ! grep -q Traceback "$TMP/log"; then ok "short / non-DEX file -> warned, no crash"
+# OCR review 2026-11-19 (P1): a non-DEX entry was warned about, skipped, and the whole file still came out "SẠCH", exit 0.
+if [ "$rc" -eq 2 ] && grep -q 'không đọc được header DEX' "$TMP/log" && ! grep -q 'SẠCH' "$TMP/log" && ! grep -q Traceback "$TMP/log"; then
+  ok "short / non-DEX file -> exit 2, never clean"
 else bad "short dex -> exit $rc: $(cat "$TMP/log")"; fi
+python3 - "$TMP" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(f'{sys.argv[1]}/garbage.apk', 'w') as z:
+    z.writestr('classes.dex', b'garbage' * 30)
+PY
+python3 "$SCAN" "$TMP/garbage.apk" >"$TMP/log" 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ! grep -q 'SẠCH' "$TMP/log" && ok "APK whose classes.dex is garbage -> exit 2, never clean" || bad "garbage apk -> exit $rc: $(cat "$TMP/log")"
 
 printf '<manifest><application><receiver' > "$TMP/broken.xml"
 python3 "$SCAN" "$TMP/clean.apk" --manifest "$TMP/broken.xml" >"$TMP/log" 2>&1; rc=$?
@@ -160,6 +169,10 @@ sys.path.insert(0, sys.argv[2]); from dexbuild import dex
 d = sys.argv[1]
 with zipfile.ZipFile(f'{d}/refl.apk', 'w') as z:
     z.writestr('classes.dex', dex(methods=[('Ljava/lang/reflect/Method;', 'setAccessible'), ('Lcom/app/A;', 'run')]))
+with zipfile.ZipFile(f'{d}/field.apk', 'w') as z:   # javac writes the receiver's static type: Field / Constructor
+    z.writestr('classes.dex', dex(methods=[('Ljava/lang/reflect/Field;', 'setAccessible')]))
+with zipfile.ZipFile(f'{d}/ctor.apk', 'w') as z:
+    z.writestr('classes.dex', dex(methods=[('Ljava/lang/reflect/Constructor;', 'setAccessible')]))
 with zipfile.ZipFile(f'{d}/serial.apk', 'w') as z:
     z.writestr('classes.dex', dex(fields=[('Landroid/os/Build;', 'SERIAL')]))
 # both pieces present, but never as one reference: Method;->invoke + Field;->setAccessible is not Method;->setAccessible
@@ -168,6 +181,10 @@ with zipfile.ZipFile(f'{d}/near.apk', 'w') as z:
 PY
 python3 "$SCAN" "$TMP/refl.apk" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'setAccessible' "$TMP/log" && ok "real DEX method ref Method;->setAccessible -> exit 1" || bad "method ref -> exit $rc: $(tail -3 "$TMP/log")"
+for f in field ctor; do
+  python3 "$SCAN" "$TMP/$f.apk" >"$TMP/log" 2>&1; rc=$?
+  [ "$rc" -eq 1 ] && ok "$f.setAccessible reference -> exit 1" || bad "$f.setAccessible -> exit $rc: $(tail -2 "$TMP/log")"
+done
 python3 "$SCAN" "$TMP/serial.apk" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'Build.SERIAL' "$TMP/log" && ok "real DEX field ref Build;->SERIAL -> exit 1" || bad "field ref -> exit $rc: $(tail -3 "$TMP/log")"
 python3 "$SCAN" "$TMP/near.apk" >"$TMP/log" 2>&1; rc=$?

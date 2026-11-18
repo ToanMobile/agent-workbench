@@ -51,7 +51,8 @@ Options:
   -p, --profile <name>    Domain profile: ${PROFILES_AVAILABLE// / | } | none
                           (default: ask; with -y: detected from the domain)
   -a, --agents <list>     Comma-separated agents or 'all'
-                          Supported: claude, codex, gemini, cursor, all
+                          Supported: claude, codex, gemini, antigravity, cursor, all
+                          (gemini/antigravity also register the Antigravity guards in .agents/hooks.json)
                           (\`agents-md\`: AGENTS.md only, no tool directory)
   -m, --mode <mode>       Install mode: symlink | copy (default: symlink)
                           symlink = absolute links into this DevKit checkout (single machine);
