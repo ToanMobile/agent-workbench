@@ -60,11 +60,6 @@ def method_count(data):
     return struct.unpack_from("<I", data, 0x58)[0]
 
 
-def _table(data, size_at):
-    size, off = struct.unpack_from("<II", data, size_at)
-    return size, off
-
-
 def _string(data, string_ids_off, idx, count):
     if idx >= count:
         raise DexError("string index out of range")
@@ -88,23 +83,22 @@ def _string(data, string_ids_off, idx, count):
 
 def dangerous_refs(data):
     """[(label, 'Lcls;->name')] of dangerous references in one DEX. Raises DexError / struct.error on broken tables.
-    Only a DEX holding both pieces of a pair can reference it, so the tables are parsed only then."""
+    Only a DEX holding both pieces of a pair can reference it, so the tables are parsed only then — but every table is
+    bounds-checked FIRST: a truncated DEX must never pass as clean through that shortcut."""
+    n_str, str_off = struct.unpack_from("<II", data, 0x38)
+    n_type, type_off = struct.unpack_from("<II", data, 0x40)
+    members = [struct.unpack_from("<II", data, at) for at in (0x50, 0x58)]  # field_ids, method_ids
+    for size, off, item in ((n_str, str_off, 4), (n_type, type_off, 4), *((s, o, 8) for s, o in members)):
+        if size and off + size * item > len(data):
+            raise DexError("table out of range")
     wanted = [(c, n, label) for c, n, label in DANGEROUS_REFS if c in data and n in data]
     if not wanted:
         return []
-    n_str, str_off = _table(data, 0x38)
-    n_type, type_off = _table(data, 0x40)
-    for size, off, item in ((n_str, str_off, 4), (n_type, type_off, 4)):
-        if off + size * item > len(data):
-            raise DexError("table out of range")
     pairs = {(c, n): label for c, n, label in wanted}
     found = []
-    for size_at in (0x50, 0x58):  # field_ids, method_ids: (u16 class_idx, u16 type/proto, u32 name_idx)
-        size, off = _table(data, size_at)
+    for size, off in members:  # item: (u16 class_idx, u16 type/proto, u32 name_idx)
         if not size:
             continue
-        if off + size * 8 > len(data):
-            raise DexError("member table out of range")
         names = {}
         for i in range(size):
             class_idx, _, name_idx = struct.unpack_from("<HHI", data, off + 8 * i)

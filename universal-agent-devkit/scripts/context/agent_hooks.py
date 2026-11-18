@@ -10,7 +10,7 @@ platform's hook protocol to the DevKit's Claude Code hooks:
   codex        .codex/hooks.json      SessionStart, UserPromptSubmit, PreToolUse(Bash), Stop
   gemini       .gemini/settings.json  SessionStart, BeforeAgent, BeforeTool(run_shell_command), AfterAgent
   cursor       .cursor/hooks.json     sessionStart, beforeShellExecution, stop
-  antigravity  .agents/hooks.json     PreToolUse(run_command) — the two destructive-command guards only
+  antigravity  .agents/hooks.json     PreToolUse(run_command|send_command_input|shell_exec) — the two destructive-command guards only
 
 Only entries whose command runs agent_bridge.sh are DevKit-owned: install replaces
 exactly those (idempotent) and uninstall removes exactly those; the project's own

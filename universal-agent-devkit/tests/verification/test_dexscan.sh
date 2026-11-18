@@ -15,8 +15,7 @@ import struct, sys, zipfile
 d = sys.argv[1]
 sys.path.insert(0, sys.argv[2]); import dexbuild
 def dex(methods, body=b''):
-    h = bytearray(0x70); h[0:8] = b'dex\n035\x00'; struct.pack_into('<I', h, 0x58, methods)
-    return bytes(h) + body
+    return dexbuild.dex(filler=methods) + body   # real tables: a header-only DEX is unreadable
 open(f'{d}/big.dex', 'wb').write(dex(61000))
 with zipfile.ZipFile(f'{d}/app.aab', 'w') as z:
     z.writestr('base/dex/classes.dex', dexbuild.dex(fields=[('Landroid/os/Build;', 'SERIAL')]))
@@ -98,7 +97,7 @@ d = sys.argv[1]
 sys.path.insert(0, sys.argv[2]); import dexbuild
 h = bytearray(0x70); h[0:8] = b'dex\n035\x00'; struct.pack_into('<I', h, 0x58, 7)
 with zipfile.ZipFile(f'{d}/feature.aab', 'w', zipfile.ZIP_DEFLATED) as z:
-    z.writestr('base/dex/classes.dex', bytes(h))
+    z.writestr('base/dex/classes.dex', dexbuild.dex(filler=7))
     z.writestr('feat/dex/classes2.dex', dexbuild.dex(methods=[('Ljava/lang/reflect/Method;', 'setAccessible')]))
 PY
 python3 "$SCAN" "$TMP/feature.aab" >"$TMP/log" 2>&1; rc=$?
@@ -107,11 +106,11 @@ else bad "feature aab -> exit $rc: $(cat "$TMP/log")"; fi
 
 # Real run 2026-11-18 on OfficeReader's app-debug.apk: 8 of 31 DEX files were flagged "near the cap" — d8 fills every DEX of a
 # multidex app close to 65,536 on purpose. The 60,000 warning only means something while the app still has ONE DEX.
-python3 - "$TMP" <<'PY'
+python3 - "$TMP" "$DEVKIT_DIR/tests/verification" <<'PY'
 import struct, sys, zipfile
 d = sys.argv[1]
-def dex(n):
-    h = bytearray(0x70); h[0:8] = b'dex\n035\x00'; struct.pack_into('<I', h, 0x58, n); return bytes(h)
+sys.path.insert(0, sys.argv[2]); import dexbuild
+def dex(n): return dexbuild.dex(filler=n)
 with zipfile.ZipFile(f'{d}/multi.apk', 'w') as z:
     z.writestr('classes.dex', dex(65400)); z.writestr('classes2.dex', dex(64000)); z.writestr('classes3.dex', dex(100))
 PY
@@ -132,11 +131,11 @@ if ! grep -q 'RecentWidget' "$TMP/log" && grep -q 'com.sdk.AssetPackService' "$T
 else bad "widget manifest -> $(cat "$TMP/log")"; fi
 
 # OCR review 2026-11-19 (3 findings).
-python3 - "$TMP" <<'PY'
+python3 - "$TMP" "$DEVKIT_DIR/tests/verification" <<'PY'
 import struct, sys, zipfile
 d = sys.argv[1]
-def dex(n, body=b''):
-    h = bytearray(0x70); h[0:8] = b'dex\n035\x00'; struct.pack_into('<I', h, 0x58, n); return bytes(h) + body
+sys.path.insert(0, sys.argv[2]); import dexbuild
+def dex(n, body=b''): return dexbuild.dex(filler=n) + body
 # a corrupt deflate stream behind an intact central directory
 with zipfile.ZipFile(f'{d}/corrupt.apk', 'w', zipfile.ZIP_DEFLATED) as z:
     z.writestr('classes.dex', dex(10, b'x' * 4000))
@@ -189,5 +188,16 @@ python3 "$SCAN" "$TMP/serial.apk" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'Build.SERIAL' "$TMP/log" && ok "real DEX field ref Build;->SERIAL -> exit 1" || bad "field ref -> exit $rc: $(tail -3 "$TMP/log")"
 python3 "$SCAN" "$TMP/near.apk" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "class and name present but not one reference -> clean" || bad "near miss -> exit $rc: $(tail -3 "$TMP/log")"
+
+# principal review round 3 (P2): a valid header whose tables point past the end was read as clean — the quick
+# "no dangerous strings here" shortcut ran before any bounds check (truncated copy of a .dex).
+python3 - "$TMP" <<'PY'
+import struct, sys
+h = bytearray(0x70); h[0:8] = b'dex\n035\x00'
+struct.pack_into('<II', h, 0x38, 500, 0x70); struct.pack_into('<II', h, 0x58, 500, 0x5000)
+open(f'{sys.argv[1]}/trunc.dex', 'wb').write(bytes(h))
+PY
+python3 "$SCAN" "$TMP/trunc.dex" >"$TMP/log" 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ! grep -q 'SẠCH' "$TMP/log" && ok "truncated DEX (tables past EOF) -> exit 2, never clean" || bad "truncated dex -> exit $rc: $(tail -2 "$TMP/log")"
 
 exit $((FAILS > 0))

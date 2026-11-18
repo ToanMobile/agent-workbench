@@ -6,7 +6,8 @@
 # and .agents/hooks.json (scripts/agent_hooks.py).
 #
 # Usage: agent_bridge.sh <codex|gemini|cursor|antigravity> <session|prompt|shell|stop> <hook.sh>
-#   antigravity: shell only — PreToolUse(run_command), payload toolCall.args.CommandLine, answer
+#   antigravity: shell only — PreToolUse(run_command|send_command_input|shell_exec), command from
+#   toolCall.args CommandLine / Input / Command (else every other string arg), answer
 #   {"decision":"deny","reason":…} on stdout (exit 0); an allowed command prints nothing.
 #   session  SessionStart / sessionStart        → session_context.sh
 #   prompt   UserPromptSubmit / BeforeAgent     → prompt_context.sh
