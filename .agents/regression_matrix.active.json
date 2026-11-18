@@ -4699,6 +4699,24 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "qa-report-review-only-ac-1298",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/skills/super-qa/SKILL.md",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-board/references/writing-standard.md",
+        "tests/super-board/test_qa_report_review_only_ac.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1298-QA-REPORT-REVIEW-ONLY-AC-01",
+          "name": "#1298: QA ghi AC chỉ lane Review chứng minh được ở ✅ Done + Next: reviewer; cổng qa-report không nới (Not done nêu AC vẫn chặn)",
+          "command": "bash tests/super-board/test_qa_report_review_only_ac.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
