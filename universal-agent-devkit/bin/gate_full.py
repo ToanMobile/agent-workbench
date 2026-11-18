@@ -1246,7 +1246,9 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
     env = i["result"] == "red-env"
     cards = []
     for sid, d in new.items():
-        sp = (i.get("suspects") or {}).get(sid) or {"sha": i["suspect"], "note": i["suspect_note"]}
+        # thẻ mở lại (#1290) là đỏ kinh niên, không được chia đôi: không mượn nghi vấn của suite đỏ mới khác trong lượt
+        sp = {"sha": "", "note": "(đỏ kinh niên sau khi thẻ đóng: không chia đôi)"} if d.get("reopened") else \
+            (i.get("suspects") or {}).get(sid) or {"sha": i["suspect"], "note": i["suspect_note"]}
         subj = git_out(repo, "log", "-1", "--format=%s", sp["sha"]) if sp.get("sha") else ""
         what = ("ca mới: " + "; ".join(d["cases"][:8])) if d.get("cases") else ("test: " + ", ".join(d["paths"])) if d.get("paths") else ""
         kind = ("VẪN ĐỎ sau khi thẻ %s đóng" % d["reopened"]) if d.get("reopened") else "đỏ MỚI"

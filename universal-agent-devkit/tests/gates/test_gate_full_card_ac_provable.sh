@@ -24,7 +24,12 @@ g.git_out = lambda *a, **k: ""
 g.shutil.which = lambda n: "/usr/bin/" + n
 os.environ["DEVKIT_GATE_FULL_CARD_CMD"] = "sh fakecard.sh"
 run = g.Run(sys.argv[2])
-if os.environ.get("CHRONIC"):   # suite red in the baseline too: not a new red
+if os.environ.get("MIXED"):   # REG-Y-01 new red bisected to commit c0ffee; REG-X-01 chronic with a closed card
+    run.info.update({"result": "red", "ref": "origin/main", "red": ["REG-X-01", "REG-Y-01"], "suspect": "c0ffee" * 6 + "cafe",
+                     "suspect_note": "", "suspects": {"REG-Y-01": {"sha": "c0ffee" * 6 + "cafe", "note": ""}},
+                     "red_tests": {"REG-X-01": {"paths": ["tests/x.sh"], "cases": []}, "REG-Y-01": {"paths": ["tests/y.sh"], "cases": []}},
+                     "new_red_detail": {"REG-Y-01": {"paths": ["tests/y.sh"], "cases": []}}})
+elif os.environ.get("CHRONIC"):   # suite red in the baseline too: not a new red
     run.info.update({"result": "red", "ref": "origin/main", "red": ["REG-X-01"], "suspect": "", "suspect_note": "",
                      "red_tests": {"REG-X-01": {"paths": ["tests/x.sh"], "cases": []}}, "new_red_detail": {}})
 else:
@@ -34,7 +39,8 @@ g.file_card(run, sys.argv[2], "o/r", "a" * 40)
 card = [c for c in calls if c[:2] == ["sh", "fakecard.sh"]]
 acs = [c[i + 1] for c in card for i, x in enumerate(c) if x == "--ac"]
 probs = [c[i + 1] for c in card for i, x in enumerate(c) if x == "--problem"]
-print(json.dumps({"cards": len(card), "acs": acs, "problem": probs[0] if probs else ""}))
+byt = {c[c.index("--title") + 1]: c[c.index("--fix") + 1] for c in card if "--title" in c and "--fix" in c}
+print(json.dumps({"cards": len(card), "acs": acs, "problem": probs[0] if probs else "", "fix": byt}))
 PY
 out=$(python3 "$T/drive.py" "$KIT" "$T/log" 2>/dev/null | tail -1)   # run.log prints to stdout: JSON is the last line
 q() { echo "$out" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print($1)"; }
@@ -50,6 +56,13 @@ out=$(CHRONIC=1 CLOSED_CARD=https://github.com/o/r/issues/4 python3 "$T/drive.py
 [ "$(q 'd["cards"]')" = 1 ] && ok "D closed card, suite still red: card filed again" || fail "D: $out"
 [ "$(q '"VẪN ĐỎ sau khi thẻ https://github.com/o/r/issues/4 đóng" in d["problem"] and "đỏ MỚI" not in d["problem"]')" = True ] \
   && ok "H re-filed card says the suite is still red after #4 closed, not 'new red'" || fail "H: $out"
+
+# I. same run: REG-Y-01 new red bisected to c0ffee…, REG-X-01 re-filed: X's card must not blame Y's commit
+out=$(MIXED=1 CLOSED_CARD=https://github.com/o/r/issues/4 python3 "$T/drive.py" "$KIT" "$T/log5" 2>/dev/null | tail -1)
+[ "$(q 'd["cards"]')" = 2 ] \
+  && [ "$(q '[f for t, f in d["fix"].items() if "REG-X-01" in t][0].find("c0ffee") < 0')" = True ] \
+  && [ "$(q '[f for t, f in d["fix"].items() if "REG-Y-01" in t][0].find("c0ffee") >= 0')" = True ] \
+  && ok "I re-filed chronic card does not blame the other suite's bisected commit" || fail "I: $out"
 
 # E. chronic red that still has an open card: no new card (no duplicates)
 out=$(CHRONIC=1 CLOSED_CARD=https://github.com/o/r/issues/4 OPEN_CARD=https://github.com/o/r/issues/5 python3 "$T/drive.py" "$KIT" "$T/log3" 2>/dev/null | tail -1)
