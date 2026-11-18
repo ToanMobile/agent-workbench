@@ -17,9 +17,9 @@ hợp lệ ở đó, createdAt mới hơn report QA mới nhất, gỡ các mụ
     Dòng của lỗi này mở đầu `qa-report: stale:` (#979): merge queue chỉ đưa thẻ Review → QA khi MỌI dòng lý do là stale.
     Report không nêu sha nào thì không có gì để ghim và vẫn qua (fixture cũ); luật định dạng (dòng đầu `[qa] [report]` có `@ <sha head>`)
     nằm ở writing-standard.md § 4 và prompt QA.
-  Ngoại lệ (#1298): vế Not done nêu AC mà chữ của vế đó nói rõ chỉ lane Review chứng minh được ("review độc lập", "lane Review") được gỡ
-  khi có `--head` và, MỚI HƠN report QA, người đáng tin đăng cả `[reviewer] [report] ✅ merge-ready … head <sha>` lẫn `approved-head:<head 40>`.
-  AC khác (code, test), reviewer ở head khác, thiếu approved-head, hay report reviewer cũ hơn QA: vẫn chặn.
+  Ngoại lệ (#1298): mục Not done MỞ ĐẦU bằng `AC<n> [phần] review độc lập` (AC chỉ lane Review chứng minh được), phần còn lại không nêu AC
+  nào, được gỡ khi có `--head` và, MỚI HƠN report QA, report `[reviewer] [report] ✅ merge-ready … head <sha>` mới nhất cùng `approved-head:<head 40>`
+  mới nhất (luật super-board-approved-head.jq) đều đúng head. AC khác, head khác, thiếu/thu hồi duyệt, reviewer cũ hơn QA: vẫn chặn.
 Người đáng tin = tác giả PR hoặc authorAssociation OWNER/MEMBER/COLLABORATOR. Dòng trích dẫn `> ` và khối ``` bị bỏ qua.
 Không có comment QA hay không có mục AC thì không có gì để từ chối (cổng khác lo việc QA vắng mặt).
 Thoát 2 khi metadata không đọc được hay lỗi bất ngờ: cổng merge coi là "không quyết định được", không phải lỗi build.
@@ -52,9 +52,13 @@ TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
 _CONFIG = os.environ.get("SB_CONFIG") or None  # decision_policy.enabled=false của config tắt luật này
 MIN_AC_TEXT = 12  # AC ngắn hơn thế quá dễ trùng chữ thường trong ghi chú phạm vi
 SHA_TOKEN = re.compile(r"\b[0-9a-f]{7,40}\b")
-REVIEW_ONLY = re.compile(r"review\s+độc\s+lập|lane\s+review|chuyển\s+(?:sang\s+)?(?:lane\s+)?review", re.I)  # #1298: AC chỉ lane Review chứng minh được
-REVIEWER_READY = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*✅\s*merge-ready\b.*?(?:\bhead|@)\s+([0-9a-f]{7,40})\b", re.I)
-APPROVED_HEAD = re.compile(r"^\s*approved-head:\s*([0-9a-f]{40})\s*$", re.I)
+# #1298: mục review-only = mã AC rồi NGAY SAU là "review độc lập" (cho phép "phần/việc"); chữ review nơi khác trong mục không tính.
+REVIEW_ONLY = re.compile(r"^\s*(AC\s*-?\s*#?\d+)\s+(?:(?:phần|việc|mục)\s+)?review\s+độc\s+lập\b", re.I)
+REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]")
+REVIEWER_READY = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*✅\s*merge-ready\s*[·|]\s*(?:.*?)(?:\bhead|@)\s+([0-9a-f]{7,40})\b", re.I)
+APPROVED_HEAD = re.compile(r"^approved-head:([0-9a-f]{40})[ \t\r]*$")
+APPROVED_BY = re.compile(r"^approved-by:[ \t]*(.*?)\s*$")
+TASK_ID = re.compile(r"\AT[0-9]{4,}-[a-z0-9-]{1,48}\Z")
 EVIDENCE_DIR = "docs/super-board/runs"  # commit bằng chứng QA (bin/tree_fp.py cũng bỏ thư mục này khỏi dấu vân tay cây)
 
 
@@ -236,22 +240,41 @@ def _when(comment):
     return t if t.tzinfo else None
 
 
-def review_cleared(comments, pr_author, after, head):
-    """#1298: True khi SAU report QA (chỉ số > after) người đáng tin đã đăng CẢ `[reviewer] [report] ✅ merge-ready … head <sha>` (sha là tiền tố
-    của head PR) LẪN `approved-head:<head đủ 40>`. Thiếu head (không --head) thì không gỡ. Hai dòng là bằng chứng review độc lập của AC mà QA
-    không thể tự chứng minh; tính hợp lệ của chính biên nhận duyệt vẫn do khối approved-head của cổng merge kiểm."""
+def _approval_ok(body, assoc):
+    """Luật super-board-approved-head.jq: không `approved-by:` thì chỉ OWNER; có thì JSON đủ 4 trường, reviewer khác builder, task_id đúng dạng."""
+    m = next((APPROVED_BY.match(l) for l in body.splitlines() if APPROVED_BY.match(l)), None)
+    if m is None:
+        return assoc == "OWNER"
+    try:
+        o = json.loads(m.group(1))
+    except ValueError:
+        return False
+    if not isinstance(o, dict) or not all(isinstance(o.get(k), str) and o[k].strip() for k in ("reviewer", "builder", "task_id", "gate_receipt")):
+        return False
+    return o["reviewer"].strip().lower() != o["builder"].strip().lower() and bool(TASK_ID.match(o["task_id"]))
+
+
+def review_cleared(comments, after, head):
+    """#1298: True khi comment `approved-head:<head 40>` MỚI NHẤT của OWNER/MEMBER/COLLABORATOR (đúng luật jq dùng chung, tác giả PR
+    không tự duyệt bằng login) và report `[reviewer] [report]` MỚI NHẤT của nhóm đó đều đăng SAU report QA (chỉ số > after), báo
+    `✅ merge-ready … head <sha>` (tiền tố của head). Report reviewer ❌ mới hơn thu hồi; thiếu head thì không gỡ."""
     if not head or len(head) != 40:
         return False
-    head, ready, approved = head.lower(), False, False
-    for c in (comments or [])[after + 1:]:
-        if not isinstance(c, dict) or not isinstance(c.get("body"), str) or not trusted(c, pr_author):
+    head = head.lower()
+    approved, ready = None, None   # (chỉ số, hợp lệ?)
+    for i, c in enumerate(comments or []):
+        if not isinstance(c, dict) or not isinstance(c.get("body"), str) or c.get("authorAssociation") not in TRUSTED_ASSOC:
             continue
-        for line in visible_lines(c["body"]):
-            m = REVIEWER_READY.match(line)
-            ready = ready or bool(m and head.startswith(m.group(1).lower()))
-            m = APPROVED_HEAD.match(line)
-            approved = approved or bool(m and m.group(1).lower() == head)
-    return ready and approved
+        lines = visible_lines(c["body"])
+        raw = c["body"]
+        m = re.search(r"(?m)^approved-head:([0-9a-f]{40})[ \t\r]*$", raw)
+        if m:
+            approved = (i, m.group(1) == head and _approval_ok(raw, c.get("authorAssociation")))
+        for line in lines:
+            if REVIEWER_REPORT.match(line):
+                r = REVIEWER_READY.match(line)
+                ready = (i, bool(r and head.startswith(r.group(1).lower())))
+    return bool(approved and ready and approved[0] > after and ready[0] > after and approved[1] and ready[1])
 
 
 def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None, head=None):
@@ -269,7 +292,7 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None,
     if not decided and qa_at:
         decided = any(_DEC.is_valid(c, policy) and (_when(c) or qa_at) > qa_at for c in issue_comments)
     acs = ac_texts(body)
-    reviewed = review_cleared(comments, pr_author, latest_at, head)
+    reviewed = review_cleared(comments, latest_at, head)
     items = []
     for i, line in enumerate(latest):
         m = NOT_DONE.match(line)
@@ -284,10 +307,11 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None,
         if text.strip(" .").lower() in EMPTY_VALUES:
             continue
         # #1199: mỗi dòng/bullet của mục kiểm riêng, để dòng dẫn issue repo khác không che AC cục bộ ở dòng kia.
-        # vế tách theo ; , — để chữ "review độc lập" của AC này không che AC code đứng cạnh; chữ trong ngoặc không tính là dấu review-only
-        clauses = [c for p in parts if p for c in re.split(r"[;；,，—–]", p)]
-        if reviewed and not any(names_ac(c, acs) and not REVIEW_ONLY.search(re.sub(r"[(（][^()（）]*[)）]", " ", c)) for c in clauses):
-            continue    # #1298: mọi vế nêu AC đều là AC review-only và lane Review đã duyệt đúng head
+        # #1298: chỉ gỡ mục MỞ ĐẦU bằng `AC<n> [phần] review độc lập` mà phần còn lại không nêu AC nào (mã AC khác hay nguyên văn AC), và
+        # không thuộc DANH SÁCH DỪNG; mọi dạng khác (AC code, hai AC trong một mục, "và/nên lane Review") vẫn chặn.
+        ro = REVIEW_ONLY.match(text)
+        if reviewed and ro and not names_ac(text[ro.end():], acs) and not _DEC.is_stop(text):
+            continue
         if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
             # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.
             if not decided or _DEC.is_stop(text):

@@ -34,10 +34,23 @@ def c(text, assoc="OWNER", login="bot"):
 qa = c("[qa] [report] ✅ QA v4 · PR #1292 @ d0093822\nDid: test\n" + nd + "\nNext: reviewer\n")
 rev_head = other[:8] if mode == "otherhead" else head[:8]
 rev = c("<!-- super-review:report -->\n[reviewer] [report] ✅ merge-ready · round 3 · head %s\nDid: đọc AC\n" % rev_head)
-app = c("approved-head:%s\napproved-by: {\"reviewer\":\"antigravity\"}" % head)
+ab = '{"reviewer":"antigravity","builder":"issue-1258-build","task_id":"T0005-audit-pr-1292","gate_receipt":"r1"}'
+if mode == "selfreview":
+    ab = ab.replace("antigravity", "issue-1258-build", 1)
+app = c("approved-head:%s\napproved-by: %s" % (head, ab))
+if mode == "bareowner":
+    app = c("approved-head:%s" % head)
+if mode == "baremember":
+    app = c("approved-head:%s" % head, "MEMBER")
+if mode == "indented":
+    app = c("    approved-head:%s\n    approved-by: %s" % (head, ab))
 if mode == "untrusted":
     rev = c(rev["body"], "NONE", "stranger"); app = c(app["body"], "NONE", "stranger")
 comments = [rev, app, qa] if mode == "old" else [qa, rev, app]
+if mode == "rejected":
+    comments = [qa, rev, app, c("[reviewer] [report] ❌ bounced · round 4 · head %s\n" % head[:8])]
+if mode == "authornone":
+    rev = c(rev["body"], "NONE", "bot"); app = c("approved-head:%s" % head, "NONE", "bot"); comments = [qa, rev, app]
 if mode == "noapproval":
     comments = [qa, rev]
 json.dump({"body": body, "author": {"login": "bot"}, "comments": comments}, open(f, "w"))
@@ -78,5 +91,29 @@ mk "$TMP/i3.json" '❌ Not done: AC1 chưa đạt (xem review độc lập)' ok
 [ "$(run "$TMP/i3.json" "$HEAD")" = 1 ] && ok "I3: chữ trong ngoặc không tính" || { fail "I3: bị lọt"; cat "$TMP/out"; }
 mk "$TMP/j.json" '❌ Not done: AC4 phần review độc lập, chuyển lane Review' ok
 [ "$(run "$TMP/j.json" "$HEAD")" = 0 ] && ok "J: dấu phẩy trong vế review-only vẫn qua" || { fail "J: bị chặn"; cat "$TMP/out"; }
+
+for m in selfreview baremember rejected authornone indented; do
+  mk "$TMP/m_$m.json" "$ND" $m
+  [ "$(run "$TMP/m_$m.json" "$HEAD")" = 1 ] && ok "M: $m không gỡ" || { fail "M: $m bị lọt"; cat "$TMP/out"; }
+done
+mk "$TMP/m_bare.json" "$ND" bareowner
+[ "$(run "$TMP/m_bare.json" "$HEAD")" = 0 ] && ok "M: approved-head trần của OWNER gỡ" || { fail "M: owner bare bị chặn"; cat "$TMP/out"; }
+
+# P1 của review: AC code có dấu phẩy/gạch ngang trong chính chữ AC, hay nối bằng từ (và/nên/and), không được gỡ.
+ACX='- [ ] parser xử lý file rỗng, file null không crash'
+python3 - "$TMP/n.json" <<'PY'
+import json, sys
+head = "314e948918ea5d31731c0daef2d55fb176627fa6"
+c = lambda t: {"author": {"login": "bot"}, "authorAssociation": "OWNER", "body": t}
+ab = '{"reviewer":"antigravity","builder":"b","task_id":"T0005-audit","gate_receipt":"r"}'
+qa = c("[qa] [report] ✅ QA\n❌ Not done: parser xử lý file rỗng, file null không crash — vẫn crash\n")
+json.dump({"body": "## Acceptance criteria\n- [ ] parser xử lý file rỗng, file null không crash\n", "author": {"login": "bot"},
+  "comments": [qa, c("[reviewer] [report] ✅ merge-ready · head 314e9489\n"), c("approved-head:%s\napproved-by: %s" % (head, ab))]}, open(sys.argv[1], "w"))
+PY
+[ "$(run "$TMP/n.json" "$HEAD")" = 1 ] && ok "N: AC code có dấu phẩy trong chữ AC vẫn chặn" || { fail "N: bị lọt"; cat "$TMP/out"; }
+for nd in '❌ Not done: AC1 chưa đạt và AC4 review độc lập' '❌ Not done: AC1 cổng OCR còn đỏ nên lane Review kiểm lại' '❌ Not done: AC4 review độc lập và AC1 chưa đạt'; do
+  mk "$TMP/o.json" "$nd" ok
+  [ "$(run "$TMP/o.json" "$HEAD")" = 1 ] && ok "O: '$nd' vẫn chặn" || { fail "O: '$nd' bị lọt"; cat "$TMP/out"; }
+done
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_qa_report_review_only_ac: all passed" || { echo "❌ $FAILS failed"; exit 1; }
