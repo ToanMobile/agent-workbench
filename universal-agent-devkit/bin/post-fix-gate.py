@@ -72,7 +72,7 @@ for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
         sys.path.insert(0, _sub_path)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
-from instincts import append_lesson, md_escape  # noqa: E402
+from instincts import append_lesson, md_escape, worktree_root  # noqa: E402
 # Who edited an existing test: the rule hooks/testsourceset_gate.sh scopes its compile with.
 import session_authorship  # noqa: E402
 
@@ -4081,7 +4081,7 @@ def check_anti_false_green(is_hardware_project: bool = False) -> tuple:
 def record_lesson(base_dir: Path, lesson: str, cause: str, prevention: str):
     """Same writer as `agent-kit learn` (bin/instincts.py): next [INSTINCT-NNN] id,
     a title already recorded is not added twice."""
-    instincts_file = base_dir / ".agents" / "instincts.md"
+    instincts_file = worktree_root(Path(base_dir).resolve()) / ".agents" / "instincts.md"
     try:
         status, inst_id, _ = append_lesson(instincts_file, lesson, cause=cause, rule=prevention,
                                            check="postfix-gate --run-tests")

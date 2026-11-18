@@ -143,10 +143,32 @@ def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=
     return "added", inst_id, entry
 
 
+def _git_path(*args: str) -> "Path | None":
+    res = subprocess.run(["git", *args], capture_output=True, text=True)
+    out = res.stdout.strip() if res.returncode == 0 else ""
+    return Path(out).resolve() if out else None
+
+
+def worktree_root(project: Path) -> Path:
+    """#1296: in trunk mode CLAUDE_PROJECT_DIR names the main checkout while the session runs in a linked
+    worktree of the same repo. A lesson must land in that worktree, never in main's tracked instincts.md."""
+    top = _git_path("rev-parse", "--show-toplevel")
+    if not top or top == project:
+        return project
+    common = _git_path("rev-parse", "--git-common-dir")
+    proj_common = None
+    res = subprocess.run(["git", "-C", str(project), "rev-parse", "--git-common-dir"], capture_output=True, text=True)
+    if res.returncode == 0 and res.stdout.strip():
+        proj_common = (project / res.stdout.strip()).resolve()
+    if common and proj_common and common == proj_common:
+        return top
+    return project
+
+
 def project_dir() -> Path:
     env = os.environ.get("CLAUDE_PROJECT_DIR")
     if env and Path(env).is_dir():
-        return Path(env).resolve()
+        return worktree_root(Path(env).resolve())
     res = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     if res.returncode == 0 and res.stdout.strip():
         return Path(res.stdout.strip()).resolve()
