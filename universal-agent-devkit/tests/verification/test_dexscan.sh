@@ -15,7 +15,7 @@ import struct, sys, zipfile
 d = sys.argv[1]
 sys.path.insert(0, sys.argv[2]); import dexbuild
 def dex(methods, body=b''):
-    return dexbuild.dex(filler=methods) + body   # real tables: a header-only DEX is unreadable
+    return dexbuild.dex(filler=methods, tail=body)   # real tables + file_size: a header-only DEX is unreadable
 open(f'{d}/big.dex', 'wb').write(dex(61000))
 with zipfile.ZipFile(f'{d}/app.aab', 'w') as z:
     z.writestr('base/dex/classes.dex', dexbuild.dex(fields=[('Landroid/os/Build;', 'SERIAL')]))
@@ -95,7 +95,6 @@ python3 - "$TMP" "$DEVKIT_DIR/tests/verification" <<'PY'
 import struct, sys, zipfile
 d = sys.argv[1]
 sys.path.insert(0, sys.argv[2]); import dexbuild
-h = bytearray(0x70); h[0:8] = b'dex\n035\x00'; struct.pack_into('<I', h, 0x58, 7)
 with zipfile.ZipFile(f'{d}/feature.aab', 'w', zipfile.ZIP_DEFLATED) as z:
     z.writestr('base/dex/classes.dex', dexbuild.dex(filler=7))
     z.writestr('feat/dex/classes2.dex', dexbuild.dex(methods=[('Ljava/lang/reflect/Method;', 'setAccessible')]))
@@ -135,7 +134,7 @@ python3 - "$TMP" "$DEVKIT_DIR/tests/verification" <<'PY'
 import struct, sys, zipfile
 d = sys.argv[1]
 sys.path.insert(0, sys.argv[2]); import dexbuild
-def dex(n, body=b''): return dexbuild.dex(filler=n) + body
+def dex(n, body=b''): return dexbuild.dex(filler=n, tail=body)
 # a corrupt deflate stream behind an intact central directory
 with zipfile.ZipFile(f'{d}/corrupt.apk', 'w', zipfile.ZIP_DEFLATED) as z:
     z.writestr('classes.dex', dex(10, b'x' * 4000))
@@ -199,5 +198,19 @@ open(f'{sys.argv[1]}/trunc.dex', 'wb').write(bytes(h))
 PY
 python3 "$SCAN" "$TMP/trunc.dex" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ! grep -q 'SẠCH' "$TMP/log" && ok "truncated DEX (tables past EOF) -> exit 2, never clean" || bad "truncated dex -> exit $rc: $(tail -2 "$TMP/log")"
+
+# principal review round 4 (P2, same class): the id tables sit at the front, so a cut in the string data still passed the
+# table bounds and read as clean. The header's file_size (u32 at 0x20) must equal the real size — any cut is caught.
+python3 - "$TMP" "$DEVKIT_DIR/tests/verification" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[2]); import dexbuild
+full = dexbuild.dex(methods=[('Ljava/lang/reflect/Method;', 'setAccessible')])
+open(f'{sys.argv[1]}/full.dex', 'wb').write(full)
+open(f'{sys.argv[1]}/cut.dex', 'wb').write(full[:132])
+PY
+python3 "$SCAN" "$TMP/full.dex" >"$TMP/log" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "full DEX with the reference -> exit 1" || bad "full dex -> exit $rc: $(tail -2 "$TMP/log")"
+python3 "$SCAN" "$TMP/cut.dex" >"$TMP/log" 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ! grep -q 'SẠCH' "$TMP/log" && ok "same DEX cut inside the string data -> exit 2, never clean" || bad "cut dex -> exit $rc: $(tail -2 "$TMP/log")"
 
 exit $((FAILS > 0))

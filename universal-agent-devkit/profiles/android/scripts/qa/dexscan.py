@@ -190,6 +190,11 @@ def scan_apk_or_dex(target_path, manifest_path=None):
             unreadable.append(f"{name}: không phải header DEX")  # never let a skipped entry read as clean
             continue
         counts.append((name, module, count))
+        (declared,) = struct.unpack_from("<I", data, 0x20)  # header file_size: d8 writes the real size
+        if declared != len(data):
+            # A cut anywhere (string data sits after the id tables) must never pass the "no dangerous strings" shortcut.
+            unreadable.append(f"{name}: file_size {declared} ≠ {len(data)} byte (DEX bị cắt hoặc hỏng)")
+            continue
         try:
             findings += [(name, label, ref) for label, ref in dangerous_refs(data)]
         except (DexError, struct.error) as e:
