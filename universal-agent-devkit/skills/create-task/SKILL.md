@@ -31,6 +31,19 @@ Mỗi Task tạo ra BẮT BUỘC phải tuân thủ cấu trúc sau:
 
 ---
 
+## 🚫 Một yêu cầu = một thẻ (BẤT BIẾN, #1333)
+
+19/11 một phiên tạo 15 thẻ, nhiều thẻ cùng gốc.
+- Một yêu cầu của người dùng (hay một việc đang làm) ra **đúng một thẻ**. Phát hiện thêm lúc làm thì ghi thành dòng AC/ghi chú
+  của thẻ đó (`gh api repos/<repo>/issues/<số> -X PATCH -f body=…`), không mở thẻ mới.
+- **Cấm tạo issue trực tiếp** bằng `gh issue create` hay `gh api repos/<repo>/issues -X POST`: mọi thẻ đi qua `create_task.py`
+  để được gom và đặt cột.
+- `--new-card` mỗi phiên (`CLAUDE_CODE_SESSION_ID`) chỉ dùng được **1 lần trong 12 giờ**; lần sau script thoát 64 kèm số thẻ đã tạo:
+  gom việc vào thẻ đó. Sổ ở `.agents/local/state/create_task_new_card.json` của repo (thư mục tự git-ignore). Không có session id
+  (script, CI) thì không áp.
+
+---
+
 ## 🧺 Gom Việc: Ít Thẻ Nhất Có Thể (BẮT BUỘC)
 
 Mỗi NHÁNH là một PR, một merge-gate và một lượt gate (`post-fix-gate --scoped`, tự leo `--full` khi đụng file lõi); nhiều nhánh nhỏ làm gate chạy đè nhau và máy quá tải
@@ -43,7 +56,7 @@ Mỗi NHÁNH là một PR, một merge-gate và một lượt gate (`post-fix-ga
 - Sửa một lỗi gốc cho nhiều chỗ, hay một nhóm suite/test cùng nguyên nhân: **một thẻ, nhiều commit**, không một thẻ mỗi chỗ.
 - Mở thẻ riêng chỉ khi có lý do thật và nói rõ bằng `--new-card "<lý do>"`: việc độc lập cần PR riêng, khác repo (`--repo`).
   Thẻ không nhận thêm khi tổng dòng AC (cũ + mới) vượt trần `MAX_CARD_AC` (mặc định 12, đặt `SB_MAX_CARD_AC=<số>` để đổi; #369: thẻ gom phình tới build 7873 s). Không tách thẻ vì diff dài: không còn trần 400 dòng. Thẻ cần người (`--needs-you`),
-  khác loại với mọi thẻ chưa chạy, `--from-file` và không có thẻ chưa chạy thì script tự tạo thẻ mới. Không đọc được board thì tạo thẻ mới và cảnh báo. Không đọc được PR mở thì không gom vào Ready, vẫn gom vào Backlog.
+  khác loại với mọi thẻ chưa chạy, `--from-file --ticket` (backlog soạn sẵn; `--from-file --title` vẫn gom, #1333) và không có thẻ chưa chạy thì script tự tạo thẻ mới. Không đọc được board thì tạo thẻ mới và cảnh báo. Không đọc được PR mở thì không gom vào Ready, vẫn gom vào Backlog.
 - Rủi ro 🟢 và 🟡 đều gom; chỉ việc 🔴 High, hoặc có `--blocked-by`, mới thành thẻ riêng (24/10: trước đây chỉ 🟢 gom, mà gần
   như mọi thẻ ghi 🟡 nên cơ chế gom không bao giờ chạy).
 - Thẻ đã ở Building / QA / Review / Done, hoặc Ready đã có PR mở `issue-<số>-`, không nhận thêm việc: việc mới nhập vào thẻ chưa chạy khác hoặc mở thẻ mới.
@@ -68,7 +81,7 @@ riêng, đóng riêng) nhưng build chung:
 - Trần đợt (#369): `SB_MAX_BATCH_CARDS` (mặc định 5 thẻ kể cả thẻ trưởng) và `SB_MAX_BATCH_AC` (mặc định 16 mục AC cộng mọi thẻ).
   Vượt thì thẻ mới đứng riêng và thành thẻ trưởng của đợt sau; gom cùng chủ đề vào thẻ trưởng cũng không được làm đợt vượt trần.
   Đợt chốt lúc tạo thẻ, không chờ gom (bài học #679).
-- Vẫn riêng: 🔴 High, `--blocked-by`, `--needs-you`, `--new-card`, `--from-file`, nhãn ngoài bug/feature/qa, khác loại, repo chưa bật
+- Vẫn riêng: 🔴 High, `--blocked-by`, `--needs-you`, `--new-card`, `--from-file --ticket`, nhãn ngoài bug/feature/qa, khác loại, repo chưa bật
   đợt (`PROJECT_REGISTRY[...]["batch"]`; hiện chỉ agent-workbench — merge gate repo khác chưa hiểu marker).
 - **Builder thẻ trưởng** (người hay lane): `python3 .agents/devkit/scripts/governance/card_batch.py plan --lead <N>` in danh sách thẻ.
   Một worktree, một nhánh `issue-<N>-…`; mỗi thẻ một (vài) commit, subject kết thúc `(#m)`; PR body một dòng `Closes #x` cho MỖI

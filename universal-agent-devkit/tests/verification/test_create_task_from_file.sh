@@ -6,6 +6,7 @@
 # Có --ticket: hành vi cũ (đọc đúng mục TICKET-N). gh giả ghi mọi lệnh vào calls.jsonl. Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
+unset CLAUDE_CODE_SESSION_ID   # #1333: ca 1, 9 dùng --new-card để xem body; hạn mức theo phiên nằm ở test_create_task_fold_cap.sh
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 CT="$DEVKIT_DIR/scripts/governance/create_task.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -71,7 +72,8 @@ MD
 TITLE="🐛 [fix] create_task: đọc file làm body"
 
 # 1. --from-file + --title, không --ticket, --dry-run: body in ra là nội dung file (không phải body mẫu).
-rc=$(run --dry-run --from-file "$TMP/card.md" --title "$TITLE")
+#    --new-card: từ #1333 đường này cũng gom vào #7 (ca 10b); ca 1 chỉ xem body nên mở thẻ riêng.
+rc=$(run --dry-run --new-card "xem body" --from-file "$TMP/card.md" --title "$TITLE")
 [ "$rc" = "0" ] && ok "1a exit 0" || fail "1a exit $rc: $(cat "$TMP/out")"
 grep -q "FROMFILE-MARKER-123" "$TMP/out" && grep -q "## Blocked by" "$TMP/out" && grep -q "Sửa đúng một chỗ" "$TMP/out" \
   && ok "1b body có đủ mục ## Problem … ## Blocked by của file" || fail "1b body không có nội dung file: $(cat "$TMP/out")"
@@ -123,17 +125,18 @@ rc=$(run --dry-run --from-file "$TMP/card.md" --title "   ")
 [ "$rc" = "64" ] && [ "$(gh_calls)" = "0" ] && ok "8 --title toàn khoảng trắng → exit 64" || fail "8 exit $rc: $(cat "$TMP/out")"
 
 # 9. --problem/--fix/--ac đi kèm --from-file: cảnh báo bị bỏ qua, body vẫn là file.
-rc=$(run --dry-run --from-file "$TMP/card.md" --title "$TITLE" --problem "PROBLEM-DE-THỪA" --ac "- [ ] AC-DE-THỪA")
+rc=$(run --dry-run --new-card "xem body" --from-file "$TMP/card.md" --title "$TITLE" --problem "PROBLEM-DE-THỪA" --ac "- [ ] AC-DE-THỪA")
 [ "$rc" = "0" ] && grep -q "bị bỏ qua" "$TMP/out" && grep -q "FROMFILE-MARKER-123" "$TMP/out" && ! grep -q "PROBLEM-DE-THỪA" "$TMP/out" \
   && ok "9 cờ body thừa được cảnh báo và không vào body" || fail "9 rc=$rc: $(cat "$TMP/out")"
 
-# 10. --from-file không --ticket không bị GOM vào thẻ Backlog có sẵn. Đối chứng: cùng loại thẻ lấy từ --problem thì gom (#7),
-#     chứng minh thẻ giả #7 đủ điều kiện gom nên ca --from-file không phải đạt vì fixture sai.
+# 10. #1333 (đổi kỳ vọng cũ của #695): --from-file --title không --ticket GOM vào thẻ Backlog có sẵn như thẻ từ --problem
+#     (19/11 đường này mở 15 thẻ, nhiều thẻ cùng gốc). Đối chứng 10a: thẻ từ --problem gom vào #7, chứng minh fixture đủ điều kiện.
+#     --from-file --ticket (backlog soạn sẵn) vẫn không gom: test_create_task_fold_cap.sh ca 2.
 BUGTITLE="🐛 [bug] create_task: đọc file làm body"
 rc=$(run --dry-run --title "$BUGTITLE" --problem "x create_task.py" --ac "- [ ] y")
 grep -q "Sẽ gom" "$TMP/out" && ok "10a đối chứng: thẻ từ --problem được gom vào #7" || fail "10a fixture không gom được: rc=$rc $(cat "$TMP/out")"
 rc=$(run --dry-run --from-file "$TMP/card.md" --title "$BUGTITLE")
-[ "$rc" = "0" ] && ! grep -q "Sẽ gom" "$TMP/out" && grep -q "FROMFILE-MARKER-123" "$TMP/out" \
-  && ok "10b --from-file không --ticket tạo thẻ riêng, không gom" || fail "10b rc=$rc: $(cat "$TMP/out")"
+[ "$rc" = "0" ] && grep -q "Sẽ gom" "$TMP/out" && grep -q "#7" "$TMP/out" \
+  && ok "10b --from-file không --ticket gom vào thẻ chưa chạy #7" || fail "10b rc=$rc: $(cat "$TMP/out")"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi
