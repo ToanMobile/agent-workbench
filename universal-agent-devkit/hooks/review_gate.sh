@@ -553,7 +553,7 @@ def _result_text(blk):
 
 
 # #1301: a review result "has P0/P1" when a line names one without a negation ("Không có P0/P1", "no P0", "0 P1"); words like "không"/"no"/"clean" elsewhere in the line are a description, not a negation.
-_SEVERE = re.compile(r"\bP[01]\b")
+_SEVERE = re.compile(r"\bP[01]\b", re.I)
 _SEP = r"(?:\s*(?:/|or|and|,|v\u00e0)\s*)"
 _NEG = r"(?:kh\u00f4ng(?:\s+c\u00f3)?|no|none|zero|without|0)"
 _NEG_BEFORE = re.compile(r"\b" + _NEG + r"\s+(?:P[01]" + _SEP + r")*$", re.I)   # "no P0", "Kh\u00f4ng c\u00f3 P0/" before the label
@@ -570,7 +570,21 @@ def _severe(txt):
 
 
 # #1301: files in these areas are never capped (auth, secrets, payment, migrations).
-SENSITIVE_PATH = re.compile(r"(?<![a-z])o?auth(?!or)|secret|credential|token|password|payment|billing|migrat", re.I)
+_SENSITIVE_SUBSTR = re.compile(r"secret|credential|token|password|payment|billing|migrat", re.I)
+
+
+def _sensitive(path):
+    # R6: auth is matched on filename tokens (snake/kebab/dot/slash and camelCase boundaries): `author`/`authority` are not auth;
+    # `authorization`, `userAuth`, `JwtAuth`, `reauth`, `oauth*` are.
+    if _SENSITIVE_SUBSTR.search(path):
+        return True
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", path)
+    for t in re.split(r"[^A-Za-z0-9]+", spaced.lower()):
+        if t in ("auth", "authn", "authz", "reauth") or t.startswith(("oauth", "authoriz", "authentic")):
+            return True
+    return False
+
+
 CLEAN_ROUNDS_CAP = 2
 _REVIEW_NOT_READ = re.compile(r"async agent launched|agent (?:is )?running in (?:the )?background", re.I)
 if tp and os.path.exists(tp):
@@ -1008,6 +1022,8 @@ if reviewed_after_edits:
 # R5: a round is a review after an edit; reviews launched together (no edit between them) are one round, severe if any is.
 _rounds = []
 for _ri, _sv in sorted(review_rounds):
+    if not any(_e < _ri for _e in edit_marks):   # R7: a review before the first edit reviewed nothing of this change
+        continue
     if _rounds and not any(_rounds[-1][0] < _e < _ri for _e in edit_marks):
         _rounds[-1] = (_ri, _rounds[-1][1] or _sv)
     else:
@@ -1015,7 +1031,7 @@ for _ri, _sv in sorted(review_rounds):
 _trail = 0
 for _ri, _sv in _rounds:
     _trail = 0 if _sv else _trail + 1
-if _trail >= CLEAN_ROUNDS_CAP and not any(SENSITIVE_PATH.search(f) for f in session_unreviewed | set(changed)):
+if _trail >= CLEAN_ROUNDS_CAP and not any(_sensitive(f) for f in session_unreviewed | set(changed)):
     reset_attempts()
     logline(f"[{ts}] round cap: {_trail} clean review rounds (no P0/P1), edits after the last one — pass")
     sys.stderr.write(f"REVIEW-GATE: {_trail} vòng review sạch (không còn P0/P1), không giữ thêm; review tiếp do lane QA / merge gate.\n")
