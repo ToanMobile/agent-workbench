@@ -876,3 +876,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** A signing helper that runs an LLM auditor must not run it inside the code it audits, and the signed base must be exactly merge-base
 - **Nguyên nhân:** #632 review: agy ran in a checkout of the agent head (project config/MCP run as the signer uid), and base&lt;=merge-base let an older trunk ancestor hide a weakened test (the test shows as Added)
 - **Quy tắc phòng ngừa & Cách fix:** Give the auditor only data files with no config-like names; require signed base == merge-base(trunk, head); keep a content-keyed fail ledger out of the agent's reach
+
+---
+
+### [INSTINCT-113] Đổi profile kit mà không commit file sinh ra làm bẩn mọi worktree
+- **Ngày phát hiện:** 2026-11-18
+- **Hiện tượng lỗi:** Đổi profile kit mà không commit file sinh ra làm bẩn mọi worktree
+- **Nguyên nhân:** #1243 đổi mô tả profile backend nhưng không commit .agents/active-profile.json; mỗi lần cài DevKit vào worktree sinh diff, cây review bẩn nên audit Antigravity không ghi được phạm vi, reviewer no-op rồi thẻ Blocked
+- **Quy tắc phòng ngừa & Cách fix:** Sửa profiles/ thì chạy lại agent-config và commit .agents/active-profile.json cùng PR; thấy 'M .agents/active-profile.json' trong worktree mới là file trên main đã cũ, sửa ở main, không khôi phục tay
