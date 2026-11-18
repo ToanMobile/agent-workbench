@@ -4523,6 +4523,52 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "runner-reclaim-reset-on-clean-exit-1276",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_reclaim_reset_on_clean_exit.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1276-RECLAIM-RESET-01",
+          "name": "#1266/#1276: worker build thoát sạch và builder đã comment sau dispatch thì xoá sổ reclaim; crash, lane khác, result lỗi, no-op thì giữ",
+          "command": "bash tests/super-board/test_runner_reclaim_reset_on_clean_exit.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-ci-cancel-rerun-1021",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_ci_cancel_rerun.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1021-MERGE-GATE-CI-CANCEL-01",
+          "name": "#1021: check CI bucket cancel không tính đỏ: chạy lại một lần rồi chờ; huỷ mãi thì exit 4, không exit 11; check fail vẫn exit 11",
+          "command": "bash tests/super-board/test_merge_gate_ci_cancel_rerun.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "workbench-active-profile-current-1266",
+      "watch_files": [
+        ".agents/active-profile.json",
+        "universal-agent-devkit/profiles/backend/profile.json",
+        "tests/super-board/test_workbench_active_profile_current.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1266-ACTIVE-PROFILE-CURRENT-01",
+          "name": "#1266: .agents/active-profile.json đã commit khớp profile của kit, cài DevKit không làm bẩn cây review (audit Antigravity ghi được phạm vi)",
+          "command": "bash tests/super-board/test_workbench_active_profile_current.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
