@@ -49,6 +49,8 @@ if mode == "untrusted":
 comments = [rev, app, qa] if mode == "old" else [qa, rev, app]
 if mode == "rejected":
     comments = [qa, rev, app, c("[reviewer] [report] ❌ bounced · round 4 · head %s\n" % head[:8])]
+if mode == "revokedcase":
+    comments = [qa, rev, app, c("[Reviewer] [report] ❌ bounced · head %s\n" % head[:8])]
 if mode == "authornone":
     rev = c(rev["body"], "NONE", "bot"); app = c("approved-head:%s" % head, "NONE", "bot"); comments = [qa, rev, app]
 if mode == "noapproval":
@@ -117,13 +119,15 @@ for nd in '❌ Not done: AC1 chưa đạt và AC4 review độc lập' '❌ Not 
 done
 
 # P2 vòng 3: mục mở đầu bằng "AC<n> review độc lập" nhưng còn tả lỗi code (cùng dòng hay dòng nối tiếp) không được gỡ.
-for nd in '❌ Not done: AC1 phần review độc lập chưa có, phần code: test 413 vẫn đỏ' '❌ Not done: AC1 review độc lập — test 413 vẫn đỏ, payload 2 MB trả 500'; do
+for nd in '❌ Not done: AC1 review độc lập (AC2 unit test parse còn đỏ)' '❌ Not done: AC1 review độc lập （AC2 test đỏ）' '❌ Not done: AC1 review độc lập (test 413 vẫn đỏ)' '❌ Not done: AC1 phần review độc lập chưa có, phần code: test 413 vẫn đỏ' '❌ Not done: AC1 review độc lập — test 413 vẫn đỏ, payload 2 MB trả 500'; do
   mk "$TMP/p.json" "$nd" ok
   [ "$(run "$TMP/p.json" "$HEAD")" = 1 ] && ok "P: '$nd' vẫn chặn" || { fail "P: '$nd' bị lọt"; cat "$TMP/out"; }
 done
 mk "$TMP/p2.json" '❌ Not done: AC1 review độc lập chưa có
   - test 413 vẫn đỏ' ok
 [ "$(run "$TMP/p2.json" "$HEAD")" = 1 ] && ok "P: dòng nối tiếp mô tả lỗi code vẫn chặn" || { fail "P: dòng nối tiếp bị lọt"; cat "$TMP/out"; }
+mk "$TMP/p4.json" "$ND" revokedcase
+[ "$(run "$TMP/p4.json" "$HEAD")" = 1 ] && ok "P: [Reviewer] [report] ❌ viết hoa vẫn thu hồi" || { fail "P: thu hồi viết hoa bị lọt"; cat "$TMP/out"; }
 mk "$TMP/p3.json" '❌ Not done: AC4 phần review độc lập (không phải tác giả) chưa có, chuyển sang lane Review.' ok
 [ "$(run "$TMP/p3.json" "$HEAD")" = 0 ] && ok "P: 'chưa có, chuyển sang lane Review' vẫn qua" || { fail "P: bị chặn"; cat "$TMP/out"; }
 

@@ -56,7 +56,7 @@ SHA_TOKEN = re.compile(r"\b[0-9a-f]{7,40}\b")
 REVIEW_ONLY = re.compile(r"^\s*(AC\s*-?\s*#?\d+)\s+(?:(?:phần|việc|mục)\s+)?review\s+độc\s+lập\b", re.I)
 # Phần còn lại hợp lệ của mục review-only: chỉ lời "chưa có / chuyển lane Review", KHÔNG mang tả lỗi code nào (#1298 review P2).
 REVIEW_ONLY_TAIL = re.compile(r"^[\s.,;—–-]*(?:chưa\s+(?:có|xong|được))?[\s.,;—–-]*(?:(?:chuyển(?:\s+sang)?|chờ|cần)\s+(?:lane\s+)?(?:review|reviewer))?[\s.,;—–-]*$", re.I)
-REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]")
+REVIEWER_REPORT = re.compile(r"^\s*\[reviewer\]\s*\[report\]", re.I)
 REVIEWER_READY = re.compile(r"^\s*\[reviewer\]\s*\[report\]\s*✅\s*merge-ready\s*[·|]\s*(?:.*?)(?:\bhead|@)\s+([0-9a-f]{7,40})\b", re.I)
 TASK_ID = re.compile(r"\AT[0-9]{4,}-[a-z0-9-]{1,48}\Z")
 EVIDENCE_DIR = "docs/super-board/runs"  # commit bằng chứng QA (bin/tree_fp.py cũng bỏ thư mục này khỏi dấu vân tay cây)
@@ -310,7 +310,7 @@ def latest_qa_unfinished(comments, pr_author=None, body="", issue_comments=None,
         # #1298: chỉ gỡ mục MỘT dòng MỞ ĐẦU bằng `AC<n> [phần] review độc lập` mà phần còn lại chỉ là lời "chưa có / chuyển lane Review"
         # (không mô tả lỗi code), và không thuộc DANH SÁCH DỪNG; mọi dạng khác (AC code, hai AC trong một mục, "và/nên lane Review") vẫn chặn.
         ro = REVIEW_ONLY.match(text)
-        tail = re.sub(r"[(（][^()（）]*[)）]", " ", text[ro.end():]) if ro else ""
+        tail = re.sub(r"[(（]\s*(?:không\s+phải|khác)\s+tác\s+giả[^()（）]*[)）]", " ", text[ro.end():], flags=re.I) if ro else ""  # chỉ ngoặc "(không phải tác giả)" được bỏ; ngoặc khác (kể cả mã AC, full-width) làm đuôi không hợp lệ
         if reviewed and ro and len(parts) == 1 and REVIEW_ONLY_TAIL.match(tail) and not names_ac(tail, acs) and not _DEC.is_stop(text):
             continue
         if any(names_ac(p, acs) for p in parts if p) or names_ac(text, acs):
