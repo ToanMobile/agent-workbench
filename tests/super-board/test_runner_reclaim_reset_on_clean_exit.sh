@@ -3,7 +3,8 @@
 # next build worker finished cleanly (exit=0 + success result), but the reclaim ledger inflight/reclaims/<issue> kept the 3
 # old epochs, so the first new crash inside 24h would block the card again at once.
 # Rule: note_worker_exit on a lane=build worker that ended clean (worker_ended_clean) clears the card's ledger.
-# A crash (exit!=0), a clean exit of another lane, or exit=0 without a success result keeps it.
+# Clean = also a builder report after the dispatch. A crash (exit!=0), a clean exit of another lane, exit=0 without a success
+# result, or a clean exit with no builder report (a no-op: the ledger is its only cap) keeps it.
 # bash 3.2 compatible.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -22,6 +23,8 @@ INFLIGHT_DIR="$TMP/inflight"
 gh_checkpoint() { :; }
 gh() { :; }
 log() { :; }
+REPORTED=1
+builder_reported_since() { [ "$REPORTED" = 1 ]; }   # stub: did the builder comment after the dispatch?
 
 # mklog <file> <exit> <result-json-or-empty>
 mklog() {
@@ -51,5 +54,10 @@ LANE=qa WORKER_LOG="$TMP/c.log" note_worker_exit 9
 rm -rf "$INFLIGHT_DIR"; seed 10; mklog "$TMP/d.log" 0 '{"type":"result","subtype":"error_max_turns","is_error":true}'
 LANE=build WORKER_LOG="$TMP/d.log" note_worker_exit 10
 [ -s "$INFLIGHT_DIR/reclaims/10" ] && ok "D: exit=0 with an error result keeps the ledger" || fail "D: ledger cleared on exit=0 with an error result"
+
+# E: lane build, clean exit but the builder wrote nothing (no-op) -> ledger kept: it is the only cap on build no-ops
+REPORTED=0; mkdir -p "$INFLIGHT_DIR/reclaims"; printf '1\n2\n3\n' > "$INFLIGHT_DIR/reclaims/11"; mklog "$TMP/e.log" 0 "$OKRES"
+LANE=build WORKER_LOG="$TMP/e.log" note_worker_exit 11
+[ -s "$INFLIGHT_DIR/reclaims/11" ] && ok "E: clean exit without a builder report keeps the ledger" || fail "E: ledger cleared on a no-op clean exit"
 
 [ "$FAILS" -eq 0 ] && { echo "PASS"; exit 0; } || { echo "FAIL ($FAILS)"; exit 1; }
