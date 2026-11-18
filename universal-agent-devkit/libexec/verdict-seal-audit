@@ -12,6 +12,7 @@ ONLY as the uid _devkitseal through sudoers (`sudo -n -u _devkitseal …`, env_r
 Paths below are fixed. The SEAL_TEST_* overrides exist for the kit's own tests; they cannot mint a trusted seal because the
 trusted key is only readable by the signer running as _devkitseal (an agent running this file as itself gets no key).
 """
+import atexit
 import calendar
 import datetime
 import fcntl
@@ -69,9 +70,22 @@ def die(msg, code=1):
     sys.exit(code)
 
 
+_EMPTY_HOME = []
+
+
+def git_env(**extra):
+    """Environment of every git run on the PR's clone. HOME is an empty directory of ours, never the checkout: the PR's own `.gitconfig`
+    (diff textconv / external drivers = code as this uid, color.diff=always = a diff the hunk parser cannot read) must not be read.
+    No global or system config, no system attributes."""
+    if not _EMPTY_HOME:
+        _EMPTY_HOME.append(tempfile.mkdtemp(prefix="seal-home-", dir=WORK_ROOT if os.path.isdir(WORK_ROOT) else None))
+        atexit.register(shutil.rmtree, _EMPTY_HOME[0], True)
+    return dict({"PATH": "/usr/bin:/bin", "HOME": _EMPTY_HOME[0], "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+                 "GIT_ATTR_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"}, **extra)
+
+
 def git(cwd, *args, check=True):
-    r = subprocess.run([GIT, "-C", cwd, *args], capture_output=True, text=True, timeout=300,
-                       env={"PATH": "/usr/bin:/bin", "HOME": cwd, "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"})
+    r = subprocess.run([GIT, "-C", cwd, *args], capture_output=True, text=True, timeout=300, env=git_env())
     if check and r.returncode != 0:
         die(f"git {' '.join(args[:3])} failed: {r.stderr.strip()[-500:]}")
     return r.stdout.strip()
@@ -157,7 +171,7 @@ def verify_ocr_report(clone, text, head, base, edited):
         bad("reviewed_at is missing or not YYYY-MM-DDTHH:MM:SSZ")
     if at < int(git(clone, "show", "-s", "--format=%ct", head)) or at > time.time() + 300:
         bad("reviewed_at is older than the head commit or in the future")
-    genv = {"PATH": "/usr/bin:/bin", "HOME": clone, "GIT_CONFIG_NOSYSTEM": "1"}
+    genv = git_env()
     cache = {}
 
     def lines_at(rev, path):
@@ -195,15 +209,19 @@ def verify_ocr_report(clone, text, head, base, edited):
     empty = os.path.join(os.path.dirname(clone), "empty-tree")
     os.makedirs(empty, exist_ok=True)
     denv = dict(genv, GIT_DIR=os.path.join(clone, ".git"), GIT_WORK_TREE=empty, GIT_INDEX_FILE=os.path.join(empty, "idx"))
+    # (a failed diff prints nothing: that must never read as "no hunks, nothing to cite")
 
     def need(path, side, lo, hi, texts):
         if hi >= lo and any(not TRIVIAL.fullmatch(t.strip()) for t in texts) \
                 and not any(f == path and sd == side and lo <= n <= hi for (f, sd, n) in hit):
             bad(f"{path}: no verified citation inside the {'changed' if side == 'head' else 'deleted'} lines {lo}-{hi} ({side} side)")
     for e in edited:
-        out = subprocess.run([GIT, "-c", "core.attributesFile=/dev/null", "diff", "-a", "-U0", "--no-ext-diff", "--no-textconv",
-                              "--no-renames", base, head, "--", ":(literal)" + e], capture_output=True, text=True, errors="replace",
-                             timeout=60, env=denv).stdout
+        dr = subprocess.run([GIT, "-c", "core.attributesFile=/dev/null", "-c", "color.ui=false", "diff", "--no-color", "-a", "-U0",
+                             "--no-ext-diff", "--no-textconv", "--no-renames", base, head, "--", ":(literal)" + e],
+                            capture_output=True, text=True, errors="replace", timeout=60, env=denv)
+        if dr.returncode != 0:
+            bad(f"git diff of {e} failed: {dr.stderr.strip()[-200:]}")
+        out = dr.stdout
         cur = None
         for ln in out.split("\n") + ["@@ -0 +0 @@"]:       # the sentinel flushes the last hunk
             m = HUNK.match(ln)
@@ -282,13 +300,17 @@ def main(argv):
             # #1258: own early branch. No agy, no ledger, no attempt counters (attempts fixed at 1): an ocr signing neither burns the
             # antigravity attempts of the same base/path nor its own. `kind` is signed so verify() keeps the two seal kinds apart.
             result = verify_ocr_report(clone, ocr_text, head, base, edited)
-            emit({"v": 1, "kind": "ocr-delegate", "reviewer": "ocr-delegate", "task_id": task, "head": head, "tree": tree, "base": base,
-                  "edited": edited, "attempts": 1, "verdict": "pass", "findings": result["findings"]})
-            ledger_dir = LEDGER or os.path.join(SEAL_HOME, "verdict-ledger")   # audit line AFTER a successful signing
+            # v 2: an older kit's verify() takes v == 1 only, so an ocr seal copied into the antigravity dir of an old pack is no pass there.
+            # reviewer_label (the report's own word, casefolded) is what the gate checks against the author session / co-authors.
+            label = str(json.loads(ocr_text)["reviewer"]).strip().casefold()
+            ledger_dir = LEDGER or os.path.join(SEAL_HOME, "verdict-ledger")   # audit line BEFORE the seal is printed: no unlogged seal
             os.makedirs(ledger_dir, mode=0o700, exist_ok=True)
             with open(os.path.join(ledger_dir, "ocr-signings.log"), "a", encoding="utf-8") as lg:
                 lg.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\tuid={os.getuid()}\tsudo_user={os.environ.get('SUDO_USER', '')}"
-                         f"\thead={head}\ttask={task}\n")
+                         f"\thead={head}\ttask={task}\treviewer={label}\n")
+            emit({"v": 2, "kind": "ocr-delegate", "reviewer": "ocr-delegate", "reviewer_label": label,
+                  "report_sha256": hashlib.sha256(ocr_text.encode()).hexdigest(), "task_id": task, "head": head, "tree": tree, "base": base,
+                  "edited": edited, "attempts": 1, "verdict": "pass", "findings": result["findings"]})
             return 0
         # Review P1: agy never runs in a checkout. A checkout of the agent's head would hand agy the agent's project config
         # (.gemini/settings.json MCP servers or hooks, AGENTS.md/GEMINI.md, .agents workflows), and code agy ran from it would
@@ -301,8 +323,8 @@ def main(argv):
         with open(os.path.join(seal_dir, "name-status.txt"), "w") as f:
             f.write(f"base {base}\nhead {head}\n{name_status}\n")
         with open(os.path.join(seal_dir, "diff.patch"), "w") as f:
-            f.write(git(clone, "diff", "-M", base, head))
-        changed = set(edited) | {p for p in git(clone, "diff", "--name-only", "-z", "-M", base, head).split("\0") if p}
+            f.write(git(clone, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "-M", base, head))
+        changed = set(edited) | {p for p in git(clone, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "-M", base, head).split("\0") if p}
         blobs, rows = {}, []
         genv = {"PATH": "/usr/bin:/bin", "HOME": work, "GIT_CONFIG_NOSYSTEM": "1"}
         for side, rev in (("base", base), ("head", head)):

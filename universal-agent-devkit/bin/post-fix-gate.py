@@ -1183,7 +1183,7 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
     if rc_c != 0 or not cur or rc_h != 0 or at_head != cur:
         return False, f"nội dung khác cây đã audit (auditedHead {h10})"
     if top not in _APPROVAL_AUDITS:
-        _APPROVAL_AUDITS[top] = _push_gate().audited_heads(top)
+        _APPROVAL_AUDITS[top] = _push_gate().audited_heads(top) + _push_gate().ocr_seal_heads(top)   # #1258: ocr reviews count too
     for tid2, h2 in _APPROVAL_AUDITS[top]:
         if h2 == head or not _on_audit_chain(top, ch, h2):
             continue

@@ -865,6 +865,35 @@ def _repo_tasks(top, task_id=None, any_project=False):
         yield task
 
 
+def ocr_seal_heads(top):
+    """[(task_id, head)] of the valid PASS ocr-delegate seals for repo `top` (every task id), as audited_heads lists the PM audits: the
+    replay guard of post-fix-gate (a NEWER review of the same file on the branch voids an older one) must see both kinds (#1258)."""
+    lib = _seal_lib()
+    if not lib or os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0":
+        return []
+    try:
+        names = [n[:-5] for n in os.listdir(os.path.join(lib.pm_state_home(), "seals", "ocr-delegate")) if n.endswith(".json")]
+    except OSError:
+        return []
+    out = []
+    for h in names:
+        p = lib.verify(top, h, _seal_fixture(top), "ocr-delegate")
+        if p and p["verdict"] == "pass" and p.get("reviewer") == "ocr-delegate" and isinstance(p.get("task_id"), str):
+            out.append((p["task_id"], h))
+    return out
+
+
+def author_names(top, rng):
+    """Casefolded names of the `Co-Authored-By:` trailers of the commits in `rng` (the PR's own authors besides the git author)."""
+    rc, out = git(top, "log", "--format=%(trailers:key=Co-Authored-By,valueonly,separator=%x0a)", rng)
+    names = set()
+    for ln in out.splitlines() if rc == 0 else []:
+        n = re.sub(r"\s*<[^>]*>\s*$", "", ln).strip().casefold()
+        if n:
+            names.add(n)
+    return names
+
+
 def approval_head(top, word, ident, sha=None):
     """The reviewed commit a `Test-approved-by: <word> <ident>` trailer (on commit `sha`) points at, or None. antigravity: the PM
     record's auditedHead. ocr-delegate (#1258, kill switch DEVKIT_OCR_CROSS_REVIEW=0): the head of a valid ocr-delegate seal signed
@@ -876,9 +905,18 @@ def approval_head(top, word, ident, sha=None):
     hand-edited; it does NOT prove the reviewer was independent of the author. That is process trust (a fresh reviewer session). The
     reviewer-label check is only in the unprivileged wrapper (approve-tests --ocr-delegate): an author with shell access can call the
     sealing entry through sudo directly and seal a report it wrote itself. Residual risk, accepted by the owner; the entry logs every
-    signing (ocr-signings.log in its ledger) so it can be audited afterwards."""
+    signing (ocr-signings.log in its ledger) so it can be audited afterwards. Hardening (review of #1258): the seal is v2 and signs
+    the report's own reviewer_label + report_sha256; a label equal to this session's agent or to a Co-Authored-By of base..sha never
+    approves, so an author must at least put a different name on the report (still a label, not an identity: process trust)."""
     if word != "ocr-delegate":
         return audited_head(top, ident)
+    try:
+        return _ocr_approval_head(top, ident, sha)
+    except (subprocess.TimeoutExpired, OSError, ValueError):   # a git timeout is "no approval", never an exception into the hook
+        return None
+
+
+def _ocr_approval_head(top, ident, sha):
     lib = _seal_lib()
     if not lib or not sha or os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0":
         return None
@@ -887,8 +925,16 @@ def approval_head(top, word, ident, sha=None):
     trunk = _trunk_ref(top)
     for payload in lib.ocr_delegate_seals(top, ident, _seal_fixture(top), hints=(parent, sha)) if trunk and tree else []:
         rc_m, mb = git(top, "merge-base", trunk, payload["head"])
-        if payload["tree"] == tree and rc_m == 0 and mb.strip() == payload["base"]:
-            return payload["head"]
+        if payload["tree"] != tree or rc_m != 0 or mb.strip() != payload["base"]:
+            continue
+        # The label the report carries is the reviewer's own word (not an identity), but it must not be the author: this session, or a
+        # Co-Authored-By of the PR (whole name, or its first word: "Claude Sonnet 5.5" ~ claude).
+        label = normalize_reviewer(payload.get("reviewer_label") or "")
+        authors = session_agents() | {normalize_reviewer(n) for n in author_names(top, f"{payload['base']}..{sha}")}
+        authors |= {a.split()[0] for a in authors if a.split()}
+        if not label or label in authors:
+            continue
+        return payload["head"]
     return None
 
 

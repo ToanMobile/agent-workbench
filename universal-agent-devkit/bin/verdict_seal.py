@@ -235,7 +235,7 @@ def _git(top, *args):
 
 def verify(top, head, test_fixture=False, sub=""):
     """Signed payload (dict) of the seal of `head` when it is valid for repo `top`; None otherwise (also when seal mode is off).
-    Valid = Ed25519 signature of the trusted pubkey over payload, v == 1, payload.head == head, payload.tree == tree(head) in top,
+    Valid = Ed25519 signature of the trusted pubkey over payload, v == 1 (v == 2 in the ocr-delegate dir, #1258: an old kit reads v 1 only), payload.head == head, payload.tree == tree(head) in top,
     base a sha40, edited a list of str, verdict in (pass, fail)."""
     if not isinstance(head, str) or not SHA40.fullmatch(head):
         return None
@@ -253,7 +253,7 @@ def verify(top, head, test_fixture=False, sub=""):
         if not isinstance(payload_s, str) or not ed25519_verify(pub, payload_s.encode("utf-8"), sig):
             return None
         payload = json.loads(payload_s)
-        if not isinstance(payload, dict) or payload.get("v") != 1 or payload.get("head") != head:
+        if not isinstance(payload, dict) or payload.get("v") != (2 if sub else 1) or payload.get("head") != head:
             return None
         base, edited = payload.get("base"), payload.get("edited")
         attempts = payload.get("attempts")
