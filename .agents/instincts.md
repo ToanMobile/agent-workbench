@@ -879,6 +879,14 @@ Mẫu ghi nhận:
 
 ---
 
+### [INSTINCT-113] Đổi profile kit mà không commit file sinh ra làm bẩn mọi worktree
+- **Ngày phát hiện:** 2026-11-18
+- **Hiện tượng lỗi:** Đổi profile kit mà không commit file sinh ra làm bẩn mọi worktree
+- **Nguyên nhân:** #1243 đổi mô tả profile backend nhưng không commit .agents/active-profile.json; mỗi lần cài DevKit vào worktree sinh diff, cây review bẩn nên audit Antigravity không ghi được phạm vi, reviewer no-op rồi thẻ Blocked
+- **Quy tắc phòng ngừa & Cách fix:** Sửa profiles/ thì chạy lại agent-config và commit .agents/active-profile.json cùng PR; thấy 'M .agents/active-profile.json' trong worktree mới là file trên main đã cũ, sửa ở main, không khôi phục tay
+
+---
+
 ### [INSTINCT-112] Model mặc định trong code PM bị config máy ~/.antigravity-pm.json đè
 - **Ngày phát hiện:** 2026-11-17
 - **Hiện tượng lỗi:** Model mặc định trong code PM bị config máy ~/.antigravity-pm.json đè
