@@ -554,12 +554,19 @@ def _result_text(blk):
 
 # #1301: a review result "has P0/P1" when a line names one without a negation ("Không có P0/P1", "no P0", "0 P1"); words like "không"/"no"/"clean" elsewhere in the line are a description, not a negation.
 _SEVERE = re.compile(r"\bP[01]\b")
-_NEGATED = re.compile(r"\b(?:kh\u00f4ng(?:\s+c\u00f3)?|no|none|zero|without|0)\s+P[01]\b"   # a negation right before the label
-                      r"|\bP[01](?:\s*(?:/|or|and|,|v\u00e0)\s*P[01])?\s*[:=-]?\s*(?:none|0|kh\u00f4ng(?:\s+c\u00f3)?)\s*[.;]?$", re.I)
+_SEP = r"(?:\s*(?:/|or|and|,|v\u00e0)\s*)"
+_NEG = r"(?:kh\u00f4ng(?:\s+c\u00f3)?|no|none|zero|without|0)"
+_NEG_BEFORE = re.compile(r"\b" + _NEG + r"\s+(?:P[01]" + _SEP + r")*$", re.I)   # "no P0", "Kh\u00f4ng c\u00f3 P0/" before the label
+_NEG_AFTER = re.compile(r"^(?:" + _SEP + r"P[01])*\s*[:=-]?\s*" + _NEG + r"\s*[.;]?$", re.I)   # "P1: none" closing the line
 
 
 def _severe(txt):
-    return any(_SEVERE.search(l) and not _NEGATED.search(l) for l in txt.splitlines())
+    # each label is judged on its own: a negation of one label never hides another label in the same line
+    for l in txt.splitlines():
+        for m in _SEVERE.finditer(l):
+            if not (_NEG_BEFORE.search(l[:m.start()]) or _NEG_AFTER.search(l[m.end():].strip())):
+                return True
+    return False
 
 
 # #1301: files in these areas are never capped (auth, secrets, payment, migrations).

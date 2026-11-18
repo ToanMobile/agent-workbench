@@ -55,7 +55,7 @@ stop c4; rc=$?
 rm -f "$P/auth.py"   # C4 để lại file nhạy cảm: không để nó che kết quả của C5/C6
 # C5. dòng P0/P1 thật có chữ "không"/"no"/"clean" trong mô tả lỗi vẫn là P0/P1 (reviewer bounce 18/11).
 n=0
-for sev in "P1: không kiểm tra x=0 (app.py:1)" "P0: no auth check on endpoint" "P1: SQL injection, input not clean"; do
+for sev in "P1: không kiểm tra x=0 (app.py:1)" "P0: no auth check on endpoint" "P1: SQL injection, input not clean" "P1: no P0 handling for empty input (a.py:3)" "P1: thiếu kiểm tra, không có P0 nào khác" "P0: auth bypass; không P1" "P1: x=0 P0 path"; do
   n=$((n + 1))
   : > "$TR"; ev edit e1 "$P/app.py"; ev review r1 "$CLEAN"; ev edit e2 "$P/app.py"; ev review r2 "$sev"; ev edit e3 "$P/app.py"
   stop c5$n; rc=$?
