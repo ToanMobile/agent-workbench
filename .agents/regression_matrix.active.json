@@ -4569,6 +4569,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "gate-full-close-proven-cards-1275",
+      "watch_files": [
+        "universal-agent-devkit/bin/gate_full.py",
+        "universal-agent-devkit/tests/gates/test_gate_full_close_proven_cards.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1275-GATE-FULL-CLOSE-PROVEN-01",
+          "name": "#1275: sau lượt gate_full, thẻ gate-full còn mở mà suite PASS ở lượt đó được comment bằng chứng, gỡ ac-open, đóng completed; suite còn đỏ, không chạy, thẻ khác, comment lỗi thì giữ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_full_close_proven_cards.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
