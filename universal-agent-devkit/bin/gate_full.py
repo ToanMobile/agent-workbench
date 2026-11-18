@@ -1181,10 +1181,12 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
 
 
 def closed_cards(slug: str, before: dt.datetime) -> dict:
-    """{suite: URL} của thẻ gate-full đóng COMPLETED trước `before` (giờ bắt đầu lượt: sha của lượt đã gồm PR sửa đóng thẻ đó) (#1290).
-    Đóng NOT_PLANNED (trùng, chấp nhận đỏ) hay đóng giữa lượt (PR sửa merge sau khi chốt sha) không tính. gh lỗi ⇒ {}."""
-    rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "closed", "--search", '"gate-full đêm" in:title',
-                  "--json", "title,url,stateReason,closedAt", "--limit", "100"], timeout=60)
+    """{suite: URL}: thẻ gate-full ĐÓNG GẦN NHẤT của suite, trước `before` (giờ bắt đầu lượt: sha của lượt đã gồm PR sửa đóng
+    thẻ đó), là COMPLETED (#1290). Thẻ gần nhất đóng NOT_PLANNED (trùng, chấp nhận đỏ) ⇒ suite không tính, dù có thẻ COMPLETED cũ hơn;
+    thẻ đóng giữa lượt (PR sửa merge sau khi chốt sha) không xét. gh lỗi ⇒ {}."""
+    rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "closed", "--search",
+                  '"gate-full đêm" in:title sort:updated-desc', "--json", "title,url,stateReason,closedAt", "--limit", "100"],
+                 timeout=60)
     if rc != 0:
         return {}
     try:
@@ -1192,18 +1194,18 @@ def closed_cards(slug: str, before: dt.datetime) -> dict:
     except ValueError:
         return {}
     cut = before.astimezone()
-    found = {}
+    latest = {}   # suite → (closedAt, stateReason, url) của lần đóng gần nhất trước cut
     for it in items if isinstance(items, list) else []:
-        if not isinstance(it, dict) or it.get("stateReason") != "COMPLETED":
+        if not isinstance(it, dict):
             continue
         try:
             closed_at = dt.datetime.fromisoformat(str(it.get("closedAt") or "").replace("Z", "+00:00"))
         except ValueError:
             continue
         m = CARD_SUITE.search(it.get("title") if isinstance(it.get("title"), str) else "")
-        if m and closed_at.tzinfo and closed_at < cut:
-            found.setdefault(m.group(1), it.get("url") or "(thẻ đã đóng)")
-    return found
+        if m and closed_at.tzinfo and closed_at < cut and (m.group(1) not in latest or closed_at > latest[m.group(1)][0]):
+            latest[m.group(1)] = (closed_at, it.get("stateReason"), it.get("url") or "(thẻ đã đóng)")
+    return {sid: v[2] for sid, v in latest.items() if v[1] == "COMPLETED"}
 
 
 def card_cmd() -> list:
@@ -1239,7 +1241,7 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
             sig = i["red_tests"][sid]
             closed = done.get(sid)
             if closed and open_issue_for(slug, sid) == "":
-                new[sid] = {"paths": list((sig or {}).get("paths") or []), "cases": []}
+                new[sid] = {"paths": list((sig or {}).get("paths") or []), "cases": [], "reopened": closed}
                 run.log("đỏ kinh niên %s: thẻ %s đã đóng mà suite vẫn đỏ, mở thẻ mới" % (sid, closed))
     env = i["result"] == "red-env"
     cards = []
@@ -1247,8 +1249,9 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
         sp = (i.get("suspects") or {}).get(sid) or {"sha": i["suspect"], "note": i["suspect_note"]}
         subj = git_out(repo, "log", "-1", "--format=%s", sp["sha"]) if sp.get("sha") else ""
         what = ("ca mới: " + "; ".join(d["cases"][:8])) if d.get("cases") else ("test: " + ", ".join(d["paths"])) if d.get("paths") else ""
-        problem = ("Lượt heavy gate trên %s @ %s đỏ MỚI: %s%s. Mọi suite đỏ: %s. %sCommit nghi vấn của %s: %s %s %s. Log: %s"
-                   % (i["ref"], sha[:12], sid, " (%s)" % what if what else "", ", ".join(i["red"]),
+        kind = ("VẪN ĐỎ sau khi thẻ %s đóng" % d["reopened"]) if d.get("reopened") else "đỏ MỚI"
+        problem = ("Lượt heavy gate trên %s @ %s %s: %s%s. Mọi suite đỏ: %s. %sCommit nghi vấn của %s: %s %s %s. Log: %s"
+                   % (i["ref"], sha[:12], kind, sid, " (%s)" % what if what else "", ", ".join(i["red"]),
                       "Mọi suite đỏ đều nhóm b (thời gian thực / môi trường: %s). " % ", ".join(i["group_b"]) if env else "",
                       sid, sp.get("sha") or "-", subj, sp.get("note") or "", run.log_path))
         dup = open_issue_for(slug, sid)

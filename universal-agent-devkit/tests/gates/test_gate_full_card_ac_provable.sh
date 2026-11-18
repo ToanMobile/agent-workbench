@@ -33,7 +33,8 @@ else:
 g.file_card(run, sys.argv[2], "o/r", "a" * 40)
 card = [c for c in calls if c[:2] == ["sh", "fakecard.sh"]]
 acs = [c[i + 1] for c in card for i, x in enumerate(c) if x == "--ac"]
-print(json.dumps({"cards": len(card), "acs": acs}))
+probs = [c[i + 1] for c in card for i, x in enumerate(c) if x == "--problem"]
+print(json.dumps({"cards": len(card), "acs": acs, "problem": probs[0] if probs else ""}))
 PY
 out=$(python3 "$T/drive.py" "$KIT" "$T/log" 2>/dev/null | tail -1)   # run.log prints to stdout: JSON is the last line
 q() { echo "$out" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print($1)"; }
@@ -47,6 +48,8 @@ q() { echo "$out" | python3 -c "import json,sys; d=json.loads(sys.stdin.read());
 # D. card closed after the fix merged, suite still red the next night (chronic vs baseline) and no open card: a card is filed again
 out=$(CHRONIC=1 CLOSED_CARD=https://github.com/o/r/issues/4 python3 "$T/drive.py" "$KIT" "$T/log2" 2>/dev/null | tail -1)
 [ "$(q 'd["cards"]')" = 1 ] && ok "D closed card, suite still red: card filed again" || fail "D: $out"
+[ "$(q '"VẪN ĐỎ sau khi thẻ https://github.com/o/r/issues/4 đóng" in d["problem"] and "đỏ MỚI" not in d["problem"]')" = True ] \
+  && ok "H re-filed card says the suite is still red after #4 closed, not 'new red'" || fail "H: $out"
 
 # E. chronic red that still has an open card: no new card (no duplicates)
 out=$(CHRONIC=1 CLOSED_CARD=https://github.com/o/r/issues/4 OPEN_CARD=https://github.com/o/r/issues/5 python3 "$T/drive.py" "$KIT" "$T/log3" 2>/dev/null | tail -1)
@@ -69,6 +72,12 @@ items = [
     {"title": P + " 2026-11-17: REG-B-01 đỏ", "url": "u/3", "stateReason": "NOT_PLANNED", "closedAt": "2026-11-18T01:00:00Z"},
     {"title": P + " 2026-11-17: REG-C-01 đỏ", "url": "u/4", "stateReason": "COMPLETED", "closedAt": "2026-11-18T09:00:00Z"},
     {"title": "🐛 other card: REG-D-01 đỏ", "url": "u/5", "stateReason": "COMPLETED", "closedAt": "2026-11-18T01:00:00Z"},
+    # REG-E-01: old COMPLETED card, then the re-filed card closed NOT_PLANNED (red accepted): the latest close wins ⇒ not counted
+    {"title": P + " 2026-11-18: REG-E-01 đỏ", "url": "u/7", "stateReason": "NOT_PLANNED", "closedAt": "2026-11-18T03:00:00Z"},
+    {"title": P + " 2026-11-10: REG-E-01 đỏ", "url": "u/6", "stateReason": "COMPLETED", "closedAt": "2026-11-11T01:00:00Z"},
+    # REG-F-01: an older NOT_PLANNED card, then a newer COMPLETED one: counted (listed old first to check order does not matter)
+    {"title": P + " 2026-11-01: REG-F-01 đỏ", "url": "u/8", "stateReason": "NOT_PLANNED", "closedAt": "2026-11-02T01:00:00Z"},
+    {"title": P + " 2026-11-16: REG-F-01 đỏ", "url": "u/9", "stateReason": "COMPLETED", "closedAt": "2026-11-17T01:00:00Z"},
 ]
 rc = int(os.environ.get("GH_RC", "0"))
 g.sh = lambda cmd, cwd=None, timeout=None: (rc, json.dumps(items))
@@ -76,8 +85,8 @@ start = dt.datetime(2026, 11, 18, 5, 0, tzinfo=dt.timezone.utc)   # run started 
 print(json.dumps(g.closed_cards("o/r", start), sort_keys=True))
 PY
 got=$(python3 "$T/parse.py" "$KIT")
-[ "$got" = '{"REG-A-01": "u/1", "agent-kit test": "u/2"}' ] \
-  && ok "G closed_cards: COMPLETED before run start only" || fail "G: $got"
+[ "$got" = '{"REG-A-01": "u/1", "REG-F-01": "u/9", "agent-kit test": "u/2"}' ] \
+  && ok "G closed_cards: latest close before run start, COMPLETED only" || fail "G: $got"
 got=$(GH_RC=1 python3 "$T/parse.py" "$KIT")
 [ "$got" = '{}' ] && ok "G2 closed_cards gh error: {}" || fail "G2: $got"
 
