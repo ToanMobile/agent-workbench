@@ -158,8 +158,8 @@ def verify_ocr_report(clone, text, head, base, edited):
         bad("auditedHead is not the head under review")
     if rep.get("verdict") != "pass":
         bad("verdict is not pass")
-    if not isinstance(rep.get("reviewer"), str) or not rep["reviewer"].strip():
-        bad("no reviewer")
+    if not isinstance(rep.get("reviewer"), str) or not re.fullmatch(r"[^\x00-\x1f\x7f\x85\u2028\u2029]{1,80}", rep["reviewer"].strip()):
+        bad("no reviewer (1-80 chars, no control characters: the label goes into ocr-signings.log)")
     files, cites, finds = rep.get("files_reviewed"), rep.get("citations"), rep.get("findings")
     if not (isinstance(files, list) and all(isinstance(f, str) for f in files) and isinstance(cites, list) and isinstance(finds, list)):
         bad("files_reviewed / citations / findings have the wrong shape")

@@ -99,5 +99,13 @@ resignv '{}'; [ "$(XENV=CLAUDECODE=1 ah)" = "$H" ] && ok "independent label acce
 git commit -q --allow-empty -m "co" -m "Co-Authored-By: Reviewer-Seven <x@y>"; CH="$(git rev-parse HEAD)"
 got="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(sorted(p.author_names(sys.argv[2], sys.argv[3])))' "$DEVKIT_DIR/bin" "$TMP/repo" "$CH" 2>&1 | tail -1)"
 [ "$got" = "['reviewer-seven']" ] && ok "author_names: Co-Authored-By names of base..head" || ko "author_names: $got"
+# (6) review of the hardening: a label with control characters (log injection into ocr-signings.log) is refused; label vs author is compared
+# by first word on both sides ("claude opus 5.5" vs a Claude co-author); an unreadable author list is no approval
+refused "reviewer label with a newline (forged ocr-signings.log line)" "$(report 'reviewer="x\n2026-11-18T00:00:00Z\tuid=0\tsudo_user=a\thead=1\ttask=T0001-a"')"
+git checkout -q --detach "$H" && git commit -q --allow-empty -m "co" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" && git commit -q --allow-empty -m "ocr trailer" -m "Test-approved-by: ocr-delegate T0001-x"; TR="$(git rev-parse HEAD)"
+resignv '{"reviewer_label":"claude opus 5.5"}'; [ "$(ah)" = None ] && ok "label 'claude opus 5.5' vs co-author 'Claude Sonnet 5.5' -> refused (first word)" || ko "first-word label accepted: $(ah)"
+resignv '{"reviewer_label":"council-reviewer"}'; [ "$(ah)" = "$H" ] && ok "unrelated label accepted next to a Claude co-author" || ko "unrelated label refused: $(ah)"
+got="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(p.author_names(sys.argv[2], "nonexistent-ref..HEAD"))' "$DEVKIT_DIR/bin" "$TMP/repo" 2>&1 | tail -1)"
+[ "$got" = None ] && ok "author_names: git failure -> None (no silent empty set)" || ko "author_names on git failure: $got"
 git checkout -q --detach "$H"
 [ "$FAILS" -eq 0 ] && echo "ALL OK" || { echo "FAILS=$FAILS"; exit 1; }

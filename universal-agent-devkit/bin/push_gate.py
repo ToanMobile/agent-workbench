@@ -877,6 +877,8 @@ def ocr_seal_heads(top):
         return []
     out = []
     for h in names:
+        if git(top, "cat-file", "-e", f"{h}^{{commit}}")[0] != 0:   # a seal of another repo: skip before the signature check (cost)
+            continue
         p = lib.verify(top, h, _seal_fixture(top), "ocr-delegate")
         if p and p["verdict"] == "pass" and p.get("reviewer") == "ocr-delegate" and isinstance(p.get("task_id"), str):
             out.append((p["task_id"], h))
@@ -884,10 +886,13 @@ def ocr_seal_heads(top):
 
 
 def author_names(top, rng):
-    """Casefolded names of the `Co-Authored-By:` trailers of the commits in `rng` (the PR's own authors besides the git author)."""
+    """Casefolded names of the `Co-Authored-By:` trailers of the commits in `rng` (the PR's own authors besides the git author); None
+    when git cannot read the range."""
     rc, out = git(top, "log", "--format=%(trailers:key=Co-Authored-By,valueonly,separator=%x0a)", rng)
+    if rc != 0:
+        return None   # unreadable author list is no approval (the caller refuses), never an empty set
     names = set()
-    for ln in out.splitlines() if rc == 0 else []:
+    for ln in out.splitlines():
         n = re.sub(r"\s*<[^>]*>\s*$", "", ln).strip().casefold()
         if n:
             names.add(n)
@@ -930,9 +935,12 @@ def _ocr_approval_head(top, ident, sha):
         # The label the report carries is the reviewer's own word (not an identity), but it must not be the author: this session, or a
         # Co-Authored-By of the PR (whole name, or its first word: "Claude Sonnet 5.5" ~ claude).
         label = normalize_reviewer(payload.get("reviewer_label") or "")
-        authors = session_agents() | {normalize_reviewer(n) for n in author_names(top, f"{payload['base']}..{sha}")}
-        authors |= {a.split()[0] for a in authors if a.split()}
-        if not label or label in authors:
+        names = author_names(top, f"{payload['base']}..{sha}")
+        if names is None:
+            return None
+        authors = session_agents() | {normalize_reviewer(n) for n in names}
+        first = lambda v: (re.split(r"[\s._-]+", v.strip()) or [""])[0]   # "claude opus 5.5" / "claude-review" ~ claude
+        if not label or label in authors or first(label) in {first(a) for a in authors}:
             continue
         return payload["head"]
     return None
