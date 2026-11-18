@@ -56,6 +56,19 @@ agt send_command_input '{"CommandId":"c1","Input":"git reset --hard HEAD~2\n"}'
 [ "$(decision)" = deny ] && ok "send_command_input typing git reset --hard -> deny" || fail "send_command_input: rc=$RC out=$OUT"
 agt shell_exec '{"Shell":"git clean -fdx","WaitMs":100}'
 [ "$(decision)" = deny ] && ok "shell_exec with an unknown arg name -> deny (any string arg)" || fail "shell_exec unknown arg: rc=$RC out=$OUT"
+# Board review audit 2026-11-19 (major): a multi-line command (typed into a terminal, or several shell_exec arguments) let
+# the second line slip past the guard's fast path. A newline separates commands, so the bridge hands it on as "; ".
+agt send_command_input '{"CommandId":"c1","Input":"echo hi\ngit reset --hard HEAD~1\n"}'
+[ "$(decision)" = deny ] && ok "multi-line Input with git reset --hard on line 2 -> deny" || fail "multi-line Input: rc=$RC out=$OUT"
+agt shell_exec '{"A":"echo one","B":"git clean -fdx"}'
+[ "$(decision)" = deny ] && ok "shell_exec: dangerous command in the second string argument -> deny" || fail "two shell_exec args: rc=$RC out=$OUT"
+agt run_command '{"CommandLine":"ls\n\tgit reset --hard"}'
+[ "$(decision)" = deny ] && ok "run_command with newline + tab before git reset --hard -> deny" || fail "run_command newline/tab: rc=$RC out=$OUT"
+# Probe 2026-11-19: a lone CR (the Enter key typed into a terminal), VT, FF and a literal backslash-n passed the guard.
+for sep in '\r' '\u000b' '\u000c' '\\n' '\\r'; do
+  agt send_command_input "{\"CommandId\":\"c1\",\"Input\":\"echo hi${sep}git reset --hard HEAD~1\"}"
+  [ "$(decision)" = deny ] && ok "send_command_input separator ${sep} before git reset --hard -> deny" || fail "separator ${sep}: rc=$RC out=$OUT"
+done
 agt run_command '{"CommandLine":"git status","toolSummary":"explain why git reset --hard is dangerous"}'
 [ -z "$OUT" ] && ok "toolSummary text is not read as the command" || fail "toolSummary read as command: out=$OUT"
 

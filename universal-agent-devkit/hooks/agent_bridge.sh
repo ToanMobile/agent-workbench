@@ -72,8 +72,14 @@ args = tc.get("args") if isinstance(tc.get("args"), dict) else {}  # Antigravity
 # the working directory or ids) — an unknown name must not let a command through unread.
 ag_cmd = next((args[k] for k in ("CommandLine", "Input", "Command") if isinstance(args.get(k), str) and args[k]), "")
 if not ag_cmd and args:
-    ag_cmd = "\n".join(v for k, v in args.items()
+    ag_cmd = "; ".join(v for k, v in args.items()
                        if isinstance(v, str) and v and k not in ("toolSummary", "Cwd", "CommandId"))
+if ag_cmd:
+    # Every line break is a command boundary for the guards: a lone CR is the Enter key typed into a terminal
+    # (send_command_input), and VT/FF or a literal backslash-n/r slipped past the fast path of the guard (board audit + probe
+    # 2026-11-19). Over-splitting can only block more, never let a command through.
+    import re
+    ag_cmd = re.sub(r"\r\n|[\r\n\x0b\x0c]|\\[nr]", "; ", ag_cmd).replace("\t", " ")
 if kind == "shell":
     out = {"tool_name": "Bash", "tool_input": {"command": ti.get("command") or d.get("command") or ag_cmd or ""}}
     cwd = args.get("Cwd") or d.get("cwd")

@@ -200,6 +200,18 @@ open(f'{sys.argv[1]}/trunc.dex', 'wb').write(bytes(h))
 PY
 python3 "$SCAN" "$TMP/trunc.dex" >"$TMP/log" 2>&1; rc=$?
 [ "$rc" -eq 2 ] && grep -q 'table out of range' "$TMP/log" && ok "tables past EOF (size + checksum right) -> exit 2 by the table bounds check" || bad "truncated dex -> exit $rc: $(tail -2 "$TMP/log")"
+# Board review audit 2026-11-19 (minor): a DEX rejected by its tables must not print a (garbage) method count either.
+! grep -q 'trunc.dex\] [0-9]* method' "$TMP/log" && ok "DEX with broken tables prints no method count" || bad "broken-table dex printed a count: $(grep method "$TMP/log")"
+# Board review audit 2026-11-19 (minor): with a finding AND a broken DEX, exit 1 must still name the broken DEX.
+python3 - "$TMP" "$DEVKIT_DIR/tests/verification" <<'PY'
+import sys, zipfile
+sys.path.insert(0, sys.argv[2]); import dexbuild
+with zipfile.ZipFile(f'{sys.argv[1]}/mixed.apk', 'w') as z:
+    z.writestr('classes.dex', dexbuild.dex(methods=[('Ljava/lang/reflect/Method;', 'setAccessible')]))
+    z.writestr('classes2.dex', b'garbage' * 30)
+PY
+python3 "$SCAN" "$TMP/mixed.apk" >"$TMP/log" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'classes2.dex' "$TMP/log" && ok "finding + broken DEX -> exit 1 and the broken DEX is still named" || bad "mixed apk -> exit $rc: $(tail -4 "$TMP/log")"
 
 # principal review round 4 (P2, same class): the id tables sit at the front, so a cut in the string data still passed the
 # table bounds and read as clean. The header's file_size (u32 at 0x20) must equal the real size — any cut is caught.

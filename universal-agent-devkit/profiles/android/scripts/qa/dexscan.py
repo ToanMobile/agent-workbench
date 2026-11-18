@@ -198,11 +198,13 @@ def scan_apk_or_dex(target_path, manifest_path=None):
         if zlib.adler32(data[12:]) != checksum:
             unreadable.append(f"{name}: checksum adler32 sai (DEX hỏng)")
             continue
-        counts.append((name, module, count))  # only an intact DEX: a corrupt header gives a garbage count
         try:
-            findings += [(name, label, ref) for label, ref in dangerous_refs(data)]
+            refs = dangerous_refs(data)
         except (DexError, struct.error) as e:
             unreadable.append(f"{name}: {e}")
+            continue
+        counts.append((name, module, count))  # only a DEX that read cleanly: a broken one gives a garbage count
+        findings += [(name, label, ref) for label, ref in refs]
     report_counts(counts)
 
     if manifest_path is None:
@@ -221,6 +223,8 @@ def scan_apk_or_dex(target_path, manifest_path=None):
         print(f"❌ Phát hiện {len(findings)} tham chiếu API nguy hiểm:")
         for loc, lbl, ref in findings:
             print(f"  • [{loc}] {lbl} — {ref}")
+        for entry in unreadable:  # a finding wins the exit code, but a DEX that could not be read is never hidden
+            print(f"⚠️ chưa quét được: {entry}")
         return 1
     if unreadable:
         return usage("Không đọc được bảng tham chiếu của DEX, chưa kết luận sạch: " + "; ".join(unreadable))
