@@ -1163,8 +1163,8 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
         if not isinstance(n, int) or not m or m.group(1) not in passed:
             continue
         sid = m.group(1)
-        body = ("[gate-full] %s %s PASS trên %s @ %s: AC \"Lượt gate_full.py run kế tiếp không còn %s đỏ\" đã chứng minh. Log: %s"
-                % (run.started.strftime("%Y-%m-%d"), sid, run.info.get("ref") or "?", sha[:12], sid, run.log_path))
+        body = ("[gate-full] %s %s PASS trên %s @ %s (lượt gate_full chạy thật, không cache): suite không còn đỏ. Log: %s"
+                % (run.started.strftime("%Y-%m-%d"), sid, run.info.get("ref") or "?", sha[:12], run.log_path))
         # ac-open gỡ trước (sweep của board mở lại thẻ còn ac-open); bằng chứng đi cùng lệnh đóng: đóng lỗi thì lượt sau làm lại cả hai,
         # không để lại comment bằng chứng lặp trên thẻ còn mở.
         labels = {(lb.get("name") if isinstance(lb, dict) else lb) for lb in (it.get("labels") or [])}
@@ -1177,25 +1177,33 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
         rc3, _ = sh(["gh", "issue", "close", str(n), "--repo", slug, "--reason", "completed", "--comment", body], timeout=60)
         run.log("thẻ #%d: %s PASS ⇒ %s" % (n, sid, "đã đóng" if rc3 == 0 else "đóng lỗi exit %d, lượt sau thử lại" % rc3))
         if rc3 == 0:
-            run.info.setdefault("notes", []).append("đã đóng thẻ #%d: %s PASS (AC lượt kế không còn đỏ)" % (n, sid))
+            run.info.setdefault("notes", []).append("đã đóng thẻ #%d: %s PASS (lượt chạy thật không còn đỏ)" % (n, sid))
 
 
-def closed_card_for(slug: str, sid: str) -> str:
-    """URL của thẻ gate-full ĐÃ ĐÓNG cho đúng suite (tiêu đề CARD_PREFIX + ": <sid> đỏ"), "" khi không có hoặc gh lỗi (#1290)."""
+def closed_cards(slug: str, before: dt.datetime) -> dict:
+    """{suite: URL} của thẻ gate-full đóng COMPLETED trước `before` (giờ bắt đầu lượt: sha của lượt đã gồm PR sửa đóng thẻ đó) (#1290).
+    Đóng NOT_PLANNED (trùng, chấp nhận đỏ) hay đóng giữa lượt (PR sửa merge sau khi chốt sha) không tính. gh lỗi ⇒ {}."""
     rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "closed", "--search", '"gate-full đêm" in:title',
-                  "--json", "title,url", "--limit", "100"], timeout=60)
+                  "--json", "title,url,stateReason,closedAt", "--limit", "100"], timeout=60)
     if rc != 0:
-        return ""
+        return {}
     try:
         items = json.loads(out.strip().splitlines()[-1]) if out.strip() else []
     except ValueError:
-        return ""
+        return {}
+    cut = before.astimezone()
+    found = {}
     for it in items if isinstance(items, list) else []:
-        t = it.get("title") if isinstance(it, dict) and isinstance(it.get("title"), str) else ""
-        m = CARD_SUITE.search(t)
-        if m and m.group(1) == sid:
-            return it.get("url") or "(thẻ đã đóng)"
-    return ""
+        if not isinstance(it, dict) or it.get("stateReason") != "COMPLETED":
+            continue
+        try:
+            closed_at = dt.datetime.fromisoformat(str(it.get("closedAt") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        m = CARD_SUITE.search(it.get("title") if isinstance(it.get("title"), str) else "")
+        if m and closed_at.tzinfo and closed_at < cut:
+            found.setdefault(m.group(1), it.get("url") or "(thẻ đã đóng)")
+    return found
 
 
 def card_cmd() -> list:
@@ -1225,10 +1233,11 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
         # #1290: thẻ gate-full đóng khi PR sửa merge (AC chỉ còn "chạy lại PASS trên origin/main"). Suite vẫn đỏ ở lượt sau là đỏ
         # kinh niên so mốc, nên không thành đỏ mới; đã có thẻ gate-full của nó bị đóng mà không còn thẻ mở thì mở thẻ mới.
         new = dict(new)
-        for sid, sig in (i.get("red_tests") or {}).items():
-            if sid in new:
-                continue
-            closed = closed_card_for(slug, sid)
+        chronic = [sid for sid in (i.get("red_tests") or {}) if sid not in new]
+        done = closed_cards(slug, run.started) if chronic else {}
+        for sid in chronic:
+            sig = i["red_tests"][sid]
+            closed = done.get(sid)
             if closed and open_issue_for(slug, sid) == "":
                 new[sid] = {"paths": list((sig or {}).get("paths") or []), "cases": []}
                 run.log("đỏ kinh niên %s: thẻ %s đã đóng mà suite vẫn đỏ, mở thẻ mới" % (sid, closed))
@@ -1519,7 +1528,7 @@ def cmd_run(args) -> int:
             detail = new_reds(run, base)
             run.info["new_red_detail"], run.info["new_red"] = detail, list(detail)
             if base is not None and not isinstance(base.get("red_tests"), dict) and base.get("result") != "green":
-                run.info["notes"].append("mốc %s là dòng history dạng cũ (không có red_tests): chỉ gieo mốc, không thẻ đỏ mới" % base["sha"][:12])
+                run.info["notes"].append("mốc %s là dòng history dạng cũ (không có red_tests): chỉ gieo mốc, không thẻ đỏ mới (thẻ đã đóng COMPLETED mà suite vẫn đỏ thì vẫn mở thẻ mới, #1290)" % base["sha"][:12])
             start = base["sha"] if base else last_green   # đầu khoảng chia đôi + truy vết
             if not detail:
                 run.info["suspect_note"] = "(không chia đôi: không có đỏ mới so mốc — đỏ kinh niên)"

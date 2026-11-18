@@ -19,7 +19,7 @@ g.sh = sh
 open_card = os.environ.get("OPEN_CARD", "")
 g.open_issue_for = lambda slug, sid: open_card   # "" = no open card for the suite
 closed_card = os.environ.get("CLOSED_CARD", "")
-g.closed_card_for = lambda slug, sid: closed_card   # "" = the suite never had a gate-full card
+g.closed_cards = lambda slug, before: {"REG-X-01": closed_card} if closed_card else {}   # {} = never had a completed card
 g.git_out = lambda *a, **k: ""
 g.shutil.which = lambda n: "/usr/bin/" + n
 os.environ["DEVKIT_GATE_FULL_CARD_CMD"] = "sh fakecard.sh"
@@ -55,5 +55,30 @@ out=$(CHRONIC=1 CLOSED_CARD=https://github.com/o/r/issues/4 OPEN_CARD=https://gi
 # F. chronic red that never had a gate-full card: unchanged rule, no card
 out=$(CHRONIC=1 python3 "$T/drive.py" "$KIT" "$T/log4" 2>/dev/null | tail -1)
 [ "$(q 'd["cards"]')" = 0 ] && ok "F chronic red never carded: no card (old rule)" || fail "F: $out"
+
+# G. closed_cards parses gh: only COMPLETED cards closed before the run started count (title with spaces too); NOT_PLANNED
+#    (duplicate / accepted red) and a card closed mid-run (fix merged after the sha was pinned) do not; gh error ⇒ {}
+cat > "$T/parse.py" <<'PY'
+import os, sys, json, datetime as dt
+sys.path.insert(0, os.path.join(sys.argv[1], "bin"))
+import gate_full as g
+P = g.CARD_PREFIX
+items = [
+    {"title": P + " 2026-11-17: REG-A-01 đỏ", "url": "u/1", "stateReason": "COMPLETED", "closedAt": "2026-11-18T01:00:00Z"},
+    {"title": P + " 2026-11-17: agent-kit test đỏ", "url": "u/2", "stateReason": "COMPLETED", "closedAt": "2026-11-18T01:00:00Z"},
+    {"title": P + " 2026-11-17: REG-B-01 đỏ", "url": "u/3", "stateReason": "NOT_PLANNED", "closedAt": "2026-11-18T01:00:00Z"},
+    {"title": P + " 2026-11-17: REG-C-01 đỏ", "url": "u/4", "stateReason": "COMPLETED", "closedAt": "2026-11-18T09:00:00Z"},
+    {"title": "🐛 other card: REG-D-01 đỏ", "url": "u/5", "stateReason": "COMPLETED", "closedAt": "2026-11-18T01:00:00Z"},
+]
+rc = int(os.environ.get("GH_RC", "0"))
+g.sh = lambda cmd, cwd=None, timeout=None: (rc, json.dumps(items))
+start = dt.datetime(2026, 11, 18, 5, 0, tzinfo=dt.timezone.utc)   # run started 05:00Z
+print(json.dumps(g.closed_cards("o/r", start), sort_keys=True))
+PY
+got=$(python3 "$T/parse.py" "$KIT")
+[ "$got" = '{"REG-A-01": "u/1", "agent-kit test": "u/2"}' ] \
+  && ok "G closed_cards: COMPLETED before run start only" || fail "G: $got"
+got=$(GH_RC=1 python3 "$T/parse.py" "$KIT")
+[ "$got" = '{}' ] && ok "G2 closed_cards gh error: {}" || fail "G2: $got"
 
 [ "$FAILS" -eq 0 ] && { echo "✅ test_gate_full_card_ac_provable: all passed"; exit 0; } || { echo "❌ test_gate_full_card_ac_provable: $FAILS failed"; exit 1; }
