@@ -78,9 +78,15 @@ for flag in --attempt --max-tries --settle --poll --max-wait; do
 done
 
 # 9. run.md bước 6 (R4): đầu đổi sau 5b thì quay lại 5b, không Block thẻ.
-RUNMD="$ROOT/.claude/skills/super-board/references/run.md"
+RUNMD="${RUNMD_OVERRIDE:-$ROOT/.claude/skills/super-board/references/run.md}"
 step6=$(grep -n '^6\. \*\*Pass\*\*' "$RUNMD" | head -1 | cut -d: -f2-)
 if printf '%s' "$step6" | grep -q "5b" && ! printf '%s' "$step6" | grep -q "is not <sha>, do not retry or force: Block the card"; then ok "run.md bước 6 chuyển về 5b khi đầu đổi"; else fail "run.md bước 6 vẫn Block khi đầu đổi"; fi
+
+# 10. Major audit T0002: (1) bước 6 không Block vô điều kiện trước nhánh 5b — push non-ff do đầu đổi
+# phải quay về 5b; (2) 5b đưa nhánh cục bộ lên <sha> để lượt K+1 ff được.
+step5b=$(grep -n '^5b\. ' "$RUNMD" | head -1 | cut -d: -f2-)
+if printf '%s' "$step6" | grep -q "non-fast-forward" && ! printf '%s' "$step6" | grep -q "any command exits non-zero, do not retry or force: Block"; then ok "run.md bước 6: push non-ff do đầu đổi → 5b, không Block"; else fail "run.md bước 6 còn Block vô điều kiện khi lệnh thoát khác 0"; fi
+if printf '%s' "$step5b" | grep -q "merge --ff-only" && printf '%s' "$step5b" | grep -q "branch -f"; then ok "run.md 5b đưa nhánh cục bộ lên <sha> trước lượt K+1"; else fail "run.md 5b không cập nhật nhánh cục bộ"; fi
 
 echo "---"
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL: $FAILS"; exit 1; }
