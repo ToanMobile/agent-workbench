@@ -863,7 +863,7 @@ def main():
         if args.issue_history:
             require(re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', args.issue_history) is not None, 'issue history requires owner/name')
             owner, repo = args.issue_history.split('/')
-            query = 'query($owner:String!,$repo:String!,$endCursor:String){repository(owner:$owner,name:$repo){issues(first:100,after:$endCursor,states:[OPEN,CLOSED]){totalCount pageInfo{hasNextPage endCursor} nodes{number state body}}}}'
+            query = 'query($owner:String!,$repo:String!,$endCursor:String){repository(owner:$owner,name:$repo){issues(first:100,after:$endCursor,states:[OPEN,CLOSED]){totalCount pageInfo{hasNextPage endCursor} nodes{number state stateReason body}}}}'
             _, pages = read(['api','graphql','--paginate','--slurp','-f','query='+query,'-F','owner='+owner,'-F','repo='+repo], 'issue-history')
             print(json.dumps([n for page in pages for n in page['data']['repository']['issues']['nodes']]))
             return 0
