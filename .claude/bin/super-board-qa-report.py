@@ -43,7 +43,8 @@ PROOF = re.compile(r"^\s*↳\s*(\S.*)$")
 AC_ID = re.compile(r"\bAC\s*-?\s*#?\d+", re.I)
 OTHER_REPO_AC = re.compile(r"\(\s*repo\s*:\s*[^)\s][^)]*\)", re.I)  # #1199: AC gắn `(repo: <khác>)` đo ở repo khác, không phải AC của PR này
 SPLIT_WORD = re.compile(r"đã\s+tách|tách\s+sang|thuộc", re.I)        # #1199: lời khai AC đã tách/thuộc repo khác (kèm owner/repo#N)
-CROSS_REPO_REF = re.compile(r"\b[\w.-]+/[\w.-]+#\d+\b")             # `owner/repo#N`: AC đã tách thành issue ở repo khác
+# `owner/repo#N`: AC đã tách thành issue ở repo khác. #1300: chặn độ dài (owner ≤ 39, repo ≤ 100) — lớp `[\w.-]+` không chặn là O(n²) trên một dòng dài không có `/`.
+CROSS_REPO_REF = re.compile(r"\b[\w.-]{1,100}/[\w.-]{1,100}#\d+\b")
 BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S")
 TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
 _CONFIG = os.environ.get("SB_CONFIG") or None  # decision_policy.enabled=false của config tắt luật này
