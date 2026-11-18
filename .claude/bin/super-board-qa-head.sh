@@ -36,7 +36,7 @@ cur="$(head_of)"
 [ -n "$cur" ] || { echo "blocked: không đọc được head của $branch trên $remote"; exit 11; }
 if [ "$cur" = "$sha" ]; then echo "current $cur"; exit 0; fi
 
-if [ "$attempt" -ge "$max_tries" ]; then
+if [ $((10#$attempt)) -ge $((10#$max_tries)) ]; then
   echo "blocked: head $branch vẫn đổi sau $attempt lần chạy QA (tối đa $max_tries); head mới nhất $cur"
   exit 11
 fi
@@ -51,7 +51,7 @@ while :; do
   [ -n "$nxt" ] || { echo "blocked: không đọc được head của $branch trên $remote khi đợi đứng yên (head cuối biết: $cur)"; exit 11; }
   if [ "$nxt" != "$cur" ]; then cur="$nxt"; stable_since=$now; fi
   if [ $((now - stable_since)) -ge "$settle" ]; then
-    echo "rerun $cur attempt=$((attempt + 1))/$max_tries (head đổi từ $sha)"
+    echo "rerun $cur attempt=$((10#$attempt + 1))/$max_tries (head đổi từ $sha)"
     exit 10
   fi
   if [ $((now - start)) -ge "$max_wait" ]; then

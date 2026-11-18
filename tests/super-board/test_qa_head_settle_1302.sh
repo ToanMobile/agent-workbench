@@ -54,8 +54,8 @@ out=$(run --branch pr --sha "$C1" --settle 3 --poll 1 --max-wait 4 --attempt 1 -
 wait "$BG"
 [ "$rc" = 11 ] && ok "head không đứng yên trong max-wait → exit 11" || fail "không đứng yên: rc=$rc out=$out"
 
-# 6. ls-remote lỗi giữa lúc đợi: không coi là đứng yên (không rerun giả), exit 11.
-C6=$(commit six)
+# 6. ls-remote lỗi (origin biến mất): không coi là đứng yên (không rerun giả), exit 11.
+commit six >/dev/null
 mv "$ORIG" "$ORIG.gone"
 out=$(run --branch pr --sha "$C1" --settle 1 --poll 1 --attempt 1 --max-tries 3); rc=$?
 mv "$ORIG.gone" "$ORIG"
@@ -87,6 +87,34 @@ if printf '%s' "$step6" | grep -q "5b" && ! printf '%s' "$step6" | grep -q "is n
 step5b=$(grep -n '^5b\. ' "$RUNMD" | head -1 | cut -d: -f2-)
 if printf '%s' "$step6" | grep -q "non-fast-forward" && ! printf '%s' "$step6" | grep -q "any command exits non-zero, do not retry or force: Block"; then ok "run.md bước 6: push non-ff do đầu đổi → 5b, không Block"; else fail "run.md bước 6 còn Block vô điều kiện khi lệnh thoát khác 0"; fi
 if printf '%s' "$step5b" | grep -q "merge --ff-only" && printf '%s' "$step5b" | grep -q "branch -f"; then ok "run.md 5b đưa nhánh cục bộ lên <sha> trước lượt K+1"; else fail "run.md 5b không cập nhật nhánh cục bộ"; fi
+
+# 11. Major audit T0003: chạy git thật vòng push non-ff → 5b → K+1. Bằng chứng QA E1 đã commit vào nhánh
+# cục bộ, push bị từ chối vì phiên khác đẩy S: `merge --ff-only S` lỗi (phân kỳ), 5b phải đặt lại nhánh về S
+# (worktree sạch, chỉ khác S ở commit QA bị hủy) để lượt K+1 ff được bằng chứng mới.
+G clone -q "$ORIG" "$TMP/qa" 2>/dev/null
+( cd "$TMP/qa" && G checkout -q -B pr origin/pr && mkdir -p docs/super-board/runs && echo e1 > docs/super-board/runs/ev && G add -A && G commit -q -m "qa evidence v1" )
+S0=$(cd "$TMP/qa" && G rev-parse origin/pr)
+( cd "$TMP/w" && G pull -q --ff-only origin pr 2>/dev/null; echo other > g && G add g && G commit -q -m "other session" && G push -q origin pr 2>/dev/null )
+S=$(cd "$TMP/w" && G rev-parse HEAD)
+if ( cd "$TMP/qa" && G push -q origin pr >/dev/null 2>&1 ); then fail "11: push non-ff đáng ra bị từ chối"; else ok "11: push non-ff bị từ chối khi đầu đổi"; fi
+out=$(cd "$TMP/qa" && SB_QA_HEAD_REMOTE="$ORIG" bash "$HEADCHK" --branch pr --sha "$S0" --settle 1 --poll 1 --attempt 1 --max-tries 3 2>&1); rc=$?
+[ "$rc" = 10 ] && printf '%s' "$out" | grep -q "rerun $S" && ok "11: helper báo rerun trên $S" || fail "11: helper: rc=$rc out=$out"
+cd "$TMP/qa" && G fetch -q origin
+if G merge --ff-only "$S" >/dev/null 2>&1; then fail "11: ff-only đáng ra phải lỗi (nhánh cục bộ phân kỳ)"; else ok "11: ff-only lỗi vì nhánh cục bộ mang commit QA cũ"; fi
+# Công thức 5b: worktree sạch và nhánh cục bộ chỉ hơn S ở commit bằng chứng QA (docs/super-board/runs/) → reset về S.
+dirty=$(G status --porcelain); extra=$(G diff --name-only "$S...HEAD" | grep -v '^docs/super-board/runs/' || true)
+if [ -z "$dirty" ] && [ -z "$extra" ]; then G reset -q --hard "$S"; fi
+[ "$(G rev-parse HEAD)" = "$S" ] && ok "11: 5b đặt lại nhánh về $S" || fail "11: nhánh chưa về S"
+mkdir -p docs/super-board/runs && echo e2 > docs/super-board/runs/ev2
+G add -A && G commit -q -m "qa evidence v2"
+if G push -q origin pr >/dev/null 2>&1 && [ "$(G ls-remote origin refs/heads/pr | cut -f1)" = "$(G rev-parse HEAD)" ]; then ok "11: lượt K+1 đẩy bằng chứng ff được"; else fail "11: lượt K+1 không đẩy được"; fi
+cd "$TMP/w" || exit 1
+# run.md 5b phải nêu công thức đặt lại (reset --hard sau kiểm sạch) cho trường hợp ff lỗi.
+if printf '%s' "$step5b" | grep -q "reset --hard" && printf '%s' "$step5b" | grep -q "status --porcelain"; then ok "11: run.md 5b nêu reset về <sha> sau kiểm worktree sạch"; else fail "11: run.md 5b thiếu công thức reset khi ff lỗi"; fi
+
+# 12. Nit: --attempt 08 không bị hiểu là bát phân.
+out=$(run --branch pr --sha "$C1" --settle 1 --poll 1 --attempt 08 --max-tries 10); rc=$?
+if [ "$rc" = 10 ] && ! printf '%s' "$out" | grep -qi "value too great"; then ok "12: --attempt 08 hiểu là thập phân"; else fail "12: --attempt 08: rc=$rc out=$out"; fi
 
 echo "---"
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL: $FAILS"; exit 1; }
