@@ -4,6 +4,7 @@
 #  C1. sửa, 2 vòng review sạch, sửa tiếp, chưa review lại → thả (rc 0) + dòng handoff "lane QA / merge gate".
 #  C2. vòng 2 còn P1 → vẫn giữ (rc 2).
 #  C3. chưa có vòng review nào → giữ (rc 2).
+#  C8. 2 review song song = 1 vòng; author.py không bị coi là auth.
 #  C4. file chạm auth (auth.py) sau 2 vòng sạch → vẫn giữ (rc 2).
 # bash 3.2 compatible.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
@@ -81,6 +82,19 @@ stop c72; rc=$?; [ "$rc" = 2 ] && ok "C7.2 hai review rỗng: vẫn giữ" || fa
 stop c73; rc=$?; [ "$rc" = 2 ] && ok "C7.3 hai review chạy nền: vẫn giữ" || fail "C7.3 rc $rc"
 : > "$TR"; ev edit e1 "$P/app.py"; ev review r1 "$CLEAN"; ev edit e2 "$P/app.py"; ev review r2 "boom" err; ev edit e3 "$P/app.py"
 stop c74; rc=$?; [ "$rc" = 2 ] && ok "C7.4 1 sạch + 1 lỗi: chưa đủ 2 vòng, giữ" || fail "C7.4 rc $rc"
+
+# C8. cap đếm vòng (có sửa giữa hai review), không đếm số review: 2 review song song = 1 vòng (R5); `author` không phải `auth` (R4).
+: > "$TR"; ev edit e1 "$P/app.py"; ev review r1 "$CLEAN"; ev review r2 "$CLEAN"; ev edit e2 "$P/app.py"
+stop c81; rc=$?; [ "$rc" = 2 ] && ok "C8.1 2 review song song = 1 vòng: vẫn giữ" || fail "C8.1 rc $rc"
+: > "$TR"; ev edit e1 "$P/app.py"; ev review r1 "$CLEAN"; ev review r2 "P1: chia cho 0 (app.py:1)"; ev edit e2 "$P/app.py"; ev review r3 "$CLEAN"; ev edit e3 "$P/app.py"
+stop c82; rc=$?; [ "$rc" = 2 ] && ok "C8.2 P1 trong review song song: vẫn giữ" || fail "C8.2 rc $rc"
+: > "$TR"; ev edit e1 "$P/app.py"; ev review r1 "$CLEAN"; ev review r2 "$CLEAN"; ev edit e2 "$P/app.py"; ev review r3 "$CLEAN"; ev edit e3 "$P/app.py"
+stop c83; rc=$?; [ "$rc" = 0 ] && ok "C8.3 2 vòng thật (có sửa giữa): thả" || fail "C8.3 rc $rc"
+echo "x = 1" > "$P/author.py"; : > "$TR"; ev edit e1 "$P/author.py"; ev review r1 "$CLEAN"; ev edit e2 "$P/author.py"; ev review r2 "$CLEAN"; ev edit e3 "$P/author.py"
+stop c84; rc=$?; [ "$rc" = 0 ] && ok "C8.4 author.py không phải vùng auth: thả" || fail "C8.4 rc $rc"
+echo "x = 1" > "$P/oauth_client.py"; : > "$TR"; ev edit e1 "$P/oauth_client.py"; ev review r1 "$CLEAN"; ev edit e2 "$P/oauth_client.py"; ev review r2 "$CLEAN"; ev edit e3 "$P/oauth_client.py"
+stop c85; rc=$?; [ "$rc" = 2 ] && ok "C8.5 oauth_client.py vẫn nhạy cảm: giữ" || fail "C8.5 rc $rc"
+rm -f "$P/author.py" "$P/oauth_client.py"
 
 [ "$FAILS" = 0 ] && { echo "test_review_gate_round_cap: PASS"; exit 0; }
 echo "test_review_gate_round_cap: FAIL ($FAILS)"; exit 1

@@ -570,7 +570,7 @@ def _severe(txt):
 
 
 # #1301: files in these areas are never capped (auth, secrets, payment, migrations).
-SENSITIVE_PATH = re.compile(r"auth|secret|credential|token|password|payment|billing|migrat", re.I)
+SENSITIVE_PATH = re.compile(r"(?<![a-z])o?auth(?!or)|secret|credential|token|password|payment|billing|migrat", re.I)
 CLEAN_ROUNDS_CAP = 2
 _REVIEW_NOT_READ = re.compile(r"async agent launched|agent (?:is )?running in (?:the )?background", re.I)
 if tp and os.path.exists(tp):
@@ -1004,9 +1004,16 @@ if reviewed_after_edits:
 # #1301 round cap: every review finds something new, so a PR head never settles (#1298: 12 rounds, 9 heads). After CLEAN_ROUNDS_CAP
 # trailing agent reviews with no P0/P1, the gate lets the stop go and hands the rest to the QA lane / merge gate. The first round, any
 # P0/P1 in the latest round and sensitive files (auth, secret, payment, migration) are never capped.
-# ponytail: counts reviews of the whole session, not of one file set; per-file rounds when a long session mixes unrelated work.
-_trail = 0
+# ponytail: counts rounds of the whole session, not of one file set; per-file rounds when a long session mixes unrelated work.
+# R5: a round is a review after an edit; reviews launched together (no edit between them) are one round, severe if any is.
+_rounds = []
 for _ri, _sv in sorted(review_rounds):
+    if _rounds and not any(_rounds[-1][0] < _e < _ri for _e in edit_marks):
+        _rounds[-1] = (_ri, _rounds[-1][1] or _sv)
+    else:
+        _rounds.append((_ri, _sv))
+_trail = 0
+for _ri, _sv in _rounds:
     _trail = 0 if _sv else _trail + 1
 if _trail >= CLEAN_ROUNDS_CAP and not any(SENSITIVE_PATH.search(f) for f in session_unreviewed | set(changed)):
     reset_attempts()
