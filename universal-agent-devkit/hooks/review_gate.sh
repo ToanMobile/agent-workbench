@@ -20,8 +20,8 @@
 # invocation of code-review / review-pr / open-code-review, or a full OCR review.
 # With `ocr` installed (REVIEW_GATE_REQUIRE_OCR=0: off) an OCR review after the last
 # edit is REQUIRED (user, 13/10: OCR always runs again after principal-code-reviewer;
-# the two find different defects); with no LLM endpoint, `ocr-review` falling back to
-# its delegation spec plus an agent review after it stands in for it (in one message: the
+# the two find different defects); `ocr-review` writing its delegation spec (#1332: always,
+# OCR's LLM is removed) plus an agent review after it stands in for it (in one message: the
 # `ocr-review` call before the Agent call — calls are indexed in the order listed).
 # A progress reply (CHƯA XONG, no status line) is reviewed at the handover: a turn that ran
 # git push, `gh pr create`, `agent-kit worktree finish|integrate` or super-board-merge-gate.sh
@@ -312,13 +312,6 @@ if not changed:
     logline(f"[{ts}] no uncommitted code ({'|'.join(CODE_EXTS)}) — pass")
     sys.exit(0)
 
-# OpenCodeReview, full mode (REVIEW_GATE_OCR=full, 2026-10-13): one full LLM review per state of the unreviewed code, run in the
-# background (the hook has 20 s, a review ~80 s), kept in <repo>/.git/ocr-review/full-<hash>/ and shared by sessions.
-OCR_MODE = os.environ.get("REVIEW_GATE_OCR", "1")
-
-
-OCR_REVIEW_TIMEOUT_S = 900   # bin/ocr-review stops `ocr review` there: a pid file older than this (+ margin) is not a running review
-OCR_KEEP_RUNS = 10
 _OCR_ROOT = []
 
 
@@ -338,23 +331,6 @@ def _ocr_root():
     return _OCR_ROOT[0]
 
 
-def _code_hash():
-    import hashlib
-    h = hashlib.sha256()
-    for rel in changed:
-        h.update(rel.encode("utf-8", "surrogateescape") + b"\0")
-        try:
-            with open(os.path.join(repo_root, rel), "rb") as fh:
-                h.update(hashlib.sha256(fh.read()).digest())
-        except OSError:
-            h.update(b"-")
-    return h.hexdigest()[:16]
-
-
-def _full_dir():
-    return os.path.join(_ocr_root(), "full-" + _code_hash())
-
-
 def _reviewed(rep_):
     """An OCR JSON report that reviewed something: an object with a comments list (an error object, another schema or a partial write
     is no review, OCR 13/10), not `status` skipped/error and not 0 files reviewed (code committed before the run: the workspace diff
@@ -365,16 +341,6 @@ def _reviewed(rep_):
     return not (isinstance(summ, dict) and summ.get("files_reviewed") == 0)
 
 
-def _full_report(fdir):
-    """The comments of a finished full review in fdir, or None (none yet, or not a full review)."""
-    try:
-        with open(os.path.join(fdir, "ocr-review.json"), encoding="utf-8") as fh:
-            rep_ = json.load(fh)
-        return rep_["comments"] if _reviewed(rep_) else None
-    except (OSError, ValueError, RecursionError):   # RecursionError: JSON nested too deep is no report (review 03/11 G6)
-        return None
-
-
 def _valid_ocr_report(rp, newest):
     """rp is an OCR JSON report (an object with a comments list) written after the newest edited file (mtime `newest`)."""
     try:
@@ -383,32 +349,6 @@ def _valid_ocr_report(rp, newest):
         with open(rp, encoding="utf-8") as fh:
             return _reviewed(json.load(fh))
     except (OSError, ValueError, RecursionError):
-        return False
-
-
-def _prune_full_runs(keep_dir):
-    """Keep the newest OCR_KEEP_RUNS full-* runs (each new code state makes one; nothing else removes them)."""
-    import shutil
-    root = _ocr_root()
-    try:
-        runs = sorted((os.path.join(root, n) for n in os.listdir(root) if n.startswith("full-")),
-                      key=os.path.getmtime, reverse=True)
-    except OSError as e:
-        logline(f"[{ts}] OCR prune: {e!r}")
-        return
-    for old in runs[OCR_KEEP_RUNS:]:
-        if os.path.realpath(old) != os.path.realpath(keep_dir):
-            try:
-                shutil.rmtree(old)
-            except OSError as e:
-                logline(f"[{ts}] OCR prune {os.path.basename(old)}: {e!r}")
-
-
-def _shown_to(fdir):
-    try:
-        with open(os.path.join(fdir, "shown"), encoding="utf-8") as fh:
-            return sid in fh.read().split()
-    except OSError:
         return False
 
 
@@ -436,7 +376,7 @@ review_pending = {}   # #1301: tool_use id of an agent/skill review -> its trans
 review_rounds = []    # #1301: (index, has P0/P1) per agent review whose result was read
 ocr_pending = {}   # tool_use id -> (transcript index, "helper" | "plain", command)
 ocr_reports = []   # (transcript index, report path) of OCR runs that named a report
-ocr_fallbacks = []   # (transcript index, spec, argv) of ocr-review runs that ASKED the LLM and fell back to delegation for want of an endpoint
+ocr_fallbacks = []   # (transcript index, spec, argv) of ocr-review delegation runs (not --delegate-only) that wrote their own spec
 OCR_NOT_A_RUN = re.compile(r"(?:^|\s)(?:--help|-h|--version)(?:\s|$)")
 bash_runs = []   # [transcript index, start, end, command] of every Bash run with a timestamp: a code change made through it
 bash_open = {}   # tool_use id -> its bash_runs entry, until its result (end time) is read
@@ -624,8 +564,9 @@ if tp and os.path.exists(tp):
                         _txt = _result_text(blk)
                         _spec = next((l[6:].strip() for l in _txt.splitlines() if l.startswith("spec: ")), "")
                         _spec = os.path.join(cwd, _spec) if _spec and not os.path.isabs(_spec) else _spec   # a relative --out
-                        if ("no valid LLM endpoint configured" in _txt or "LLM endpoint unusable" in _txt) and "mode: delegate" in _txt \
-                                and _spec and _spec_from_run(ocmd, _spec):   # no endpoint, or one that rejects every request (bin/ocr-review)
+                        # #1332: ocr-review luôn chạy delegation (LLM của OCR đã gỡ): ghi nhận `mode: delegate` + spec của chính lượt
+                        # chạy, không còn đòi dòng báo lỗi endpoint của LLM
+                        if "mode: delegate" in _txt and _spec and _spec_from_run(ocmd, _spec):
                             ocr_fallbacks.append((at, _spec, _helper_argv(ocmd)))
                     continue
                 if not isinstance(blk, dict) or blk.get("type") != "tool_use":
@@ -994,22 +935,9 @@ ocr_done = ((not need_ws or last_ocr_ws_idx > last_edit_idx or _fallback_for(Fal
 ocr_missing = (reviewed_after_edits and not ocr_done
                and os.environ.get("REVIEW_GATE_OCR", "1") != "0" and os.environ.get("REVIEW_GATE_REQUIRE_OCR", "1") != "0"
                and shutil.which("ocr") is not None)
-if ocr_missing:   # an agent review alone; `ocr` is here, so OCR must review the final code too (a full OCR run below still passes)
+if ocr_missing:   # an agent review alone; `ocr` is here, so OCR must review the final code too
     reviewed_after_edits = False
     logline(f"[{ts}] agent review after the last edit, but no OCR review (ocr installed) — OCR required")
-
-# A full review diffs the workspace: code committed past verified_head (`since`) is not in it, so it never passes that (OCR, 13/10).
-if not reviewed_after_edits and OCR_MODE == "full" and not since:
-    try:
-        _fd = _full_dir()
-        if _full_report(_fd) is not None and _shown_to(_fd):
-            reset_attempts()
-            logline(f"[{ts}] OCR full review of this code shown to this session ({os.path.basename(_fd)}) — pass")
-            sys.exit(0)
-    except SystemExit:
-        raise
-    except Exception as _e:
-        logline(f"[{ts}] OCR full check failed: {_e!r}")
 
 if reviewed_after_edits:
     reset_attempts()
@@ -1150,7 +1078,7 @@ lines += [
     "  D) Hoặc Workflow 'multi-lens-audit' nếu môi trường hỗ trợ workflow.",
     "Finding P0..P3: sửa ngay trong PR này (theo CLASS, không chỉ instance) rồi review lại; không hạ thành thẻ Backlog",
     "  (chủ repo 06/11). Bug thật ngoài phạm vi PR thì tạo thẻ (skill createTask) rồi ghi số thẻ vào báo cáo.",
-    "`ocr-review` ra mode delegate (không có LLM endpoint): không cần giao spec cho agent thứ hai — gọi `ocr-review` TRƯỚC",
+    "`ocr-review` ra mode delegate: không cần giao spec cho agent thứ hai — gọi `ocr-review` TRƯỚC",
     "  lời gọi Agent review (cùng một tin nhắn được, lệnh OCR đứng trước); một agent review sau nó là đủ.",
 ]
 if ocr_missing:   # the agent review is done: say exactly what is left
@@ -1162,10 +1090,9 @@ if ocr_missing:   # the agent review is done: say exactly what is left
         *([f'  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm khác> --from {since_base[:12]}'
            "   (phần đã commit sau lần xác minh cuối: lệnh không --from chỉ xem phần chưa commit)"] if since else []),
         "rồi xử lý phát hiện: P0..P3 sửa ngay trong PR (sửa code thì review lại), không hạ thành thẻ Backlog; bug thật ngoài PR thì",
-        "tạo thẻ (skill createTask) và ghi số thẻ vào báo cáo. Máy chưa có LLM endpoint thì lệnh tự rơi về spec delegation (mode delegate): không cần",
+        "tạo thẻ (skill createTask) và ghi số thẻ vào báo cáo. Lệnh ra spec delegation (mode delegate): không cần",
         "giao spec cho agent thứ hai — gọi `ocr-review` đúng phạm vi trên TRƯỚC lời gọi Agent review (cùng một tin nhắn được, lệnh OCR",
-        "đứng trước), một agent review sau nó là đủ. Đừng cắt output của lệnh (| tail, | head): gate nhận fallback qua dòng đầu",
-        "'no valid LLM endpoint' / 'LLM endpoint unusable'.",
+        "đứng trước), một agent review sau nó là đủ. Đừng cắt output của lệnh (| tail, | head): gate đọc dòng `mode: delegate` và `spec:`.",
         "`--out` viết thẳng đường dẫn (không `$BIẾN`): gate so thư mục của dòng `spec:` với chữ sau --out trong lệnh (#992).",
         "Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
         *([f"OCR theo nội dung đã phủ {len(ws_mapped) + len(range_mapped)} file; còn lệch: {', '.join(ocr_delta[:10])}"]
@@ -1174,70 +1101,8 @@ if ocr_missing:   # the agent review is done: say exactly what is left
     ] + [f"  • {f}" for f in unrev[:20]] + ([f"  … +{len(unrev) - 20} file nữa"] if len(unrev) > 20 else [])
 # OpenCodeReview, run by the gate itself on this block path only (2026-10-13, user: run ocr review in every repo): the delegation
 # mode needs no LLM and no key (~1 s); its spec goes to the reviewer. REVIEW_GATE_OCR=0: off.
-_full_lines = []
-if OCR_MODE == "full":
-    _helper = os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "..", "bin", "ocr-review"))
-    try:
-        _fd = _full_dir()
-        _comments = _full_report(_fd)
-        if _comments is not None:
-            _sev = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-            _top = sorted(_comments, key=lambda c: _sev.get(str(c.get("severity", "")).lower(), 4))[:8]
-            _full_lines = ["", f"OCR review đầy đủ cho đúng code này đã xong: {len(_comments)} phát hiện "
-                               f"(report {os.path.join(_fd, 'ocr-review.json')}). Xử lý từng cái (sửa, hoặc nói vì sao không):"]
-            for c in _top:
-                _txt = " ".join(str(c.get("content") or c.get("message") or "").split())[:240]
-                _full_lines.append(f"  • [{c.get('severity', '?')}] {c.get('path', '?')}:{c.get('start_line', '?')} — {_txt}")
-            if len(_comments) > len(_top):
-                _full_lines.append(f"  … +{len(_comments) - len(_top)} phát hiện nữa trong report")
-            _full_lines.append("  Code không đổi thêm thì Stop sau được tính là đã review; sửa code thì OCR review lại."
-                               if not since else
-                               f"  {len(since)} file code đã commit sau lần xác minh cuối không nằm trong review này (OCR chỉ diff "
-                               "workspace): phần đó vẫn cần review context sạch (A–D).")
-            with open(os.path.join(_fd, "shown"), "a", encoding="utf-8") as fh:
-                fh.write(sid + "\n")
-            logline(f"[{ts}] OCR full review shown: {len(_comments)} finding(s) ({os.path.basename(_fd)})")
-        elif os.path.isfile(_helper):
-            _pidf = os.path.join(_fd, "pid")
-            _running = False
-            try:   # older than the helper's own bound: a recycled pid, not a running review
-                _age = time.time() - os.path.getmtime(_pidf)
-                with open(_pidf) as fh:
-                    _ptxt = fh.read().strip()
-                if _age < OCR_REVIEW_TIMEOUT_S + 120:
-                    if _ptxt:
-                        os.kill(int(_ptxt), 0)
-                        _running = True
-                    else:
-                        _running = _age < 30   # claimed by another Stop a moment ago, its pid not written yet
-            except (OSError, ValueError):
-                _running = False
-            _running_line = ["", "OCR review đầy đủ (LLM) đang chạy ở nền cho code này; Stop sau sẽ có kết quả."]
-            if _running:
-                _full_lines = _running_line
-            elif not os.path.isfile(_pidf):
-                os.makedirs(_fd, mode=0o700, exist_ok=True)
-                try:   # claim the run first: two Stops at once start one review, not two writing the same report
-                    _pfd = os.open(_pidf, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                except FileExistsError:
-                    _pfd = None
-                if _pfd is None:
-                    _full_lines = _running_line
-                else:
-                    with open(os.path.join(_fd, "run.log"), "w") as _lg:
-                        _pr = subprocess.Popen([sys.executable, "-I", _helper, "--out", _fd], cwd=repo_root,
-                                               stdin=subprocess.DEVNULL, stdout=_lg, stderr=subprocess.STDOUT, start_new_session=True)
-                    with os.fdopen(_pfd, "w") as fh:
-                        fh.write(str(_pr.pid))
-                    _full_lines = ["", "OCR review đầy đủ (LLM, ~1–2 phút) đã khởi động ở nền cho code này; Stop sau sẽ có kết quả."]
-                    logline(f"[{ts}] OCR full review started in the background pid={_pr.pid} ({os.path.basename(_fd)})")
-                    _prune_full_runs(_fd)
-            else:   # ended without a report (no endpoint, error): the delegation spec below is the way
-                logline(f"[{ts}] OCR full review ended without a report ({os.path.basename(_fd)}) — delegation only")
-    except Exception as _e:   # OCR is an aid here, never a reason to fail the gate
-        logline(f"[{ts}] OCR full review failed: {_e!r}")
-lines += _full_lines
-if os.environ.get("REVIEW_GATE_OCR", "1") != "0" and not ocr_missing and not any("đã xong" in l for l in _full_lines):
+# #1332: chế độ REVIEW_GATE_OCR=full (OCR review đầy đủ bằng LLM chạy nền) đã gỡ cùng LLM của OCR.
+if os.environ.get("REVIEW_GATE_OCR", "1") != "0" and not ocr_missing:
     _helper = os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "..", "bin", "ocr-review"))
     try:
         if os.path.isfile(_helper):
@@ -1253,8 +1118,8 @@ if os.environ.get("REVIEW_GATE_OCR", "1") != "0" and not ocr_missing and not any
             _spec = next((l[6:].strip() for l in _r.stdout.splitlines() if l.startswith("spec: ")), "")
             if _r.returncode == 0 and _spec:
                 lines += ["", "OCR (OpenCodeReview) đã tự chạy chế độ delegation: spec " + _spec,
-                          "  → giao spec này cho reviewer ở mục A; có khoá LLM thì chạy .agents/devkit/bin/ocr-review để OCR tự review "
-                          "(một lượt OCR review thành công sau lần sửa cuối được tính)."]
+                          "  → giao spec này cho reviewer ở mục A (lượt --delegate-only này của gate không được tính: tự chạy "
+                          ".agents/devkit/bin/ocr-review rồi agent review sau nó)."]
             logline(f"[{ts}] ocr-review --delegate-only rc={_r.returncode} spec={_spec or '-'}")
     except Exception as _e:   # OCR is an aid here, never a reason to fail the gate
         logline(f"[{ts}] ocr-review failed: {_e!r}")

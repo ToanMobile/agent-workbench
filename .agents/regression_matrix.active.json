@@ -3576,16 +3576,16 @@
       ]
     },
     {
-      "component": "devkit-ocr-review-content-map",
+      "component": "devkit-ocr-review-delegate-always",
       "watch_files": [
         "universal-agent-devkit/bin/ocr-review",
-        "universal-agent-devkit/tests/installer/test_ocr_review_content.sh"
+        "universal-agent-devkit/tests/installer/test_ocr_review_delegate_always.sh"
       ],
       "mandatory_regression_tests": [
         {
-          "id": "REG-DK-OCR-REVIEW-CONTENT-01",
-          "name": "Đợt 2 gate mục 6 (04/11): ocr-review ghi content_sha256 + content_base của file đã review, hash trước khi review chạy",
-          "command": "bash universal-agent-devkit/tests/installer/test_ocr_review_content.sh",
+          "id": "REG-DK-OCR-REVIEW-DELEGATE-01",
+          "name": "#1332 (19/11): LLM của OCR gỡ hẳn — ocr-review luôn chạy delegation, không gọi `ocr review`, ra mode: delegate + spec",
+          "command": "bash universal-agent-devkit/tests/installer/test_ocr_review_delegate_always.sh",
           "parallel_safe": true
         }
       ]

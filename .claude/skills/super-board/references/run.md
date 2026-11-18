@@ -470,7 +470,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    data) and copy its two lines into the report; later heads of the same PR keep that tier (never lower it). `reviewers:` lists
    the content-review sides: `claude` = this review plus the truth-check sub-agents; `ocr` =
    `.agents/devkit/bin/ocr-review --from origin/<base> --to HEAD -b "<card title>" --out <dir>` (`-b` is the change description,
-   not the base). With no LLM endpoint (owner 17/11: the OCR LLM is out of credit, run delegate everywhere) the helper prints
+   not the base). The helper always runs delegate (owner 19/11, #1332: the OCR LLM is removed) and prints
    `mode: delegate` and a `spec:` path: hand that spec to a fresh-context sub-agent; its findings are the OCR side. Defaults:
    S `claude`, M and L `claude ocr` (owner 17/11: Antigravity is no longer a content-review side; a config may still add
    `antigravity` = `pm_dispatch kind=audit` of the head). Grok is no review side (owner stopped using it 13/11). Run every listed
