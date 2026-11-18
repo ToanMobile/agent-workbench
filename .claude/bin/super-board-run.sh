@@ -1681,6 +1681,8 @@ preflight_gate() {
   out=$(SB_STALE_DRAFT_DAYS="${stale:-3}" bash "$pf" --repo "$repo" --issues "$issues" --inflight "$inf" --cap "${cap:-0}" 2>>"$RUN_MANIFEST") || rc=$?
   rm -f "$inf"
   if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
+  # #1311: 69 = rate limit outlasted the backoff: preflight is blind, so no dispatch; the card stays Ready and the next tick retries.
+  if [ "$rc" -eq 69 ]; then log "preflight #${issue}: GitHub rate limit (exit 69) — not dispatched, stays Ready, retrying next tick"; return 1; fi
   if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
   v=$(printf '%s' "$out" | jq -c --arg n "$issue" '.[$n] // empty' 2>/dev/null)
   [ -n "$v" ] || { log "⚠ preflight returned no verdict for #${issue} — dispatching without it"; return 0; }

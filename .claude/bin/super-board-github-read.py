@@ -322,6 +322,8 @@ def verify_write(spec):
     try:
         if spec.get('kind') == 'pr-merged':
             result = run_gh(['pr', 'view', str(int(spec['pr'])), '--json', 'state'])
+            if result.returncode and RATE_LIMITED.search(result.stderr or ''):
+                return 69, 'GitHub rate limit while verifying; nothing changed, try again later'   # #1311: temporary, not 'unknown'
             state = json.loads(result.stdout)['state'] if not result.returncode else None
             if state == 'MERGED':
                 return 0, f"PR #{spec['pr']} is MERGED on GitHub"
@@ -330,6 +332,8 @@ def verify_write(spec):
             return RECONCILE_UNKNOWN, f"PR #{spec['pr']} state could not be read as MERGED or OPEN ({state})"
         if spec.get('kind') == 'comment':
             result = run_gh(['api', f"repos/{{owner}}/{{repo}}/issues/{int(spec['issue'])}/comments", '--paginate', '--slurp'])
+            if result.returncode and RATE_LIMITED.search(result.stderr or ''):
+                return 69, 'GitHub rate limit while verifying; nothing changed, try again later'   # #1311
             if result.returncode:
                 return RECONCILE_UNKNOWN, f"comments of #{spec['issue']} could not be read"
             pages = json.loads(result.stdout)

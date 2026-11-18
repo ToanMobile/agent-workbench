@@ -70,4 +70,32 @@ GH_MODE=limit-always SB_GITHUB_RATE_RETRIES=1 python3 "$AP" --repo o/r --pr 1 --
   && ok "approval.py check under rate limit: exit 69, no traceback, no halt" \
   || fail "approval rc=$rc ($(tail -1 "$TMP/aerr"))"
 
+# P1 (merge-gate): approval.py exit 69 must stop the gate with 69, never become approved:false (a human button / Blocked).
+MG="${GHR_MERGE_GATE:-$ROOT/.claude/bin/super-board-merge-gate.sh}"
+sed -n '/^approval_check() {/,/^}/p' "$MG" > "$TMP/ac.sh"
+mkdir -p "$TMP/here"; printf 'import sys\nsys.exit(69)\n' > "$TMP/here/super-board-approval.py"
+rc=$(bash -c 'say(){ :; }; HERE="$1"; REPO=o/r; REPO_PATH=/nonexistent; HEAD_REF=x; PR=1; HEAD_SHA=abc; PLAN={}; APPROVED_HEAD=; GITHUB_READ=/bin/true; . "$2"; approval_check' _ "$TMP/here" "$TMP/ac.sh" >/dev/null 2>&1; echo $?)
+[ "$rc" = 69 ] && ok "merge-gate approval_check: approval exit 69 stops the gate with 69" \
+  || fail "merge-gate approval_check rc=$rc (want 69)"
+
+# P1 (preflight): exit 69 from preflight must not dispatch the card (return 1, stays Ready), not "dispatching without it".
+RUN2="${GHR_RUN:-$ROOT/.claude/bin/super-board-run.sh}"
+sed -n '/^preflight_gate() {/,/^}/p' "$RUN2" > "$TMP/pg.sh"
+printf '#!/usr/bin/env bash\nexit 69\n' > "$TMP/pf.sh"; printf '{"repo":{"remote":"o/r"}}' > "$TMP/cfg.json"
+out=$(bash -c 'log(){ echo "$*"; }; SB_PREFLIGHT="$1"; CONFIG_PATH="$2"; PROJECT_ITEMS_JSON="{\"items\":[]}"; RUN_MANIFEST=/dev/null; SB_GITHUB_READ=/x/y; WAITING_ON_JQ=; . "$3"; preflight_gate 7; echo "rc=$?"' _ "$TMP/pf.sh" "$TMP/cfg.json" "$TMP/pg.sh" 2>&1)
+case "$out" in *"rc=1"*) ok "runner preflight_gate: exit 69 is not dispatched (rc=1)" ;; *) fail "preflight_gate 69: $out" ;; esac
+
+# P3 (reconcile): a rate-limited verifying read is 69 (retry later), not 11 (unknown -> hold + notify).
+mkdir -p "$TMP/rc"; printf '{"verify":{"kind":"pr-merged","pr":3}}' > "$TMP/rc/halt.json"
+rc=$(GH_MODE=limit-always SB_GITHUB_HALT_FILE="$TMP/rc/halt.json" python3 "$READ" --reconcile >/dev/null 2>&1; echo $?)
+{ [ "$rc" = 69 ] && [ -s "$TMP/rc/halt.json" ]; } && ok "--reconcile under rate limit: exit 69, halt kept" \
+  || fail "reconcile rc=$rc (want 69)"
+
+# P3 (AC2): the real card.sh status under rate limit hands the error to the caller and writes no halt.
+CARD="${GHR_CARD:-$ROOT/.claude/bin/super-board-card.sh}"
+rm -f "$HALT" "$GH_COUNT"
+GH_MODE=limit-always SB_GITHUB_RATE_RETRIES=1 bash "$CARD" --config "$ROOT/.claude/super-board/configs/agent-workbench.json" status 1 >"$TMP/cout" 2>"$TMP/cerr"; rc=$?
+{ [ "$rc" != 0 ] && [ ! -e "$HALT" ]; } && ok "card.sh status under rate limit: error rc=$rc, no github-halt.json" \
+  || fail "card.sh status rc=$rc halt=$([ -e "$HALT" ] && echo yes || echo no) ($(tail -1 "$TMP/cerr"))"
+
 [ "$FAILS" -eq 0 ] && { echo "OK"; exit 0; } || { echo "$FAILS failed"; exit 1; }
