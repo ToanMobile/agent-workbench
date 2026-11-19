@@ -892,3 +892,20 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Model mặc định trong code PM bị config máy ~/.antigravity-pm.json đè
 - **Nguyên nhân:** Đổi DEFAULT_CONFIG.defaultModel trong antigravity-pm, test agy-model xanh, nhưng ~/.antigravity-pm.json ghim gemini-4-argon-high nên mọi dispatch thật vẫn chạy model cũ (review 17/11 PR #1264 bắt được, test chỉ kiểm DEFAULT_CONFIG)
 - **Quy tắc phòng ngừa & Cách fix:** Đổi default của PM thì grep defaultModel ở ~/.antigravity-pm.json và .antigravity-pm.json của từng repo; bỏ khoá ghim (đừng ghi model mới trước khi PM trên main nhận model đó) và kiểm bằng pm_doctor dòng 'Model mac dinh' trên cả bản mới lẫn bản main
+
+---
+
+### [INSTINCT-114] Tách đoạn theo ngoặc làm mã AC đứng một mình
+- **Ngày phát hiện:** 2026-11-16
+- **Hiện tượng lỗi:** Tách đoạn theo ngoặc làm mã AC đứng một mình
+- **Nguyên nhân:** names_ac tách đoạn nhỏ theo cả dấu ngoặc nên 'AC3 (mô tả) tách sang owner/repo#N' thành mã AC trần trước ngoặc và cụm tách sau ngoặc, merge gate exit 11 dù có #1199
+- **Quy tắc phòng ngừa & Cách fix:** Bỏ cụm ngoặc cân bằng trước khi tách đoạn; test cả dạng có ngoặc, không chỉ dạng liền câu; và tick bỏ qua vì đĩa phải miễn cầu chì runaway như phanh tải
+
+---
+
+### [INSTINCT-115] Tick tự nạp lại thoát sớm khi blob runner đã mới thì main kẹt sau origin cả ngày
+- **Ngày phát hiện:** 2026-11-18
+- **Hiện tượng lỗi:** Tick tự nạp lại thoát sớm khi blob runner đã mới thì main kẹt sau origin cả ngày
+- **Nguyên nhân:** self_reload_tick: ff bị file sửa dở của phiên khác chặn nên chỉ swap runner rồi exec; từ đó new == RELOAD_RUN_SUM trả về sớm mỗi tick, không bao giờ thử ff lại; cảnh báo duy nhất đổ lỗi cho runner rồi im; mọi bản sửa kit đã merge chạy bằng code cũ 14 commit
+- **Quy tắc phòng ngừa & Cách fix:** Lối thoát sớm theo blob của một file không được che trạng thái của cả checkout: mỗi tick đang ở nhánh base, HEAD là tổ tiên origin và HEAD != origin thì thử ff lại (reload_catchup_ff); vẫn chặn thì đặt lại runner origin, không exec, không stash, cảnh báo một lần mỗi sha origin kèm đúng các file chặn
+- **Lệnh kiểm tra:** `bash tests/super-board/test_runner_self_reload_catchup_ff.sh`

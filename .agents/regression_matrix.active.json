@@ -4802,6 +4802,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-self-reload-catchup",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_self_reload_catchup_ff.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SELF-RELOAD-CATCHUP-01",
+          "name": "main ở nhánh base, HEAD là tổ tiên origin và lệch origin: ff lại dù blob runner đã mới; vẫn bị file khác chặn thì đặt lại runner origin, không exec, một cảnh báo mỗi sha kèm file chặn, không stash; main có commit cục bộ thì không đụng",
+          "command": "bash tests/super-board/test_runner_self_reload_catchup_ff.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
