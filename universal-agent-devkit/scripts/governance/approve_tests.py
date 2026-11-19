@@ -71,6 +71,13 @@ def main(argv):
         return refuse(f"git diff {base[:10]} lỗi: {diff.stderr.strip()[:200]}")
     entries, skipped = [], []
     for f in diff.stdout.splitlines():
+        if f and gate.is_test_path(f) and not os.path.lexists(project / f):
+            # #1323: test đã xoá không có nội dung để ghi mục (sha256); gate tự nhận qua biên bản PM có phạm vi / trailer nếu
+            # audit_covers nhận (cây đã audit cũng không có file). Chỉ báo, không ghi.
+            ok, why = gate.audit_covers(top, prefix, project, f, head)
+            print(f"approve-tests: {f} đã xoá — " + ("audit phủ việc xoá; gate tra thẳng biên bản PM / trailer, không cần mục"
+                                                      if ok else why), file=sys.stderr)
+            continue
         if not f or not gate.is_test_path(f) or not (project / f).is_file():
             continue
         existed = subprocess.run(["git", "-C", top, "cat-file", "-e", f"{base}:{prefix}{f}"], capture_output=True, timeout=30)

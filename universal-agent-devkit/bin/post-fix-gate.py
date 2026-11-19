@@ -1160,7 +1160,7 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
     còn hiệu lực sau khi gộp main mới vào nhánh PR hay trong scratch merge gate (main + PR):
       1. head không là tổ tiên (hoặc chính) của trunk — cây đã nằm trên main là cây cũ;
       2. head nằm trên chuỗi audit của PR (_on_audit_chain): không nhận audit tới qua parent thứ hai;
-      3. blob hiện tại == blob của f ở head;
+      3. blob hiện tại == blob của f ở head; test đã xoá (#1323): f không có ở cây hiện tại VÀ không có ở head;
       4. mọi audit pass khác của repo trên chuỗi đó mà không là tổ tiên của head (mới hơn) có cùng blob — chỉ audit mới nhất được dùng,
          chép lùi về bản đã audit trước khi test được làm mạnh không qua (replay);
       5. blob của f ở TIP nhánh đích == blob ở merge-base(head, trunk): main không đổi chính file đó kể từ lúc audit, kể cả khi PR
@@ -1179,10 +1179,18 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
     if not _on_audit_chain(top, ch, head):
         return False, (f"auditedHead {h10} không nằm trên chuỗi first-parent của PR (audit tới qua merge nhánh khác / cây khác): "
                        "cần audit lại")
-    rc_c, cur = _git_out(top, "hash-object", "--", str(Path(project_root) / f))
-    rc_h, at_head = _git_out(top, "rev-parse", "--verify", "-q", f"{head}:{prefix}{f}")
-    if rc_c != 0 or not cur or rc_h != 0 or at_head != cur:
-        return False, f"nội dung khác cây đã audit (auditedHead {h10})"
+    if os.path.lexists(Path(project_root) / f):
+        rc_c, cur = _git_out(top, "hash-object", "--", str(Path(project_root) / f))
+        rc_h, at_head = _git_out(top, "rev-parse", "--verify", "-q", f"{head}:{prefix}{f}")
+        if rc_c != 0 or not cur or rc_h != 0 or at_head != cur:
+            return False, f"nội dung khác cây đã audit (auditedHead {h10})"
+    else:
+        # #1323: test đã xoá — duyệt khi cây đã audit cũng không có file (audit thấy việc xoá; phạm vi do nguồn gọi kiểm). Còn ở head
+        # = xoá sau audit. ls-tree: rc 0 + rỗng = không có file, rc khác 0 = lỗi git (không duyệt). cur "" = vắng mặt cho luật 4.
+        rc_h, at_head = _git_out(top, "ls-tree", head, "--", f"{prefix}{f}")
+        if rc_h != 0 or at_head:
+            return False, f"file đã xoá nhưng cây đã audit còn file này (auditedHead {h10}): cần audit lại"
+        cur = ""
     if top not in _APPROVAL_AUDITS:
         _APPROVAL_AUDITS[top] = _push_gate().audited_heads(top)
     for tid2, h2 in _APPROVAL_AUDITS[top]:
@@ -1191,7 +1199,12 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
         older = _is_ancestor(top, h2, head)
         if older:
             continue
-        rc2, b2 = _git_out(top, "rev-parse", "--verify", "-q", f"{h2}:{prefix}{f}") if older is False else (1, "")
+        if older is not False:
+            rc2, b2 = 1, ""
+        elif cur:
+            rc2, b2 = _git_out(top, "rev-parse", "--verify", "-q", f"{h2}:{prefix}{f}")
+        else:
+            rc2, b2 = _git_out(top, "ls-tree", h2, "--", f"{prefix}{f}")   # test đã xoá: audit mới hơn cũng phải không có file
         if rc2 != 0 or b2 != cur:
             return False, (f"có audit mới hơn trên nhánh ({tid2}, auditedHead {h2[:10]}) với nội dung khác: chỉ audit mới nhất "
                            "của nhánh được dùng")
@@ -1379,9 +1392,19 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
         try:
             mtimes[f] = os.stat(root / f).st_mtime
         except OSError:
-            pass                                  # deleted: nothing to bind an approval to
+            pass                                  # deleted: nothing to bind a user answer or json entry to
+    # #1323: a deleted test is approved only by an audit record (trailer / PM scoped record): audit_covers checks the audited
+    # tree has no such file either. No user answer or approved_tests.json entry (sha256 of content) can name a deleted file.
+    deleted = [f for f in paths if f not in mtimes and not os.path.lexists(root / f)]
+    if deleted:
+        for f, rv_tid in _trailer_cross_review(deleted, root).items():
+            CROSS_REVIEW[f] = rv_tid
+        for f, rv_tid in _pm_audit_cross_review([f for f in deleted if f not in CROSS_REVIEW], root, {}).items():
+            CROSS_REVIEW[f] = rv_tid
+    ok_deleted = [f for f in deleted if f in CROSS_REVIEW]
+    APPROVED_BY.update({f: "cross-review:" + CROSS_REVIEW[f][0] for f in ok_deleted})
     if not mtimes:
-        return paths, []
+        return [f for f in paths if f not in ok_deleted], ok_deleted
     appr_file = root / ".claude" / "audit-gate" / "approved_tests.json"
     approved_at = {}                              # path -> latest approving answer (epoch s)
     user_at = {}                                  # path -> latest approving answer of the user
@@ -1584,6 +1607,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
 
     ok = [f for f in paths if f in mtimes and approved_at.get(f, 0) >= mtimes[f]]
     APPROVED_BY.update({f: "user" if user_at.get(f, 0) >= mtimes[f] else "cross-review:" + CROSS_REVIEW[f][0] for f in ok})
+    ok += [f for f in ok_deleted if f not in ok]
     return [f for f in paths if f not in ok], ok
 
 
@@ -9997,6 +10021,9 @@ def main():
         else:
             rv, tid = CROSS_REVIEW.get(f, ("?", "?"))
             rv = _approval_reviewer_label(rv)
+            if not os.path.lexists(Path(get_project_dir()) / f):   # #1323: test đã xoá, cây đã audit cũng không có file
+                print(f"  • {GREEN}{tr(f'Test đã có bị xoá — duyệt chéo bởi {rv} (task {tid}), cây đã audit cũng không có file:', f'Existing test deleted — cross-reviewed by {rv} (task {tid}), the audited tree has no such file either:')}{RESET} {f}")
+                continue
             print(f"  • {GREEN}{tr(f'Test đã có bị sửa — duyệt chéo bởi {rv} (task {tid}), sha256 khớp nội dung hiện tại:', f'Existing test edited — cross-reviewed by {rv} (task {tid}), sha256 matches the current content:')}{RESET} {f}")
     for f, sha, why in APPROVAL_REJECTS:
         if f in tests_touched:
