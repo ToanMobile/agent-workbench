@@ -40,6 +40,9 @@ jobs:
 
       # 16/11 (chủ repo): gate chỉ chạy test liên quan tới diff, không cả bộ (50-58 phút, dính test flaky ngoài diff). Cả bộ chạy theo lịch (gate-full).
       - name: DevKit tests (impacted by the diff)
+        # #1318: test_hook_big_command_fast_path.sh kills each hook at 3 s; this runner lands at 3.01 s on load (runs 44434672814,
+        # 44429843025). 6 s keeps its verdict checks and still sits under the 7 s watchdog and the 10 s hook timeout.
         env:
           DEVKIT_SKIP_CPU_BUDGET_TESTS: "1"
+          BIG_COMMAND_BOUND_S: "6"
         run: bash universal-agent-devkit/tests/run_impacted.sh
