@@ -286,6 +286,8 @@ RETRY=0; LABEL_DONE=0; CARD_RETRY=0; CARD_UNREAD=0; CARD_UNKNOWN=0
 # head mới đếm lại từ 1; route lại (RETRY=1) không đếm thêm; lần thứ hai cùng head (RETRY=0) trả 1 để đi đường cũ.
 UNVERIFIED_F="$QDIR/merge-queue.unverified"
 REBASE_PURE_F="$QDIR/merge-queue.rebase-pure"   # "<PR> <pure rebases so far>" (#1318 R5)
+# The ledger counts pure rebases of a PR that is still in play; a PR that merged or left the queue Blocked starts from zero if it comes back.
+rebase_pure_drop() { [ -f "$REBASE_PURE_F" ] || return 0; awk -v p="$1" '$1 != p' "$REBASE_PURE_F" > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"; }
 unverified_edited_first() {
   grep -Eq 'CHƯA XÁC MINH — [0-9]+ file test đã có bị sửa|UNVERIFIED — [0-9]+ existing test files? (was|were) edited' <<<"$3" || return 1
   local n
@@ -339,18 +341,19 @@ rebuild_or_rebase() {
     [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
       "train-result for PR #${p}: ${why}${det:+
 ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
-    card_move "$k" Blocked
-    return
+    card_move "$k" Blocked; local brc=$?
+    [ "$brc" -ne 0 ] || rebase_pure_drop "$p"
+    return "$brc"
   fi
   if [ "$kind" = rebase-pure ]; then
     local rn
     rn=$(awk -v p="$p" '$1 == p {print $2; exit}' "$REBASE_PURE_F" 2>/dev/null || true); rn=$(( ${rn:-0} + 1 ))
     if [ "$rn" -gt "$REBASE_PURE_MAX" ]; then
       [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "pure rebase ceiling ${REBASE_PURE_MAX} reached: main keeps moving past this PR's approval"         "PR #${p} needed ${rn} pure rebases (${why})" "a person looks at why main keeps outrunning this card, then drags it to Ready"
-      card_move "$k" Blocked
-      return
+      card_move "$k" Blocked; local prc=$?
+      [ "$prc" -ne 0 ] || rebase_pure_drop "$p"
+      return "$prc"
     fi
-    { awk -v p="$p" '$1 != p' "$REBASE_PURE_F" 2>/dev/null || true; echo "$p $rn"; } > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"
   fi
   if [ "$kind" = rebuild ]; then
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
@@ -364,6 +367,10 @@ Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "wha
 root-cause-hash: ${rch}}" || true
   else
     add_label "$k" "loop:rebase" || return 1
+    # Count the pure rebase only now that its label is on: a failed add_label is routed again and must not count twice.
+    if [ "$kind" = rebase-pure ]; then
+      { awk -v p="$p" '$1 != p' "$REBASE_PURE_F" 2>/dev/null || true; echo "$p $rn"; } > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"
+    fi
     # R9: a pure rebase carries no root-cause-hash line (R2); a conflict does.
     rhl=""; { [ "$kind" != rebase-pure ] && [ -n "$rch" ]; } && rhl=$'\nroot-cause-hash: '"${rch}"
     LABEL_DONE=1
@@ -421,7 +428,7 @@ attempt_retry() {
 Next: a person looks at why, then labels the PR ${LABEL} again${k:+ (card #$k is Blocked)}" || true
   # Trần: PR rời hàng dù card_move / tra thẻ lỗi, để không route lại vô hạn mỗi tick.
   [ "$ok" -eq 0 ] || say "PR #${p}: moving its card to Blocked failed too; the PR leaves the queue anyway (comment above)"
-  unlabel "$p"; attempt_clear "$p"
+  unlabel "$p"; attempt_clear "$p"; rebase_pure_drop "$p"
 }
 # route_one <PR> <kết quả>: một train-result. Nhãn chỉ gỡ khi mọi bước bắt buộc của nhánh trả 0; bước nào lỗi (lỗi đọc qua read_failed)
 # thì giữ nhãn, ghi merge-queue.pending và tính một lần thử (halt 79 thì không tính): lượt sau route lại từ pending, chỉ làm lại các bước
@@ -650,6 +657,7 @@ Next: a fresh review of the new head, then a new approved-head and the ${LABEL} 
     return 0
   fi
   unlabel "$p"; attempt_clear "$p"
+  [ "$res" != merged ] || rebase_pure_drop "$p"
 }
 # ---- train nền theo PR (#676) -----------------------------------------------------------------------------------------------------------
 # merge-queue.inflight: "<PR> <head> <ref> <issue đóng|0> <pid> <dir>" mỗi dòng — train của PR đang chạy nền (pid = subshell phóng nó),

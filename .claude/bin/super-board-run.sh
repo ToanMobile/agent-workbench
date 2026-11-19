@@ -2507,7 +2507,8 @@ qa_apply_report() {
   rsha=$(printf '%s' "$head" | sed -nE 's/.*@ ?([0-9a-f]{7,40}).*/\1/p' | head -1)
   if [ -n "$rsha" ]; then
     phead=$(issue_pr_head "$issue" 2>/dev/null || true)
-    case "$phead" in "$rsha"*) ;; *) [ -z "$phead" ] || [ "${rsha#"$phead"}" != "$rsha" ] || return 1 ;; esac
+    [ -n "$phead" ] || return 1   # head unreadable: the verdict cannot be proven fresh, so no routing (audit 19/11)
+    case "$phead" in "$rsha"*) ;; *) [ "${rsha#"$phead"}" != "$rsha" ] || return 1 ;; esac
   fi
   item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
   [ -n "$item_id" ] || return 1
@@ -2519,6 +2520,7 @@ qa_apply_report() {
     [ "$cur" -lt "${REBUILD_CAP:-2}" ] || return 1
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
     gh_checkpoint
+    gh_write_once label create "loop:rebuild-$((cur + 1))" --color BFD4F2 --force >/dev/null 2>&1 || return 1   # a repo without the label would fail the edit below (audit 19/11)
     gh_write_once issue edit "$issue" --add-label "loop:rebuild-$((cur + 1))" ${rm[@]+"${rm[@]}"} >/dev/null 2>&1 || return 1
     target=Ready
   fi
