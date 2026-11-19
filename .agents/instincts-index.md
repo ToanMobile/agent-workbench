@@ -108,6 +108,6 @@
 - [INSTINCT-108] Gỡ một dòng hook theo prefix làm mất luôn lưới an toàn đi chung dòng đó — `sed -n '858,865p' .agents/instincts.md`
 - [INSTINCT-110] Lệnh hook dạng mới trong hooks.json làm health, gate và uninstall cùng đánh giá sai ở repo ngoài… — `sed -n '866,873p' .agents/instincts.md`
 - [INSTINCT-111] A signing helper that runs an LLM auditor must not run it inside the code it audits, and the signed… — `sed -n '874,881p' .agents/instincts.md`
-- [INSTINCT-113] Đổi profile kit mà không commit file sinh ra làm bẩn mọi worktree — `sed -n '882,887p' .agents/instincts.md`
+- [INSTINCT-113] Đổi profile kit mà không commit file sinh ra làm bẩn mọi worktree — `sed -n '882,889p' .agents/instincts.md`
 - [INSTINCT-112] Model mặc định trong code PM bị config máy ~/.antigravity-pm.json đè — `sed -n '890,894p' .agents/instincts.md`
 
