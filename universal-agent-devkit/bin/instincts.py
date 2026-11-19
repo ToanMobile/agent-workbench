@@ -143,10 +143,39 @@ def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=
     return "added", inst_id, entry
 
 
+def _git_path(*args: str) -> "Path | None":
+    res = subprocess.run(["git", *args], capture_output=True, text=True)
+    out = res.stdout.strip() if res.returncode == 0 else ""
+    return Path(out).resolve() if out else None
+
+
+def worktree_root(project: Path) -> Path:
+    """#1296: in trunk mode CLAUDE_PROJECT_DIR names the main checkout while the session runs in a linked
+    worktree of the same repo. A lesson must land in that worktree, never in main's tracked instincts.md.
+    Only that one shape redirects: the project must be the main checkout and cwd a linked worktree of it;
+    a project that is itself a linked worktree, another repo, or no repo keeps the project dir."""
+    top = _git_path("rev-parse", "--show-toplevel")
+    if not top or top == project:
+        return project
+    common = _git_path("rev-parse", "--git-common-dir")
+    gitdir = _git_path("rev-parse", "--git-dir")
+    if not common or not gitdir or gitdir == common:
+        return project  # cwd is a main checkout (or a bare layout), not a linked worktree
+    res = subprocess.run(["git", "-C", str(project), "rev-parse", "--git-dir", "--git-common-dir"],
+                         capture_output=True, text=True)
+    lines = res.stdout.split() if res.returncode == 0 else []
+    if len(lines) != 2:
+        return project
+    p_gitdir, p_common = ((project / x).resolve() for x in lines)
+    if p_gitdir == p_common and p_common == common:
+        return top
+    return project
+
+
 def project_dir() -> Path:
     env = os.environ.get("CLAUDE_PROJECT_DIR")
     if env and Path(env).is_dir():
-        return Path(env).resolve()
+        return worktree_root(Path(env).resolve())
     res = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     if res.returncode == 0 and res.stdout.strip():
         return Path(res.stdout.strip()).resolve()
