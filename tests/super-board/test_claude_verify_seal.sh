@@ -372,4 +372,30 @@ SK="$ROOT/.claude/skills/super-review/SKILL.md"
   && ! grep -q "the seal refuses the session holding the PR branch's worktree" "$SK"; } \
   && ok "f2 SKILL.md: test cũ bị sửa vẫn đi Antigravity; claude-verify chỉ cho thẻ board giao; bỏ lời hứa cũ" || fail "f2 SKILL.md"
 
+# ── g. (review round 1 @ 671f2b7) R1/R2: lượt build do agy (không hook, không env Claude) phải vào sổ kèm engine; thẻ có lượt build
+#    không phải Claude → claude-verify từ chối (fail closed), kể cả khi agy tự register reviewer rồi seal.
+H36=$(mkpr 36 'k = 36')
+reg build 36 b36; reg review 36 rev36
+SB_RUNNER_REGISTER=1 python3 "$CV" register --lane build --repo "$R" --issue 36 --session agy-b36 --engine antigravity; GA=$?
+reg review 36 agy-self-rev36   # agy tự ghi mình là reviewer SAU lượt build của nó
+report "$TMP/r-36.json" "$H36" "$BASE" '[]'
+seal agy-self-rev36 "$H36" "$TMP/r-36.json" issue-36-x
+{ [ "$GA" = 0 ]; } && ok "g0 register --engine antigravity ghi sổ" || fail "g0 rc=$GA"
+refused "g1 R1/R2 thẻ có lượt build agy (tự register reviewer) → seal từ chối" 2 "không phải Claude"
+# engine lạ → từ chối ghi (không im lặng coi là claude)
+SB_RUNNER_REGISTER=1 python3 "$CV" register --lane build --repo "$R" --issue 36 --session b36z --engine foo 2>/dev/null; GB=$?
+[ "$GB" != 0 ] && ok "g2 engine lạ bị từ chối khi register" || fail "g2 engine lạ vẫn ghi"
+# runner: nhánh agy ghi sổ builders (engine antigravity) TRƯỚC khi chạy agy
+mkdir -p "$TMP/home2"
+env -u SB_RUNNER_REGISTER HOME="$TMP/home2" REPO_ROOT_T="$R" SB_LIB_ONLY=1 bash -c '. "$1" || exit 9; set +e; REPO_ROOT="$REPO_ROOT_T"
+  agy_session_register build 37 "$2"' _ "$RS" "$TMP/w2.log" >/dev/null 2>&1
+grep -rq '"engine": "antigravity"' "$CLAUDE_VERIFY_HOME/builders" 2>/dev/null && ok "g3 runner agy_session_register ghi sổ builders engine antigravity" || fail "g3 runner không ghi sổ agy"
+awk '/agy_session_register "\$lane" "\$issue" "\$worker_log"/ { seen = NR } /exec nohup "\$SB_WORKER_WRAP" "\$HOME\/.local\/bin\/agy"/ { if (seen && NR - seen < 8) k = 1 } END { exit !k }' "$RS" \
+  && ok "g4 dispatch agy gọi agy_session_register trước khi exec" || fail "g4 dispatch agy không gọi agy_session_register"
+# R3: dạng `--` / env -u trước subcommand register vẫn bị hook chặn
+hook "python3 x/claude_verify.py -- register --lane review --repo . --issue 1 --session x"; GC=$?
+hook "env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID python3 x/claude_verify.py register --lane review --issue 1 --session x"; GD=$?
+hook "python3 x/claude_verify.py --repo . register --lane review --issue 1 --session x"; GE=$?
+{ [ "$GC" = 2 ] && [ "$GD" = 2 ] && [ "$GE" = 2 ]; } && ok "g5 hook: -- register / env -u / cờ trước register → chặn" || fail "g5 hook rc=$GC/$GD/$GE"
+
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }

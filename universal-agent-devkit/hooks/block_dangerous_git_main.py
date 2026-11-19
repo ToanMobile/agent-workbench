@@ -2393,6 +2393,15 @@ CV_REGISTER_MSG = "ghi sổ phiên claude-verify từ phiên agent"
 _CV_DECL = ("export", "declare", "typeset", "local", "readonly")
 
 
+def _cv_after(toks, j):
+    """Token ngay sau claude_verify.py, bỏ cờ `-x`/`--x` và giá trị của chúng (`--repo . register`, `-- register`): đủ để thấy subcommand."""
+    out = []
+    while j < len(toks) and len(out) < 8:
+        out.append(toks[j])
+        j += 1
+    return [t for t in out if not t.startswith("-")][:3]
+
+
 def _cv_register(text, depth=0, calls_cv=None):
     """True khi lệnh ghi sổ phiên claude-verify hoặc giả phiên reviewer (luật ở comment trên). calls_cv xét trên lệnh gốc, nên gán
     biến ở tầng ngoài còn claude_verify.py nằm trong `bash -c` vẫn bị bắt."""
@@ -2412,7 +2421,7 @@ def _cv_register(text, depth=0, calls_cv=None):
             return True
         if calls_cv and (t.startswith("CLAUDE_CODE_SESSION_ID=") or (t == "CLAUDE_CODE_SESSION_ID" and prev in _CV_DECL + ("unset",))):
             return True
-        if os.path.basename(t) == "claude_verify.py" and i + 1 < len(toks) and toks[i + 1] == "register":
+        if os.path.basename(t) == "claude_verify.py" and "register" in _cv_after(toks, i + 1):
             return True
         if depth < 3 and re.search(r"\s", t) and _cv_register(t, depth + 1, calls_cv):
             return True

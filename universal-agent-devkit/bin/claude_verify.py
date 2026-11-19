@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Biên bản duyệt chéo `claude-verify` (#1328): nguồn duyệt của merge queue ngoài antigravity-pm.
 
-  register --lane build|review --repo DIR --issue N --session SID   runner ghi sổ phiên TRƯỚC khi chạy worker (chỉ thêm, không xoá).
+  register --lane build|review --repo DIR --issue N --session SID [--engine claude|antigravity]   runner ghi sổ phiên TRƯỚC khi chạy worker (chỉ thêm, không xoá).
       Trong env phiên agent (CLAUDECODE=1 hoặc CLAUDE_CODE_SESSION_ID) → exit 2, trừ khi lệnh mang cờ SB_RUNNER_REGISTER=1 mà
       super-board-run.sh đặt inline; hook PreToolUse (block_dangerous_git_main.py) chặn lệnh Bash của agent gọi register hay mang cờ đó.
   seal --repo DIR --head SHA40 --report FILE --branch issue-N-…      exit 0 pass, 4 = có finding important, 2 = báo cáo/phiên bị từ
@@ -44,6 +44,7 @@ TASK_ID = re.compile(r"\ACV[0-9]{8}T[0-9]{6}-[0-9a-f]{12}-[0-9a-f]{6}\Z")
 SHA40 = re.compile(r"\A[0-9a-f]{40}\Z")
 SESSION = re.compile(r"\A[A-Za-z0-9._:-]{1,128}\Z")
 BRANCH = re.compile(r"\Aissue-([0-9]{1,9})(?:-[A-Za-z0-9._/-]{1,200})?\Z")
+ENGINES = ("claude", "antigravity")
 SEVERITIES = ("important", "nit", "pre-existing")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 MAX_BYTES = 2_000_000
@@ -109,22 +110,29 @@ def ledger_sessions(top, lane, issue):
 
 
 def ledger_rows(top, lane, issue):
-    """[(session, ts datetime)] theo thứ tự ghi; không có file = rỗng; dòng hỏng / ts sai dạng / lỗi đọc → Unchecked."""
+    """[(session, ts datetime)] theo thứ tự ghi; không có file = []; dòng hỏng / ts sai dạng / lỗi đọc → Unchecked."""
+    return [(s, t) for s, t, _ in _rows(top, lane, issue)]
+
+
+def _rows(top, lane, issue):
+    """[(session, ts, engine)]; dòng không có engine = claude (sổ cũ). Engine lạ → Unchecked (fail closed)."""
     path = _ledger(top, lane, issue)
     try:
         with open(path, encoding="utf-8") as fh:
             rows = [json.loads(line) for line in fh if line.strip()]
     except FileNotFoundError:
-        return set()
+        return []
     except (OSError, ValueError, RecursionError) as e:
         raise Unchecked(f"sổ {lane} hỏng ({e.__class__.__name__})") from None
     if not all(isinstance(r, dict) and isinstance(r.get("session"), str) and SESSION.fullmatch(r["session"]) for r in rows):
         raise Unchecked(f"sổ {lane} có dòng sai dạng")
+    if any(r.get("engine", "claude") not in ENGINES for r in rows):
+        raise Unchecked(f"sổ {lane} có engine lạ")
     try:
-        out = [(r["session"], datetime.datetime.fromisoformat(r["ts"])) for r in rows]
+        out = [(r["session"], datetime.datetime.fromisoformat(r["ts"]), r.get("engine", "claude")) for r in rows]
     except (KeyError, TypeError, ValueError):
         raise Unchecked(f"sổ {lane} có ts sai dạng") from None
-    if any(t.tzinfo is None for _, t in out):
+    if any(t.tzinfo is None for _, t, _ in out):
         raise Unchecked(f"sổ {lane} có ts thiếu múi giờ")
     return out
 
@@ -135,12 +143,12 @@ def agent_env():
     return agent and os.environ.get("SB_RUNNER_REGISTER") != "1"
 
 
-def register(top, lane, issue, session):
-    if lane not in ("build", "review") or not SESSION.fullmatch(session or "") or not 0 < int(issue) < 10 ** 9:
+def register(top, lane, issue, session, engine="claude"):
+    if engine not in ENGINES or lane not in ("build", "review") or not SESSION.fullmatch(session or "") or not 0 < int(issue) < 10 ** 9:
         raise Unchecked("register: lane/issue/session sai dạng")
     path = _ledger(top, lane, issue)
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    line = json.dumps({"session": session, "ts": datetime.datetime.now(datetime.timezone.utc).isoformat()}) + "\n"
+    line = json.dumps({"session": session, "engine": engine, "ts": datetime.datetime.now(datetime.timezone.utc).isoformat()}) + "\n"
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
         os.write(fd, line.encode())
@@ -170,6 +178,11 @@ def lock_builders(top, head):
 def session_problem(top, head, issue, reviewer, recorded_builders=()):
     """Lý do từ chối phiên reviewer của thẻ `issue`, hoặc None; lỗi kiểm → Unchecked."""
     build_rows = ledger_rows(top, "build", issue)
+    # Review vòng 1 (R1/R2): lượt build do engine không phải Claude (agy: không hook, không env phiên) không kiểm được "reviewer ≠ builder"
+    # và có thể tự register reviewer → thẻ đó không dùng được claude-verify (fail closed); đi Antigravity hoặc chủ repo duyệt.
+    other = sorted({e for _, _, e in _rows(top, "build", issue) if e != "claude"})
+    if other:
+        return f"thẻ #{issue} có lượt build không phải Claude ({', '.join(other)}): claude-verify không kiểm được phiên đó"
     builders = {s for s, _ in build_rows} | lock_builders(top, head) | set(recorded_builders)
     builders.discard("")
     if not builders:
@@ -370,6 +383,7 @@ def main(argv):
     g.add_argument("--repo", default=".")
     g.add_argument("--issue", required=True, type=int)
     g.add_argument("--session", required=True)
+    g.add_argument("--engine", choices=ENGINES, default="claude")
     s = sub.add_parser("seal")
     s.add_argument("--repo", default=".")
     s.add_argument("--head", required=True)
@@ -392,7 +406,7 @@ def main(argv):
             if agent_env():
                 print("claude-verify: register chỉ do runner gọi (env phiên agent: CLAUDECODE/CLAUDE_CODE_SESSION_ID)", file=sys.stderr)
                 return 2
-            register(os.path.realpath(a.repo), a.lane, a.issue, a.session)
+            register(os.path.realpath(a.repo), a.lane, a.issue, a.session, a.engine)
             return 0
         rc, why = seal(a.repo, a.head, a.report, a.branch)
     except Unchecked as e:

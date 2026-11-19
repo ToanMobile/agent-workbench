@@ -1638,6 +1638,22 @@ worker_session_args() {
   done
 }
 
+agy_session_register() {
+  # #1328 (review vòng 1, R1/R2): agy không chạy hook và không có env phiên Claude. Runner ghi lượt build của nó vào sổ builders kèm
+  # engine=antigravity TRƯỚC khi chạy; claude-verify thấy lượt build không phải Claude thì từ chối thẻ (fail closed).
+  # $1 = lane, $2 = issue, $3 = log worker. Chỉ lane build. Ghi sổ hỏng chỉ cảnh báo (ponytail: lượt agy không ghi được thì sổ thiếu nó;
+  # nâng cấp khi seal mode có signer của chủ repo).
+  local sid cv
+  [ "$1" = build ] || return 0
+  sid="agy-$(python3 -I -S -c 'import uuid; print(uuid.uuid4())' 2>/dev/null)" || return 0
+  for cv in "$SCRIPT_DIR/../../universal-agent-devkit/bin/claude_verify.py" "$SCRIPT_DIR/../../.agents/devkit/bin/claude_verify.py"; do
+    [ -f "$cv" ] || continue
+    SB_RUNNER_REGISTER=1 python3 -I "$cv" register --lane build --repo "${REPO_ROOT:-.}" --issue "$2" --session "$sid" --engine antigravity 2>>"$3" \
+      || log "⚠ claude-verify: could not record the antigravity build of #${2}; check the card by hand"
+    return 0
+  done
+}
+
 hold_for_open_pr() {
   # #556: $1 = issue, $2 = verdict JSON. Trả 0 khi đã giữ thẻ (caller không giao). Trả 1 khi không có conflictWith
   # để nhánh sequence cũ (waiting-on theo issue) chạy tiếp. Nhãn chỉ là dấu; sweep_file_wait hỏi lại preflight.
@@ -2048,6 +2064,7 @@ EOF
     # review of a card whose build worktree stays), never the main checkout by default. `exec` keeps `$!` = the wrapper's PID (the subshell
     # becomes it), the log path is absolute because the cd moves away from $REPO_ROOT. ponytail: a lane worktree the worker itself creates
     # later does not exist yet at dispatch, so a first build still starts in main; upgrade: create the lane worktree here with the DevKit.
+    agy_session_register "$lane" "$issue" "$worker_log"
     ( lane_wt="$REPO_ROOT/.claude/worktrees/issue-${issue}-${lane}"
       [ -d "$lane_wt" ] && cd "$lane_wt"
       exec nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-hydrogen-high --dangerously-skip-permissions -p "$prompt" ) >> "$worker_log_abs" 2>&1 &
