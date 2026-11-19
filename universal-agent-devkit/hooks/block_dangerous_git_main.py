@@ -2386,25 +2386,36 @@ CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_up
 CV_REGISTER_MSG = "ghi sổ phiên claude-verify từ phiên agent"
 
 
+_CV_DECL = ("export", "declare", "typeset", "local", "readonly")
+
+
 def _cv_register(text, depth=0):
+    """(T0005) Thêm: gán CLAUDE_CODE_SESSION_ID trong lệnh có gọi claude_verify.py (seal đọc reviewer từ biến này). Chỉ tách tiếp
+    chuỗi là mã shell (sau `-c` của shell, eval, xargs), không tách chuỗi dữ liệu như `commit -m "..."`."""
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
         toks = list(lex)
     except ValueError:
-        return bool(re.search(r"\bSB_RUNNER_REGISTER\s*=|claude_verify\.py['\"]?\s+['\"]?register\b", text))
+        return bool(re.search(r"\bSB_RUNNER_REGISTER\s*=|claude_verify\.py['\"]?\s+['\"]?register\b", text)
+                    or (re.search(r"\bCLAUDE_CODE_SESSION_ID\s*=", text) and "claude_verify" in text))
+    calls_cv = any(os.path.basename(t) == "claude_verify.py" for t in toks)
     for i, t in enumerate(toks):
-        if t.startswith("SB_RUNNER_REGISTER=") or (t == "SB_RUNNER_REGISTER" and i and toks[i - 1] in ("export", "declare", "typeset", "local", "readonly")):
+        prev = toks[i - 1] if i else ""
+        if t.startswith("SB_RUNNER_REGISTER=") or (t == "SB_RUNNER_REGISTER" and prev in _CV_DECL):
+            return True
+        if calls_cv and (t.startswith("CLAUDE_CODE_SESSION_ID=") or (t == "CLAUDE_CODE_SESSION_ID" and prev in _CV_DECL + ("unset",))):
             return True
         if os.path.basename(t) == "claude_verify.py" and i + 1 < len(toks) and toks[i + 1] == "register":
             return True
-        if depth < 3 and re.search(r"\s", t) and _cv_register(t, depth + 1):
+        code = prev == "-c" or re.fullmatch(r"-[a-z]*c", prev or "x") or os.path.basename(prev) in ("eval", "xargs")
+        if depth < 3 and code and re.search(r"\s", t) and _cv_register(t, depth + 1):
             return True
     return False
 
 
 reason = analyse(cmd) or (PENDING_FEED[0] if PENDING_FEED else None)
-if _cv_register(cmd):
+if not reason and _cv_register(cmd):
     reason = CV_REGISTER_MSG
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"

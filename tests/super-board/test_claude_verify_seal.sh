@@ -44,7 +44,7 @@ mkpr() {   # mkpr <N> <dòng thêm>: commit trên nhánh issue-N-x từ main, in
 }
 H1=$(mkpr 21 'x = danger(1)'); H2=$(mkpr 22 'y = 2'); H3=$(mkpr 23 'z = 3'); H4=$(mkpr 24 'w = 4'); H5=$(mkpr 25 'v = 5')
 H6=$(mkpr 26 'u = 6'); H7=$(mkpr 27 't = 7'); H8=$(mkpr 28 's = 8'); H9=$(mkpr 29 'r = 9'); H30=$(mkpr 30 'q = 30')
-H31=$(mkpr 31 'p = 31')
+H31=$(mkpr 31 'p = 31'); H33=$(mkpr 33 'o = 33')
 git -C "$R" worktree add -q "$TMP/wt1" issue-21-x
 printf '{"session_id":"builder-sess","heartbeat":0}' > "$(git -C "$TMP/wt1" rev-parse --absolute-git-dir)/devkit-session.lock"
 # Sổ phiên do runner ghi lúc giao việc: thẻ 21..29, 31 có builder + reviewer; thẻ 30 chỉ có reviewer (sổ builder rỗng).
@@ -101,6 +101,12 @@ report "$TMP/r-e.json" "$H2" "$BASE" '[]'
 seal fake-sess "$H2" "$TMP/r-e.json" issue-22-x; refused "d-B builder đặt CLAUDE_CODE_SESSION_ID giả (không có trong sổ reviewers) → từ chối" 2 "reviewers"
 report "$TMP/r-30.json" "$H30" "$BASE" '[]'
 seal reviewer-sess "$H30" "$TMP/r-30.json" issue-30-x; refused "d-empty sổ builder của thẻ rỗng → từ chối (fail closed)" 2 "builder"
+# T0005 major: reviewer của vòng review TRƯỚC (đã có trong sổ) không niêm phong được commit của vòng build SAU (builder đặt env = sid cũ)
+reg build 33 b33a; reg review 33 old-rev33; reg build 33 b33b
+report "$TMP/r-33.json" "$H33" "$BASE" '[]'
+seal old-rev33 "$H33" "$TMP/r-33.json" issue-33-x; refused "d-stale reviewer giao trước lượt build mới nhất → từ chối" 2 "lượt build"
+reg review 33 new-rev33; seal new-rev33 "$H33" "$TMP/r-33.json" issue-33-x
+[ "$SRC" = 0 ] && ok "d-stale2 reviewer giao sau lượt build mới nhất → seal được" || fail "d-stale2 rc=$SRC $(cat "$TMP/seal.err")"
 # git lỗi: shim làm `git worktree list` hỏng
 mkdir -p "$TMP/gitshim"; REALGIT=$(command -v git)
 printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = worktree ] && { echo "boom" >&2; exit 128; }; done\nexec "%s" "$@"\n' "$REALGIT" > "$TMP/gitshim/git"
@@ -287,6 +293,13 @@ hook "export SB_RUNNER_REGISTER=1"; HG=$?
 hook "bash -c 'python3 .agents/devkit/bin/claude_verify.py register --lane build --issue 1 --session x'"; HH=$?
 { [ "$HD" = 0 ] && [ "$HE" = 0 ] && [ "$HF" = 0 ] && [ "$HG" = 2 ] && [ "$HH" = 2 ]; } \
   && ok "e6b hook: grep/commit nhắc chữ → cho qua; export cờ, register trong bash -c → chặn" || fail "e6b hook rc=$HD/$HE/$HF/$HG/$HH $(cat "$TMP/hook.err")"
+# e6c (T0005): gán CLAUDE_CODE_SESSION_ID cho lệnh claude_verify.py → chặn; commit -m chỉ nhắc chữ "claude_verify.py register" → qua
+hook "CLAUDE_CODE_SESSION_ID=abc python3 .agents/devkit/bin/claude_verify.py seal --repo . --head x --report r --branch b"; HI=$?
+hook "export CLAUDE_CODE_SESSION_ID=abc; python3 .agents/devkit/bin/claude_verify.py seal --repo . --head x --report r --branch b"; HJ=$?
+hook "env CLAUDE_CODE_SESSION_ID=abc python3 .agents/devkit/bin/claude_verify.py seal --repo . --head x --report r --branch b"; HK=$?
+hook 'git commit -m "hook: chặn claude_verify.py register" -- universal-agent-devkit/hooks/block_dangerous_git_main.py'; HL=$?
+{ [ "$HI" = 2 ] && [ "$HJ" = 2 ] && [ "$HK" = 2 ] && [ "$HL" = 0 ]; } && ok "e6c hook: đặt CLAUDE_CODE_SESSION_ID cho claude_verify.py → chặn; commit -m nhắc chữ → qua" \
+  || fail "e6c hook rc=$HI/$HJ/$HK/$HL $(cat "$TMP/hook.err")"
 RS="$ROOT/.claude/bin/super-board-run.sh"
 grep -q 'SB_RUNNER_REGISTER=1 python3' "$RS" && ok "e7 runner tự đặt SB_RUNNER_REGISTER=1 inline cho lệnh register" || fail "e7 runner thiếu cờ inline"
 P_REV=$(grep -F 'The merge queue is on for this board' "$RS")

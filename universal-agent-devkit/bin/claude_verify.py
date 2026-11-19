@@ -105,6 +105,11 @@ def _ledger(top, lane, issue):
 
 def ledger_sessions(top, lane, issue):
     """Các session id trong sổ; không có file = rỗng; dòng hỏng / lỗi đọc → Unchecked."""
+    return {s for s, _ in ledger_rows(top, lane, issue)}
+
+
+def ledger_rows(top, lane, issue):
+    """[(session, ts datetime)] theo thứ tự ghi; không có file = rỗng; dòng hỏng / ts sai dạng / lỗi đọc → Unchecked."""
     path = _ledger(top, lane, issue)
     try:
         with open(path, encoding="utf-8") as fh:
@@ -115,7 +120,13 @@ def ledger_sessions(top, lane, issue):
         raise Unchecked(f"sổ {lane} hỏng ({e.__class__.__name__})") from None
     if not all(isinstance(r, dict) and isinstance(r.get("session"), str) and SESSION.fullmatch(r["session"]) for r in rows):
         raise Unchecked(f"sổ {lane} có dòng sai dạng")
-    return {r["session"] for r in rows}
+    try:
+        out = [(r["session"], datetime.datetime.fromisoformat(r["ts"])) for r in rows]
+    except (KeyError, TypeError, ValueError):
+        raise Unchecked(f"sổ {lane} có ts sai dạng") from None
+    if any(t.tzinfo is None for _, t in out):
+        raise Unchecked(f"sổ {lane} có ts thiếu múi giờ")
+    return out
 
 
 def agent_env():
@@ -166,8 +177,13 @@ def session_problem(top, head, issue, reviewer, recorded_builders=()):
         return "không rõ phiên reviewer"
     if reviewer in builders:
         return "phiên reviewer là phiên builder của thẻ: tự duyệt không tính"
-    if reviewer not in ledger_sessions(top, "review", issue):
+    reviews = [t for s, t in ledger_rows(top, "review", issue) if s == reviewer]
+    if not reviews:
         return f"phiên reviewer không có trong sổ reviewers của thẻ #{issue} (runner chưa giao review cho phiên này)"
+    # T0005: reviewer của vòng trước (sid đã lộ trong sổ/log worker) không duyệt được commit của lượt build sau nó.
+    builds = [t for _, t in ledger_rows(top, "build", issue)]
+    if builds and max(reviews) <= max(builds):
+        return f"phiên reviewer được giao trước lượt build mới nhất của thẻ #{issue}: chỉ reviewer giao sau lượt build đó mới duyệt được"
     return None
 
 
