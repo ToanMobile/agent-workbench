@@ -42,4 +42,30 @@ grep -q 'Worktree lesson two' "$TMP/wt/.agents/instincts.md" && ok "record_lesso
 # A plain main-checkout session still writes to main.
 cd "$TMP/main" && bash "$KIT" learn "Main lesson" >/dev/null 2>&1
 grep -q 'Main lesson' "$TMP/main/.agents/instincts.md" && ok "main checkout session still writes to main" || fail "main session regressed"
+# Audit follow-up: the project dir is a linked worktree but cwd is main -> still the worktree, never main.
+main_snap="$(cat "$TMP/main/.agents/instincts.md")"
+export CLAUDE_PROJECT_DIR="$TMP/wt"
+cd "$TMP/main" && bash "$KIT" learn "Reverse lesson" >/dev/null 2>&1
+grep -q 'Reverse lesson' "$TMP/wt/.agents/instincts.md" && ok "project=worktree, cwd=main: learn writes into the worktree" || fail "project=worktree, cwd=main: learn missed the worktree"
+[ "$(cat "$TMP/main/.agents/instincts.md")" = "$main_snap" ] && ok "project=worktree, cwd=main: main untouched" || fail "project=worktree, cwd=main: main dirtied"
+python3 - "$DEVKIT_DIR" "$TMP/wt" <<'PY'
+import importlib.util, sys
+from pathlib import Path
+devkit, wt = sys.argv[1], Path(sys.argv[2])
+sys.path.insert(0, f"{devkit}/bin")
+spec = importlib.util.spec_from_file_location("pfg", f"{devkit}/bin/post-fix-gate.py")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m.record_lesson(wt, "Reverse record lesson", "c", "p")
+PY
+grep -q 'Reverse record lesson' "$TMP/wt/.agents/instincts.md" && ok "record_lesson(worktree) from cwd=main stays in the worktree" || fail "record_lesson(worktree) from cwd=main moved away"
+[ "$(cat "$TMP/main/.agents/instincts.md")" = "$main_snap" ] && ok "record_lesson(worktree) leaves main untouched" || fail "record_lesson(worktree) dirtied main"
+
+# Unrelated cwd (other repo, or outside git) keeps the project dir.
+mkdir -p "$TMP/other" "$TMP/plain"
+(cd "$TMP/other" && git init -q .)
+export CLAUDE_PROJECT_DIR="$TMP/main"
+cd "$TMP/other" && bash "$KIT" learn "Other repo lesson" >/dev/null 2>&1
+grep -q 'Other repo lesson' "$TMP/main/.agents/instincts.md" && ok "cwd in another repo: project dir kept" || fail "cwd in another repo: project dir lost"
+cd "$TMP/plain" && bash "$KIT" learn "Outside git lesson" >/dev/null 2>&1
+grep -q 'Outside git lesson' "$TMP/main/.agents/instincts.md" && ok "cwd outside git: project dir kept" || fail "cwd outside git: project dir lost"
 [ "$FAILS" -eq 0 ]
