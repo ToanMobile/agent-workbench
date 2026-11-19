@@ -51,7 +51,8 @@ Options:
   -p, --profile <name>    Domain profile: ${PROFILES_AVAILABLE// / | } | none
                           (default: ask; with -y: detected from the domain)
   -a, --agents <list>     Comma-separated agents or 'all'
-                          Supported: claude, codex, gemini, cursor, all
+                          Supported: claude, codex, gemini, antigravity, cursor, all
+                          (gemini/antigravity also register the Antigravity guards in .agents/hooks.json)
                           (\`agents-md\`: AGENTS.md only, no tool directory)
   -m, --mode <mode>       Install mode: symlink | copy (default: symlink)
                           symlink = absolute links into this DevKit checkout (single machine);
@@ -163,7 +164,8 @@ if [ "$can_ask" = 0 ]; then
   if [ "$AGENTS" = "ask" ]; then
     kept=""
     grep -q ".claude/hooks/" "$TARGET_DIR/.claude/settings.json" 2>/dev/null && kept="$kept,claude"
-    { grep -q "agent_bridge" "$TARGET_DIR/.gemini/settings.json" 2>/dev/null || grep -q "universal-agent-devkit" "$TARGET_DIR/GEMINI.md" 2>/dev/null; } && kept="$kept,gemini"
+    { grep -q "agent_bridge" "$TARGET_DIR/.gemini/settings.json" 2>/dev/null || grep -q "universal-agent-devkit" "$TARGET_DIR/GEMINI.md" 2>/dev/null \
+      || grep -q "agent_bridge.sh antigravity" "$TARGET_DIR/.agents/hooks.json" 2>/dev/null; } && kept="$kept,gemini"
     grep -q "agent_bridge" "$TARGET_DIR/.codex/hooks.json" 2>/dev/null && kept="$kept,codex"
     { grep -q "agent_bridge" "$TARGET_DIR/.cursor/hooks.json" 2>/dev/null || [ -f "$TARGET_DIR/.cursor/rules/universal-agent-devkit.mdc" ]; } && kept="$kept,cursor"
     # AGENTS.md alone (no per-tool directory) must not grow into every tool on re-init.
@@ -329,10 +331,10 @@ IFS=',' read -ra _ags <<< "$AGENTS"
 for _ag in "${_ags[@]}"; do
   case "$(echo "$_ag" | tr '[:upper:]' '[:lower:]' | xargs)" in
     claude) json_inputs="$json_inputs .claude/settings.json .mcp.json" ;;
-    gemini|antigravity) json_inputs="$json_inputs mcp_config.json .gemini/settings.json" ;;
+    gemini|antigravity) json_inputs="$json_inputs mcp_config.json .gemini/settings.json .agents/hooks.json" ;;
     codex|chatgpt|openai) json_inputs="$json_inputs .codex/hooks.json" ;;
     cursor) json_inputs="$json_inputs .cursor/hooks.json" ;;
-    all) json_inputs="$json_inputs .claude/settings.json .mcp.json mcp_config.json .gemini/settings.json .codex/hooks.json .cursor/hooks.json" ;;
+    all) json_inputs="$json_inputs .claude/settings.json .mcp.json mcp_config.json .gemini/settings.json .codex/hooks.json .cursor/hooks.json .agents/hooks.json" ;;
   esac
 done
 # shellcheck disable=SC2086  # a list of fixed relative paths
@@ -624,15 +626,16 @@ fi
 # 5c. The same gates for the other agents that support hooks (OpenAI Codex, Gemini CLI,
 #     Cursor): hooks/agent_bridge.sh + the bridged hooks go to .agents/hooks/, and
 #     scripts/context/agent_hooks.py registers them in .codex/hooks.json, .gemini/settings.json
-#     and .cursor/hooks.json (only DevKit-owned entries are ever touched).
+#     .cursor/hooks.json and .agents/hooks.json (Antigravity) (only DevKit-owned entries are ever touched).
 #     agents-md is not here: AGENTS.md only, no directory of its own.
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   bridge_platforms=""
   for agent_item in "${AGENT_LIST[@]}"; do
     case "$(echo "$agent_item" | tr '[:upper:]' '[:lower:]' | xargs)" in
-      all) bridge_platforms="codex gemini cursor" ;;
+      all) bridge_platforms="codex gemini cursor antigravity" ;;
       codex|chatgpt|openai) bridge_platforms="$bridge_platforms codex" ;;
-      gemini|antigravity) bridge_platforms="$bridge_platforms gemini" ;;
+      # antigravity: Antigravity replaced Gemini CLI in the app repos (14/10), which are set up with "gemini".
+      gemini|antigravity) bridge_platforms="$bridge_platforms gemini antigravity" ;;
       cursor) bridge_platforms="$bridge_platforms cursor" ;;
     esac
   done
