@@ -231,7 +231,7 @@ fi  # end non-lib-only setup
 : "${WORKER_LOG_DIR:=/dev/null}"
 : "${INFLIGHT_DIR:=/dev/null}"
 : "${PROJECT_OWNER:=}" ; : "${PROJECT_NUMBER:=0}" ; : "${BOT_LOGIN:=}"
-: "${LOAD_HELD_TICK:=0}" ; : "${TICK_SEQ:=0}" ; : "${REAPED_THIS_TICK:=0}" ; : "${BOARD_SYNCED:=0}"
+: "${LOAD_HELD_TICK:=0}" ; : "${RATE_LIMITED_TICK:=0}" ; : "${TICK_SEQ:=0}" ; : "${REAPED_THIS_TICK:=0}" ; : "${BOARD_SYNCED:=0}"
 
 # ───────────────────────────── helpers ─────────────────────────────
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$RUN_MANIFEST"; }
@@ -258,6 +258,7 @@ fetch_project_items() {
       SKIPPED_FOREIGN="${foreign:-${SKIPPED_FOREIGN:-[]}}"
       return 0
     fi
+    [ "$rc" -ne 68 ] || return 68   # #1311: rate limit already backed off in github-read: no 10/30/60 s re-reads on top
     case "$RUNNER_HALT_CODES" in *" $rc "*) return "$rc" ;; esac
     [ -n "$d" ] || break
     case "$d" in *[!0-9]*|?????*) d=10 ;; esac   # giá trị lạ (1.5, chữ, quá dài): dùng 10s, không để lỗi số học giết runner
@@ -278,6 +279,12 @@ tick_read_failed() {
   local rc="$1" max="${SB_READ_SKIP_MAX:-5}"
   case "$max" in ''|*[!0-9]*|????*) max=5 ;; esac   # giá trị lạ không được lặng lẽ tắt trần
   case "$RUNNER_HALT_CODES" in *" $rc "*) exit "$rc" ;; esac
+  if [ "$rc" -eq 68 ]; then   # #1311: rate limit is waiting on GitHub, not a broken read: never counts toward SB_READ_SKIP_MAX, never exits (exit => crash loop)
+    RATE_LIMITED_TICK=1
+    log "⚠ GitHub rate limit outlasted the backoff (exit 68) — skipping this tick, runner keeps going"
+    [ "${2:-}" = nosleep ] || tick_sleep "${TICK_SECONDS:-30}"
+    return 1
+  fi
   READ_SKIPS=$((READ_SKIPS + 1))
   if [ "$READ_SKIPS" -gt "$((10#$max))" ]; then
     log "✖ GitHub read failed ${READ_SKIPS} ticks in a row (rc=$rc) — exiting so the watchdog restarts the runner"
@@ -694,12 +701,26 @@ project_node_id() {
   echo "$PROJECT_NODE_ID"
 }
 
+RL_SKIP_UNTIL=0
+rate_limit_skip() {  # #1311: $1 = exit code of a GitHub read. 68 = rate limit outlasted the backoff: skip this card, never exit (exit => STATE=crashed => watchdog crash loop, #256 / INSTINCT-058)
+  [ "$1" -eq 68 ] || return 1
+  # R12: a 68 that came from the latch itself (issue_is_open fails fast while it is still armed) must not renew it, or the latch never expires and the board stays silent
+  if [ "$(date +%s)" -lt "${RL_SKIP_UNTIL:-0}" ]; then
+    RATE_LIMITED_TICK=1
+    return 0
+  fi
+  RL_SKIP_UNTIL=$(( $(date +%s) + ${SB_RATE_SKIP_SECONDS:-300} ))   # latch: the next cards fail fast instead of each waiting out a backoff
+  RATE_LIMITED_TICK=1
+  log "⚠ GitHub rate limit outlasted the backoff (exit 68) — skipping this tick for this card, runner keeps going"
+  return 0
+}
 issue_is_open() {
+  [ "$(date +%s)" -ge "${RL_SKIP_UNTIL:-0}" ] || return 68
   # $1 = issue number. Returns 0 when OPEN, 1 when CLOSED.
   # Unreadable is distinct from both OPEN and CLOSED: exit 79 halts the run.
   local state reason raw
   ISSUE_KEPT_CLOSED=0   # #1222: 1 when CLOSED and returned 0 only because it was not reopened — dispatch_lane must not start a lane
-  state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
+  state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || { state=$?; [ "$state" -eq 68 ] && return 68; return 79; }   # #1311: 68 = rate limit that outlasted the backoff: no halt, the caller skips the card (rate_limit_skip) and the next tick retries
   [ "$state" = "CLOSED" ] || return 0
   # T0054: thẻ mang nhãn ac-open đã merge một PR nhưng còn AC chưa chứng minh (merge gate gắn nhãn). Worker vẫn có thể
   # `gh issue close` nó; mọi đường reconcile CLOSED → Done đều qua đây, nên coi nó là OPEN (và mở lại issue) thay vì Done.
@@ -877,7 +898,7 @@ top_card_in_column() {
     if [ "$col" = "Review" ] && review_wait_cooldown "$issue"; then continue; fi   # #671: waiting review turn, rest before the next one
     local issue_rc=0
     issue_is_open "$issue" || issue_rc=$?
-    [ "$issue_rc" -le 1 ] || exit "$issue_rc"
+    [ "$issue_rc" -le 1 ] || { rate_limit_skip "$issue_rc" && continue; exit "$issue_rc"; }
     if [ "$issue_rc" -ne 0 ]; then
       log "reconciled closed #${issue} -> Done (was '${col}') — dispatching 0 workers for it"
       set_card_status "$item_id" "Done" || { gh_checkpoint; log "  ↳ reconcile of #${issue} could not be written to the board"; return 1; }
@@ -1577,7 +1598,7 @@ review_train_batch() {
     early_backoff "$issue" Review && continue
     local open_rc=0
     issue_is_open "$issue" || open_rc=$?   # rc 1 = đã đóng (bỏ qua); lỗi đọc >1 đi lên như top_card_in_column, không nuốt
-    [ "$open_rc" -le 1 ] || exit "$open_rc"
+    [ "$open_rc" -le 1 ] || { rate_limit_skip "$open_rc" && continue; exit "$open_rc"; }
     [ "$open_rc" -eq 0 ] || continue
     row=$(review_approved_head "$issue") || continue
     rows="${rows}${issue} ${row}"$'\n'; n=$((n + 1))
@@ -1681,6 +1702,8 @@ preflight_gate() {
   out=$(SB_STALE_DRAFT_DAYS="${stale:-3}" bash "$pf" --repo "$repo" --issues "$issues" --inflight "$inf" --cap "${cap:-0}" 2>>"$RUN_MANIFEST") || rc=$?
   rm -f "$inf"
   if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
+  # #1311: 68 = rate limit outlasted the backoff: preflight is blind, so no dispatch; the card stays Ready and the next tick retries.
+  if [ "$rc" -eq 68 ]; then log "preflight #${issue}: GitHub rate limit (exit 68) — not dispatched, stays Ready, retrying next tick"; return 1; fi
   if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
   v=$(printf '%s' "$out" | jq -c --arg n "$issue" '.[$n] // empty' 2>/dev/null)
   [ -n "$v" ] || { log "⚠ preflight returned no verdict for #${issue} — dispatching without it"; return 0; }
@@ -1902,7 +1925,7 @@ dispatch_lane() {
   gh_checkpoint
   local issue_rc=0
   issue_is_open "$issue" || issue_rc=$?
-  [ "$issue_rc" -le 1 ] || exit "$issue_rc"
+  [ "$issue_rc" -le 1 ] || { rate_limit_skip "$issue_rc" && return 0; exit "$issue_rc"; }
   if [ "$issue_rc" -ne 0 ] || [ "${ISSUE_KEPT_CLOSED:-0}" = 1 ]; then   # #1222: still CLOSED (ac-open not reopened) is no reason to build
     log "skip dispatch lane=${lane} issue=#${issue} — issue is CLOSED"
     return 0
@@ -2242,6 +2265,8 @@ record_cycle_progress() {
   # Returns 0 = keep running, 1 = halt (runaway).
   # $1 = the current done signature (injected so tests need no board).
   local cur="$1"
+  # R13: start-up could not read the board (rate limit), so PREV_DONE_SIG is a placeholder: adopt the first real signature as the baseline instead of counting every Done card as landed
+  if [ "$PREV_DONE_SIG" = "@unread" ]; then PREV_DONE_SIG="$cur"; return 0; fi
   # Đang hoãn giao việc sau RUNAWAY: không giao gì thì không tính là một chu kỳ không tiến triển.
   dispatch_paused && return 0
   if [ "$cur" != "$PREV_DONE_SIG" ]; then
@@ -2263,6 +2288,10 @@ record_cycle_progress() {
   fi
   # #530: máy quá tải và chưa có worker thì im lặng không phải runaway.
   if [ "${ACTIVE_WORKERS:-0}" -eq 0 ] && [ "${LOAD_HELD_TICK:-0}" = 1 ]; then
+    return 0
+  fi
+  # #1311: tick bị GitHub rate limit (đọc board/thẻ lùi hết) chưa đọc được gì: không tính là chu kỳ không tiến triển.
+  if [ "${ACTIVE_WORKERS:-0}" -eq 0 ] && [ "${RATE_LIMITED_TICK:-0}" = 1 ]; then
     return 0
   fi
   NO_PROGRESS_CYCLE_COUNT=$((NO_PROGRESS_CYCLE_COUNT + 1))
@@ -2905,7 +2934,7 @@ reclaim_stranded_building() {
     # #254: builder đóng issue khi AC đã đạt sẵn trên main (không PR) — thẻ đóng ở Building đi thẳng Done, không quay về Ready.
     local issue_rc=0
     issue_is_open "$issue" || issue_rc=$?
-    [ "$issue_rc" -le 1 ] || exit "$issue_rc"
+    [ "$issue_rc" -le 1 ] || { rate_limit_skip "$issue_rc" && continue; exit "$issue_rc"; }
     if [ "$issue_rc" -eq 1 ]; then
       if set_card_status "$item_id" "Done"; then
         gh_checkpoint
@@ -3033,9 +3062,11 @@ startup_reconcile() {
   QA_PID=""; QA_ISSUE=""; QA_EXTRA=""
   REVIEW_PID=""; REVIEW_ISSUE=""; REVIEW_EXTRA=""
   adopt_live_locks
-  gh_rate_guard
-  fetch_project_items
-  reclaim_stranded_building; fetch_project_items
+  # #1311: 68 = the quota read hit the rate limit past the backoff: log it and go on (the ticks guard again), never die on it (set -e => STATE=crashed)
+  gh_rate_guard || { rc=$?; [ "$rc" -eq 68 ] || exit "$rc"; RATE_LIMITED_TICK=1; log "⚠ GitHub rate limit at start-up (exit 68) — quota read skipped, the ticks retry"; }
+  # #1311: 68 = rate limit outlasted the backoff: skip the start-up reclaim (the ticks and the mid-run reclaim retry), never die on it
+  fetch_project_items || { rc=$?; [ "$rc" -eq 68 ] || exit "$rc"; RATE_LIMITED_TICK=1; [ -n "${PROJECT_ITEMS_JSON:-}" ] || { PROJECT_ITEMS_JSON='{"items":[],"totalCount":0}'; STARTUP_BOARD_UNREAD=1; }; log "⚠ GitHub rate limit at start-up (exit 68) — start-up reclaim skipped, the ticks retry"; return 0; }
+  reclaim_stranded_building; fetch_project_items || { rc=$?; [ "$rc" -eq 68 ] || exit "$rc"; RATE_LIMITED_TICK=1; return 0; }
   # Sweep sau reap/adopt: lock của lane còn sống đã rõ.
   sweep_merged_lanes
   RECLAIM_BUILDING=""
@@ -3259,7 +3290,7 @@ sweep_closed_cards() {
     fi
     issue_locked "$n" && continue
     rc=0; issue_is_open "$n" || rc=$?
-    [ "$rc" -le 1 ] || exit "$rc"
+    [ "$rc" -le 1 ] || { rate_limit_skip "$rc" && continue; exit "$rc"; }
     [ "$rc" -eq 1 ] || continue
     if ! SB_CARD_BLOCKING=1 set_card_status "$item" "Done"; then
       gh_checkpoint
@@ -3393,7 +3424,7 @@ EOF
 startup_migrate_waiting() {
   local items="" out rc=0 moved
   # startup_reconcile vừa đọc board; cache rỗng (lần đọc đó hỏng) → helper tự đọc board, không truyền --items rỗng
-  if [ -n "${PROJECT_ITEMS_JSON:-}" ]; then
+  if [ -n "${PROJECT_ITEMS_JSON:-}" ] && [ "${STARTUP_BOARD_UNREAD:-0}" != 1 ]; then   # R13: the placeholder board is not a read
     items=$(mktemp "${TMPDIR:-/tmp}/sb-waiting-items.XXXXXX") || { log "⚠ waiting-on migrate: mktemp failed — skipped until the next start"; return 0; }
     # set -e ở top-level: ghi hỏng (đĩa đầy) không được giết runner lúc khởi động — để helper tự đọc board
     printf '%s' "$PROJECT_ITEMS_JSON" > "$items" || { rm -f "$items"; items=""; }
@@ -3591,7 +3622,7 @@ pull_backlog_cards() {
     [ "$want" -gt 0 ] && [ "$tried" -lt 20 ] || break
     tried=$((tried + 1))
     issue_rc=0; issue_is_open "$issue" || issue_rc=$?
-    [ "$issue_rc" -le 1 ] || exit "$issue_rc"
+    [ "$issue_rc" -le 1 ] || { rate_limit_skip "$issue_rc" && continue; exit "$issue_rc"; }
     if [ "$issue_rc" -ne 0 ]; then
       if set_card_status "$item_id" "Done"; then
         log "backlog pull: #${issue} is CLOSED -> Done (not pulled)"; moved=0
@@ -3600,7 +3631,7 @@ pull_backlog_cards() {
       fi
       continue
     fi
-    body=$(backlog_issue_body "$issue") || exit $?
+    body=$(backlog_issue_body "$issue") || { brc=$?; rate_limit_skip "$brc" && continue; exit "$brc"; }
     gaps=$(printf '%s\n' "$body" | backlog_ticket_gaps)
     if [ -n "$gaps" ]; then
       stamp="${gaps}:$(printf '%s' "$body" | cksum | cut -d' ' -f1)"
@@ -4004,6 +4035,7 @@ log "initial Ready count: $INITIAL_READY"
 
 # Landed-work baseline (issue #8). Progress is a change in this set, not lane state.
 PREV_DONE_SIG=$(done_signature)
+[ "${STARTUP_BOARD_UNREAD:-0}" != 1 ] || PREV_DONE_SIG="@unread"
 INITIAL_DONE_SIG="$PREV_DONE_SIG"
 [ "${SB_WATCHDOG_START:-0}" = "1" ] || NO_PROGRESS_CYCLE_COUNT=0   # watchdog khởi động lại: đã nạp từ bản ghi ở trên; khởi động tường minh đếm từ 0, không thừa hưởng môi trường người gọi
 
@@ -4011,6 +4043,7 @@ while true; do
   refresh_run_paths
   # #530: mỗi vòng một mốc tải mới. Cờ hoãn của vòng trước không được kéo sang.
   LOAD_HELD_TICK=0
+  RATE_LIMITED_TICK=0   # #1311: same, per tick (set by tick_read_failed / rate_limit_skip, read by record_cycle_progress)
   TICK_SEQ=$(( ${TICK_SEQ:-0} + 1 ))
   REAPED_THIS_TICK=0
   # Stop marker xuất hiện giữa chừng (super-board-stop.sh không kill được runner này, hoặc watchdog vừa khởi động nó

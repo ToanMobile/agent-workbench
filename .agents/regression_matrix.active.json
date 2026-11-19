@@ -2824,6 +2824,21 @@
       ]
     },
     {
+      "component": "android-dexscan-app-package",
+      "watch_files": [
+        "universal-agent-devkit/profiles/android/scripts/qa/dexscan.py",
+        "universal-agent-devkit/tests/verification/test_dexscan_app_package.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-DEXSCAN-PKG-01",
+          "name": "dexscan --app-package bytecode caller filtering",
+          "command": "bash universal-agent-devkit/tests/verification/test_dexscan_app_package.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-waiting-on-skip-619",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
@@ -4185,6 +4200,28 @@
       ]
     },
     {
+      "component": "antigravity-hooks-lifecycle",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/bin/tree_fp.py",
+        "universal-agent-devkit/bin/parity_check.py",
+        "universal-agent-devkit/bin/agent-health.py",
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/hooks/agent_bridge.sh",
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/tests/verification/test_antigravity_hooks_lifecycle.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-AG-LIFECYCLE-01",
+          "name": "Antigravity .agents/hooks.json state, parity/health, manage_task bridge",
+          "command": "bash universal-agent-devkit/tests/verification/test_antigravity_hooks_lifecycle.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "merge-gate-no-stale-verify-1012",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
@@ -4731,6 +4768,22 @@
           "id": "REG-1265-ACTIVE-PROFILE-CLEAN-01",
           "name": "#1265: agent-config.py, install.sh và worktree add --lane=review giữ sạch .agents/active-profile.json (không làm bẩn updated_at/newline), dispatch audit ghi được Pham vi:",
           "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_active_profile_clean.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-audit-deleted-test-1323",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/governance/approve_tests.py",
+        "universal-agent-devkit/tests/gates/test_gate_audit_deleted_test.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1323-GATE-AUDIT-DELETED-TEST-01",
+          "name": "#1323: audit pass (biên bản PM có phạm vi / trailer) duyệt test đã xoá khi cây đã audit cũng không có file; xoá không audit, xoá sau audit, ngoài phạm vi vẫn chặn; sửa test vẫn đòi blob khớp auditedHead",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_audit_deleted_test.sh",
           "parallel_safe": true
         }
       ]

@@ -72,7 +72,7 @@ for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
         sys.path.insert(0, _sub_path)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
-from instincts import append_lesson, md_escape  # noqa: E402
+from instincts import append_lesson, md_escape, worktree_root  # noqa: E402
 # Who edited an existing test: the rule hooks/testsourceset_gate.sh scopes its compile with.
 import session_authorship  # noqa: E402
 
@@ -948,7 +948,7 @@ def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = Fa
     for sha in res.stdout.split():                    # newest first
         ok, note = _push_gate().approved(root, f"{sha}^!")
         m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None   # `antigravity <task-id>`
-        head = _push_gate().trailer_head(root, m.group(1), m.group(2), sha) if m else None
+        head = _push_gate().audited_head(root, m.group(2)) if m else None
         # auditedHead trước `since` (task cũ, commit rỗng ở nhánh phụ gộp vào range) kéo base lùi về cây yếu cũ: không duyệt.
         if head and _push_gate().head_after(root, since, head):
             base = sha
@@ -1154,13 +1154,25 @@ def _on_audit_chain(top, ch, sha) -> bool:
     return _FP_CHAIN_MEMO[key]
 
 
+def path_absent(p) -> bool:
+    """#1323: True chỉ khi đường dẫn chắc chắn không có (ENOENT / ENOTDIR). EACCES hay lỗi khác → False (coi như còn file, không duyệt
+    như test đã xoá). Đo 19/11 trên macOS: file dưới thư mục chmod 0 thì os.path.lexists trả False, os.lstat ném PermissionError."""
+    try:
+        os.lstat(p)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def audit_covers(top, prefix, project_root, f, head) -> tuple:
     """(True, "") khi biên bản audit có auditedHead `head` duyệt được nội dung HIỆN TẠI của test `f` (đường dẫn so với project_root);
     (False, lý do) khác. Một luật cho mục approved_tests.json, trailer `Test-approved-by:` và `agent-kit approve-tests` (đợt 2 lane A),
     còn hiệu lực sau khi gộp main mới vào nhánh PR hay trong scratch merge gate (main + PR):
       1. head không là tổ tiên (hoặc chính) của trunk — cây đã nằm trên main là cây cũ;
       2. head nằm trên chuỗi audit của PR (_on_audit_chain): không nhận audit tới qua parent thứ hai;
-      3. blob hiện tại == blob của f ở head;
+      3. blob hiện tại == blob của f ở head; test đã xoá (#1323): f không có ở cây hiện tại VÀ không có ở head;
       4. mọi audit pass khác của repo trên chuỗi đó mà không là tổ tiên của head (mới hơn) có cùng blob — chỉ audit mới nhất được dùng,
          chép lùi về bản đã audit trước khi test được làm mạnh không qua (replay);
       5. blob của f ở TIP nhánh đích == blob ở merge-base(head, trunk): main không đổi chính file đó kể từ lúc audit, kể cả khi PR
@@ -1179,10 +1191,18 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
     if not _on_audit_chain(top, ch, head):
         return False, (f"auditedHead {h10} không nằm trên chuỗi first-parent của PR (audit tới qua merge nhánh khác / cây khác): "
                        "cần audit lại")
-    rc_c, cur = _git_out(top, "hash-object", "--", str(Path(project_root) / f))
-    rc_h, at_head = _git_out(top, "rev-parse", "--verify", "-q", f"{head}:{prefix}{f}")
-    if rc_c != 0 or not cur or rc_h != 0 or at_head != cur:
-        return False, f"nội dung khác cây đã audit (auditedHead {h10})"
+    if not path_absent(Path(project_root) / f):
+        rc_c, cur = _git_out(top, "hash-object", "--", str(Path(project_root) / f))
+        rc_h, at_head = _git_out(top, "rev-parse", "--verify", "-q", f"{head}:{prefix}{f}")
+        if rc_c != 0 or not cur or rc_h != 0 or at_head != cur:
+            return False, f"nội dung khác cây đã audit (auditedHead {h10})"
+    else:
+        # #1323: test đã xoá — duyệt khi cây đã audit cũng không có file (audit thấy việc xoá; phạm vi do nguồn gọi kiểm). Còn ở head
+        # = xoá sau audit. ls-tree: rc 0 + rỗng = không có file, rc khác 0 = lỗi git (không duyệt). cur "" = vắng mặt cho luật 4.
+        rc_h, at_head = _git_out(top, "ls-tree", head, "--", f"{prefix}{f}")
+        if rc_h != 0 or at_head:
+            return False, f"file đã xoá nhưng cây đã audit còn file này (auditedHead {h10}): cần audit lại"
+        cur = ""
     if top not in _APPROVAL_AUDITS:
         _APPROVAL_AUDITS[top] = _push_gate().audited_heads(top)
     for tid2, h2 in _APPROVAL_AUDITS[top]:
@@ -1191,7 +1211,12 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
         older = _is_ancestor(top, h2, head)
         if older:
             continue
-        rc2, b2 = _git_out(top, "rev-parse", "--verify", "-q", f"{h2}:{prefix}{f}") if older is False else (1, "")
+        if older is not False:
+            rc2, b2 = 1, ""
+        elif cur:
+            rc2, b2 = _git_out(top, "rev-parse", "--verify", "-q", f"{h2}:{prefix}{f}")
+        else:
+            rc2, b2 = _git_out(top, "ls-tree", h2, "--", f"{prefix}{f}")   # test đã xoá: audit mới hơn cũng phải không có file
         if rc2 != 0 or b2 != cur:
             return False, (f"có audit mới hơn trên nhánh ({tid2}, auditedHead {h2[:10]}) với nội dung khác: chỉ audit mới nhất "
                            "của nhánh được dùng")
@@ -1236,7 +1261,7 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
         for sha in res.stdout.split():
             ok, note = _push_gate().approved(root, f"{sha}^!")
             m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None
-            head = _push_gate().trailer_head(root, m.group(1), m.group(2), sha) if m else None
+            head = _push_gate().audited_head(root, m.group(2)) if m else None
             if head and m.group(1) not in agents:
                 audited.append((head, m.group(1), m.group(2)))
         # R11: an older trailer head whose test blob differs from a newer accepted head's is a replay of a weaker, superseded test.
@@ -1379,9 +1404,19 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
         try:
             mtimes[f] = os.stat(root / f).st_mtime
         except OSError:
-            pass                                  # deleted: nothing to bind an approval to
+            pass                                  # deleted: nothing to bind a user answer or json entry to
+    # #1323: a deleted test is approved only by an audit record (trailer / PM scoped record): audit_covers checks the audited
+    # tree has no such file either. No user answer or approved_tests.json entry (sha256 of content) can name a deleted file.
+    deleted = [f for f in paths if f not in mtimes and path_absent(root / f)]
+    if deleted:
+        for f, rv_tid in _trailer_cross_review(deleted, root).items():
+            CROSS_REVIEW[f] = rv_tid
+        for f, rv_tid in _pm_audit_cross_review([f for f in deleted if f not in CROSS_REVIEW], root, {}).items():
+            CROSS_REVIEW[f] = rv_tid
+    ok_deleted = [f for f in deleted if f in CROSS_REVIEW]
+    APPROVED_BY.update({f: "cross-review:" + CROSS_REVIEW[f][0] for f in ok_deleted})
     if not mtimes:
-        return paths, []
+        return [f for f in paths if f not in ok_deleted], ok_deleted
     appr_file = root / ".claude" / "audit-gate" / "approved_tests.json"
     approved_at = {}                              # path -> latest approving answer (epoch s)
     user_at = {}                                  # path -> latest approving answer of the user
@@ -1584,6 +1619,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
 
     ok = [f for f in paths if f in mtimes and approved_at.get(f, 0) >= mtimes[f]]
     APPROVED_BY.update({f: "user" if user_at.get(f, 0) >= mtimes[f] else "cross-review:" + CROSS_REVIEW[f][0] for f in ok})
+    ok += [f for f in ok_deleted if f not in ok]
     return [f for f in paths if f not in ok], ok
 
 
@@ -4081,7 +4117,7 @@ def check_anti_false_green(is_hardware_project: bool = False) -> tuple:
 def record_lesson(base_dir: Path, lesson: str, cause: str, prevention: str):
     """Same writer as `agent-kit learn` (bin/instincts.py): next [INSTINCT-NNN] id,
     a title already recorded is not added twice."""
-    instincts_file = base_dir / ".agents" / "instincts.md"
+    instincts_file = worktree_root(Path(base_dir).resolve()) / ".agents" / "instincts.md"
     try:
         status, inst_id, _ = append_lesson(instincts_file, lesson, cause=cause, rule=prevention,
                                            check="postfix-gate --run-tests")
@@ -4178,7 +4214,8 @@ DOC_NAMES = {"LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS"}
 # The agents' own harness config (.claude/settings*.json) is read by no project program either
 # (2026-09-29, Goods: a settings-only commit needed a full Unity gate to be pushed). A project that
 # does test it (a matrix rule watching the file) keeps that test: coverage comes from the matrix.
-AGENT_STATE_FILES = {".antigravity-pm.json", ".adb-denylist", ".claude/settings.json", ".claude/settings.local.json"}
+# Cấu hình harness của agent (.claude/settings*.json, .agents/hooks.json) không có code ứng dụng nào đọc, nhưng vẫn phải kiểm tĩnh dây nối hook.
+AGENT_STATE_FILES = {".antigravity-pm.json", ".adb-denylist", ".claude/settings.json", ".claude/settings.local.json", ".agents/hooks.json"}
 
 
 def needs_no_test(rel_file: str) -> bool:
@@ -4205,8 +4242,10 @@ def needs_no_test(rel_file: str) -> bool:
 
 # Exempt from regression SUITES above, not from every check (25/10): 11 of 11 app repos have no matrix rule watching
 # .claude/settings.json, so a commit that dropped the Stop hook wiring passed with none. run_settings_audit() checks it.
-SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json")
+SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json", ".agents/hooks.json")
 _AGENT_HEALTH = []
+_AG_BRIDGE_SCRIPT_RE = re.compile(r"agent_bridge\.sh\s+antigravity\s+\S+\s+([A-Za-z0-9_.-]+)")
+_AG_HOOK_PATH_RE = re.compile(r"(?:^|[\s\"'])hooks/([A-Za-z0-9_.-]+)")
 
 
 def _missing_hook_scripts(settings, exists) -> list:
@@ -4221,13 +4260,67 @@ def _missing_hook_scripts(settings, exists) -> list:
     return _AGENT_HEALTH[0].missing_hook_scripts(settings, exists)
 
 
+def _antigravity_hooks_problems(text, root: Path) -> list:
+    """Trả về [(vi, en)] cho lỗi dây nối guard Antigravity trong .agents/hooks.json; [] khi hợp lệ."""
+    if text is None:
+        return [("đã xoá: mọi guard Antigravity của dự án thôi chạy", "deleted: every Antigravity guard of the project stops running")]
+    try:
+        cfg = json.loads(text)
+    except ValueError as e:
+        return [(f"không phải JSON hợp lệ ({e})", f"not valid JSON ({e})")]
+    if not isinstance(cfg, dict):
+        return [("không phải một object JSON", "not a JSON object")]
+
+    kit_hooks = get_devkit_dir() / "hooks"
+    seen_guards = set()
+    missing_scripts = []
+    # Lệnh trong .agents/hooks.json chạy với cwd là thư mục .agents/, nên script cầu nối nằm dưới .agents/hooks/ hoặc nguồn kit
+    def _script_exists(name: str) -> bool:
+        return (root / ".agents" / "hooks" / name).exists() or (kit_hooks / name).is_file()
+
+    for entry in cfg.values():
+        if not isinstance(entry, dict):
+            return [("cấu trúc .agents/hooks.json sai dạng (mỗi mục phải là object theo event)", "malformed .agents/hooks.json (each entry must be an event object)")]
+        for ev, groups in entry.items():
+            if not isinstance(groups, list):
+                return [(f"khối event {ev} trong .agents/hooks.json phải là mảng", f"event {ev} in .agents/hooks.json must be a list")]
+            for grp in groups:
+                if not isinstance(grp, dict) or not isinstance(grp.get("hooks", []), list):
+                    return [(f"nhóm hook trong {ev} sai dạng", f"malformed hook group under {ev}")]
+                for h in grp.get("hooks", []):
+                    cmd = h.get("command") if isinstance(h, dict) and isinstance(h.get("command"), str) else ""
+                    if not cmd:
+                        continue
+                    refs = list(_AG_HOOK_PATH_RE.findall(cmd)) + list(_AG_BRIDGE_SCRIPT_RE.findall(cmd))
+                    for name in dict.fromkeys(refs):
+                        if not _script_exists(name) and name not in missing_scripts:
+                            missing_scripts.append(name)
+                    if ev == "PreToolUse":
+                        for g in ("block-dangerous-git.sh", "hardware_safety_gate.sh"):
+                            if g in cmd:
+                                seen_guards.add(g)
+
+    problems = []
+    if not {"block-dangerous-git.sh", "hardware_safety_gate.sh"}.issubset(seen_guards):
+        # Lưu ý: đòi hỏi đủ cả hai guard phá huỷ của DevKit trong PreToolUse tương tự rule giữ khối hooks của .claude/settings.json
+        problems.append(('thiếu guard PreToolUse bắt buộc (block-dangerous-git.sh / hardware_safety_gate.sh) — chạy lại agent-kit init',
+                         'missing required PreToolUse guards (block-dangerous-git.sh / hardware_safety_gate.sh) — re-run agent-kit init'))
+    for name in missing_scripts:
+        problems.append((f"hook chạy file không tồn tại: .agents/hooks/{name}",
+                         f"hook runs a file that does not exist: .agents/hooks/{name}"))
+    return problems
+
+
 def settings_problems(rel_file: str, text, root: Path) -> list:
-    """(vi, en) labels of what breaks the hook wiring in this content of .claude/settings.json or settings.local.json;
+    """(vi, en) labels of what breaks the hook wiring in this content of .claude/settings.json, settings.local.json or .agents/hooks.json;
     [] when sound. text None = the file is deleted. Shared with bin/push_gate.py, which passes the blob it pushes.
     settings.local.json usually holds permissions only, so it needs no hooks of its own (core-rules §3 must-allow).
     ponytail: settings.json must keep a non-empty "hooks" block, so a project that wires no Claude hook on purpose (the kit
     installed for other agents only) is refused any edit of it; key the rule on the base version having hooks when one shows up."""
-    is_main = rel_file.replace("\\", "/") == ".claude/settings.json"
+    clean = rel_file.replace("\\", "/")
+    if clean == ".agents/hooks.json":
+        return _antigravity_hooks_problems(text, root)
+    is_main = clean == ".claude/settings.json"
     if text is None:
         return [("đã xoá: mọi hook Claude Code của dự án thôi chạy", "deleted: every Claude Code hook of the project stops running")] if is_main else []
     try:
@@ -9998,6 +10091,9 @@ def main():
         else:
             rv, tid = CROSS_REVIEW.get(f, ("?", "?"))
             rv = _approval_reviewer_label(rv)
+            if path_absent(Path(get_project_dir()) / f):   # #1323: test đã xoá, cây đã audit cũng không có file
+                print(f"  • {GREEN}{tr(f'Test đã có bị xoá — duyệt chéo bởi {rv} (task {tid}), cây đã audit cũng không có file:', f'Existing test deleted — cross-reviewed by {rv} (task {tid}), the audited tree has no such file either:')}{RESET} {f}")
+                continue
             print(f"  • {GREEN}{tr(f'Test đã có bị sửa — duyệt chéo bởi {rv} (task {tid}), sha256 khớp nội dung hiện tại:', f'Existing test edited — cross-reviewed by {rv} (task {tid}), sha256 matches the current content:')}{RESET} {f}")
     for f, sha, why in APPROVAL_REJECTS:
         if f in tests_touched:
