@@ -77,7 +77,7 @@ Runner `scripts/testing/skill_eval.py` (run / grade / aggregate / compare / vali
 | II.A §3.1 | Hook `hook-augment` của codebase-memory trong settings người dùng (còn 7 khớp ở mỗi `~/.claude*/settings.json`): bỏ hoặc thu hẹp | cấu hình của người dùng; đo cũ 1,3 s mỗi Read/Grep |
 | II.A §3.3, §3.4, §3.6 | `REG-GAME-03` về lệnh full khi impacted chậm hơn; daemon cho cổng Pre-tool và `async` cho hook ghi sổ; `session_lock.sh` có cho Write ngoài checkout đi qua không | chưa kiểm: không đối chiếu lại với code sau trunk mode; §3.6 nới cổng nên cần người quyết |
 | II.A `.sandboxes/` | Thêm `.sandboxes/` vào `.gitignore` của GeelyEx2, OfficeReader, Goods, Neighbours (`grep sandbox .gitignore`: 0 khớp ở cả bốn; workbench đã có) | sửa từng repo, chủ repo |
-| REVIEW_GATE_OCR | Công tắc `REVIEW_GATE_OCR=full` (Đợt 31) chưa đặt trong `env` của `~/.claude*/settings.json` (0 khớp ở 4 file); mỗi lượt trừ credit LLM | bật hay không |
+| REVIEW_GATE_OCR | Đã đóng (#1332, 19/11): chế độ `REVIEW_GATE_OCR=full` và LLM của OCR đã gỡ; OCR chỉ còn delegate | không còn việc |
 | I.4 #2 | Mặc định Argon trong mã (mục 1.4) | |
 | f, g | Hai quyết định ở mục 3 f (hook cấp người dùng) và g (remote cho Neighbours + sao lưu dotfile) | |
 
