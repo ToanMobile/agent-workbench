@@ -106,5 +106,12 @@ grep -q "card move 13 Blocked" "$F/writes" && ! grep -q "card move 13 Ready" "$F
   && ok "real conflict at the cap -> Blocked, not Ready (the cap is the brake)" || fail "real conflict at cap not Blocked: $(cat "$F/writes")"
 grep -q "card move 12 Blocked" "$F/writes" && ok "real red at the cap still Blocked (not loosened)" || fail "red at cap not Blocked: $(cat "$F/writes")"
 
+# R2: a pure-rebase comment carries no root-cause-hash: a later red's hash is never compared against it (cur=0 would lift the cap).
+if [ -f "$F/issue-comment-11.txt" ] && grep -q "needs a rebase pass" "$F/issue-comment-11.txt" && ! grep -q "root-cause-hash:" "$F/issue-comment-11.txt"; then
+  ok "R2: rebase-pure comment has no root-cause-hash line"
+else
+  fail "R2: rebase-pure comment missing or carries a hash: $(cat "$F/issue-comment-11.txt" 2>/dev/null)"
+fi
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_queue_rebase_not_capped_1319: PASS"; exit 0; } || { echo "test_merge_queue_rebase_not_capped_1319: FAIL ($FAILS)"; exit 1; }

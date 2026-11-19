@@ -40,7 +40,14 @@ SB_APPROVED_HEAD_JQ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-a
 SB_AUDIT_CHECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-audit-check.py"          # #605: task_id ↔ biên bản audit
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
 # của script nên vẫn halt board. Không export: worker thừa hưởng nó thì một lệnh gõ sai của agent lại halt cả board.
-gh_checkpoint() { python3 "$SB_GITHUB_READ" --check || exit $?; }
+# #1322: halt 79 do một lần ĐỌC tạm thời được nhả bằng recover_read_halt (--resume, chỉ đọc); halt do GHI chưa rõ kết quả hoặc hết số lần thử vẫn thoát.
+gh_checkpoint() {
+  local rc=0
+  python3 "$SB_GITHUB_READ" --check || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  if [ "$rc" -eq 79 ] && [ "${CHECKPOINT_RECOVER:-1}" = 1 ] && recover_read_halt; then return 0; fi
+  exit "$rc"
+}
 gh_write_once() {
   gh_checkpoint
   # #190: comment ghi chưa rõ kết quả → kèm cách đọc lại. Marker là token DUY NHẤT gắn vào cuối body (comment HTML ẩn): comment
@@ -785,7 +792,7 @@ ready_card_held() {
   if [ "$rc" -ne 0 ]; then
     log "ready_card_held #${issue}: github-read exit ${rc}: $(tail -n 1 "$errf" | cut -c1-300)"
     rm -f "$errf"
-    [ "$rc" -eq 79 ] && exit 79
+    if [ "$rc" -eq 79 ]; then recover_read_halt && return 0; exit 79; fi   # #1322: read halt released -> hold this tick, retry next
     return 1
   fi
   rm -f "$errf"
@@ -1704,7 +1711,11 @@ preflight_gate() {
   fi
   out=$(SB_STALE_DRAFT_DAYS="${stale:-3}" bash "$pf" --repo "$repo" --issues "$issues" --inflight "$inf" --cap "${cap:-0}" 2>>"$RUN_MANIFEST") || rc=$?
   rm -f "$inf"
-  if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
+  if [ "$rc" -eq 79 ]; then
+    log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"
+    recover_read_halt && return 1   # #1322: read halt released -> not dispatched this tick, retried next
+    exit 79
+  fi
   if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
   v=$(printf '%s' "$out" | jq -c --arg n "$issue" '.[$n] // empty' 2>/dev/null)
   [ -n "$v" ] || { log "⚠ preflight returned no verdict for #${issue} — dispatching without it"; return 0; }
@@ -2441,7 +2452,7 @@ build_handed_to_qa() {
   builder_reported_since "$1" "$since" || return 1
   n=$(issue_comment_count "$1")
   [ -n "$n" ] || return 1
-  issue_last_comment "$1" "$n" | tr -d '\r' | grep -qiE '^Next:.*\bQA\b'
+  issue_last_comment "$1" "$n" | tr -d '\r' | grep -qiE '^Next:[[:space:]]*(→[[:space:]]*)?QA\b'
 }
 
 # #1318: worker QA kết thúc sạch, thẻ còn ở QA và comment mới nhất là `[qa] [report] ✅|❌`: áp kết luận đó thay vì giao lại QA.
@@ -2671,7 +2682,7 @@ EOF
       fi
     fi
     # #1318: QA worker that exited 0 with a new [qa] [report] but left the card in QA: apply the report's verdict (pass → Review, fail → Ready).
-    if [ "$lane" = qa ] && [ "$col" = QA ] && [ "$col" = "$from" ] && [ "$count" -gt "$c0" ] && worker_ended_clean "$wlog" \
+    if [ "$lane" = qa ] && [ "$col" = QA ] && { [ "$col" = "$from" ] || [ "$from" = Ready ]; } && [ "$count" -gt "$c0" ] && worker_ended_clean "$wlog" \
        && qa_apply_report "$issue" "$count"; then
       NOOP_MOVED=1
       rm -f "$f" 2>/dev/null || true
@@ -4045,7 +4056,9 @@ if [ "${SB_WATCHDOG_START:-0}" != "1" ]; then
 fi
 # #1038: halt without a saved read + only dead-worker locks → archived here (read-only proof); anything else stays halted below.
 python3 "$SB_GITHUB_READ" --auto-reconcile --inflight "$INFLIGHT_DIR" >&2 || true
+CHECKPOINT_RECOVER=0   # a halt left by an earlier run stays halted: only a halt raised inside this run is retried (#1322)
 gh_checkpoint
+CHECKPOINT_RECOVER=1
 
 # ───────────────────────────── preconditions ─────────────────────────────
 log "super-board run started${START_TAG} — config=${CONFIG_SLUG} base=${BASE_BRANCH} tick=${TICK_SECONDS}s max_workers=${MAX_WORKERS} no_progress_cycles=${NO_PROGRESS_CYCLES} max_dispatches=${MAX_DISPATCHES}"

@@ -28,17 +28,26 @@ import os, sys
 st = os.environ['STATE_FILE']
 n = int(open(st).read() or 0) if os.path.exists(st) else 0
 open(st, 'w').write(str(n + 1))
+halted = os.environ['STATE_FILE'] + '.halted'
+if '--check' in sys.argv:
+    if os.path.exists(halted):
+        sys.stderr.write('[github-read] HALTED\n'); sys.exit(79)
+    sys.exit(0)
 if '--resume' in sys.argv:
     if os.environ.get('MODE') == 'write':
         sys.stderr.write('[github-read] HALT: saved failure needs manual outcome reconciliation before restart\n'); sys.exit(79)
     if n < int(os.environ.get('FAILS_LEFT', '0')):
         sys.stderr.write('[github-read] HALT: gh: HTTP 504\n'); sys.exit(79)
+    if os.path.exists(halted): os.remove(halted)
     sys.exit(0)
+if os.path.exists(halted):
+    sys.stderr.write('[github-read] HALTED\n'); sys.exit(79)
 sys.exit(0)
 PY
 chmod +x "$GH"
 export SB_GITHUB_READ="$GH" STATE_FILE="$TMP/calls"
-reset() { : > "$TMP/log"; : > "$TMP/sleeps"; rm -f "$TMP/calls"; READ_SKIPS=0; HALT_RECOVERS=0; }
+reset() { : > "$TMP/log"; : > "$TMP/sleeps"; rm -f "$TMP/calls" "$TMP/calls.halted"; READ_SKIPS=0; HALT_RECOVERS=0; }
+halt() { : > "$TMP/calls.halted"; }
 run_failed() { ( tick_read_failed "$1" nosleep ) >/dev/null 2>&1; echo $?; }
 
 # A: 504 hai lần rồi đọc được -> runner không thoát (tick_read_failed trả 1 = bỏ tick), có lùi lại giữa các lần thử.
@@ -70,6 +79,21 @@ tries=$(cat "$TMP/calls" 2>/dev/null)
 reset; export MODE=read FAILS_LEFT=0
 rc=$(run_failed 10)
 [ "$rc" = 10 ] && [ ! -e "$TMP/calls" ] && ok "E: other halt codes still exit untouched" || fail "E: rc=$rc"
+
+# F (R3): gh_checkpoint chạm halt đọc tạm thời -> lùi lại, nhả bằng --resume, không thoát runner.
+reset; export MODE=read FAILS_LEFT=1; halt
+rc=$( ( gh_checkpoint ) >/dev/null 2>&1; echo $? )
+[ "$rc" = 0 ] && ok "F: gh_checkpoint on a transient read halt recovers (no runner exit)" || fail "F: gh_checkpoint exited rc=$rc"
+
+# G (R3): gh_checkpoint chạm halt do GHI chưa rõ kết quả -> vẫn thoát 79.
+reset; export MODE=write FAILS_LEFT=0; halt
+rc=$( ( gh_checkpoint ) >/dev/null 2>&1; echo $? )
+[ "$rc" = 79 ] && ok "G: gh_checkpoint on an uncertain-write halt still exits 79" || fail "G: rc=$rc"
+
+# H (R3): ready_card_held gặp 79 đọc tạm thời -> giữ thẻ tick này (return 0), không thoát.
+reset; export MODE=read FAILS_LEFT=0; halt
+rc=$( ( ready_card_held 5 PVTI_5; echo "held=$?" ) 2>/dev/null | tail -1 )
+[ "$rc" = "held=0" ] && ok "H: ready_card_held on a transient read halt holds the card and keeps the runner" || fail "H: got '$rc' (runner exited or card dispatched)"
 
 [ "$FAILS" -eq 0 ] && { echo "PASS test_runner_read_halt_recover_1322"; exit 0; }
 echo "FAIL test_runner_read_halt_recover_1322 ($FAILS)"; exit 1

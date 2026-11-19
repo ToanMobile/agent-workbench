@@ -306,7 +306,7 @@ rebuild_or_rebase() {
     rch=$(printf '%s\n%s' "$why" "$det" | python3 -I "$HERE/super-board-root-cause-hash.py" hash --lane review) || rch=""
     prevh=$(printf '%s' "$ij" | python3 -I "$HERE/super-board-root-cause-hash.py" last --from "[merge-queue]") || prevh=""
   fi
-  if [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
+  if [ "$kind" != rebase-pure ] && [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
   # #1319: only a pure rebase (`rebase-pure`: train gate-exit-2, edited-test approval stale because the base moved, no conflicting file)
   # is mechanical and never counts toward rebuild_cap: a card at the cap that only needs it still goes Ready `loop:rebase`. A real
   # conflict (`conflict`, gate-exit-5/14) stays a bounce held by the cap (the brake against Ready → loop:rebase → queue forever),
@@ -338,8 +338,7 @@ root-cause-hash: ${rch}}" || true
 Did: merged the PR head into origin/<base> in the merge-queue batch
 ❌ Not done: ${why}${det:+; the git / hook lines:
 ${det}}
-Next: Builder rebases onto the base, verification green, then Review again${rch:+
-root-cause-hash: ${rch}}" || true
+Next: Builder rebases onto the base, verification green, then Review again${rch:+$([ "$kind" = rebase-pure ] || printf '\nroot-cause-hash: %s' "$rch")}" || true
   fi
   card_move "$k" Ready
 }

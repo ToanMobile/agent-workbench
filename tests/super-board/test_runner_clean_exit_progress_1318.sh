@@ -188,5 +188,27 @@ else
   fail "G: stale-head verdict routed (writes: $(tr '\n' ';' < "$TMP/writes"))"
 fi
 
+# ── B3 (R4): `Next: not QA yet` nhắc QA nhưng không giao QA -> đường cũ, không sang QA.
+reset_case
+clean_log build 204; set_card 204 Building; lock 204 build Building 3
+LAST_COMMENT=$'[builder] [report] ⚠️ stuck\nNext: not QA yet, người xem'
+build_cycle
+if ! grep -qx "move PVTI_204 QA" "$TMP/writes"; then
+  ok "B3: 'Next: not QA yet' is not read as a hand-off to QA"
+else
+  fail "B3: negated Next: line routed to QA (writes: $(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# ── H (R1): thẻ nhãn `qa` đi Ready -> QA (worker QA tự chuyển, from = Ready), exit 0 + [qa] [report] ✅ -> Review.
+reset_case
+clean_log qa 217; set_card 217 QA '["qa"]'; lock 217 qa Ready 3
+LAST_COMMENT=$'[qa] [report] ✅ pass @ abc1234'
+qa_cycle
+if grep -qx "move PVTI_217 Review" "$TMP/writes"; then
+  ok "H: qa-label card (Ready -> QA by the worker) with a clean exit + ✅ report -> Review"
+else
+  fail "H: qa card from Ready not routed (writes: $(tr '\n' ';' < "$TMP/writes"))"
+fi
+
 [ "$FAILS" -eq 0 ] && { echo "PASS test_runner_clean_exit_progress_1318"; exit 0; }
 echo "FAIL test_runner_clean_exit_progress_1318 ($FAILS)"; exit 1
