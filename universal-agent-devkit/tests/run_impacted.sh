@@ -224,9 +224,10 @@ is_timing_test() { # <test path>
 }
 # CPU-budget tests: they measure the owner's local hardware budgets (ms of CPU) and go red on a slower CI runner, not on a defect. With
 # DEVKIT_SKIP_CPU_BUDGET_TESTS=1 (the CI job) run_one skips them; they still run in gate-full and the local gate. Behaviour tests (the
-# rest of the alone list) are never skipped.
+# rest of the alone list) are never skipped. #1318: test_hook_big_command_fast_path.sh kills each hook at a 3 s wall-clock bound; the slow
+# GitHub runner lands at 3.01 s (runs 44434672814, 44429843025), so CI skips it too (test_run_impacted_ci_wall_clock_skip.sh).
 is_cpu_budget_test() { # <test path>
-  case "$1" in */test_budgets.sh|*/test_evidence_backlog427.sh|*/test_prompt_hook_gate_env.sh|*/test_context_midlane.sh) return 0 ;; esac
+  case "$1" in */test_budgets.sh|*/test_evidence_backlog427.sh|*/test_prompt_hook_gate_env.sh|*/test_context_midlane.sh|*/test_hook_big_command_fast_path.sh) return 0 ;; esac
   return 1
 }
 export -f is_alone_test is_timing_test is_cpu_budget_test
