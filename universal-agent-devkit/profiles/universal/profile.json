@@ -21,6 +21,7 @@
   "rules_file": "profiles/universal/rules/universal-rules.md",
   "exclude_skills": [
     "android-real-device-qa",
+    "blender-game-pipeline",
     "compose-recomp-audit",
     "deploy",
     "unity-gc-audit"

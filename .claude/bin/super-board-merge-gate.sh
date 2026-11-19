@@ -608,13 +608,20 @@ approval_check() {
   # audit T0066 vòng 3: head PR phải có trong repo của board thì auditedHead của marker duyệt chéo mới kiểm được; fetch lỗi vẫn đi tiếp
   # (approval.py tự fetch refs/pull/<n>/head, còn thiếu thì không duyệt).
   git -C "$REPO_PATH" fetch origin "$HEAD_REF" --quiet 2>/dev/null || :
+  local arc=0
   APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
-    --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || APPROVAL='{"approved":false}'
+    --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || arc=$?
+  # #1311: exit 68 = GitHub rate limit outlasted the backoff: stop (no verdict, no human button), the next run asks again.
+  [ "$arc" -ne 68 ] || { say "merge policy: GitHub rate limit while reading the approval — stopping, try again later"; exit 68; }
+  [ "$arc" -eq 0 ] || APPROVAL='{"approved":false}'
   # Head Y do gate tự đẩy (biên nhận Y→X): approval_request sau lần đẩy ghi --head Y, nên người có thể đã duyệt chính Y. Duyệt đúng head
   # hiện tại luôn hợp lệ: không có duyệt cho X thì đọc lại duyệt cho Y.
   if [ -n "$APPROVED_HEAD" ] && [ "$(echo "$APPROVAL" | jq -r '.approved // false')" != true ]; then
+    arc=0
     APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
-      --head "$HEAD_SHA" --plan "$PLAN") || APPROVAL='{"approved":false}'
+      --head "$HEAD_SHA" --plan "$PLAN") || arc=$?
+    [ "$arc" -ne 68 ] || { say "merge policy: GitHub rate limit while reading the approval — stopping, try again later"; exit 68; }
+    [ "$arc" -eq 0 ] || APPROVAL='{"approved":false}'
   fi
   python3 "$GITHUB_READ" --check || exit $?
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')

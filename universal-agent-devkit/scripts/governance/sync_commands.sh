@@ -12,7 +12,7 @@ mkdir -p "$COMMANDS_DIR"
 # Skill cố ý không có slash command: agent tự chọn theo ngữ cảnh, không ai gõ. parallel-lanes: dòng "Song song" của prompt
 # hook khởi động nó, và một command MỚI làm `agent-kit health` FAIL ở mọi repo đã cài cho tới khi từng repo chạy
 # `agent-kit init` (không có SessionStart relink nào thêm command). Tên skill cách nhau bằng dấu cách.
-NO_COMMAND_SKILLS="parallel-lanes"
+NO_COMMAND_SKILLS="parallel-lanes blender-game-pipeline"
 
 # 1. Link each canonical skill
 for skill_dir in "$SKILLS_DIR"/*; do

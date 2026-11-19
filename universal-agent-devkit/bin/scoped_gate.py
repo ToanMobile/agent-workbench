@@ -46,8 +46,8 @@ CORE_FILE = ".agents/gate-core.txt"
 MATRIX_FILE = ".agents/regression_matrix.active.json"
 MAP_NAME = "gate-test-map.json"
 # trạng thái agent / chỉ git đọc (như AGENT_STATE_FILES + .gitignore của post-fix-gate): đi kèm commit fix chứ không làm vỡ test; worktree
-# của phiên có .claude/settings.json bẩn (thấy 29/10) — để vào [core:auto] thì lượt nào của worktree đó cũng thành full
-AGENT_STATE = {".claude/settings.json", ".claude/settings.local.json", ".gitignore", ".antigravity-pm.json", ".adb-denylist"}
+# của phiên có .claude/settings.json hoặc .agents/hooks.json bẩn — để vào [core:auto] thì lượt nào của worktree đó cũng thành full
+AGENT_STATE = {".claude/settings.json", ".claude/settings.local.json", ".agents/hooks.json", ".gitignore", ".antigravity-pm.json", ".adb-denylist"}
 FAN_IN_CORE = 5
 MAX_BYTES = 2 * 1024 * 1024
 CACHE_AFTER_S = 3.0
