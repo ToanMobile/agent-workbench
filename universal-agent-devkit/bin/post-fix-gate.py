@@ -4214,7 +4214,8 @@ DOC_NAMES = {"LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS"}
 # The agents' own harness config (.claude/settings*.json) is read by no project program either
 # (2026-09-29, Goods: a settings-only commit needed a full Unity gate to be pushed). A project that
 # does test it (a matrix rule watching the file) keeps that test: coverage comes from the matrix.
-AGENT_STATE_FILES = {".antigravity-pm.json", ".adb-denylist", ".claude/settings.json", ".claude/settings.local.json"}
+# Cấu hình harness của agent (.claude/settings*.json, .agents/hooks.json) không có code ứng dụng nào đọc, nhưng vẫn phải kiểm tĩnh dây nối hook.
+AGENT_STATE_FILES = {".antigravity-pm.json", ".adb-denylist", ".claude/settings.json", ".claude/settings.local.json", ".agents/hooks.json"}
 
 
 def needs_no_test(rel_file: str) -> bool:
@@ -4241,8 +4242,10 @@ def needs_no_test(rel_file: str) -> bool:
 
 # Exempt from regression SUITES above, not from every check (25/10): 11 of 11 app repos have no matrix rule watching
 # .claude/settings.json, so a commit that dropped the Stop hook wiring passed with none. run_settings_audit() checks it.
-SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json")
+SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json", ".agents/hooks.json")
 _AGENT_HEALTH = []
+_AG_BRIDGE_SCRIPT_RE = re.compile(r"agent_bridge\.sh\s+antigravity\s+\S+\s+([A-Za-z0-9_.-]+)")
+_AG_HOOK_PATH_RE = re.compile(r"(?:^|[\s\"'])hooks/([A-Za-z0-9_.-]+)")
 
 
 def _missing_hook_scripts(settings, exists) -> list:
@@ -4257,13 +4260,67 @@ def _missing_hook_scripts(settings, exists) -> list:
     return _AGENT_HEALTH[0].missing_hook_scripts(settings, exists)
 
 
+def _antigravity_hooks_problems(text, root: Path) -> list:
+    """Trả về [(vi, en)] cho lỗi dây nối guard Antigravity trong .agents/hooks.json; [] khi hợp lệ."""
+    if text is None:
+        return [("đã xoá: mọi guard Antigravity của dự án thôi chạy", "deleted: every Antigravity guard of the project stops running")]
+    try:
+        cfg = json.loads(text)
+    except ValueError as e:
+        return [(f"không phải JSON hợp lệ ({e})", f"not valid JSON ({e})")]
+    if not isinstance(cfg, dict):
+        return [("không phải một object JSON", "not a JSON object")]
+
+    kit_hooks = get_devkit_dir() / "hooks"
+    seen_guards = set()
+    missing_scripts = []
+    # Lệnh trong .agents/hooks.json chạy với cwd là thư mục .agents/, nên script cầu nối nằm dưới .agents/hooks/ hoặc nguồn kit
+    def _script_exists(name: str) -> bool:
+        return (root / ".agents" / "hooks" / name).exists() or (kit_hooks / name).is_file()
+
+    for entry in cfg.values():
+        if not isinstance(entry, dict):
+            return [("cấu trúc .agents/hooks.json sai dạng (mỗi mục phải là object theo event)", "malformed .agents/hooks.json (each entry must be an event object)")]
+        for ev, groups in entry.items():
+            if not isinstance(groups, list):
+                return [(f"khối event {ev} trong .agents/hooks.json phải là mảng", f"event {ev} in .agents/hooks.json must be a list")]
+            for grp in groups:
+                if not isinstance(grp, dict) or not isinstance(grp.get("hooks", []), list):
+                    return [(f"nhóm hook trong {ev} sai dạng", f"malformed hook group under {ev}")]
+                for h in grp.get("hooks", []):
+                    cmd = h.get("command") if isinstance(h, dict) and isinstance(h.get("command"), str) else ""
+                    if not cmd:
+                        continue
+                    refs = list(_AG_HOOK_PATH_RE.findall(cmd)) + list(_AG_BRIDGE_SCRIPT_RE.findall(cmd))
+                    for name in dict.fromkeys(refs):
+                        if not _script_exists(name) and name not in missing_scripts:
+                            missing_scripts.append(name)
+                    if ev == "PreToolUse":
+                        for g in ("block-dangerous-git.sh", "hardware_safety_gate.sh"):
+                            if g in cmd:
+                                seen_guards.add(g)
+
+    problems = []
+    if not {"block-dangerous-git.sh", "hardware_safety_gate.sh"}.issubset(seen_guards):
+        # Lưu ý: đòi hỏi đủ cả hai guard phá huỷ của DevKit trong PreToolUse tương tự rule giữ khối hooks của .claude/settings.json
+        problems.append(('thiếu guard PreToolUse bắt buộc (block-dangerous-git.sh / hardware_safety_gate.sh) — chạy lại agent-kit init',
+                         'missing required PreToolUse guards (block-dangerous-git.sh / hardware_safety_gate.sh) — re-run agent-kit init'))
+    for name in missing_scripts:
+        problems.append((f"hook chạy file không tồn tại: .agents/hooks/{name}",
+                         f"hook runs a file that does not exist: .agents/hooks/{name}"))
+    return problems
+
+
 def settings_problems(rel_file: str, text, root: Path) -> list:
-    """(vi, en) labels of what breaks the hook wiring in this content of .claude/settings.json or settings.local.json;
+    """(vi, en) labels of what breaks the hook wiring in this content of .claude/settings.json, settings.local.json or .agents/hooks.json;
     [] when sound. text None = the file is deleted. Shared with bin/push_gate.py, which passes the blob it pushes.
     settings.local.json usually holds permissions only, so it needs no hooks of its own (core-rules §3 must-allow).
     ponytail: settings.json must keep a non-empty "hooks" block, so a project that wires no Claude hook on purpose (the kit
     installed for other agents only) is refused any edit of it; key the rule on the base version having hooks when one shows up."""
-    is_main = rel_file.replace("\\", "/") == ".claude/settings.json"
+    clean = rel_file.replace("\\", "/")
+    if clean == ".agents/hooks.json":
+        return _antigravity_hooks_problems(text, root)
+    is_main = clean == ".claude/settings.json"
     if text is None:
         return [("đã xoá: mọi hook Claude Code của dự án thôi chạy", "deleted: every Claude Code hook of the project stops running")] if is_main else []
     try:
