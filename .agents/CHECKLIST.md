@@ -1,8 +1,8 @@
 # 🧪 Regression Checklist
 
-**An toàn 1% (5/457)** · ❌ 113 · 🔁 0 · 🚫 0 · 🟡 95 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 239 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 22 · ma trận chờ duyệt: không
+**An toàn 1% (5/475)** · ❌ 113 · 🔁 0 · 🚫 0 · 🟡 95 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 257 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 22 · ma trận chờ duyệt: không
 
-> Sinh tự động lúc 2026-11-14 19:26:50 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
+> Sinh tự động lúc 2026-11-19 10:59:53 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
 
 **Bug không có test hồi quy nào chặn tái phát: 2** (0 chưa có test · 2 có test nhưng gate không chạy)
 
@@ -226,6 +226,12 @@
 
 ## 🧩 Phân hệ
 
+### active-profile-clean-tree-1265 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-1265-ACTIVE-PROFILE-CLEAN-01 | #1265: agent-config.py, install.sh và worktree add --lane=review giữ sạch .agents/active-profile.json (không làm bẩn updated_at/newline), dispatch audit ghi được Pham vi: | chưa chạy | bash universal-agent-devkit/tests/worktree_git/test_worktree_active_profile_clean.sh |
+
 ### agent-office-agent-message — 0/2 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -245,6 +251,24 @@
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-AGENT-OFFICE-GATE-FULL-WEEKDAYS-01 | Gate speed v26 mục 6: agent-office đọc lịch heavy gate thứ Hai + thứ Năm (dict hoặc list StartCalendarInterval) | chưa chạy | cd mcp-servers/agent-office && python3 -m unittest discover -s tests -p test_gate_full_runner_weekdays.py |
+
+### android-dexscan — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-DEXSCAN-1308-01 | dexscan: aab, method count, exported, exit codes | chưa chạy | bash universal-agent-devkit/tests/verification/test_dexscan.sh |
+
+### android-dump-view-hierarchy — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-DUMP-VIEW-1308-01 | dump-view-hierarchy: no silent pass, device policy, density | chưa chạy | bash universal-agent-devkit/tests/verification/test_dump_view_hierarchy.sh |
+
+### antigravity-hook-bridge — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-ANTIGRAVITY-BRIDGE-1308-01 | Antigravity .agents/hooks.json destructive-command guards | chưa chạy | bash universal-agent-devkit/tests/verification/test_agent_bridge_antigravity.sh |
 
 ### approval-auto-merge-head — 0/1 PASS
 
@@ -514,6 +538,12 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-DK-INIT-PARITY-SYNC-01 | #774: init đồng bộ super-board (drift exit 0, giữ file chỉ có ở repo), cài lịch gate-full đêm, đăng ký guard-protected-push fail closed | chưa chạy | bash universal-agent-devkit/tests/installer/test_parity_check.sh |
 
+### devkit-install-no-grok — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-INSTALL-NO-GROK-01 | 17/11 chủ repo gỡ Grok: install.sh không còn agent grok/xai (help, menu, all); đường chỉ ghi AGENTS.md là agents-md và re-init giữ đúng đường đó | chưa chạy | bash universal-agent-devkit/tests/installer/test_install_no_grok.sh |
+
 ### devkit-integrate — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -751,6 +781,12 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-DK-GATE-APPROVAL-FRESH-WT-628-01 | #628 AC2: lời duyệt test (approved_hashes.json) của main checkout còn hiệu lực ở worktree mới (chỉ so sha256 nội dung, không mtime); đổi 1 byte test: vẫn exit 2 | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_approval_fresh_worktree.sh |
 
+### gate-audit-deleted-test-1323 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-1323-GATE-AUDIT-DELETED-TEST-01 | #1323: audit pass (biên bản PM có phạm vi / trailer) duyệt test đã xoá khi cây đã audit cũng không có file; xoá không audit, xoá sau audit, ngoài phạm vi vẫn chặn; sửa test vẫn đòi blob khớp auditedHead | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_audit_deleted_test.sh |
+
 ### gate-cache-ttl-3d — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -768,6 +804,25 @@
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-DK-FAIL-FAST-647-01 | #647: suite FAIL hoặc TIMEOUT thì phần NOT_RUN còn lại thành UNTESTED; --no-fail-fast chạy tiếp; merge-train và gate_full truyền cờ | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_fail_fast.sh |
+
+### gate-full-close-proven-cards-1275 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-1275-GATE-FULL-CLOSE-PROVEN-01 | #1275: sau lượt gate_full, thẻ gate-full còn mở mà suite PASS ở lượt đó được comment bằng chứng, gỡ ac-open, đóng completed; suite còn đỏ, không chạy, thẻ khác, comment lỗi thì giữ | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_full_close_proven_cards.sh |
+
+### gate-full-dup-card-on-board-1287 — 0/2 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-1287-CREATE-TASK-ENSURE-ON-BOARD-01 | #1287: create_task --ensure-on-board đưa issue ngoài board vào Backlog, để yên issue đã có trên board, gh lỗi thì exit khác 0 | chưa chạy | bash universal-agent-devkit/tests/verification/test_create_task_ensure_on_board.sh |
+| ⏳ chưa chạy | REG-1287-GATE-FULL-DUP-CARD-ON-BOARD-01 | #1287: gate_full comment vào thẻ đỏ còn mở thì gọi --ensure-on-board; comment lỗi thì không gọi; ensure lỗi thì ghi log | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_full_dup_card_on_board.sh |
+
+### gate-full-provable-ac-1290 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-1290-GATE-FULL-PROVABLE-AC-01 | #1290: thẻ gate-full mới không mang AC 'lượt gate_full kế tiếp'; đỏ kinh niên có thẻ đã đóng mà không thẻ mở thì mở thẻ mới; còn thẻ mở hoặc chưa từng có thẻ thì không | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_full_card_ac_provable.sh |
 
 ### gate-matrix-append-only-coverage-p6 — 0/1 PASS
 
@@ -912,6 +967,12 @@
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-742-A4-MERGE-GATE-CI-01 | #742 tách A4 (F5): merge gate đọc gh pr checks sau verify, trước migration và merge: check đỏ hay bucket lạ/rỗng → exit 11, không merge, migration không chạy, tên check trên stdout và stderr; không đọc được → exit 4; no checks reported → merge như cũ; pending rồi pass → merge, pending quá SB_MERGE_AUTO_WAIT_S → exit 4; --dry-run đọc CI một lần không ngủ; head đổi lúc chờ hay lúc check đỏ → exit 6 không in ci-check; mỗi ca có đối chứng | chưa chạy | bash tests/super-board/test_merge_gate_ci_checks.sh |
+
+### merge-gate-ci-cancel-rerun-1021 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-1021-MERGE-GATE-CI-CANCEL-01 | #1021: check CI bucket cancel không tính đỏ: chạy lại một lần rồi chờ; huỷ mãi thì exit 4, không exit 11; check fail vẫn exit 11 | chưa chạy | bash tests/super-board/test_merge_gate_ci_cancel_rerun.sh |
 
 ### merge-gate-conflicting-precheck — 0/2 PASS
 
@@ -1088,6 +1149,18 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-QA-EXIT2-643-01 | #643: QA exit 2 chỉ vì test sửa đi Review rồi merge nhờ duyệt chéo | chưa chạy | bash tests/super-board/test_qa_exit2_edited_test.sh |
 
+### qa-report-issue-decision — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-QA-ISSUE-DECISION-01 | #1175: preflight qa-report của merge gate nhận [decision] hợp lệ trên issue thẻ (mới hơn report QA theo createdAt) như trên PR; cũ hơn, người lạ, marker lane khác, thiếu thời gian, DANH SÁCH DỪNG, đọc issue lỗi, decision_policy tắt vẫn exit 11; report sạch không đọc issue | chưa chạy | bash tests/super-board/test_merge_gate_qa_report_issue_decision.sh |
+
+### qa-report-review-only-ac-1298 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-1298-QA-REPORT-REVIEW-ONLY-AC-01 | #1298: QA ghi AC chỉ lane Review chứng minh được ở ✅ Done + Next: reviewer; cổng qa-report không nới (Not done nêu AC vẫn chặn) | chưa chạy | bash tests/super-board/test_qa_report_review_only_ac.sh |
+
 ### rerun-skip-ttl-3d-992 — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -1124,6 +1197,18 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-GATE-RECEIPT-BY-HEAD-671-01 | #671 AC1: super-board-gate-receipt.sh in fp theo head từ store chung; biên nhận của cây bẩn (file thật) không phủ commit sạch, file cài đặt worktree thì qua | chưa chạy | bash tests/super-board/test_issue671_gate_receipt_by_head.sh |
 | ⏳ chưa chạy | REG-SB-REVIEW-WAIT-NOT-NOOP-671-01 | #671 AC2/AC3: review worker kết thúc sạch khi chờ (comment [reviewer] cuối blocked-by:) không bị đếm no-op và nghỉ SB_REVIEW_WAIT_S; bị kill, is_error hoặc comment không phải reviewer vẫn Blocked | chưa chạy | bash tests/super-board/test_issue671_review_wait_not_noop.sh |
+
+### runner-reclaim-reset-on-clean-exit-1276 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-1276-RECLAIM-RESET-01 | #1266/#1276: worker build thoát sạch và builder đã comment sau dispatch thì xoá sổ reclaim; crash, lane khác, result lỗi, no-op thì giữ | chưa chạy | bash tests/super-board/test_runner_reclaim_reset_on_clean_exit.sh |
+
+### runner-reload-absorbed-ff-1285 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-1285-RELOAD-ABSORBED-FF-01 | #1285: sửa tay runner đã có trên origin thì main fast-forward lên origin (không chỉ thay file runner); file khác chặn ff thì thay runner, giữ file đó; sửa tay origin chưa có thì giữ và cảnh báo | chưa chạy | bash tests/super-board/test_runner_self_reload_absorbed_ff.sh |
 
 ### sb-runner-suite-fuse — 0/1 PASS
 
@@ -1316,6 +1401,12 @@
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-GITHUB-READ-FOREIGN-HALT-01 | github-read: a failed read of ANOTHER repository (test fixture o/r from a worktree) never writes the real board halt; a read of the checkout's own repository, or one naming no repository, still halts | 2026-10-24 13:07:21 · 1.14s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-GITHUB-READ-FOREIGN-HALT-01/20261024-130714.log) | bash tests/super-board/test_github_read_foreign_halt.sh |
+
+### super-board-github-read-malformed-halt — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-GITHUB-READ-MALFORMED-HALT-01 | 14/11 07:00 (board đứng 2 giờ): lệnh đọc có --owner rỗng/null hoặc số project không phải số nguyên dương không ghi halt của board; halt dị dạng có sẵn bị check_halt và --resume (watchdog) cất sang github-halt-malformed-*.json; lệnh đọc hợp lệ không nêu repo vẫn halt | chưa chạy | bash tests/super-board/test_github_read_malformed_halt.sh |
 
 ### super-board-github-read-reconcile — 0/1 PASS
 
@@ -1782,6 +1873,12 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-REBUILD-GATE-ONCE-01 | 03/11 lane 1: mục rebuild sau review của super-build nêu đúng một gate scoped trên cây sau sửa, không gate riêng giữa chừng | chưa chạy | bash tests/super-board/test_rebuild_gate_once.sh |
 
+### super-collect-not-planned-dedupe — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-COLLECT-NOT-PLANNED-1308-01 | super-collect skips issues closed NOT_PLANNED | chưa chạy | bash tests/super-board/test_collect_file_not_planned.sh |
+
 ### super-review-receipt-before-rerun — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -1799,6 +1896,12 @@
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-VERIFY-FLAGS-ARG-SPAN-01 | #802: sb_verify_inject_flags chỉ xét --full/--force-full/--scoped/--diff/--json trong phần đối số của post-fix-gate.py; token của lệnh khác trong lệnh ghép không chặn ' --diff origin/<base> --scoped' chèn ngay sau token | chưa chạy | bash tests/super-board/test_verify_flags_arg_span.sh |
+
+### workbench-active-profile-current-1266 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-1266-ACTIVE-PROFILE-CURRENT-01 | #1266: .agents/active-profile.json đã commit khớp profile của kit, cài DevKit không làm bẩn cây review (audit Antigravity ghi được phạm vi) | chưa chạy | bash tests/super-board/test_workbench_active_profile_current.sh |
 
 ### workbench-agent-config — 0/1 PASS
 
