@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# #1319 (19/11): thẻ đã sạch chỉ thiếu rebase (train in `conflict`, main đi tiếp) mà đã loop:rebuild-N ≥ rebuild_cap bị Blocked 🛡:
+# #1319 (19/11): thẻ đã sạch chỉ thiếu rebase thuần (train in `gate-exit-2`, main đi tiếp, không file xung đột) mà đã loop:rebuild-N ≥ rebuild_cap bị Blocked 🛡:
 # một lượt rebase là việc máy móc, không phải bounce do lỗi code, nên không tính vào rebuild_cap.
-#  - conflict ở cap -> thẻ về Ready kèm loop:rebase, KHÔNG Blocked, nhãn loop:rebuild-N giữ nguyên (không thêm N+1).
+#  - gate-exit-2 ở cap -> thẻ về Ready kèm loop:rebase, KHÔNG Blocked, nhãn loop:rebuild-N giữ nguyên (không thêm N+1).
+#  - conflict thật (train `conflict`) ở cap -> Blocked (phanh cho vòng Ready -> loop:rebase -> queue vô hạn).
 #  - red (lỗi verify thật) ở cap -> vẫn Blocked 🛡 như cũ (không nới).
 # Chạy offline, khung của test_merge_queue_root_cause_cap.sh. bash 3.2.
 # Chạy offline, khung của test_merge_queue_gate_exit_14.sh. bash 3.2.
@@ -87,19 +88,22 @@ HELPER="$ROOT/.claude/bin/super-board-root-cause-hash.py"
 ln -s "$HELPER" "$Q/super-board-root-cause-hash.py" 2>/dev/null
 DET='tests/foo.sh:12 AssertionError boom'
 SAME=$(printf '%s\n%s' "red (verify red with this PR in the batch)" "$DET" | python3 -I "$HELPER" hash --lane review)
-printf '[{"number":1,"headRefName":"issue-11-a","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]},{"number":2,"headRefName":"issue-12-b","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]}]\n' "$(sha 1)" "$(sha 2)" > "$F/prs.json"
-: > "$F/labeled/1"; : > "$F/labeled/2"; sha 1 > "$F/head-1"; sha 2 > "$F/head-2"
+printf '[{"number":1,"headRefName":"issue-11-a","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]},{"number":2,"headRefName":"issue-12-b","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]},{"number":3,"headRefName":"issue-13-c","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]}]\n' "$(sha 1)" "$(sha 2)" "$(sha 3)" > "$F/prs.json"
+: > "$F/labeled/1"; : > "$F/labeled/2"; : > "$F/labeled/3"; sha 1 > "$F/head-1"; sha 2 > "$F/head-2"; sha 3 > "$F/head-3"
 printf '{"number":11,"title":"c","body":"","state":"OPEN","labels":[{"name":"loop:rebuild-2"}],"comments":[]}' > "$F/issue-11.json"
 printf '{"number":12,"title":"c","body":"","state":"OPEN","labels":[{"name":"loop:rebuild-2"}],"comments":[]}' > "$F/issue-12.json"
-printf 'train-result: 1 conflict\ntrain-result: 2 red\ntrain-detail: 2 tests/foo.sh:12 boom\n' > "$F/train.out"
+printf '{"number":13,"title":"c","body":"","state":"OPEN","labels":[{"name":"loop:rebuild-2"}],"comments":[]}' > "$F/issue-13.json"
+printf 'train-result: 1 gate-exit-2\ntrain-result: 2 red\ntrain-detail: 2 tests/foo.sh:12 boom\ntrain-result: 3 conflict\n' > "$F/train.out"
 echo 11 > "$F/train.rc"; : > "$F/writes"
 ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait ) >"$TMP/out" 2>"$TMP/err"; rc=$?
 
 [ "$rc" -eq 0 ] && ok "queue exit 0" || fail "queue exit $rc: $(tail -3 "$TMP/err")"
 grep -q "issue-labels 11 .*loop:rebase" "$F/writes" && grep -q "card move 11 Ready" "$F/writes" \
-  && ok "conflict at the cap: card #11 -> Ready with loop:rebase" || fail "conflict not routed to Ready/loop:rebase: $(cat "$F/writes")"
-grep -q "card move 11 Blocked" "$F/writes" && fail "conflict at the cap: card Blocked" || ok "conflict at the cap: not Blocked"
+  && ok "pure rebase (gate-exit-2) at the cap: card #11 -> Ready with loop:rebase" || fail "pure rebase not routed to Ready/loop:rebase: $(cat "$F/writes")"
+grep -q "card move 11 Blocked" "$F/writes" && fail "pure rebase at the cap: card Blocked" || ok "pure rebase at the cap: not Blocked"
 grep -q "issue-labels 11 .*loop:rebuild-3" "$F/writes" && fail "rebase counted: loop:rebuild-3 added" || ok "rebase does not advance loop:rebuild-N"
+grep -q "card move 13 Blocked" "$F/writes" && ! grep -q "card move 13 Ready" "$F/writes" \
+  && ok "real conflict at the cap -> Blocked, not Ready (the cap is the brake)" || fail "real conflict at cap not Blocked: $(cat "$F/writes")"
 grep -q "card move 12 Blocked" "$F/writes" && ok "real red at the cap still Blocked (not loosened)" || fail "red at cap not Blocked: $(cat "$F/writes")"
 
 echo

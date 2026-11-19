@@ -40,6 +40,8 @@ BUILDER_NEW=1
 issue_comment_count() { printf '%s' "$COMMENTS_NOW"; }
 issue_last_comment() { printf '%s\n' "$LAST_COMMENT"; }
 builder_reported_since() { [ "$BUILDER_NEW" = 1 ]; }
+PR_HEAD="abc1234def5678"
+issue_pr_head() { printf "%s" "$PR_HEAD"; }
 
 sleep 0 & DEAD=$!; wait "$DEAD"
 
@@ -55,7 +57,7 @@ lock() {   # lock <issue> <lane> <from-col> <comments0>
     "$DEAD" "$2" "$WORKER_LOG_DIR/worker-$2-$1.log" "$3" "$4" > "$INFLIGHT_DIR/$1"
 }
 reset_case() { : > "$TMP/writes"; : > "$TMP/log"; rm -rf "${INFLIGHT_DIR:?}"/*; NOOP_CHECK=""; NOOP_MOVED=0; RECLAIM_BUILDING=""; RECLAIM_MOVED=0
-  COMMENTS_NOW=4; LAST_COMMENT=""; BUILDER_NEW=1; }
+  COMMENTS_NOW=4; LAST_COMMENT=""; BUILDER_NEW=1; PR_HEAD="abc1234def5678"; }
 build_cycle() { reap_finished_locks; reclaim_dead_builds; }
 qa_cycle() { reap_finished_locks; block_noop_workers; }
 
@@ -173,6 +175,17 @@ if ! grep -q "^move " "$TMP/writes"; then
   ok "F: a [qa] [blocker] comment is not turned into a verdict"
 else
   fail "F: blocker misrouted (writes: $(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# ── G: báo cáo QA @ sha cũ (head PR đã đổi sau lượt QA) -> không route (verdict cũ), đường cũ quyết.
+reset_case
+clean_log qa 216; set_card 216 QA; lock 216 qa QA 3; PR_HEAD="9999999aaaaaaa"
+LAST_COMMENT=$'[qa] [report] ✅ pass @ abc1234'
+qa_cycle
+if ! grep -qx "move PVTI_216 Review" "$TMP/writes"; then
+  ok "G: a [qa] [report] ✅ for an older head is not applied"
+else
+  fail "G: stale-head verdict routed (writes: $(tr '\n' ';' < "$TMP/writes"))"
 fi
 
 [ "$FAILS" -eq 0 ] && { echo "PASS test_runner_clean_exit_progress_1318"; exit 0; }

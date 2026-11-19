@@ -343,7 +343,7 @@ grep -q "^human-gate: money — label money$" "$F/issue-comment-35.txt" 2>/dev/n
   && grep -q "^blocked-by: -$" "$F/issue-comment-35.txt" && ok "  … 🙋 issue comment copies the gate lines verbatim, ends with blocked-by" || fail "  … 🙋 comment: $(cat "$F/issue-comment-35.txt" 2>/dev/null)"
 grep -q "train-detail" "$F/issue-comment-35.txt" 2>/dev/null && fail "  … the train-detail prefix leaked into the comment" || ok "  … no train-detail prefix in the comment"
 has_w "pr-unlabel 26 merge-queue" && has_w "card move 36 Blocked" && ok "gate-exit-3 → unlabel, Blocked" || fail "exit 3 #26: $(cat "$F/writes")"
-has_w "pr-unlabel 27 merge-queue" && has_w "card move 37 Ready" && ! has_w "card move 37 Blocked" && has_w "issue-labels 37 loop:rebase,loop:rebuild-2" && ok "gate-exit-5 at rebuild_cap → Ready loop:rebase, not Blocked (#1319: a rebase is not a bounce)" || fail "exit 5 cap #27: $(cat "$F/writes")"
+has_w "pr-unlabel 27 merge-queue" && has_w "card move 37 Blocked" && ! has_w "card move 37 Ready" && ok "gate-exit-5 at rebuild_cap → Blocked, not Ready" || fail "exit 5 cap #27: $(cat "$F/writes")"
 has_w "pr-unlabel 29 merge-queue" && has_w "issue-labels 39 loop:rebuild-2" && has_w "card move 39 Ready" && ok "gate-exit-11 → loop:rebuild-1 becomes loop:rebuild-2, Ready" || fail "exit 11 #29: $(cat "$F/writes")"
 # R1 mục 3: dòng train-detail của PR vào comment issue (red, exit 11, exit 3); exit 3 không còn câu cố định "branch protection".
 grep -q "^ac-check: the sb:ac block lists 1 of 3$" "$F/issue-comment-31.txt" 2>/dev/null && grep -q "^FAILED tests/test_x.py::test_y$" "$F/issue-comment-31.txt" \

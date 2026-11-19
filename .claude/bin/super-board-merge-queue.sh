@@ -23,7 +23,7 @@
 #                                 board, #637) không mang ac-open: đóng issue, card Done, comment ✅ merged <sha>
 #   red · gate-exit-11            thẻ về Ready với loop:rebuild-(K+1) (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn. gate-exit-11 = preflight
 #                                 (qa-report / AC) chặn trước khi dựng cây: comment nói nguồn đó, không nói verify đỏ (#639).
-#   conflict · gate-exit-2/5/14   thẻ về Ready với loop:rebase (#1319: không tính vào rebuild_cap, đã chạm cap vẫn về Ready); gỡ nhãn
+#   conflict · gate-exit-2/5/14   thẻ về Ready với loop:rebase (#1319: chỉ gate-exit-2 = thiếu rebase thuần không tính rebuild_cap, chạm cap vẫn về Ready; conflict thật vẫn chịu cap → Blocked 🛡); gỡ nhãn
 #   gate-exit-7/8                 comment 🙋 chép nguyên văn dòng approval-request/human-gate/needs-you, needs-you mark, Blocked, một tin
 #                                 super-board-notify.py approve-button (cùng chữ ký merge gate dùng); gỡ nhãn
 #   gate-exit-3                   comment chép dòng của gate (GitHub từ chối merge / PR đóng), Blocked; gỡ nhãn
@@ -269,7 +269,7 @@ detail_lines() {
       print l; used += length(l) + 1 }
     END { if (cut) print "… (rest of the gate log is in the merge-queue output)" }' <<<"$raw"
 }
-# rebuild_or_rebase <PR> <issue> <rebuild|rebase> <why> [tag] [did]: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
+# rebuild_or_rebase <PR> <issue> <rebuild|rebase|rebase-pure> <why> [tag] [did]: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
 # tag / did: chữ đầu và dòng Did của comment rebuild (mặc định của verify đỏ; preflight exit 11 truyền chữ riêng, #639).
 # Trả 0 chỉ khi các bước bắt buộc (nhãn loop:*, card_move) xong. Lượt route lại (RETRY=1): không comment lại; nhãn loop:* đã gắn ở lượt
 # trước (LABEL_DONE=1) thì không gắn lần nữa (không đẩy loop:rebuild-N lên hai lần cho cùng một lần đỏ).
@@ -307,9 +307,11 @@ rebuild_or_rebase() {
     prevh=$(printf '%s' "$ij" | python3 -I "$HERE/super-board-root-cause-hash.py" last --from "[merge-queue]") || prevh=""
   fi
   if [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
-  # #1319: a rebase pass is mechanical, not a code bounce: it never counts toward rebuild_cap (a card already at the cap that only needs
-  # a rebase still goes Ready `loop:rebase`). A real conflict or a red verify after the rebase comes back here as `red` and counts.
-  if [ "$kind" != rebase ] && [ "$cur" -ge "$REBUILD_CAP" ]; then
+  # #1319: only a pure rebase (`rebase-pure`: train gate-exit-2, edited-test approval stale because the base moved, no conflicting file)
+  # is mechanical and never counts toward rebuild_cap: a card at the cap that only needs it still goes Ready `loop:rebase`. A real
+  # conflict (`conflict`, gate-exit-5/14) stays a bounce held by the cap (the brake against Ready → loop:rebase → queue forever),
+  # and so does a red verify after the rebase.
+  if [ "$kind" != rebase-pure ] && [ "$cur" -ge "$REBUILD_CAP" ]; then
     [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
       "train-result for PR #${p}: ${why}${det:+
 ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
@@ -517,6 +519,8 @@ Next: back to Build${k:+ (card #$k)}" || true
             elif [ "$res" = gate-exit-14 ]; then
               # Gate thoát 14: GitHub báo CONFLICTING (driver gộp chỉ có ở local), không verify nào chạy.
               tag="GitHub CONFLICTING"; why="${res} (GitHub reports the PR CONFLICTING with the base; nothing verified)"; det=""
+            elif [ "$res" = gate-exit-2 ]; then
+              tag=conflict; why="${res} (the base moved past the edited-test approval; a rebase pass only, no conflicting file)"; det=""
             else
               tag=conflict; why="${res} (the base does not merge in cleanly)"; det=""
             fi
@@ -524,7 +528,8 @@ Next: back to Build${k:+ (card #$k)}" || true
 Did: merged this PR into origin/<base> for the merge-queue batch${det:+
 ${det}}
 Next: rebase pass${k:+ (card #$k)}" || true
-            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebase "$why" "$tag" || ok=1 ;;
+            rk=rebase; [ "$res" = gate-exit-2 ] && rk=rebase-pure
+            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" "$rk" "$why" "$tag" || ok=1 ;;
           gate-exit-7|gate-exit-8)
             det=$(detail_lines "$p")
             if [ -n "$k" ]; then

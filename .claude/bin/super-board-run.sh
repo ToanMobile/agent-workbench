@@ -2448,13 +2448,19 @@ build_handed_to_qa() {
 # $1 = issue, $2 = số comment. ✅ → Review; ❌ → Ready + loop:rebuild-N (N+1; đã chạm rebuild_cap thì trả 1, đường cũ lo).
 # Trả 0 chỉ khi thẻ đã được chuyển.
 qa_apply_report() {
-  local issue="$1" count="$2" head verdict item_id cur target labs l rm=()
+  local issue="$1" count="$2" head verdict item_id cur target labs l rm=() rsha phead
   head=$(issue_last_comment "$issue" "$count" | tr -d '\r' | awk 'NF && $0 !~ /^<!--/ {print; exit}')
   case "$head" in
     "[qa] [report] ✅"*) verdict=pass ;;
     "[qa] [report] ❌"*) verdict=fail ;;
     *) return 1 ;;
   esac
+  # #1302-class: the report's `@ <sha>` must still be the PR head. A head that moved after the QA run makes the verdict stale: no routing, the old path decides.
+  rsha=$(printf '%s' "$head" | sed -nE 's/.*@ ?([0-9a-f]{7,40}).*/\1/p' | head -1)
+  if [ -n "$rsha" ]; then
+    phead=$(issue_pr_head "$issue" 2>/dev/null || true)
+    case "$phead" in "$rsha"*) ;; *) [ -z "$phead" ] || [ "${rsha#"$phead"}" != "$rsha" ] || return 1 ;; esac
+  fi
   item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
   [ -n "$item_id" ] || return 1
   if [ "$verdict" = pass ]; then
