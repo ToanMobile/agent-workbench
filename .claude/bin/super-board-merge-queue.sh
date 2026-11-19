@@ -48,7 +48,7 @@ export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
 APPROVED_HEAD_JQ="$HERE/super-board-approved-head.jq"   # #605: luật approved-head dùng chung với runner
-AUDIT_CHECK="$HERE/super-board-audit-check.py"           # #605: task_id của approved-by ↔ biên bản audit antigravity-pm
+AUDIT_CHECK="$HERE/super-board-audit-check.py"           # #605: task_id của approved-by ↔ biên bản audit antigravity-pm / claude-verify (#1328)
 TRAIN="$HERE/super-board-merge-train.sh"
 CARD="$HERE/super-board-card.sh"
 NEEDS_YOU="$HERE/super-board-needs-you.py"
@@ -859,6 +859,10 @@ while read -r at n head ref; do
     task:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" --pr "$n" "${vwhy#task:}" "$head" ) 2>/dev/null; then
                reject "$n" "approved-by task_id ${vwhy#task:} has no antigravity-pm audit pass with auditedHead ${head:0:7}" "$ref"; continue
              fi ;;
+    # #1328: biên bản claude-verify (audit-check chuyển cho claude_verify.py check: verdict pass, head + tree, reviewer ≠ builder).
+    cv:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" --pr "$n" --branch "$ref" "${vwhy#cv:}" "$head" ) 2>/dev/null; then
+             reject "$n" "approved-by task_id ${vwhy#cv:} has no claude-verify pass record for head ${head:0:7} (verdict pass, same tree, card of the PR branch, reviewer session from the runner ledger and != builder session)" "$ref"; continue
+           fi ;;
     *) reject "$n" "approved-head ${approved:0:7}: approval source unreadable" "$ref"; continue ;;
   esac
   if [ "$NB" -ge "$SLOTS" ]; then say "PR #${n}: ${NLIVE} train(s) running + ${NB} started ≥ merge_queue.max_trains ${MAX_TRAINS}; waits for the next run"; continue; fi

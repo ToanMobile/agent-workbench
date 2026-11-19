@@ -294,7 +294,7 @@ Used when adding new features or making changes touching $\ge 3$ files or $\ge 2
 
 #### 🛠️ Workflow 2: Zero-Defect Bug Diagnostic & Repair (Bug Fixing)
 Used for resolving crashes, UI defects, logic bugs, or regressions:
-1. **Triage & Trace:** Inspect stack traces (Crashlytics/ANR) via `/fix` or trace call graphs via `/graph` (AST Knowledge Graph).
+1. **Triage & Trace:** Inspect stack traces (Crashlytics/ANR) via `/fix` or trace call graphs via `/codebase-memory` (AST Knowledge Graph).
 2. **Author Failing Test Oracle (`/fixbugs`):** Formulate a deterministic test reproducing the exact defect on the failure boundary. Run to verify **RED** exit code.
 3. **Surgical Root-Cause Fix:** Apply the minimal surgical change directly targeting the root cause. Avoid unneeded refactoring.
 4. **Verify Passing Oracle:** Re-run the exact same oracle to verify **GREEN** exit code with identical execution parameters.
@@ -544,7 +544,7 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 | **`spec-driven-development`** | `/plan` | Spec-Kit Lite planning for all changes touching $\ge 3$ files or $\ge 2$ modules. |
 | **`grill-plan`** | `/grill` | Adversarial plan stress-testing, unearthing hidden assumptions before coding. |
 | **`documentation-and-adrs`** | `/adr` | Records Architecture Decision Records and long-term technical trade-offs. |
-| **`deep-module-design`** | `/module-design` | Deep interface design, independent test seams, and modular testability. |
+| **`deep-module-design`** | `/deep-module-design` | Deep interface design, independent test seams, and modular testability. |
 | **`merge-conflict-resolver`** | `/conflict` | Resolves complex Git merge, rebase, and stash conflicts with semantic 3-way analysis. |
 | **`session-handoff`** | `/handoff` | Packages active session context, uncommitted changes, and test proofs for seamless handoff. |
 | **`worktree-sandbox`** | `/sandbox` | Instant APFS Copy-on-Write worktrees with dependency isolation and merge auto-cleanup. |
@@ -554,11 +554,11 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 ### 4. 🚀 Execution Refinement & System Governance
 | Skill | Slash Command | Description & Purpose |
 |---|---|---|
-| **`context-enricher`** | `/enrich` | Gateway 5-dimensional context enrichment (5D Dossier) for all terse user prompts. |
+| **`context-enricher`** | `/context-enricher` | Gateway 5-dimensional context enrichment (5D Dossier) for all terse user prompts. |
 | **`giao`** | `/giao` | Dual-Agent Orchestration: Leader PM (Claude) ↔ Worker (Antigravity), task packet allocation and receipt audit. |
 | **`parallel-lanes`** | — | Parallel agent lanes: critical-path lane first, lane count capped by free CPU (`agent-kit lanes plan\|slots\|record`), pre-briefed traps, one worktree per lane, risk-tiered review that never skips a round, one full gate per batch. |
-| **`codebase-memory`** | `/graph`, `/codebase-memory` | **SSOT Knowledge Graph:** AST structural navigation, inbound/outbound call-chain tracing, Cypher queries, and Read/Grep fallback. |
-| **`incremental-implementation`** | `/step` | Breaks complex features into incremental surgical steps with continuous verification. |
+| **`codebase-memory`** | `/codebase-memory` | **SSOT Knowledge Graph:** AST structural navigation, inbound/outbound call-chain tracing, Cypher queries, and Read/Grep fallback. |
+| **`incremental-implementation`** | `/incremental-implementation` | Breaks complex features into incremental surgical steps with continuous verification. |
 | **`deprecation-migration`** | `/deprecate` | Safe 3-phase API deprecation, consumer caller migration, and legacy code retirement. |
 | **`security-checklist`** | `/scan` | Mobile & platform OWASP security checklist: Intent filters, URI traversal, Storage Access Framework, exported components, permissions. |
 | **`observability-instrumentation`** | `/logging` | Structured logging standardization, metric/trace instrumentation, Crashlytics telemetry, and 100% PII masking. |
@@ -594,15 +594,15 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 | `/spec-driven-development` | `/plan` | `skills/spec-driven-development` | Spec-Kit Lite planning for multi-file/multi-module features. |
 | `/grill-plan` | `/grill` | `skills/grill-plan` | Adversarial critique and technical stress-testing. |
 | `/documentation-and-adrs` | `/adr` | `skills/documentation-and-adrs` | Documents Architecture Decision Records and architectural trade-offs. |
-| `/deep-module-design` | `/module-design` | `skills/deep-module-design` | Designs deep interfaces and testable module boundaries. |
+| `/deep-module-design` | — | `skills/deep-module-design` | Designs deep interfaces and testable module boundaries. |
 | `/merge-conflict-resolver` | `/conflict` | `skills/merge-conflict-resolver` | Semantic Git 3-way conflict resolver. |
 | `/session-handoff` | `/handoff` | `skills/session-handoff` | Session context packaging and continuity export. |
 | `/worktree-sandbox` | `/sandbox` | `skills/worktree-sandbox` | Instant APFS Copy-on-Write worktrees with dependency isolation and merge auto-cleanup. |
-| `/context-enricher` | `/enrich` | `skills/context-enricher` | Automatically enriches terse user prompts into 5D dossiers. |
+| `/context-enricher` | — | `skills/context-enricher` | Automatically enriches terse user prompts into 5D dossiers. |
 | `/devkit-audit` | — | `skills/devkit-audit` | Daily measured audit and optimisation of the DevKit (Stop-hook cost first), scored against a 100-point rubric. |
 | `/giao` | `/giao` | `skills/giao` | Task allocation and receipt verification between Leader PM and Worker. |
-| `/codebase-memory` | `/graph` | `skills/codebase-memory` | SSOT Knowledge Graph navigation and blast radius tracing. |
-| `/incremental-implementation` | `/step` | `skills/incremental-implementation` | Executes incremental changes with test gates. |
+| `/codebase-memory` | — | `skills/codebase-memory` | SSOT Knowledge Graph navigation and blast radius tracing. |
+| `/incremental-implementation` | — | `skills/incremental-implementation` | Executes incremental changes with test gates. |
 | `/deprecation-migration` | `/deprecate` | `skills/deprecation-migration` | Sunsets APIs and migrates callers safely. |
 | `/security-checklist` | `/scan` | `skills/security-checklist` | Mobile & platform security checklist inspection. |
 | `/observability-instrumentation` | `/logging` | `skills/observability-instrumentation` | Structured logging, telemetry, and PII masking. |

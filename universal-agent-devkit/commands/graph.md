@@ -1,1 +1,0 @@
-../skills/codebase-memory/SKILL.md
