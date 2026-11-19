@@ -2381,8 +2381,9 @@ CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_up
 # (#1328) Sổ phiên claude-verify (claude_verify.py register) chỉ do super-board-run.sh ghi, ngoài phiên agent. Chặn khi, sau khi tách token
 # như shell: `register` đứng ngay sau token claude_verify.py, hoặc cờ của runner ở dạng gán (`SB_RUNNER_REGISTER=…`, `export
 # SB_RUNNER_REGISTER`), hoặc gán CLAUDE_CODE_SESSION_ID trong lệnh nhắc claude_verify (T0005). Mọi token có khoảng trắng được tách tiếp
-# (tối đa 3 tầng: bash -c, eval, pipe sang shell, <<<), trừ thông điệp của `git … -m/--message` (commit nhắc chữ thì qua). Lệnh khác chỉ
-# nhắc đúng cụm (grep/gh --body "claude_verify.py register") bị chặn oan: chấp nhận, đổi cách viết. Không tách được → quét chữ thô
+# (tối đa 3 tầng: bash -c, eval, pipe sang shell, <<<), kể cả thông điệp -m (miễn trừ nó từng lọt mã qua alias, $(…), dòng sau:
+# review cabd91dd). Lệnh chỉ nhắc đúng cụm trong chuỗi (grep/commit -m/gh --body "claude_verify.py register") bị chặn oan: chấp
+# nhận, đổi cách viết (vd "claude-verify register"). Không tách được → quét chữ thô
 # (fail closed). Hook so chữ chỉ là lớp làm chậm, không phải ranh giới bảo mật (INSTINCT-045/104: lớp lỗ không đóng được bằng so
 # chữ). ponytail: agent cùng uid cố ý vòng qua (python -c gọi subprocess, tên ghép từ biến, glob, script trong file, sửa thẳng file
 # sổ) vẫn được — rủi ro chấp nhận, đóng khi có signer Ed25519 của chủ repo (seal mode).
@@ -2405,23 +2406,15 @@ def _cv_register(text, depth=0, calls_cv=None):
                     or (re.search(r"\bCLAUDE_CODE_SESSION_ID\s*=", text) and "claude_verify" in text))
     if calls_cv is None:
         calls_cv = "claude_verify" in text
-    seg_cmd = None   # lệnh của simple command hiện tại (bỏ qua phép gán đứng đầu)
     for i, t in enumerate(toks):
         prev = toks[i - 1] if i else ""
-        if t and all(c in "();<>|&" for c in t):
-            if any(c in ";|&(" for c in t):
-                seg_cmd = None
-            continue
-        if seg_cmd is None and not re.match(r"[A-Za-z_]\w*=", t):
-            seg_cmd = os.path.basename(t)
         if t.startswith("SB_RUNNER_REGISTER=") or (t == "SB_RUNNER_REGISTER" and prev in _CV_DECL):
             return True
         if calls_cv and (t.startswith("CLAUDE_CODE_SESSION_ID=") or (t == "CLAUDE_CODE_SESSION_ID" and prev in _CV_DECL + ("unset",))):
             return True
         if os.path.basename(t) == "claude_verify.py" and i + 1 < len(toks) and toks[i + 1] == "register":
             return True
-        git_msg = seg_cmd == "git" and (prev == "--message" or re.fullmatch(r"-[A-Za-z]*m", prev) or t.startswith("--message="))
-        if depth < 3 and not git_msg and re.search(r"\s", t) and _cv_register(t, depth + 1, calls_cv):
+        if depth < 3 and re.search(r"\s", t) and _cv_register(t, depth + 1, calls_cv):
             return True
     return False
 

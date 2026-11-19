@@ -45,6 +45,9 @@ mkpr() {   # mkpr <N> <dòng thêm>: commit trên nhánh issue-N-x từ main, in
 H1=$(mkpr 21 'x = danger(1)'); H2=$(mkpr 22 'y = 2'); H3=$(mkpr 23 'z = 3'); H4=$(mkpr 24 'w = 4'); H5=$(mkpr 25 'v = 5')
 H6=$(mkpr 26 'u = 6'); H7=$(mkpr 27 't = 7'); H8=$(mkpr 28 's = 8'); H9=$(mkpr 29 'r = 9'); H30=$(mkpr 30 'q = 30')
 H31=$(mkpr 31 'p = 31'); H33=$(mkpr 33 'o = 33')
+# thẻ 35: PR đổi src.py thành symlink (typechange: diff --no-renames in khối xoá rồi khối thêm cùng tên)
+git -C "$R" checkout -q -b issue-35-x main; git -C "$R" rm -q src.py; ln -s other.py "$R/src.py"; git -C "$R" add src.py; git -C "$R" commit -qm "pr 35"
+git -C "$R" update-ref refs/remotes/origin/issue-35-x HEAD; H35=$(git -C "$R" rev-parse HEAD); git -C "$R" checkout -q main
 # thẻ 34: PR xoá hẳn src.py (#1323 áp cho seal: finding trỏ file đã xoá đối chiếu với base)
 git -C "$R" checkout -q -b issue-34-x main; git -C "$R" rm -q src.py; git -C "$R" commit -qm "pr 34"
 git -C "$R" update-ref refs/remotes/origin/issue-34-x HEAD; H34=$(git -C "$R" rev-parse HEAD); git -C "$R" checkout -q main
@@ -110,6 +113,10 @@ report "$TMP/r-33.json" "$H33" "$BASE" '[]'
 seal old-rev33 "$H33" "$TMP/r-33.json" issue-33-x; refused "d-stale reviewer giao trước lượt build mới nhất → từ chối" 2 "lượt build"
 reg review 33 new-rev33; seal new-rev33 "$H33" "$TMP/r-33.json" issue-33-x
 [ "$SRC" = 0 ] && ok "d-stale2 reviewer giao sau lượt build mới nhất → seal được" || fail "d-stale2 rc=$SRC $(cat "$TMP/seal.err")"
+reg build 35 b35; reg review 35 rev35
+report "$TMP/r-35.json" "$H35" "$BASE" '[{"id":"f1","severity":"important","file":"src.py","line":1,"snippet":"other.py","class":"typechange"}]'
+seal rev35 "$H35" "$TMP/r-35.json" issue-35-x
+{ [ "$SRC" = 4 ] && ! grep -q Traceback "$TMP/seal.err"; } && ok "d-type file đổi kiểu (file → symlink): không crash, finding đối chiếu head" || fail "d-type rc=$SRC $(head -c 300 "$TMP/seal.err")"
 reg build 34 b34; reg review 34 rev34
 report "$TMP/r-34.json" "$H34" "$BASE" '[{"id":"f1","severity":"important","file":"src.py","line":2,"snippet":"b = 2","class":"deleted"}]'
 seal rev34 "$H34" "$TMP/r-34.json" issue-34-x
@@ -306,8 +313,8 @@ hook "bash -c 'python3 .agents/devkit/bin/claude_verify.py register --lane build
 hook "CLAUDE_CODE_SESSION_ID=abc python3 .agents/devkit/bin/claude_verify.py seal --repo . --head x --report r --branch b"; HI=$?
 hook "export CLAUDE_CODE_SESSION_ID=abc; python3 .agents/devkit/bin/claude_verify.py seal --repo . --head x --report r --branch b"; HJ=$?
 hook "env CLAUDE_CODE_SESSION_ID=abc python3 .agents/devkit/bin/claude_verify.py seal --repo . --head x --report r --branch b"; HK=$?
-hook 'git commit -m "hook: chặn claude_verify.py register" -- universal-agent-devkit/hooks/block_dangerous_git_main.py'; HL=$?
-{ [ "$HI" = 2 ] && [ "$HJ" = 2 ] && [ "$HK" = 2 ] && [ "$HL" = 0 ]; } && ok "e6c hook: đặt CLAUDE_CODE_SESSION_ID cho claude_verify.py → chặn; commit -m nhắc chữ → qua" \
+hook 'git commit -m "hook: chặn ghi sổ claude-verify" -- universal-agent-devkit/hooks/block_dangerous_git_main.py'; HL=$?
+{ [ "$HI" = 2 ] && [ "$HJ" = 2 ] && [ "$HK" = 2 ] && [ "$HL" = 0 ]; } && ok "e6c hook: đặt CLAUDE_CODE_SESSION_ID cho claude_verify.py → chặn; commit -m thường → qua" \
   || fail "e6c hook rc=$HI/$HJ/$HK/$HL $(cat "$TMP/hook.err")"
 # e6d (review a6d62dba): mã shell qua pipe, here-string, -ce; gán biến ở tầng ngoài còn claude_verify.py trong bash -c → chặn
 hook "echo 'python3 .agents/devkit/bin/claude_verify.py register --lane review --issue 7 --session x' | bash"; HM=$?
@@ -316,13 +323,14 @@ hook "bash -ce 'python3 .agents/devkit/bin/claude_verify.py register --lane revi
 hook "CLAUDE_CODE_SESSION_ID=abc bash -c 'python3 .agents/devkit/bin/claude_verify.py seal --repo . --head x --report r --branch b'"; HP=$?
 { [ "$HM" = 2 ] && [ "$HN" = 2 ] && [ "$HO" = 2 ] && [ "$HP" = 2 ]; } && ok "e6d hook: register qua pipe / <<< / -ce, gán sid ngoài bash -c → chặn" \
   || fail "e6d hook rc=$HM/$HN/$HO/$HP"
-# e6e (review 29e579ab): miễn trừ thông điệp chỉ cho `git … -m/--message`, không cho `bash -c 'eval "$1"' -m '<mã>'`; ANSI-C $'…'
+# e6e (review 29e579ab, cabd91dd): không còn miễn trừ thông điệp: mã trong -m (bash -c, git alias, $(…), dòng sau) và ANSI-C $'…' → chặn
 hook "bash -c 'eval \"\$1\"' -m 'env SB_RUNNER_REGISTER=1 python3 .agents/devkit/bin/claude_verify.py register --lane review --issue 7 --session x'"; HQ=$?
 hook "env \$'SB_RUNNER_REGISTER=1' python3 .agents/devkit/bin/claude_verify.py \$'register' --lane review --issue 7 --session x"; HR=$?
-hook 'git commit -am "chặn claude_verify.py register" -- a.py'; HS=$?
-hook 'git commit --message="chặn claude_verify.py register" -- a.py'; HT=$?
-{ [ "$HQ" = 2 ] && [ "$HR" = 2 ] && [ "$HS" = 0 ] && [ "$HT" = 0 ]; } && ok "e6e hook: -m của bash -c, \$'…' → chặn; git commit -am/--message= nhắc chữ → qua" \
-  || fail "e6e hook rc=$HQ/$HR/$HS/$HT"
+hook "$(printf 'git commit -m x\nbash -c %s -m %s' "'eval \"\$1\"'" "'python3 x/claude_verify.py register'")"; HS=$?
+hook 'git commit -m "$(python3 x/claude_verify.py register)"'; HT=$?
+hook "git -c alias.z='!eval \"\$2\" #' z -m 'python3 x/claude_verify.py register --lane review'"; HU=$?
+{ [ "$HQ" = 2 ] && [ "$HR" = 2 ] && [ "$HS" = 2 ] && [ "$HT" = 2 ] && [ "$HU" = 2 ]; } && ok "e6e hook: mã register trong -m / alias / \$(…) / dòng sau, \$'…' → chặn" \
+  || fail "e6e hook rc=$HQ/$HR/$HS/$HT/$HU"
 RS="$ROOT/.claude/bin/super-board-run.sh"
 grep -q 'SB_RUNNER_REGISTER=1 python3' "$RS" && ok "e7 runner tự đặt SB_RUNNER_REGISTER=1 inline cho lệnh register" || fail "e7 runner thiếu cờ inline"
 P_REV=$(grep -F 'The merge queue is on for this board' "$RS")

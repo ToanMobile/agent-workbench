@@ -198,13 +198,14 @@ def added_lines(top, base, head):
         if line.startswith("diff --git "):
             cur, header, minus = None, True, None   # dòng ---/+++ chỉ đọc ở phần đầu, không nhầm dòng nội dung "++ x" được thêm
         elif header and line.startswith("+++ "):
-            cur = line[6:] if line.startswith("+++ b/") else None
+            cur = line[6:].rstrip("\t") if line.startswith("+++ b/") else None
             if cur is not None:
-                files.setdefault(cur, set())
+                if files.get(cur) is None:
+                    files[cur] = set()   # typechange: khối xoá đứng trước khối thêm cùng tên; còn ở head thì không phải đã xoá
             elif line == "+++ /dev/null" and minus is not None:
                 files[minus] = None   # --no-renames: file bị xoá hẳn ở head
         elif header and line.startswith("--- a/"):
-            minus = line[6:]
+            minus = line[6:].rstrip("\t")   # tên có khoảng trắng: git thêm tab cuối dòng
             files.setdefault(minus, set())   # file bị xoá vẫn thuộc diff, không có dòng thêm
         elif line.startswith("@@"):
             header = False
