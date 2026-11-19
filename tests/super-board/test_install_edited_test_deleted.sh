@@ -4,7 +4,7 @@
 #  H1: mục deleted hợp lệ (tests/old.sh xoá trong PR) -> ghi vào approved_tests.json với sha256 "deleted".
 #  H2: mục deleted cho file còn ở head (tests/t.sh) -> loại, không ghi.
 #  H3: mục deleted cho file không có ở merge-base (thêm rồi xoá trong PR, hoặc tên bịa) -> loại.
-#  H4: không truyền --base -> mục deleted bị loại (fail closed).
+#  H4: không truyền --base -> mục deleted bị loại (fail closed). H7: --base không resolve (lỗi git) -> loại.
 #  H5: file vắng ở head nhưng có ở cây scratch -> loại. H6: ở merge-base là thư mục, không phải file -> loại.
 #  E1: --edited-unchanged nhận mục deleted hợp lệ khi main không đổi file (exit 0); E2: main sửa file đó sau fork -> exit 1;
 #  E3: mục deleted cho file còn ở head -> exit 1; E4: file không có ở merge-base -> exit 1.
@@ -104,6 +104,9 @@ install "$TMP/h6.json" --base main
 # H4
 install "$TMP/h1.json"
 [ ! -f "$DEST" ] && grep -q "cần --top và --base" "$TMP/err" && ok "H4: thiếu --base -> mục deleted bị loại" || fail "H4: thiếu --base vẫn ghi"
+
+install "$TMP/h1.json" --base no-such-ref   # H7: --base không resolve -> lỗi git merge-base -> loại (fail closed)
+[ ! -f "$DEST" ] && grep -q "lỗi git merge-base" "$TMP/err" && ok "H7: --base không resolve -> loại" || fail "H7: base hỏng vẫn ghi"
 
 # H5
 printf '#!/bin/sh\ntrue # old\n' > "$SCR/tests/old.sh"
