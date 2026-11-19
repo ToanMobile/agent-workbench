@@ -8,6 +8,7 @@
 # gh giả (đầu PATH): item-list trả FAKE_ITEMS, mọi lệnh ghi vào calls.jsonl. Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
+unset CLAUDE_CODE_SESSION_ID   # #1333: test này gọi --new-card nhiều lần; hạn mức theo phiên nằm ở test_create_task_fold_cap.sh
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 CT="$DEVKIT_DIR/scripts/governance/create_task.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
