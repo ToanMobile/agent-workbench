@@ -317,11 +317,9 @@ rebuild_or_rebase() {
   if [ "$kind" = rebase-stale ]; then
     local sn
     sn=$(awk -v k="$k" '$1 == k {print $2; exit}' "$STALE_F" 2>/dev/null || true); sn=$(posint "$sn" 0)
-    if [ "$sn" -ge "$REBASE_STALE_MAX" ]; then
-      kind=rebase   # quá trần riêng: lượt rebase này đi đường cũ, rebuild_cap áp như conflict
-    elif [ "$RETRY" -ne 1 ]; then
-      { { awk -v k="$k" '$1 != k' "$STALE_F" 2>/dev/null || true; echo "$k $((sn + 1))"; } > "$STALE_F.tmp" && mv -f "$STALE_F.tmp" "$STALE_F"; } || true
-    fi
+    # quá trần riêng: lượt rebase này đi đường cũ, rebuild_cap áp như conflict. Sổ chỉ tăng sau khi gắn được loop:rebase (bên dưới):
+    # lượt route lại sau một lần đọc/ghi GitHub hỏng không đếm lệch.
+    [ "$sn" -lt "$REBASE_STALE_MAX" ] || kind=rebase
   fi
   if [ "$kind" != rebase-stale ] && [ "$cur" -ge "$REBUILD_CAP" ]; then
     [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
@@ -343,6 +341,9 @@ root-cause-hash: ${rch}}" || true
   else
     add_label "$k" "loop:rebase" || return 1
     LABEL_DONE=1
+    if [ "$kind" = rebase-stale ]; then
+      { { awk -v k="$k" '$1 != k' "$STALE_F" 2>/dev/null || true; echo "$k $((sn + 1))"; } > "$STALE_F.tmp" && mv -f "$STALE_F.tmp" "$STALE_F"; } || true
+    fi
     # tag ở nhánh rebase: `conflict`, hoặc `merge refused` khi train in lời git/hook (gate-exit-5 không file xung đột, #775). Chỉ
     # `merge refused` chép train-detail (một nơi quyết định: route_one chọn tag); conflict không kèm dòng nào, như comment PR.
     [ "${5:-conflict}" = "merge refused" ] || det=""
