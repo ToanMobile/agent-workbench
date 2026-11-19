@@ -466,6 +466,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    - An unfixed **Over-engineering** finding alone does not bounce; carry it into the new report's Findings.
    - All `fixed` / `no longer applies` → continue to step 4 for a fresh pass. Do not re-raise a prior finding marked `no longer applies`.
 4. Review the code (logic, conventions). Review the tests (right thing tested? testable assertions? meaningful coverage?).
+   **Convergence (every round).** What may become a finding, and which findings may bounce the card, follows super-review `references/review-output.md` → "Convergence": report a pattern once with every place, `Pre-existing` code never bounces (file a real bug for the board), from the second review on the fresh pass reads only `git diff <last reviewed sha>..HEAD`, a Nit never bounces.
    **Review sides by tier (#858, DevKit core-rules §18).** Once, on the first head you review, run
    `.claude/bin/super-board-review-plan.sh --config <config path> --base origin/<base>` (add `--deletes-data` when the card deletes
    data) and copy its two lines into the report; later heads of the same PR keep that tier (never lower it). `reviewers:` lists
