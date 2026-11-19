@@ -555,7 +555,7 @@ check() {
     return 0
   fi
   if [ "$RESTARTS" -ge "$MAX_RESTARTS" ]; then
-    verdict gave-up "runner died $RESTARTS times in a row — gave up (crash loop): read its log, then start the board explicitly"
+    hold_and_notify gave-up "runner died $RESTARTS times in a row — gave up (crash loop): read its log, then start the board explicitly"   # #1350: a person is told once, not only the log
     return 0
   fi
   if [ "$RESTARTS" -gt 0 ]; then

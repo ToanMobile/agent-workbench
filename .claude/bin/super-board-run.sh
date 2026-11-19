@@ -734,6 +734,8 @@ project_node_id() {
 
 RL_SKIP_UNTIL=0
 rate_limit_skip() {  # #1311: $1 = exit code of a GitHub read. 68 = rate limit outlasted the backoff: skip this card, never exit (exit => STATE=crashed => watchdog crash loop, #256 / INSTINCT-058)
+  # #1350: 79 = read halt: the one shared recovery (recover_read_halt, 3 tries); released -> skip this card; not released (persistent, or an uncertain write) -> 1, the caller exits 79 as before
+  if [ "$1" -eq 79 ]; then recover_read_halt && return 0; return 1; fi
   [ "$1" -eq 68 ] || return 1
   # R12: a 68 that came from the latch itself (issue_is_open fails fast while it is still armed) must not renew it, or the latch never expires and the board stays silent
   if [ "$(date +%s)" -lt "${RL_SKIP_UNTIL:-0}" ]; then
@@ -1524,7 +1526,9 @@ mq_collect_rc() {
   rc=$(cat "$1" 2>/dev/null || true); rm -f "$1" "$2"
   case "$rc" in
     0) ;;
-    79|9) log "🛑 halt — super-board-merge-queue.sh exited ${rc}"; exit "$rc" ;;
+    79) recover_read_halt && { log "⚠ super-board-merge-queue.sh exited 79 on a transient read — halt released, the queue is retried next tick"; return 0; }   # #1350
+        log "🛑 halt — super-board-merge-queue.sh exited ${rc}"; exit "$rc" ;;
+    9) log "🛑 halt — super-board-merge-queue.sh exited ${rc}"; exit "$rc" ;;
     *) log "⚠ super-board-merge-queue.sh exited ${rc:-?} — runner keeps going, the queue is retried next tick" ;;
   esac
 }
