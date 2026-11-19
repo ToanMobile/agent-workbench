@@ -2378,13 +2378,34 @@ _rs = [m.start() for m in re.finditer(r"\brestore\b", cmd)]
 _upto = len(cmd) if not _rs or re.search(r"\b(do|done|eval|xargs|function)\b|\(\)\s*\{", cmd) else _rs[-1]
 CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_upto]))
 # (RETARGETED is set from the parsed tokens in analyse_simple: a regex over the raw text was beaten by GIT_""DIR.)
-# (#1328) Sổ phiên claude-verify (claude_verify.py register) chỉ do super-board-run.sh ghi, ngoài phiên agent: lệnh Bash của agent nhắc
-# claude_verify kèm `register`, hay mang cờ SB_RUNNER_REGISTER của runner, bị chặn (quét chữ thô, cả trong chuỗi / heredoc). ponytail:
-# agent cùng uid cố ý vòng qua (tên ghép từ biến, script trong file, sửa thẳng file sổ) vẫn được — rủi ro chấp nhận, đóng khi có signer.
+# (#1328) Sổ phiên claude-verify (claude_verify.py register) chỉ do super-board-run.sh ghi, ngoài phiên agent. Chặn khi, sau khi tách token
+# như shell: `register` đứng ngay sau token claude_verify.py, hoặc cờ của runner ở dạng gán (`SB_RUNNER_REGISTER=…`, `export
+# SB_RUNNER_REGISTER`). Token có khoảng trắng (chuỗi của bash -c, eval, heredoc) được tách tiếp (tối đa 3 tầng). Lệnh chỉ NHẮC chữ (grep,
+# commit -m) thì qua. Không tách được → quét chữ thô (fail closed). ponytail: agent cùng uid cố ý vòng qua (python -c gọi subprocess,
+# tên ghép từ biến, script trong file, sửa thẳng file sổ) vẫn được — rủi ro chấp nhận, đóng khi có signer của chủ repo.
 CV_REGISTER_MSG = "ghi sổ phiên claude-verify từ phiên agent"
-reason = (CV_REGISTER_MSG if re.search(r"sb_runner_register", cmd, re.I)
-          or (re.search(r"claude_verify", cmd, re.I) and re.search(r"(?<![\w-])register(?![\w-])", cmd)) else None)
-reason = reason or analyse(cmd) or (PENDING_FEED[0] if PENDING_FEED else None)
+
+
+def _cv_register(text, depth=0):
+    try:
+        lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        return bool(re.search(r"\bSB_RUNNER_REGISTER\s*=|claude_verify\.py['\"]?\s+['\"]?register\b", text))
+    for i, t in enumerate(toks):
+        if t.startswith("SB_RUNNER_REGISTER=") or (t == "SB_RUNNER_REGISTER" and i and toks[i - 1] in ("export", "declare", "typeset", "local", "readonly")):
+            return True
+        if os.path.basename(t) == "claude_verify.py" and i + 1 < len(toks) and toks[i + 1] == "register":
+            return True
+        if depth < 3 and re.search(r"\s", t) and _cv_register(t, depth + 1):
+            return True
+    return False
+
+
+reason = analyse(cmd) or (PENDING_FEED[0] if PENDING_FEED else None)
+if _cv_register(cmd):
+    reason = CV_REGISTER_MSG
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"
 if reason and reason.startswith("push") and "agent-kit integrate" in reason:

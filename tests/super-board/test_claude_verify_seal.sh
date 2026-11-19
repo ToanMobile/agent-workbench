@@ -279,6 +279,14 @@ hook "SB_RUNNER_REGISTER=1 python3 .agents/devkit/bin/claude_verify.py seal --re
 hook "python3 .agents/devkit/bin/claude_verify.py check CV1 abc --branch issue-1-a"; HC=$?
 { [ "$HA" = 2 ] && [ "$HB" = 2 ] && [ "$HC" = 0 ]; } && ok "e6 hook: chặn register / cờ SB_RUNNER_REGISTER trong phiên agent, cho qua check" \
   || fail "e6 hook rc=$HA/$HB/$HC $(cat "$TMP/hook.err")"
+# e6b: lệnh vô hại chỉ NHẮC chữ register / SB_RUNNER_REGISTER thì cho qua; dạng gán biến hay subcommand thật vẫn chặn
+hook "grep -n register universal-agent-devkit/bin/claude_verify.py"; HD=$?
+hook "grep -rn SB_RUNNER_REGISTER .claude/bin"; HE=$?
+hook "git commit -m 'fix: register runner sessions' -- universal-agent-devkit/bin/claude_verify.py"; HF=$?
+hook "export SB_RUNNER_REGISTER=1"; HG=$?
+hook "bash -c 'python3 .agents/devkit/bin/claude_verify.py register --lane build --issue 1 --session x'"; HH=$?
+{ [ "$HD" = 0 ] && [ "$HE" = 0 ] && [ "$HF" = 0 ] && [ "$HG" = 2 ] && [ "$HH" = 2 ]; } \
+  && ok "e6b hook: grep/commit nhắc chữ → cho qua; export cờ, register trong bash -c → chặn" || fail "e6b hook rc=$HD/$HE/$HF/$HG/$HH $(cat "$TMP/hook.err")"
 RS="$ROOT/.claude/bin/super-board-run.sh"
 grep -q 'SB_RUNNER_REGISTER=1 python3' "$RS" && ok "e7 runner tự đặt SB_RUNNER_REGISTER=1 inline cho lệnh register" || fail "e7 runner thiếu cờ inline"
 P_REV=$(grep -F 'The merge queue is on for this board' "$RS")
