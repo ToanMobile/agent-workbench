@@ -323,7 +323,7 @@ def verify_write(spec):
         if spec.get('kind') == 'pr-merged':
             result = run_gh(['pr', 'view', str(int(spec['pr'])), '--json', 'state'])
             if result.returncode and RATE_LIMITED.search(result.stderr or ''):
-                return 69, 'GitHub rate limit while verifying; nothing changed, try again later'   # #1311: temporary, not 'unknown'
+                return 68, 'GitHub rate limit while verifying; nothing changed, try again later'   # #1311: temporary, not 'unknown'
             state = json.loads(result.stdout)['state'] if not result.returncode else None
             if state == 'MERGED':
                 return 0, f"PR #{spec['pr']} is MERGED on GitHub"
@@ -333,7 +333,7 @@ def verify_write(spec):
         if spec.get('kind') == 'comment':
             result = run_gh(['api', f"repos/{{owner}}/{{repo}}/issues/{int(spec['issue'])}/comments", '--paginate', '--slurp'])
             if result.returncode and RATE_LIMITED.search(result.stderr or ''):
-                return 69, 'GitHub rate limit while verifying; nothing changed, try again later'   # #1311
+                return 68, 'GitHub rate limit while verifying; nothing changed, try again later'   # #1311
             if result.returncode:
                 return RECONCILE_UNKNOWN, f"comments of #{spec['issue']} could not be read"
             pages = json.loads(result.stdout)
@@ -659,6 +659,9 @@ def complete_pr_files(args, stdout):
         full = run_gh(['api', path, '--paginate', '--slurp'])
         if full.returncode:
             status = re.search(r'HTTP [0-9]{3}', full.stderr)
+            # #1311 R7: a rate limit here is temporary: say so ("rate limit" matches RATE_LIMITED in read(), which backs off)
+            if RATE_LIMITED.search(full.stderr or ''):
+                return json.dumps(value), 'REST file list read hit a GitHub rate limit'
             # the check below still reports a short list as incomplete
             return json.dumps(value), 'REST file list read failed' + (f' ({status[0]})' if status else '')
         # REST lists a type change twice as well: merge by path, so the list length means changed files, not entries.
@@ -702,7 +705,7 @@ def read(args, kind='json', meta=None, recovering=False):
     rest_error = None  # complete_pr_files: REST hỏng ở lần thử cuối (lỗi của GitHub, không gợi ý "Valid form")
     delay = float(os.environ.get('SB_GITHUB_RETRY_DELAY', '1'))
     # #1311: a rate-limit refusal does not use up the 3 attempts; it waits (doubling, capped) and asks again. ponytail: the
-    # backoff is per call (default 5+10+20+40+80 s, +up to 25% jitter); when it runs out the caller gets exit 69 and the runner's next tick
+    # backoff is per call (default 5+10+20+40+80 s, +up to 25% jitter); when it runs out the caller gets exit 68 and the runner's next tick
     # retries. Upgrade to a shared cross-call cooldown file if ticks keep colliding with a long secondary limit.
     rate_waits = int(os.environ.get('SB_GITHUB_RATE_RETRIES', '5'))
     rate_base = float(os.environ.get('SB_GITHUB_RATE_DELAY', '5'))
@@ -739,7 +742,7 @@ def read(args, kind='json', meta=None, recovering=False):
                 except ValueError:
                     pass
             # Chỉ bắt RATE_LIMITED trên stderr (khi lỗi) hoặc trên mảng errors của GraphQL (khi gh thoát 0), không bắt trên stdout tự do.
-            rate_text = result.stderr if result.returncode else errors_text
+            rate_text = result.stderr if result.returncode else (errors_text or (rest_error or ''))   # rest_error: R7, only text that says rate limit matches
             if rate_text and RATE_LIMITED.search(rate_text):
                 if rate_hits >= rate_waits:
                     raise RateLimited(f'GitHub rate limit still active after {rate_hits} backoffs; nothing was halted, try again later')
@@ -879,7 +882,7 @@ def main():
         return HALTED
     except RateLimited as error:
         print(f'[github-read] {error}', file=sys.stderr)
-        return 69
+        return 68
     except (ValueError, OSError) as error:
         print(f'[github-read] {error}', file=sys.stderr)
         return 64

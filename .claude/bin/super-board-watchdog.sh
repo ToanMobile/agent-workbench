@@ -478,7 +478,7 @@ reconcile_write_halt() {
       { printf '%s\n' "$NOW" >> "$RECON_LOG"; } 2>/dev/null || echo "watchdog $SLUG: could not write $RECON_LOG" >&2
       wlog "auto-reconciled the GitHub halt of runner pid $1: $(printf '%s' "$out" | tr '\n' ' ')"
       return 0 ;;
-    69) wlog "GitHub rate limit while reconciling the halt of runner pid $1; retried at the next check"; return 1 ;;   # #1311: temporary, no hold/notify
+    68) wlog "GitHub rate limit while reconciling the halt of runner pid $1; retried at the next check"; return 1 ;;   # #1311: temporary, no hold/notify
     10) hold_and_notify write-not-applied "runner pid $1 halted (rc=79): GitHub shows the uncertain write was NOT applied ($(printf '%s' "$out" | tr '\n' ' ')) — halt kept, not resumed blindly; a person decides" ;;
     *) hold_and_notify github-halt "runner pid $1 halted (rc=79) on an uncertain GitHub write that cannot be verified — check it on GitHub, then --resume --reconciled \"<what was checked>\" and start the board explicitly" ;;
   esac

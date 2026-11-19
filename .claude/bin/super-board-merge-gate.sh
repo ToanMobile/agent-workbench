@@ -611,8 +611,8 @@ approval_check() {
   local arc=0
   APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
     --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || arc=$?
-  # #1311: exit 69 = GitHub rate limit outlasted the backoff: stop (no verdict, no human button), the next run asks again.
-  [ "$arc" -ne 69 ] || { say "merge policy: GitHub rate limit while reading the approval — stopping, try again later"; exit 69; }
+  # #1311: exit 68 = GitHub rate limit outlasted the backoff: stop (no verdict, no human button), the next run asks again.
+  [ "$arc" -ne 68 ] || { say "merge policy: GitHub rate limit while reading the approval — stopping, try again later"; exit 68; }
   [ "$arc" -eq 0 ] || APPROVAL='{"approved":false}'
   # Head Y do gate tự đẩy (biên nhận Y→X): approval_request sau lần đẩy ghi --head Y, nên người có thể đã duyệt chính Y. Duyệt đúng head
   # hiện tại luôn hợp lệ: không có duyệt cho X thì đọc lại duyệt cho Y.
@@ -620,7 +620,7 @@ approval_check() {
     arc=0
     APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
       --head "$HEAD_SHA" --plan "$PLAN") || arc=$?
-    [ "$arc" -ne 69 ] || { say "merge policy: GitHub rate limit while reading the approval — stopping, try again later"; exit 69; }
+    [ "$arc" -ne 68 ] || { say "merge policy: GitHub rate limit while reading the approval — stopping, try again later"; exit 68; }
     [ "$arc" -eq 0 ] || APPROVAL='{"approved":false}'
   fi
   python3 "$GITHUB_READ" --check || exit $?
