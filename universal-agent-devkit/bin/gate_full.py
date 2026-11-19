@@ -1074,12 +1074,11 @@ def escape_check(run: Run, repo: str, scratch: str, sha: str, matrix_path, slug:
                    % (run.info["ref"], sha[:12], e["id"], ", ".join(e["tests"]) or "lệnh suite", e["sha"][:12],
                       " (PR #%s)" % e["pr"] if e["pr"] else "", " (ứng viên khác cũng không: %s)" % ", ".join(e["others"]) if e["others"] else "",
                       ", ".join(e["files"]) or "-", run.log_path))
-        rc, out = sh(base + (["--repo", slug] if slug else []) + [
+        rc, out = _no_session(lambda: sh(base + (["--repo", slug] if slug else []) + [
             "--new-card", "gate scoped lọt lưới", "--labels", "bug", "--title", title, "--problem", problem,
             "--fix", "Thêm cạnh/luật để bin/scoped_gate.py (hoặc watch_files của %s) chọn test này khi đổi các file trên." % e["id"],
             "--ac", "Gate --scoped tại %s chạy %s" % (e["sha"][:12], ", ".join(e["tests"]) or e["id"]),
-            "--risk", "🟡 Medium — gate PR báo xanh mà test liên quan không chạy", "--blocked-by", "None."], cwd=repo, timeout=300,
-            env=_no_session_env())
+            "--risk", "🟡 Medium — gate PR báo xanh mà test liên quan không chạy", "--blocked-by", "None."], cwd=repo, timeout=300))
         run.raw(out)
         m = ISSUE_URL.search(out or "")
         e["card"] = m.group(0) if m else "tạo thẻ lỗi (exit %d)" % rc
@@ -1209,9 +1208,14 @@ def closed_cards(slug: str, before: dt.datetime) -> dict:
     return {sid: v[2] for sid, v in latest.items() if v[1] == "COMPLETED"}
 
 
-def _no_session_env() -> dict:
-    """#1333: hạn mức --new-card 1 lần/12 giờ theo CLAUDE_CODE_SESSION_ID là cho agent gõ tay; lượt đêm mở nhiều thẻ nên không mang id phiên."""
-    return {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+def _no_session(run_cmd):
+    """#1333: hạn mức --new-card 1 lần/12 giờ theo CLAUDE_CODE_SESSION_ID là cho agent gõ tay; lượt đêm mở nhiều thẻ nên chạy lệnh con không mang id phiên."""
+    sid = os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+    try:
+        return run_cmd()
+    finally:
+        if sid is not None:
+            os.environ["CLAUDE_CODE_SESSION_ID"] = sid
 
 
 def card_cmd() -> list:
@@ -1294,7 +1298,7 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
             "--ac", "%s chạy lại PASS trên origin/main" % sid,
             "--risk", "🟡 Medium — nhóm b (thời gian thực / môi trường), chưa chứng minh main đỏ" if env else "🔴 High — main đỏ",
             "--blocked-by", "None."]
-        rc, out = sh(cmd, cwd=repo, timeout=300, env=_no_session_env())
+        rc, out = _no_session(lambda: sh(cmd, cwd=repo, timeout=300))
         run.raw(out)
         m = ISSUE_URL.search(out or "")
         if not m:

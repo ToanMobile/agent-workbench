@@ -156,7 +156,7 @@ grep -q '"sess-r3"' "$TMP/repo/.agents/local/state/create_task_new_card.json" &&
 
 # 11. R1: caller tự động không mang CLAUDE_CODE_SESSION_ID xuống create_task.py.
 cat > "$TMP/probe.py" <<'PY'
-import importlib.util, subprocess, sys, types
+import importlib.util, os, subprocess, sys, types
 kit = sys.argv[1]
 def load(name, rel):
     spec = importlib.util.spec_from_file_location(name, kit + "/" + rel); m = importlib.util.module_from_spec(spec)
@@ -175,7 +175,8 @@ except Exception:
 env = seen.get("env")
 print("incident", "ok" if env is not None and "CLAUDE_CODE_SESSION_ID" not in env else "leak")
 gf = load("gate_full_t", "bin/gate_full.py")
-print("gate_full", "ok" if "CLAUDE_CODE_SESSION_ID" not in gf._no_session_env() else "leak")
+inside = gf._no_session(lambda: os.environ.get("CLAUDE_CODE_SESSION_ID"))
+print("gate_full", "ok" if inside is None and os.environ.get("CLAUDE_CODE_SESSION_ID") == "sess-r1" else "leak")
 PY
 out=$(CLAUDE_CODE_SESSION_ID=sess-r1 python3 "$TMP/probe.py" "$DEVKIT_DIR" 2>&1)
 echo "$out" | grep -q "^incident ok" && ok "11a devkit_incident không truyền id phiên" || fail "11a: $out"

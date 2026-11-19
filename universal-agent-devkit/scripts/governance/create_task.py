@@ -788,6 +788,7 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
 
 # Hạn mức --new-card (#1333): 19/11 một phiên mở 15 thẻ bằng --new-card "<lý do bất kỳ>", nhiều thẻ cùng gốc.
 # Mỗi CLAUDE_CODE_SESSION_ID được 1 lần trong 12 giờ; không có session id (script, CI) thì không áp.
+# ponytail: sổ JSON theo phiên là hạn mức mềm (agent vẫn có thể bỏ env var); nâng lên khóa phía server khi có thẻ tràn lan lặp lại.
 NEW_CARD_WINDOW_S = 12 * 3600
 NEW_CARD_LEDGER = Path(".agents/local/state/create_task_new_card.json")
 
