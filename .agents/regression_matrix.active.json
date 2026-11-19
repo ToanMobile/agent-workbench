@@ -4750,6 +4750,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "install-edited-test-deleted-1323",
+      "watch_files": [
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        "tests/super-board/test_install_edited_test_deleted.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1323-INSTALL-EDITED-TEST-DELETED-01",
+          "name": "#1323: comment edited-tests mục sha256 \"deleted\" chỉ ghi vào approved_tests.json khi file vắng ở scratch, vắng ở head, có ở merge-base; --edited-unchanged cùng luật",
+          "command": "bash tests/super-board/test_install_edited_test_deleted.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

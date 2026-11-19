@@ -450,7 +450,7 @@ verify_set() {
     emeta=$(mktemp)
     gh pr view "$p" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
     bash "$HERE/super-board-install-edited-test-approval.sh" \
-      --scratch "$SCRATCH" --sha "$(head_of "$p")" --meta "$emeta" --pr "$p" --top "$REPO_PATH"
+      --scratch "$SCRATCH" --sha "$(head_of "$p")" --meta "$emeta" --pr "$p" --top "$REPO_PATH" --base "$BASE_SHA"
     rm -f "$emeta"
   done
   merged=$(git -C "$SCRATCH" rev-parse HEAD)

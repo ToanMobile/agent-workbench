@@ -1793,7 +1793,7 @@ red_only_on_base() {
 
 # #643: cài duyệt test sửa vào scratch ngay trước bằng chứng #559. File ignore sống qua clean -fdq.
 bash "$HERE/super-board-install-edited-test-approval.sh" \
-  --scratch "$SCRATCH" --sha "$REVIEWED_HEAD" --meta "$META" --pr "$PR" --top "$REPO_PATH"
+  --scratch "$SCRATCH" --sha "$REVIEWED_HEAD" --meta "$META" --pr "$PR" --top "$REPO_PATH" --base "$BASE_SHA"
 prepare_scratch_evidence
 # verify_scratch: chạy mọi lệnh verify trên cây scratch HIỆN TẠI (merge(BASE_SHA, head) của vòng này), ghi biên nhận cây khi xanh. Không
 # đổi thân vòng từ trước PR3 (thân giữ cột cũ cho diff gọn): exit 11 / 4 busy / thử lại khi timeout / red_only_on_base / giữ scratch. Gọi

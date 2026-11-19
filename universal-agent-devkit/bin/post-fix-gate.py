@@ -1172,7 +1172,7 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
     còn hiệu lực sau khi gộp main mới vào nhánh PR hay trong scratch merge gate (main + PR):
       1. head không là tổ tiên (hoặc chính) của trunk — cây đã nằm trên main là cây cũ;
       2. head nằm trên chuỗi audit của PR (_on_audit_chain): không nhận audit tới qua parent thứ hai;
-      3. blob hiện tại == blob của f ở head; test đã xoá (#1323): f không có ở cây hiện tại VÀ không có ở head;
+      3. blob hiện tại == blob của f ở head; test đã xoá (#1323): f không có ở cây hiện tại VÀ không có ở head, CÓ ở merge-base;
       4. mọi audit pass khác của repo trên chuỗi đó mà không là tổ tiên của head (mới hơn) có cùng blob — chỉ audit mới nhất được dùng,
          chép lùi về bản đã audit trước khi test được làm mạnh không qua (replay);
       5. blob của f ở TIP nhánh đích == blob ở merge-base(head, trunk): main không đổi chính file đó kể từ lúc audit, kể cả khi PR
@@ -1228,6 +1228,8 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
         return False, f"không kiểm được file ở nhánh đích / merge-base của auditedHead {h10} (lỗi git)"
     if at_tip != at_fork:
         return False, f"nhánh đích đã đổi file này kể từ audit (auditedHead {h10}): cần audit lại"
+    if not cur and not at_fork:   # #1323: test đã xoá phải có ở merge-base (thật sự là test đã có bị xoá)
+        return False, f"file đã xoá nhưng không có ở merge-base của auditedHead {h10}: không phải test đã có"
     return True, ""
 
 
@@ -1405,18 +1407,16 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             mtimes[f] = os.stat(root / f).st_mtime
         except OSError:
             pass                                  # deleted: nothing to bind a user answer or json entry to
-    # #1323: a deleted test is approved only by an audit record (trailer / PM scoped record): audit_covers checks the audited
-    # tree has no such file either. No user answer or approved_tests.json entry (sha256 of content) can name a deleted file.
+    # #1323: a deleted test is approved only by an audit record (trailer / PM scoped record, or an approved_tests.json entry
+    # `"sha256": "deleted"` naming an audit task): audit_covers checks the file is absent here and in the audited tree and was on
+    # merge-base. No user answer can name a deleted file.
     deleted = [f for f in paths if f not in mtimes and path_absent(root / f)]
     if deleted:
         for f, rv_tid in _trailer_cross_review(deleted, root).items():
             CROSS_REVIEW[f] = rv_tid
         for f, rv_tid in _pm_audit_cross_review([f for f in deleted if f not in CROSS_REVIEW], root, {}).items():
             CROSS_REVIEW[f] = rv_tid
-    ok_deleted = [f for f in deleted if f in CROSS_REVIEW]
-    APPROVED_BY.update({f: "cross-review:" + CROSS_REVIEW[f][0] for f in ok_deleted})
-    if not mtimes:
-        return [f for f in paths if f not in ok_deleted], ok_deleted
+    deleted_open = {f for f in deleted if f not in CROSS_REVIEW}   # còn chờ mục json deleted
     appr_file = root / ".claude" / "audit-gate" / "approved_tests.json"
     approved_at = {}                              # path -> latest approving answer (epoch s)
     user_at = {}                                  # path -> latest approving answer of the user
@@ -1443,7 +1443,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
         agent_id = _norm_agent(os.environ.get("DEVKIT_AGENT_ID") or "")
         for e in entries or []:
             f = e.get("path") if isinstance(e, dict) else None
-            if not isinstance(f, str) or f not in mtimes:
+            if not isinstance(f, str) or (f not in mtimes and f not in deleted_open):
                 continue                          # names no edited test of this run: approves nothing
             if isinstance(e.get("author"), str) and e["author"].strip():
                 try:
@@ -1458,7 +1458,9 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                 APPROVAL_REJECTS.append((f, _cur_sha(f), "reviewer trùng author (tự duyệt)"))
                 continue
             cur = _cur_sha(f)
-            if not cur or e["sha256"].strip().lower() != cur:
+            # #1323: "deleted" chỉ khớp file đã xoá (không có ở cây hiện tại); file còn thì so blob như cũ, "deleted" không duyệt nó.
+            want = "deleted" if f in deleted_open else cur
+            if not want or e["sha256"].strip().lower() != want:
                 APPROVAL_REJECTS.append((f, cur, "sha256 lệch nội dung hiện tại"))
                 continue
             # Audit T0066: file này agent nào cũng ghi được — mục duyệt chỉ tính khi task_id có biên bản audit pass ngoài repo
@@ -1487,8 +1489,13 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             if not covered:
                 APPROVAL_REJECTS.append((f, cur, why))
                 continue
-            approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # sha256 gắn nội dung: mtime không quyết định
+            if f in mtimes:
+                approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # sha256 gắn nội dung: mtime không quyết định
             CROSS_REVIEW[f] = (pm_rv, tid)
+    ok_deleted = [f for f in deleted if f in CROSS_REVIEW]
+    APPROVED_BY.update({f: "cross-review:" + CROSS_REVIEW[f][0] for f in ok_deleted})
+    if not mtimes:
+        return [f for f in paths if f not in ok_deleted], ok_deleted
     for f, (rv, tid) in _trailer_cross_review([f for f in mtimes if f not in CROSS_REVIEW], root).items():
         approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # nội dung = blob đã audit: mtime không quyết định
         CROSS_REVIEW[f] = (rv, tid)

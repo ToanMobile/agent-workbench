@@ -140,4 +140,33 @@ run_gate "$TMP/c1"
 if [ "$RC" = 2 ] && has "duyệt chéo bởi antigravity (task T2021-c1)" && blocked "tests/t.sh"; then ok "C1: sửa test sau audit vẫn chặn, test xoá vẫn nhận"
 else bad "C1: sửa test sau audit: rc=$RC, $(tailout)"; fi
 
+# D. approved_tests.json (comment duyệt tay edited-tests, cài bởi super-board-install-edited-test-approval.sh): mục `"sha256": "deleted"`.
+#    Audit phạm vi hẹp (không ghi old.sh / t.sh) để chỉ mục json quyết định.
+jentry() {   # jentry <dir> <path> <sha256> <task>
+  python3 -c '
+import json, sys
+d, path, digest, task = sys.argv[1:5]
+json.dump({"approvals": [{"path": path, "sha256": digest, "reviewer": "antigravity", "author": "claude", "task_id": task,
+                          "reason": "duyệt tay"}]}, open(d + "/.claude/audit-gate/approved_tests.json", "w"))
+' "$1" "$2" "$3" "$4"
+}
+# D1. test đã xoá + mục deleted, biên bản PM tại head -> nhận
+mk "$TMP/d1"; X="$(del_old)"; pm_ag T2071-d1 "$TMP/d1" "$X" tests/old.sh
+mkdir -p .claude/audit-gate && jentry "$TMP/d1" tests/old.sh deleted T2071-d1
+run_gate "$TMP/d1"
+if [ "$RC" = 0 ] && has "duyệt chéo bởi antigravity (task T2071-d1)"; then ok "D1: mục json deleted cho test đã xoá -> nhận"
+else bad "D1: mục json deleted: rc=$RC, $(tailout)"; fi
+# D2. tests/t.sh sửa (còn file) + mục deleted cho t.sh -> không duyệt (mục deleted không nới ca sửa test)
+mk "$TMP/d2"; printf "$V1" > tests/t.sh; git commit -qam "sửa t.sh"; X="$(git rev-parse HEAD)"; pm_ag T2072-d2 "$TMP/d2" "$X" tests/t.sh
+mkdir -p .claude/audit-gate && jentry "$TMP/d2" tests/t.sh deleted T2072-d2
+run_gate "$TMP/d2"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi" && blocked "tests/t.sh"; then ok "D2: mục deleted cho file còn ở cây -> không duyệt"
+else bad "D2: mục deleted cho file còn: rc=$RC, $(tailout)"; fi
+# D3. mục deleted nhưng task không có biên bản audit -> chặn
+mk "$TMP/d3"; del_old >/dev/null
+mkdir -p .claude/audit-gate && jentry "$TMP/d3" tests/old.sh deleted T2073-d3
+run_gate "$TMP/d3"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi"; then ok "D3: mục deleted không biên bản audit -> chặn"
+else bad "D3: mục deleted không audit: rc=$RC, $(tailout)"; fi
+
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

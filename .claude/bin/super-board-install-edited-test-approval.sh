@@ -5,7 +5,8 @@
 # pass có auditedHead trong <base>..<sha40> = pm — giữ khoá như comment (merge gate chỉ tự đồng bộ nhánh PR khi verify chạy post-fix-gate), nhưng base dời KHÔNG làm
 # duyệt cũ (post-fix-gate audit_covers kiểm main không đổi file test, verify chạy trong khoá trên base hiện tại). Không kiểm được biên
 # bản (lỗi nạp kit / git) = pm-unknown: vẫn khoá, không autosync, không dùng biên nhận cây; không phải duyệt gắn head nên không exit 2.
-# Chế độ cài luôn thoát 0, kể cả khi không ghi gì.
+# Chế độ cài luôn thoát 0, kể cả khi không ghi gì. Mục `"sha256": "deleted"` (#1323, test đã có bị xoá) cần --base: chỉ nhận khi file vắng ở
+# scratch, vắng ở <sha> và có ở merge-base(base, sha); ghi nguyên "deleted" vào approved_tests.json (post-fix-gate kiểm lại).
 HERE=$(cd "$(dirname "$0")" && pwd)
 JQ_FILTER="$HERE/super-board-approved-head.jq"
 AUDIT="$HERE/super-board-audit-check.py"
@@ -60,7 +61,8 @@ pm_chain() {
 
 # --edited-unchanged <meta.json> <sha40> --top DIR --base REF (#1200): thoát 0 khi comment edited-tests THẮNG (đúng head sha) còn hiệu lực
 # dù base đã tiến: với MỌI path trong mảng, file có ở head và blob ở base == blob ở merge-base(base, head) (main không đổi file đó kể từ
-# lúc head fork; cùng khoá so sánh với post-fix-gate audit_covers). Mảng rỗng/không đọc được, thiếu file ở head, lỗi git → thoát 1 (fail closed).
+# lúc head fork; cùng khoá so sánh với post-fix-gate audit_covers). Mục `"sha256": "deleted"` (#1323): file vắng ở head và có ở merge-base.
+# Mảng rỗng/không đọc được, thiếu file ở head, lỗi git → thoát 1 (fail closed).
 if [ "$unchanged_mode" -eq 1 ]; then
   winning || exit 1
   [ -n "$TOP" ] && [ -n "$BASE_REF" ] || exit 1
@@ -79,20 +81,24 @@ try:
         if isinstance(c, dict) and c.get("authorAssociation") in ("OWNER", "MEMBER", "COLLABORATOR") and pat.search(c.get("body") or ""):
             last = c["body"]
     arr = json.loads(et.search(last).group(1).strip())
-    paths = [i["path"].strip() for i in arr]
+    paths = [(i["path"].strip(), i.get("sha256") == "deleted") for i in arr]
 except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
     sys.exit(1)
-if not paths or any((not p) or p.startswith("/") or ".." in p.split("/") for p in paths):
+if not paths or any((not p) or p.startswith("/") or ".." in p.split("/") for p, _d in paths):
     sys.exit(1)
 rc, mb = git("merge-base", base, sha)
 if rc != 0 or not mb:
     sys.exit(1)
-for p in paths:
-    if git("cat-file", "-e", f"{sha}:{p}")[0] != 0:
+for p, deleted in paths:
+    if deleted:   # #1323: test đã xoá: vắng ở head (ls-tree rc 0 rỗng), có ở merge-base
+        rc_h, at_head = git("ls-tree", sha, "--", p)
+        if rc_h != 0 or at_head:
+            sys.exit(1)
+    elif git("cat-file", "-e", f"{sha}:{p}")[0] != 0:
         sys.exit(1)
     rc_a, at_base = git("ls-tree", base, "--", p)
     rc_b, at_fork = git("ls-tree", mb, "--", p)
-    if rc_a != 0 or rc_b != 0 or at_base != at_fork:
+    if rc_a != 0 or rc_b != 0 or at_base != at_fork or (deleted and not at_fork):
         sys.exit(1)
 sys.exit(0)
 PY
@@ -158,7 +164,7 @@ if [ -n "$PR" ]; then
 else
   python3 "$AUDIT" "$TASK_ID" "$SHA" --top "$TOP" || exit 0
 fi
-export QA_INS_META="$META" QA_INS_SCRATCH="$SCRATCH" QA_INS_TASK="$TASK_ID"
+export QA_INS_META="$META" QA_INS_SCRATCH="$SCRATCH" QA_INS_TASK="$TASK_ID" QA_INS_TOP="$TOP" QA_INS_SHA="$SHA" QA_INS_BASE="$BASE_REF"
 python3 -c "$(cat <<'PY'
 import hashlib, json, os, re, subprocess, sys
 from pathlib import Path
@@ -168,6 +174,43 @@ et = re.compile(r"(?m)^edited-tests:[ \t]*(.*)$")
 hex64 = re.compile(r"[0-9a-f]{64}\Z")
 scratch = Path(os.environ.get("QA_INS_SCRATCH") or "")
 task_id = os.environ.get("QA_INS_TASK") or ""
+top = os.environ.get("QA_INS_TOP") or ""
+head = os.environ.get("QA_INS_SHA") or ""
+base = os.environ.get("QA_INS_BASE") or ""
+
+def git_tree(rev, path):
+    # ls-tree: (True, "") = không có file ở rev, (True, dòng) = có, (False, "") = lỗi git (người gọi từ chối).
+    try:
+        r = subprocess.run(["git", "-C", top, "ls-tree", rev, "--", path], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False, ""
+    return r.returncode == 0, r.stdout.strip()
+
+def deleted_why(path):
+    """#1323: lý do loại mục `"sha256": "deleted"`, "" khi nhận. Đủ ba: vắng ở cây scratch, vắng ở head, có ở merge-base(base, head)
+    (thật sự là test cũ bị xoá trong PR; INSTINCT-086: chuỗi tự khai không thành cửa sau). Thiếu --top/--base, lỗi git: từ chối."""
+    if not top or not base or not head:
+        return "deleted cần --top và --base để kiểm merge-base"
+    try:
+        os.lstat(scratch / path)
+        return "deleted nhưng file còn ở cây scratch"
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return "deleted nhưng không kiểm được file ở cây scratch"
+    ok_h, at_head = git_tree(head, path)
+    if not ok_h or at_head:
+        return "deleted nhưng file còn ở head (hoặc lỗi git)"
+    try:
+        mb = subprocess.run(["git", "-C", top, "merge-base", base, head], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return "deleted: lỗi git merge-base"
+    if mb.returncode != 0 or not mb.stdout.strip():
+        return "deleted: lỗi git merge-base"
+    ok_m, at_fork = git_tree(mb.stdout.strip(), path)
+    if not ok_m or not at_fork:
+        return "deleted nhưng file không có ở merge-base (không phải test đã có bị xoá)"
+    return ""
 
 def last_array():
     try:
@@ -220,8 +263,8 @@ def ok_entry(item, idx):
     missing = [k for k, v in (("path", path), ("reviewer", reviewer), ("author", author), ("task_id", tid), ("reason", reason)) if not nonempty(v)]
     if missing:
         return reject(idx, "thiếu hoặc rỗng trường %s" % ", ".join(missing))
-    if not isinstance(digest, str) or not hex64.fullmatch(digest):
-        return reject(idx, "sha256 phải là 64 ký tự hex thường")
+    if not isinstance(digest, str) or not (digest == "deleted" or hex64.fullmatch(digest)):
+        return reject(idx, "sha256 phải là 64 ký tự hex thường hoặc \"deleted\"")
     path = path.strip()
     if path.startswith("/") or ".." in Path(path).parts:
         return reject(idx, "path phải là đường dẫn tương đối trong repo, không có '..'")
@@ -229,6 +272,12 @@ def ok_entry(item, idx):
         return reject(idx, "reviewer trùng author")
     if tid.strip() != task_id:
         return reject(idx, "task_id lệch task của approved-by")
+    if digest == "deleted":
+        why = deleted_why(path)
+        if why:
+            return reject(idx, why)
+        return {"path": path, "sha256": "deleted", "reviewer": reviewer.strip(), "author": author.strip(),
+                "task_id": tid.strip(), "reason": reason.strip()}
     target = scratch / path
     try:
         got = hashlib.sha256(target.read_bytes()).hexdigest()
