@@ -307,7 +307,7 @@ run_loop_scenario() {  # $1 = LOOP_MODE, $2 = state dir, $3 = out, $4 = err, $5 
   local mode="$1" sd="$2" out="$3" err="$4" want="$5" tag="$6" pid n=0 alive=n st skips recovered=n
   mkdir -p "$sd"
   rm -f "$RR/.claude/super-board/github-halt.json" "$RR/.claude/super-board/runner/test.state"
-  ( cd "$RR" && PATH="$TMP/rbin:$PATH" LOOP_MODE="$mode" LOOP_STATE_DIR="$sd" \
+  ( cd "$RR" && PATH="$TMP/rbin:$PATH" LOOP_MODE="$mode" LOOP_STATE_DIR="$sd" SB_GLOBAL_SLOT_DIR="$sd/slots" \
       SB_GITHUB_HALT_FILE="$RR/.claude/super-board/github-halt.json" \
       SB_GITHUB_RATE_RETRIES=1 SB_GITHUB_RATE_DELAY=0 SB_GITHUB_RETRY_DELAY=0 \
       SB_READ_SKIP_MAX=2 SB_FETCH_RETRY_DELAYS="1 1 1" SB_NOTIFY_SKIP=1 \
