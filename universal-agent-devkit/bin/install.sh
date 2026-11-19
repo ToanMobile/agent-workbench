@@ -658,7 +658,16 @@ fi
 
 # 6. Activate the domain profile, if one was chosen
 if [ -n "$PROFILE" ] && [ "$PROFILE" != "none" ]; then
-  if ! DEVKIT_MCP_APPLIED="$PROFILE" python3 "$DEVKIT_ROOT/bin/agent-config.py" --profile "$PROFILE" --target "$TARGET_DIR" --lang "$DEVKIT_LANG"; then
+  # Trong worktree liên kết khi cài lại cùng profile, giữ nguyên .agents/active-profile.json đã track
+  # để không làm bẩn cây (audit Antigravity cần cây sạch để ghi phạm vi).
+  _keep_tracked_profile=0
+  if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && [ -n "${prev_profile:-}" ] \
+     && [ "$(normalize_profile "$prev_profile" 2>/dev/null || true)" = "$PROFILE" ]; then
+    _inst_gd="$(git -C "$TARGET_DIR" rev-parse --absolute-git-dir 2>/dev/null)" || true
+    _inst_cd="$(git -C "$TARGET_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || true
+    [ -n "$_inst_gd" ] && [ -n "$_inst_cd" ] && [ "$_inst_gd" != "$_inst_cd" ] && _keep_tracked_profile=1
+  fi
+  if ! DEVKIT_MCP_APPLIED="$PROFILE" DEVKIT_KEEP_TRACKED_PROFILE="$_keep_tracked_profile" python3 "$DEVKIT_ROOT/bin/agent-config.py" --profile "$PROFILE" --target "$TARGET_DIR" --lang "$DEVKIT_LANG"; then
     echo "✖ Activating profile '$PROFILE' failed — the project was set up without a profile." >&2
     exit 1
   fi
