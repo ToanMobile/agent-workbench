@@ -1,8 +1,8 @@
 # 🧪 Regression Checklist
 
-**An toàn 1% (5/475)** · ❌ 113 · 🔁 0 · 🚫 0 · 🟡 95 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 257 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 22 · ma trận chờ duyệt: không
+**An toàn 1% (5/475)** · ❌ 113 · 🔁 0 · 🚫 0 · 🟡 95 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 257 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 0 · ma trận chờ duyệt: không
 
-> Sinh tự động lúc 2026-11-19 10:59:53 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
+> Sinh tự động lúc 2026-11-19 11:51:42 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
 
 **Bug không có test hồi quy nào chặn tái phát: 2** (0 chưa có test · 2 có test nhưng gate không chạy)
 
@@ -2087,32 +2087,3 @@
 | ⏳ chưa chạy | BUG-20261114-gate-misses-placeholder-variants-unscann | gate misses placeholder variants, unscanned file types and secret forms | gate | REG-DK-ALL-01, REG-DK-ALL-GATES-01, REG-DK-ALL-REST-01, REG-DK-ALL-WORKTREE-01, universal-agent-devkit/tests/gates/test_gate_placeholder_secret_zero_defect.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261114-guard-secrets-allows-reading-secret-file | guard-secrets allows reading secret files the gate forbids to commit | hooks | REG-DK-ALL-01, REG-DK-ALL-GATES-01, REG-DK-ALL-REST-01, REG-DK-ALL-WORKTREE-01, universal-agent-devkit/tests/gates/test_guard_secrets_zero_defect.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261114-stop-gate-accepts-unverified-test-result | stop gate accepts unverified test-result wording and zero-test runner runs | hooks | REG-DK-ALL-01, REG-DK-ALL-GATES-01, REG-DK-ALL-REST-01, REG-DK-ALL-WORKTREE-01, universal-agent-devkit/tests/gates/test_evidence_zero_defect_c1.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
-
-## 🟡 REPORTED — bug báo qua prompt, chưa xác nhận (22)
-
-> Chưa tính là bug. Xác nhận: `agent-kit bugs add "<tiêu đề>" --id <ID>` · có test ĐỎ→XANH: `agent-kit bugs link <ID> <TEST>` · không phải bug: `agent-kit bugs drop <ID>`
-
-| ID | Prompt | Ngày |
-|---|---|---|
-| BUG-20261016-audit-review-cho-toi-5-repo-https-github | audit, review cho tôi 5 repo https://github.com/ToanMobile?tab=projects hiện nhiều task bị blocked,ready ko chạy được t… | 2026-10-16 17:44:34 |
-| BUG-20261016-gan-label-theo-thu-tu-uu-tien-da-lap-va | Gắn label theo thứ tự ưu tiên đã lập và dừng vòng lặp super-board đang lỗi | 2026-10-16 20:57:33 |
-| BUG-20261017-toi-se-chi-file-hoac-config-co-duong-dan | Tôi sẽ chỉ file hoặc config có đường dẫn push_gate sai | 2026-10-17 08:23:46 |
-| BUG-20261019-hien-cac-task-dang-bi-ket-o-cac-luong-re | hiện các task đang bị kẹt ở các luồng review, QA, building xử lý ntn? | 2026-10-19 09:07:27 |
-| BUG-20261019-hien-con-nhieu-branch-dang-bi-mo-coi-ngu | hiện còn nhiều branch đang bị mồ côi nguyên nhân tại sao vậy? | 2026-10-19 16:53:00 |
-| BUG-20261019-sao-bi-ket-hoai-vay-truoc-do-chay-test-2 | sao bị kẹt hoài vậy trước đó chạy test 20 phiên mỗi repo đều pass trơn tru mà? | 2026-10-19 09:10:06 |
-| BUG-20261019-update-lai-cac-pr-log-comment-don-gian-t | update lại các PR log comment đơn giản tự nhiên nhanh gọn ko dài dòng tránh lỗi chặn khi diff PR quá lớn | 2026-10-19 07:34:55 |
-| BUG-20261020-hien-van-bi-ket-tin-nhan | hiện vẫn bị kẹt tin nhắn | 2026-10-20 00:17:04 |
-| BUG-20261020-la-sao-fix-chua-do-hien-van-ket-phai-bam | là sao fix chưa? đó hiện vẫn kẹt phải bấm send now để gửi ép | 2026-10-20 00:07:23 |
-| BUG-20261020-no-ket-stop-hook-prompt-cua-toi-ko-run-d | nó kẹt stop hook prompt của tôi ko run đc | 2026-10-20 00:02:14 |
-| BUG-20261020-tai-sao-no-phai-chay-full-nhi-no-chay-te | tại sao nó phải chạy --full nhỉ nó chạy tets trên những file sửa của worktree đó thôi còn full thì chạy 1 lần khi push… | 2026-10-20 17:36:09 |
-| BUG-20261021-xu-ly-cho-xong-nhung-issues-bi-ket-het-c | xử lý cho xong những issues bị kẹt hết cho tôi | 2026-10-21 08:04:56 |
-| BUG-20261022-audit-review-devkit-board-dang-bi-ket-ch | audit, review devkit board đang bị kẹt check tại sao fix đi | 2026-10-22 07:33:51 |
-| BUG-20261022-bi-dung-roi-a | bị đứng rồi à | 2026-10-22 16:56:22 |
-| BUG-20261022-check-21-gate-hien-lam-gi-nhieu-vay-dc-c | Check 21 gate hiện làm gì nhiều vậy đc chắc chắn có gate bị kẹt cũ lại | 2026-10-22 21:22:12 |
-| BUG-20261022-dung-ai-factory-test-va-sua-luon-loi-kie | dùng ai-factory.test và sửa luôn lỗi kiểm Host | 2026-10-22 13:15:47 |
-| BUG-20261022-la-sao-gate-bi-dinh-cu-dung-ko | Là sao gate bị dính cũ đúng ko | 2026-10-22 21:28:12 |
-| BUG-20261022-sao-228-cung-nam-trong-blocked-de-ntn-to | sao 228 cũng nằm trong blocked? Để ntn tôi sẽ bị nhầm nó đang đứng ko chạy được? | 2026-10-22 17:22:36 |
-| BUG-20261022-tuong-nam-hang-doc-sai-roi-tuong-phai-ha | tường nằm hàng dọc sai rồi tường phải hàng ngang còn các phòng có tường nhưng giữa cùng 1 repo có cửa để di chuyển sang… | 2026-10-22 16:18:33 |
-| BUG-20261022-van-de-la-toi-uu-de-no-ko-chay-gate-lien | Vấn đề là tối ưu để nó ko chạy gate liên tục chỉ có 3 review sao chạy tới 21 gate logic sai | 2026-10-22 21:33:10 |
-| BUG-20261023-update-them-toi-muon-cai-ban-xoay-lai-hu | update thêm tôi muốn cái bàn xoay lại hướng tôi hiện bị quay lưng rồi | 2026-10-23 11:46:11 |
-| BUG-20261024-need-you-vs-gom-task-toi-da-tung-lam-tru | need you vs gom task tôi đã từng làm trước đó nhưng hiện không hoạt động được | 2026-10-24 08:29:21 |

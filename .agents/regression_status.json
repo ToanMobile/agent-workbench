@@ -4642,61 +4642,6 @@
         "universal-agent-devkit/tests/gates/test_proof_gate.sh"
       ]
     },
-    "BUG-20261016-audit-review-cho-toi-5-repo-https-github": {
-      "id": "BUG-20261016-audit-review-cho-toi-5-repo-https-github",
-      "kind": "bug",
-      "title": "audit, review cho tôi 5 repo https://github.com/ToanMobile?tab=projects hiện nhiều task bị blocked,ready ko chạy được t…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-16 17:44:34",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-16 17:45:22",
-      "sessions": [
-        "65a4fe98-7231-4010-b30e-e6f8f94b18b8",
-        "a13f8e8d-85d9-4242-8cf5-e49085f8b11a"
-      ]
-    },
-    "BUG-20261016-gan-label-theo-thu-tu-uu-tien-da-lap-va": {
-      "id": "BUG-20261016-gan-label-theo-thu-tu-uu-tien-da-lap-va",
-      "kind": "bug",
-      "title": "Gắn label theo thứ tự ưu tiên đã lập và dừng vòng lặp super-board đang lỗi",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-16 20:57:33",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-16 20:57:33",
-      "sessions": [
-        "26051942-4b4e-410e-b464-cea92b089132"
-      ]
-    },
-    "BUG-20261017-toi-se-chi-file-hoac-config-co-duong-dan": {
-      "id": "BUG-20261017-toi-se-chi-file-hoac-config-co-duong-dan",
-      "kind": "bug",
-      "title": "Tôi sẽ chỉ file hoặc config có đường dẫn push_gate sai",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-17 08:23:46",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-17 08:23:46",
-      "sessions": [
-        "71bf3cd7-c81f-4f52-afa9-13cf27a07d4a"
-      ]
-    },
     "REG-SB-GITHUB-READ-01": {
       "id": "REG-SB-GITHUB-READ-01",
       "kind": "test",
@@ -5978,78 +5923,6 @@
         "tests/super-board/test_post_merge_squash_leftovers.sh"
       ]
     },
-    "BUG-20261019-hien-con-nhieu-branch-dang-bi-mo-coi-ngu": {
-      "id": "BUG-20261019-hien-con-nhieu-branch-dang-bi-mo-coi-ngu",
-      "kind": "bug",
-      "title": "hiện còn nhiều branch đang bị mồ côi nguyên nhân tại sao vậy?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 16:53:00",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 16:53:00",
-      "sessions": [
-        "dd5b5fec-39dd-45b9-85f2-f82a9ce5678b"
-      ]
-    },
-    "BUG-20261019-update-lai-cac-pr-log-comment-don-gian-t": {
-      "id": "BUG-20261019-update-lai-cac-pr-log-comment-don-gian-t",
-      "kind": "bug",
-      "title": "update lại các PR log comment đơn giản tự nhiên nhanh gọn ko dài dòng tránh lỗi chặn khi diff PR quá lớn",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 07:34:55",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 07:34:55",
-      "sessions": [
-        "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
-    },
-    "BUG-20261019-hien-cac-task-dang-bi-ket-o-cac-luong-re": {
-      "id": "BUG-20261019-hien-cac-task-dang-bi-ket-o-cac-luong-re",
-      "kind": "bug",
-      "title": "hiện các task đang bị kẹt ở các luồng review, QA, building xử lý ntn?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 09:07:27",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 09:07:27",
-      "sessions": [
-        "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
-    },
-    "BUG-20261019-sao-bi-ket-hoai-vay-truoc-do-chay-test-2": {
-      "id": "BUG-20261019-sao-bi-ket-hoai-vay-truoc-do-chay-test-2",
-      "kind": "bug",
-      "title": "sao bị kẹt hoài vậy trước đó chạy test 20 phiên mỗi repo đều pass trơn tru mà?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 09:10:06",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 09:10:06",
-      "sessions": [
-        "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
-    },
     "REG-SB-SCRATCH-CONFIG-01": {
       "id": "REG-SB-SCRATCH-CONFIG-01",
       "kind": "test",
@@ -6382,60 +6255,6 @@
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
         "tests/super-board/test_merge_gate_load_wait.sh"
-      ]
-    },
-    "BUG-20261020-no-ket-stop-hook-prompt-cua-toi-ko-run-d": {
-      "id": "BUG-20261020-no-ket-stop-hook-prompt-cua-toi-ko-run-d",
-      "kind": "bug",
-      "title": "nó kẹt stop hook prompt của tôi ko run đc",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-20 00:02:14",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-20 00:02:14",
-      "sessions": [
-        "01a154d1-f7e9-7670-a2bc-3f25a7cda5e3"
-      ]
-    },
-    "BUG-20261020-la-sao-fix-chua-do-hien-van-ket-phai-bam": {
-      "id": "BUG-20261020-la-sao-fix-chua-do-hien-van-ket-phai-bam",
-      "kind": "bug",
-      "title": "là sao fix chưa? đó hiện vẫn kẹt phải bấm send now để gửi ép",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-20 00:07:23",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-20 00:07:23",
-      "sessions": [
-        "01a154d1-f7e9-7670-a2bc-3f25a7cda5e3"
-      ]
-    },
-    "BUG-20261020-hien-van-bi-ket-tin-nhan": {
-      "id": "BUG-20261020-hien-van-bi-ket-tin-nhan",
-      "kind": "bug",
-      "title": "hiện vẫn bị kẹt tin nhắn",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-20 00:17:04",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-20 00:17:04",
-      "sessions": [
-        "01a154d1-f7e9-7670-a2bc-3f25a7cda5e3"
       ]
     },
     "REG-SB-NOTIFY-SLOTS-01": {
@@ -6771,24 +6590,6 @@
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
         "tests/super-board/test_merge_gate_timeout_retry.sh"
-      ]
-    },
-    "BUG-20261020-tai-sao-no-phai-chay-full-nhi-no-chay-te": {
-      "id": "BUG-20261020-tai-sao-no-phai-chay-full-nhi-no-chay-te",
-      "kind": "bug",
-      "title": "tại sao nó phải chạy --full nhỉ nó chạy tets trên những file sửa của worktree đó thôi còn full thì chạy 1 lần khi push…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-20 17:36:09",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-20 17:36:09",
-      "sessions": [
-        "0dc256bf-b963-452b-bd7f-7fffb54b73e4"
       ]
     },
     "REG-SB-TEST-SLOT-ISO-01": {
@@ -7224,24 +7025,6 @@
         "universal-agent-devkit/scripts/testing/stale_rerun.py"
       ]
     },
-    "BUG-20261021-xu-ly-cho-xong-nhung-issues-bi-ket-het-c": {
-      "id": "BUG-20261021-xu-ly-cho-xong-nhung-issues-bi-ket-het-c",
-      "kind": "bug",
-      "title": "xử lý cho xong những issues bị kẹt hết cho tôi",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-21 08:04:56",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-21 08:04:56",
-      "sessions": [
-        "a218bb0b-c506-4f26-b9c5-69fbd3def415"
-      ]
-    },
     "REG-SB-BUILD-WORKERS-01": {
       "id": "REG-SB-BUILD-WORKERS-01",
       "kind": "test",
@@ -7655,24 +7438,6 @@
         ".claude/workflows/super-board-wave.js"
       ]
     },
-    "BUG-20261022-audit-review-devkit-board-dang-bi-ket-ch": {
-      "id": "BUG-20261022-audit-review-devkit-board-dang-bi-ket-ch",
-      "kind": "bug",
-      "title": "audit, review devkit board đang bị kẹt check tại sao fix đi",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 07:33:51",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 07:33:51",
-      "sessions": [
-        "d8576b01-249b-42c6-81cf-7d9672f98f18"
-      ]
-    },
     "REG-SB-MERGE-CALL-FAILED-01": {
       "id": "REG-SB-MERGE-CALL-FAILED-01",
       "kind": "test",
@@ -7755,24 +7520,6 @@
       "stale_files": [
         ".claude/bin/super-board-merge-gate.sh",
         "tests/super-board/test_merge_gate_merge_call_failed.sh"
-      ]
-    },
-    "BUG-20261022-dung-ai-factory-test-va-sua-luon-loi-kie": {
-      "id": "BUG-20261022-dung-ai-factory-test-va-sua-luon-loi-kie",
-      "kind": "bug",
-      "title": "dùng ai-factory.test và sửa luôn lỗi kiểm Host",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 13:15:47",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 13:15:47",
-      "sessions": [
-        "c4fc41b8-867f-4e1b-b247-241fd1c44821"
       ]
     },
     "REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01": {
@@ -8035,42 +7782,6 @@
         "mcp-servers/agent-office/tests/frame_pacing_test.js"
       ]
     },
-    "BUG-20261022-tuong-nam-hang-doc-sai-roi-tuong-phai-ha": {
-      "id": "BUG-20261022-tuong-nam-hang-doc-sai-roi-tuong-phai-ha",
-      "kind": "bug",
-      "title": "tường nằm hàng dọc sai rồi tường phải hàng ngang còn các phòng có tường nhưng giữa cùng 1 repo có cửa để di chuyển sang…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 16:18:33",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 16:18:33",
-      "sessions": [
-        "a2998427-fbfc-4cf3-b124-196b12757bbd"
-      ]
-    },
-    "BUG-20261022-bi-dung-roi-a": {
-      "id": "BUG-20261022-bi-dung-roi-a",
-      "kind": "bug",
-      "title": "bị đứng rồi à",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 16:56:22",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 16:56:22",
-      "sessions": [
-        "e487b973-96bb-4be6-8fa5-3523a635c759"
-      ]
-    },
     "BUG-20261022-check-cac-task-trong-blocked-dang-bi-gi": {
       "id": "BUG-20261022-check-cac-task-trong-blocked-dang-bi-gi",
       "kind": "bug",
@@ -8100,24 +7811,6 @@
         "reason": "không biết file test nào (link bằng file/class test)"
       }
     },
-    "BUG-20261022-sao-228-cung-nam-trong-blocked-de-ntn-to": {
-      "id": "BUG-20261022-sao-228-cung-nam-trong-blocked-de-ntn-to",
-      "kind": "bug",
-      "title": "sao 228 cũng nằm trong blocked? Để ntn tôi sẽ bị nhầm nó đang đứng ko chạy được?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 17:22:36",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 17:22:36",
-      "sessions": [
-        "8845c1d6-6268-4b23-89c9-cd724ab8794f"
-      ]
-    },
     "BUG-20261022-co-dang-bi-stuck-ko-vay": {
       "id": "BUG-20261022-co-dang-bi-stuck-ko-vay",
       "kind": "bug",
@@ -8145,60 +7838,6 @@
         "status": "INCONCLUSIVE",
         "reason": "không biết file test nào (link bằng file/class test)"
       }
-    },
-    "BUG-20261022-check-21-gate-hien-lam-gi-nhieu-vay-dc-c": {
-      "id": "BUG-20261022-check-21-gate-hien-lam-gi-nhieu-vay-dc-c",
-      "kind": "bug",
-      "title": "Check 21 gate hiện làm gì nhiều vậy đc chắc chắn có gate bị kẹt cũ lại",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 21:22:12",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 21:22:12",
-      "sessions": [
-        "c4fc41b8-867f-4e1b-b247-241fd1c44821"
-      ]
-    },
-    "BUG-20261022-la-sao-gate-bi-dinh-cu-dung-ko": {
-      "id": "BUG-20261022-la-sao-gate-bi-dinh-cu-dung-ko",
-      "kind": "bug",
-      "title": "Là sao gate bị dính cũ đúng ko",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 21:28:12",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 21:28:12",
-      "sessions": [
-        "c4fc41b8-867f-4e1b-b247-241fd1c44821"
-      ]
-    },
-    "BUG-20261022-van-de-la-toi-uu-de-no-ko-chay-gate-lien": {
-      "id": "BUG-20261022-van-de-la-toi-uu-de-no-ko-chay-gate-lien",
-      "kind": "bug",
-      "title": "Vấn đề là tối ưu để nó ko chạy gate liên tục chỉ có 3 review sao chạy tới 21 gate logic sai",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 21:33:10",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 21:33:10",
-      "sessions": [
-        "c4fc41b8-867f-4e1b-b247-241fd1c44821"
-      ]
     },
     "REG-SB-MERGE-TRAIN-01": {
       "id": "REG-SB-MERGE-TRAIN-01",
@@ -9717,24 +9356,6 @@
         "tests/super-board/test_gh_write_once_marker.sh"
       ]
     },
-    "BUG-20261023-update-them-toi-muon-cai-ban-xoay-lai-hu": {
-      "id": "BUG-20261023-update-them-toi-muon-cai-ban-xoay-lai-hu",
-      "kind": "bug",
-      "title": "update thêm tôi muốn cái bàn xoay lại hướng tôi hiện bị quay lưng rồi",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-23 11:46:11",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-23 11:46:11",
-      "sessions": [
-        "7124a215-fcc4-4151-b92a-7426609d4eb0"
-      ]
-    },
     "REG-DK-DISCARD-SQUASH-01": {
       "id": "REG-DK-DISCARD-SQUASH-01",
       "kind": "test",
@@ -10787,24 +10408,6 @@
       "stale_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_noop_worker.sh"
-      ]
-    },
-    "BUG-20261024-need-you-vs-gom-task-toi-da-tung-lam-tru": {
-      "id": "BUG-20261024-need-you-vs-gom-task-toi-da-tung-lam-tru",
-      "kind": "bug",
-      "title": "need you vs gom task tôi đã từng làm trước đó nhưng hiện không hoạt động được",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-24 08:29:21",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-24 08:29:21",
-      "sessions": [
-        "b6755c6d-dbfb-4058-8769-4114a9fddbcf"
       ]
     },
     "REG-DK-SESSION-ENV-01": {
@@ -14954,6 +14557,6 @@
   },
   "stats": {
     "reported_total": 130,
-    "reported_dropped": 129
+    "reported_dropped": 151
   }
 }
