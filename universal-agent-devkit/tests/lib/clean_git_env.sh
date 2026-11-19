@@ -14,7 +14,8 @@ for _v in GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_OBJ
           POSTFIX_GATE_FORCE_FULL POSTFIX_GATE_FULL WORKTREE_MERGE_GATE DEVKIT_ALLOW_BRANCH \
           DEVKIT_GATE_SLOTS DEVKIT_GATE_SLOT_WAIT_S \
           DEVKIT_SLOT_HEAVY_MAX DEVKIT_SLOT_HEAVY_WAIT_S DEVKIT_SLOT_HEAVY_BUDGET_S \
-          DEVKIT_CAPACITY DEVKIT_CAPACITY_CORES DEVKIT_CAPACITY_LOAD; do   # T0052: nút sức chứa của người gọi (bin/capacity.py) không lái test
+          DEVKIT_CAPACITY DEVKIT_CAPACITY_CORES DEVKIT_CAPACITY_LOAD \
+          CLAUDE_CODE_SESSION_ID; do   # #1333: id phiên của người gọi làm create_task.py áp hạn mức --new-card và ghi sổ của repo thật   # T0052: nút sức chứa của người gọi (bin/capacity.py) không lái test
   unset "$_v"
 done
 for _v in $(env | grep -E '^GIT_CONFIG_(KEY|VALUE)_[0-9]+=' | cut -d= -f1); do unset "$_v"; done
