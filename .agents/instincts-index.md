@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (911 dòng, 101.6 KB) · 110 mục
+> **Tệp gốc:** `.agents/instincts.md` (927 dòng, 103.3 KB) · 112 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -111,5 +111,7 @@
 - [INSTINCT-113] Đổi profile kit mà không commit file sinh ra làm bẩn mọi worktree — `sed -n '882,889p' .agents/instincts.md`
 - [INSTINCT-112] Model mặc định trong code PM bị config máy ~/.antigravity-pm.json đè — `sed -n '890,897p' .agents/instincts.md`
 - [INSTINCT-114] Tách đoạn theo ngoặc làm mã AC đứng một mình — `sed -n '898,905p' .agents/instincts.md`
-- [INSTINCT-115] Tick tự nạp lại thoát sớm khi blob runner đã mới thì main kẹt sau origin cả ngày — `sed -n '906,911p' .agents/instincts.md`
+- [INSTINCT-115] Tick tự nạp lại thoát sớm khi blob runner đã mới thì main kẹt sau origin cả ngày — `sed -n '906,914p' .agents/instincts.md`
+- [INSTINCT-116] Xoá workflow CI không xoá check đỏ cũ trên PR đang mở, gate vẫn chặn — `sed -n '915,922p' .agents/instincts.md`
+- [INSTINCT-117] Giữ worktree của thẻ board bằng EnterWorktree rồi keep làm QA bị Blocked — `sed -n '923,927p' .agents/instincts.md`
 
