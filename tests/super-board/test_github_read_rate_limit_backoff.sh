@@ -259,6 +259,9 @@ def bump(name):
     open(p, 'w').write(str(n))
     return n
 if a[:2] == ['api', 'rate_limit']:
+    if mode == 'quota-rl' and bump('quota_calls') <= 3:
+        sys.stderr.write('You have exceeded a secondary rate limit.\n')
+        sys.exit(1)
     print(json.dumps({'resources': {'core': {'remaining': 4500, 'reset': 9999999999}, 'graphql': {'remaining': 4500, 'reset': 9999999999}}}))
 elif a[0] == 'api' and a[1] == 'graphql':
     q = ' '.join(a)
@@ -317,7 +320,8 @@ run_loop_scenario() {  # $1 = LOOP_MODE, $2 = state dir, $3 = out, $4 = err, $5 
   done
   ps -p "$pid" >/dev/null 2>&1 && alive=y
   st=$(sed -n 's/^STATE=//p' "$RR/.claude/super-board/runner/test.state" 2>/dev/null | head -1)
-  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  pkill -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null   # children first: the next scenario must not meet this runner's pid
+  sleep 0.5
   RL_ALIVE=$alive; RL_STATE=$st; RL_RECOVERED=$recovered; RL_SKIPS=$skips
 }
 
@@ -336,6 +340,25 @@ if [ "$RL_ALIVE" = y ] && [ "$RL_STATE" = running ] && [ "$RL_SKIPS" -ge 1 ] && 
   ok "R8b real runner loop (issue_is_open rate limited in the tick): card skipped, alive, STATE=running, no halt"
 else
   fail "R8b real runner loop issue-rl: alive=$RL_ALIVE STATE=$RL_STATE skips=$RL_SKIPS halt=$([ -e "$RR/.claude/super-board/github-halt.json" ] && echo y || echo n) tail=$(tail -4 "$TMP/r2.out" "$TMP/r2.err" | tr '\n' ' ')"
+fi
+
+# R10: a rate-limited tick (RATE_LIMITED_TICK=1, no worker) is not a no-progress cycle; the same tick without the flag still counts.
+r10=$(SB_LIB_ONLY=1 RUN_SRC="$RUN" bash -c '
+  set -euo pipefail
+  . "$RUN_SRC"
+  log() { :; }; dispatch_paused() { return 1; }; board_only_file_wait() { return 1; }
+  NO_PROGRESS_CYCLES=9; PREV_DONE_SIG=9; MQ_WAITING=0; ACTIVE_WORKERS=0; LOAD_HELD_TICK=0
+  NO_PROGRESS_CYCLE_COUNT=0; RATE_LIMITED_TICK=1; record_cycle_progress 9 || true; a=$NO_PROGRESS_CYCLE_COUNT
+  NO_PROGRESS_CYCLE_COUNT=0; RATE_LIMITED_TICK=0; record_cycle_progress 9 || true; b=$NO_PROGRESS_CYCLE_COUNT
+  echo "a=$a b=$b"' 2>&1)
+[ "$r10" = "a=0 b=1" ] && ok "R10 rate-limited tick not counted as no-progress (plain tick still is)" || fail "R10 got '$r10', want 'a=0 b=1'"
+
+# R9: the quota read (gh_rate_guard) at start-up is rate limited past the backoff: startup_reconcile logs it and goes on, never dies (set -e => STATE=crashed).
+run_loop_scenario quota-rl "$TMP/rstate3" "$TMP/r3.out" "$TMP/r3.err" "rate limit at start-up" R9 1
+if [ "$RL_ALIVE" = y ] && [ "$RL_STATE" = running ] && [ "$RL_SKIPS" -ge 1 ] && [ ! -e "$RR/.claude/super-board/github-halt.json" ]; then
+  ok "R9 real runner start-up (quota read rate limited): alive, STATE=running, no halt"
+else
+  fail "R9 real runner start-up quota-rl: alive=$RL_ALIVE STATE=$RL_STATE skips=$RL_SKIPS tail=$(tail -4 "$TMP/r3.out" "$TMP/r3.err" | tr '\n' ' ')"
 fi
 
 [ "$FAILS" -eq 0 ] && { echo "OK"; exit 0; } || { echo "$FAILS failed"; exit 1; }

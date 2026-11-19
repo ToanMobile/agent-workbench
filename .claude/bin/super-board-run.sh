@@ -231,7 +231,7 @@ fi  # end non-lib-only setup
 : "${WORKER_LOG_DIR:=/dev/null}"
 : "${INFLIGHT_DIR:=/dev/null}"
 : "${PROJECT_OWNER:=}" ; : "${PROJECT_NUMBER:=0}" ; : "${BOT_LOGIN:=}"
-: "${LOAD_HELD_TICK:=0}" ; : "${TICK_SEQ:=0}" ; : "${REAPED_THIS_TICK:=0}" ; : "${BOARD_SYNCED:=0}"
+: "${LOAD_HELD_TICK:=0}" ; : "${RATE_LIMITED_TICK:=0}" ; : "${TICK_SEQ:=0}" ; : "${REAPED_THIS_TICK:=0}" ; : "${BOARD_SYNCED:=0}"
 
 # ───────────────────────────── helpers ─────────────────────────────
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$RUN_MANIFEST"; }
@@ -715,7 +715,7 @@ issue_is_open() {
   # Unreadable is distinct from both OPEN and CLOSED: exit 79 halts the run.
   local state reason raw
   ISSUE_KEPT_CLOSED=0   # #1222: 1 when CLOSED and returned 0 only because it was not reopened — dispatch_lane must not start a lane
-  state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || { state=$?; [ "$state" -eq 68 ] && return 68; return 79; }   # #1311: 68 = rate limit that outlasted the backoff: no halt, the runner exits and the next tick retries
+  state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || { state=$?; [ "$state" -eq 68 ] && return 68; return 79; }   # #1311: 68 = rate limit that outlasted the backoff: no halt, the caller skips the card (rate_limit_skip) and the next tick retries
   [ "$state" = "CLOSED" ] || return 0
   # T0054: thẻ mang nhãn ac-open đã merge một PR nhưng còn AC chưa chứng minh (merge gate gắn nhãn). Worker vẫn có thể
   # `gh issue close` nó; mọi đường reconcile CLOSED → Done đều qua đây, nên coi nó là OPEN (và mở lại issue) thay vì Done.
@@ -2283,6 +2283,10 @@ record_cycle_progress() {
   if [ "${ACTIVE_WORKERS:-0}" -eq 0 ] && [ "${LOAD_HELD_TICK:-0}" = 1 ]; then
     return 0
   fi
+  # #1311: tick bị GitHub rate limit (đọc board/thẻ lùi hết) chưa đọc được gì: không tính là chu kỳ không tiến triển.
+  if [ "${ACTIVE_WORKERS:-0}" -eq 0 ] && [ "${RATE_LIMITED_TICK:-0}" = 1 ]; then
+    return 0
+  fi
   NO_PROGRESS_CYCLE_COUNT=$((NO_PROGRESS_CYCLE_COUNT + 1))
   [ "$NO_PROGRESS_CYCLE_COUNT" -lt "$NO_PROGRESS_CYCLES" ]
 }
@@ -3051,7 +3055,8 @@ startup_reconcile() {
   QA_PID=""; QA_ISSUE=""; QA_EXTRA=""
   REVIEW_PID=""; REVIEW_ISSUE=""; REVIEW_EXTRA=""
   adopt_live_locks
-  gh_rate_guard
+  # #1311: 68 = the quota read hit the rate limit past the backoff: log it and go on (the ticks guard again), never die on it (set -e => STATE=crashed)
+  gh_rate_guard || { rc=$?; [ "$rc" -eq 68 ] || exit "$rc"; RATE_LIMITED_TICK=1; log "⚠ GitHub rate limit at start-up (exit 68) — quota read skipped, the ticks retry"; }
   # #1311: 68 = rate limit outlasted the backoff: skip the start-up reclaim (the ticks and the mid-run reclaim retry), never die on it
   fetch_project_items || { rc=$?; [ "$rc" -eq 68 ] || exit "$rc"; RATE_LIMITED_TICK=1; [ -n "${PROJECT_ITEMS_JSON:-}" ] || PROJECT_ITEMS_JSON='{"items":[],"totalCount":0}'; log "⚠ GitHub rate limit at start-up (exit 68) — start-up reclaim skipped, the ticks retry"; return 0; }
   reclaim_stranded_building; fetch_project_items || { rc=$?; [ "$rc" -eq 68 ] || exit "$rc"; RATE_LIMITED_TICK=1; return 0; }
@@ -4030,6 +4035,7 @@ while true; do
   refresh_run_paths
   # #530: mỗi vòng một mốc tải mới. Cờ hoãn của vòng trước không được kéo sang.
   LOAD_HELD_TICK=0
+  RATE_LIMITED_TICK=0   # #1311: same, per tick (set by tick_read_failed / rate_limit_skip, read by record_cycle_progress)
   TICK_SEQ=$(( ${TICK_SEQ:-0} + 1 ))
   REAPED_THIS_TICK=0
   # Stop marker xuất hiện giữa chừng (super-board-stop.sh không kill được runner này, hoặc watchdog vừa khởi động nó
