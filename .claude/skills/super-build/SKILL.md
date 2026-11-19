@@ -106,6 +106,7 @@ Follow spec `.claude/skills/super-board/references/run.md` → Builder (first pa
 6. Open **draft PR** with the PR description template from `run.md` — title in commit-subject format, every marker block filled, `Docs:` bullets in Solution, Risk with `Door:` (one-way/two-way) and `Blast radius:` lines (writing-standard.md § 2).
 7. Follow [PR author notes](../super-board/references/pr-author-notes.md), then post the `[builder] [report]` PR comment + the short issue comment with the PR URL (writing-standard.md § 4).
 8. Move card Ready/Building → QA.
+9. **Before ending the turn (#1318):** push any local commit that is not on `origin` (or say in the comment why you left it), and make the last command of the turn exactly one `move` of the card. A turn that ends with `Next: QA` in a comment but no `move` is counted as a dead worker; the runner then only repairs it, it is not the plan.
 
 ### Keep each PR small (only when the board set a positive cap)
 Unset `merge_policy.auto_max_lines` is 0: there is no line-count cap. Build the card's ACs as one

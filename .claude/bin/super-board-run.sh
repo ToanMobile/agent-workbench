@@ -270,6 +270,28 @@ fetch_project_items() {
 }
 
 READ_SKIPS=0
+HALT_RECOVERS=0
+# #1322: halt 79 do một lần ĐỌC GitHub hỏng tạm thời (504, timeout ×3): runner từng thoát và board của 5 repo app nằm im 8–12 ngày.
+# Thử `github-read --resume` (chỉ đọc, phát lại lệnh đã lưu) sau backoff SB_HALT_RECOVER_DELAY·n (60 s), tối đa SB_HALT_RECOVER_MAX (3) lần
+# liên tiếp. 0 = đã nhả halt (runner đi tiếp); 1 = không nhả được (halt do lần GHI chưa rõ kết quả: --resume từ chối ngay; hoặc hết số
+# lần thử): runner thoát 79 như cũ và watchdog lo. Chỉ đọc, không bao giờ phát lại một lần ghi.
+recover_read_halt() {
+  local max="${SB_HALT_RECOVER_MAX:-3}" base="${SB_HALT_RECOVER_DELAY:-60}" err
+  case "$max" in ''|*[!0-9]*|????*) max=3 ;; esac
+  case "$base" in ''|*[!0-9]*|????*) base=60 ;; esac
+  while [ "$HALT_RECOVERS" -lt "$((10#$max))" ]; do
+    HALT_RECOVERS=$((HALT_RECOVERS + 1))
+    log "⚠ GitHub read halted (rc=79) — retrying --resume in $((10#$base * HALT_RECOVERS))s (try ${HALT_RECOVERS}/${max})"
+    tick_sleep "$((10#$base * HALT_RECOVERS))"
+    if err=$(python3 "$SB_GITHUB_READ" --resume 2>&1); then
+      log "✔ GitHub read halt released by --resume — runner keeps going"
+      return 0
+    fi
+    case "$err" in *"manual outcome reconciliation"*) log "✖ halt is an uncertain write, not a read: leaving it to the watchdog"; return 1 ;; esac
+  done
+  return 1
+}
+
 tick_read_failed() {
   # $1 = mã của lần đọc hỏng, $2 = "nosleep" khi người gọi tự ngủ. Một lần đọc GitHub hỏng trong vòng lặp chính (board
   # hoặc quota) bỏ tick này thay vì để `set -e` giết runner (#256); mã halt có chủ đích vẫn dừng runner như trước. Lỗi kéo
@@ -277,6 +299,7 @@ tick_read_failed() {
   # đọc (không phải halt) để watchdog khởi động lại có backoff và trần như một lần crash. Luôn trả 1.
   local rc="$1" max="${SB_READ_SKIP_MAX:-5}"
   case "$max" in ''|*[!0-9]*|????*) max=5 ;; esac   # giá trị lạ không được lặng lẽ tắt trần
+  if [ "$rc" = 79 ] && recover_read_halt; then return 1; fi
   case "$RUNNER_HALT_CODES" in *" $rc "*) exit "$rc" ;; esac
   READ_SKIPS=$((READ_SKIPS + 1))
   if [ "$READ_SKIPS" -gt "$((10#$max))" ]; then
@@ -291,7 +314,7 @@ tick_read_failed() {
 tick_fetch() {  # $1 = "nosleep" tuỳ chọn. Trả 1 khi bỏ tick (vòng lặp `continue`).
   local rc=0
   fetch_project_items || rc=$?
-  if [ "$rc" -eq 0 ]; then READ_SKIPS=0; BOARD_SYNCED=1; return 0; fi
+  if [ "$rc" -eq 0 ]; then READ_SKIPS=0; HALT_RECOVERS=0; BOARD_SYNCED=1; return 0; fi
   tick_read_failed "$rc" "${1:-}"
 }
 
@@ -321,14 +344,15 @@ def file_wait: [((.labels // []) + (.content.labels // []))[] | (if type == "obj
 # #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
 session_sweep_helper() { printf '%s' "${SB_SESSION_SWEEP:-$(dirname "$SB_GITHUB_READ")/super-board-session-sweep.py}"; }
 waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
-# P3: cờ dependency_unblock_v1 (mặc định tắt). Env SB_DEPENDENCY_UNBLOCK_V1=0|1 thắng; không thì `dependency_unblock_v1` trong
-# <checkout chính>/.agents/local/flags.json (git common dir, như guard_v2 của super-board-needs-you.py). Thiếu/hỏng = tắt.
+# P3: cờ dependency_unblock_v1 (#1320: mặc định BẬT, không cần flags.json ở từng repo). Env SB_DEPENDENCY_UNBLOCK_V1=0|1 thắng; không thì
+# `dependency_unblock_v1: false` trong <checkout chính>/.agents/local/flags.json tắt nó (git common dir, như guard_v2 của
+# super-board-needs-you.py). Thiếu file, thiếu khoá hay file hỏng = bật.
 dependency_unblock_v1_on() {
   case "${SB_DEPENDENCY_UNBLOCK_V1:-}" in 1) return 0 ;; 0) return 1 ;; esac
   local common
-  common=$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-  [ -n "$common" ] || return 1
-  jq -e '.dependency_unblock_v1 == true' "$(dirname "$common")/.agents/local/flags.json" >/dev/null 2>&1
+  common=$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+  [ -n "$common" ] || return 0
+  ! jq -e '.dependency_unblock_v1 == false' "$(dirname "$common")/.agents/local/flags.json" >/dev/null 2>&1
 }
 
 # #95: a card whose QA needs a real device (label needs-device, any case) — in QA, or in Ready labelled `qa` (the Tester takes it
@@ -2403,6 +2427,54 @@ builder_reported_since() {
   [ "${meta%% *}" \> "$2" ] || [ "${meta%% *}" = "$2" ]
 }
 
+# #1318: thời điểm lần giao gần nhất trong log worker (ISO UTC), rỗng khi không có.
+worker_dispatch_time() {
+  grep '^=== dispatch ' "$1" 2>/dev/null | tail -1 | sed 's/.* at \(.*\) ===.*/\1/' || true
+}
+
+# #1318: 0 khi worker build ($1 = issue) kết thúc sạch (exit 0 + result success), để lại comment `[builder]` mới sau lần giao
+# VÀ dòng `Next:` của comment đó nêu QA: việc đã xong, chỉ thiếu lệnh `move`. Mọi lỗi đọc GitHub = 1 (giữ đường reclaim cũ).
+build_handed_to_qa() {
+  local wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-build-${1}.log" since n
+  worker_ended_clean "$wlog" || return 1
+  since=$(worker_dispatch_time "$wlog")
+  builder_reported_since "$1" "$since" || return 1
+  n=$(issue_comment_count "$1")
+  [ -n "$n" ] || return 1
+  issue_last_comment "$1" "$n" | tr -d '\r' | grep -qiE '^Next:.*\bQA\b'
+}
+
+# #1318: worker QA kết thúc sạch, thẻ còn ở QA và comment mới nhất là `[qa] [report] ✅|❌`: áp kết luận đó thay vì giao lại QA.
+# $1 = issue, $2 = số comment. ✅ → Review; ❌ → Ready + loop:rebuild-N (N+1; đã chạm rebuild_cap thì trả 1, đường cũ lo).
+# Trả 0 chỉ khi thẻ đã được chuyển.
+qa_apply_report() {
+  local issue="$1" count="$2" head verdict item_id cur target labs l rm=()
+  head=$(issue_last_comment "$issue" "$count" | tr -d '\r' | awk 'NF && $0 !~ /^<!--/ {print; exit}')
+  case "$head" in
+    "[qa] [report] ✅"*) verdict=pass ;;
+    "[qa] [report] ❌"*) verdict=fail ;;
+    *) return 1 ;;
+  esac
+  item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
+  [ -n "$item_id" ] || return 1
+  if [ "$verdict" = pass ]; then
+    target=Review
+  else
+    labs=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)][]' 2>/dev/null || true)
+    cur=$(printf '%s\n' "$labs" | sed -nE 's/^loop:rebuild-([0-9]+)$/\1/p' | sort -n | tail -1); cur=${cur:-0}
+    [ "$cur" -lt "${REBUILD_CAP:-2}" ] || return 1
+    for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
+    gh_checkpoint
+    gh_write_once issue edit "$issue" --add-label "loop:rebuild-$((cur + 1))" ${rm[@]+"${rm[@]}"} >/dev/null 2>&1 || return 1
+    target=Ready
+  fi
+  set_card_status "$item_id" "$target" || return 1
+  [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+  gh_checkpoint
+  log "↪ #${issue} QA → ${target}: QA worker ended clean with a [qa] [report] but did not move the card (routed by the runner)"
+  return 0
+}
+
 note_worker_exit() {
   # $1 = issue; the lock just read (LANE) is the worker that died. Logs its exit record and, unless it exited 0, comments on the card.
   # No record = the wrapper itself was killed (SIGKILL, host asleep) or the worker predates the wrapper.
@@ -2591,6 +2663,13 @@ EOF
         log "↩ #${issue} Review → Ready: review worker concluded not approved without moving the card (bounce routed by the runner)"
         continue
       fi
+    fi
+    # #1318: QA worker that exited 0 with a new [qa] [report] but left the card in QA: apply the report's verdict (pass → Review, fail → Ready).
+    if [ "$lane" = qa ] && [ "$col" = QA ] && [ "$col" = "$from" ] && [ "$count" -gt "$c0" ] && worker_ended_clean "$wlog" \
+       && qa_apply_report "$issue" "$count"; then
+      NOOP_MOVED=1
+      rm -f "$f" 2>/dev/null || true
+      continue
     fi
     if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
       rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # it moved the card or wrote something: progress
@@ -2972,6 +3051,15 @@ reclaim_dead_builds() {
     case "$seen" in *" $issue "*) continue ;; esac
     seen="${seen}${issue} "
     issue_locked "$issue" && continue
+    # #1318: a clean exit after a `[builder] … Next: QA` comment is a finished build that forgot the move: QA, not a death, no reclaim count.
+    if build_handed_to_qa "$issue" && set_card_status "$item_id" "QA"; then
+      RECLAIM_MOVED=1
+      rm -f "$INFLIGHT_DIR/reclaims/$issue" 2>/dev/null || true
+      [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+      gh_checkpoint
+      log "↪ #${issue} Building → QA: build worker ended clean with a [builder] comment ending Next: QA but did not move the card (routed by the runner)"
+      continue
+    fi
     now=$(date +%s)
     f="$INFLIGHT_DIR/reclaims/$issue"
     n=0

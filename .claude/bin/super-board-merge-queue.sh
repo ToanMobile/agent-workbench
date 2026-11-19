@@ -23,7 +23,7 @@
 #                                 board, #637) không mang ac-open: đóng issue, card Done, comment ✅ merged <sha>
 #   red · gate-exit-11            thẻ về Ready với loop:rebuild-(K+1) (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn. gate-exit-11 = preflight
 #                                 (qa-report / AC) chặn trước khi dựng cây: comment nói nguồn đó, không nói verify đỏ (#639).
-#   conflict · gate-exit-2/5/14   thẻ về Ready với loop:rebase (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn
+#   conflict · gate-exit-2/5/14   thẻ về Ready với loop:rebase (#1319: không tính vào rebuild_cap, đã chạm cap vẫn về Ready); gỡ nhãn
 #   gate-exit-7/8                 comment 🙋 chép nguyên văn dòng approval-request/human-gate/needs-you, needs-you mark, Blocked, một tin
 #                                 super-board-notify.py approve-button (cùng chữ ký merge gate dùng); gỡ nhãn
 #   gate-exit-3                   comment chép dòng của gate (GitHub từ chối merge / PR đóng), Blocked; gỡ nhãn
@@ -307,7 +307,9 @@ rebuild_or_rebase() {
     prevh=$(printf '%s' "$ij" | python3 -I "$HERE/super-board-root-cause-hash.py" last --from "[merge-queue]") || prevh=""
   fi
   if [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
-  if [ "$cur" -ge "$REBUILD_CAP" ]; then
+  # #1319: a rebase pass is mechanical, not a code bounce: it never counts toward rebuild_cap (a card already at the cap that only needs
+  # a rebase still goes Ready `loop:rebase`). A real conflict or a red verify after the rebase comes back here as `red` and counts.
+  if [ "$kind" != rebase ] && [ "$cur" -ge "$REBUILD_CAP" ]; then
     [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
       "train-result for PR #${p}: ${why}${det:+
 ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"

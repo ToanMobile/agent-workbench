@@ -124,8 +124,8 @@ norm() {
   sed -E "s/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z/<ts>/g; s/pid=[0-9]+/pid=<n>/g; s#${BASE_BIN}#<bin>#g; s#${ROOT}/.claude/bin#<bin>#g; s#${TMP}#<tmp>#g" "$1"
 }
 
-# ── T1. cờ tắt (không env, không flags.json): đòi deps-calls/wo-calls vắng, có spawn; so writes/log với runner gốc
-reset; unset SB_DEPENDENCY_UNBLOCK_V1
+# ── T1. cờ tắt (env SB_DEPENDENCY_UNBLOCK_V1=0): đòi deps-calls/wo-calls vắng, có spawn; so writes/log với runner gốc
+reset; export SB_DEPENDENCY_UNBLOCK_V1=0   # #1320: mặc định đã BẬT; "cờ tắt" nay là env 0
 dispatch_lane build 7 >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && [ ! -e "$TMP/deps-calls" ] && [ ! -e "$TMP/wo-calls" ] && dispatched 7 && [ -s "$TMP/preflight-calls" ] \
   && ok "T1 flag off: deps and mark not called, preflight ran, card claimed, moved to Building, worker spawned" \
@@ -252,14 +252,14 @@ if type dependency_unblock_v1_on >/dev/null 2>&1; then
   REPO_ROOT="$TMP/not-a-repo"; mkdir -p "$REPO_ROOT"; r_norepo=$(flag)
   REPO_ROOT="$SAVED_ROOT"
   [ "$r_true" = on ] && ok "T8 flags.json true → on" || fail "T8 flags.json true → $r_true"
-  [ "$r_missing" = off ] && ok "T8 flags.json missing → off" || fail "T8 missing → $r_missing"
-  [ "$r_broken" = off ] && ok "T8 flags.json broken → off" || fail "T8 broken → $r_broken"
+  [ "$r_missing" = on ] && ok "T8 flags.json missing → on (#1320 default)" || fail "T8 missing → $r_missing"
+  [ "$r_broken" = on ] && ok "T8 flags.json broken → on (#1320 default)" || fail "T8 broken → $r_broken"
   [ "$r_false" = off ] && ok "T8 flags.json false → off" || fail "T8 false → $r_false"
   [ "$r_env0" = off ] && ok "T8 env 0 beats file true → off" || fail "T8 env 0 → $r_env0"
   [ "$r_env1" = on ] && ok "T8 env 1 beats a missing file → on" || fail "T8 env 1 → $r_env1"
-  [ "$r_after" = off ] && ok "T8 env unset again, file missing → off" || fail "T8 env leaked → $r_after"
+  [ "$r_after" = on ] && ok "T8 env unset again, file missing → on" || fail "T8 env leaked → $r_after"
   [ "$r_wt" = on ] && ok "T8 a linked worktree reads the main checkout's flags.json → on" || fail "T8 worktree → $r_wt"
-  [ "$r_norepo" = off ] && ok "T8 REPO_ROOT not a git repo → off" || fail "T8 not a repo → $r_norepo"
+  [ "$r_norepo" = on ] && ok "T8 REPO_ROOT not a git repo → on (#1320 default)" || fail "T8 not a repo → $r_norepo"
 else
   fail "T8 dependency_unblock_v1_on is not defined in the runner"
 fi
