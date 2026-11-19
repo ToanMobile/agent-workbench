@@ -118,7 +118,10 @@ for cmd in 'gh api -XPOST repos/o/r/issues -fbody=x' 'gh api repos/o/r/issues -F
            'git diff --output=src/a.py' 'git log --output=src/a.py' 'git show --output=src/a.py' \
            "sed 's/x/y/w out.txt' f" "sed -n '1w out.txt' f" "sed -n 1p -i f" "sed -n -f s.sed f" "sed -e 1p f" "sed '1e id' f" "sed -n '1p;2w o' f" \
            'git grep -Ots x' 'git grep --open-files-in-pager=sh x' 'git diff --ext-diff' 'git show --textconv HEAD:f' 'git log -p --ext-diff' \
-           'git grep -nOsh x' 'git grep -On x' 'git grep -inOsh x'; do
+           'git grep -nOsh x' 'git grep -On x' 'git grep -inOsh x' \
+           'gh api -iXPOST repos/o/r/issues' 'gh api -iX DELETE repos/o/r/issues/1' 'git diff --out=o a b' 'git log --ext-d -p' 'git log --textc -p' \
+           'git cat-file --filters HEAD:f' 'git diff --no-index a b' 'rg --pre ./evil x .' 'rg --hostname-bin ./evil x' 'sort --output=o f' 'sort --out=o f' \
+           'sort --compress-program=./evil f' 'sort --comp=./evil f' 'sort -uo o f' 'date -s 2020' "'rm' cat" "'sort' -o o f" "\\rm x" ; do
   i=$((i + 1))
   python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],"",False]]))' "$cmd" > "$TMP/s.json"
   transcript "$TMP/w$i.jsonl" "$(cat "$TMP/s.json")"
@@ -127,7 +130,8 @@ done
 i=0
 for cmd in 'git branch -a' 'git branch --show-current' 'git branch -vv' 'git branch --list' 'git worktree list' 'git remote -v' 'git remote' \
            'git diff --stat' 'git log --oneline -3' 'gh api repos/o/r --jq .x --paginate' 'gh api -H Accept:x repos/o/r' \
-           "sed -n '1,40p' f" "sed -n 5p f" "sed -n '10,\$p' f | head" 'git grep -n x'; do
+           "sed -n '1,40p' f" "sed -n 5p f" "sed -n '10,\$p' f | head" 'git grep -n x' \
+           'date' 'date -u' 'date +%s' 'sort -u f' 'sort -k2 f' 'rg -n x .' 'gh api -i repos/o/r' 'git log --oneline --no-ext-diff -3' 'git diff --no-color'; do
   i=$((i + 1))
   python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],"",False]]))' "$cmd" > "$TMP/s.json"
   transcript "$TMP/p$i.jsonl" "$(cat "$TMP/s.json")"

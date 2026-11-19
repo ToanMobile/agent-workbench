@@ -3622,12 +3622,24 @@ _HIDDEN_CMD = re.compile(r"\$\(|<\(|>\(|`|(?<![&|])&(?![&>])")
 _SEG_SPLIT = re.compile(r"&&|\|\||[;|\n]")
 _GIT_READ = {"log", "show", "diff", "status", "ls-files", "rev-parse", "rev-list", "branch", "merge-base", "blame", "grep", "worktree",
              "remote", "describe", "cat-file", "check-ignore"}
-_GH_WRITE_FLAG = re.compile(r"(?:^|\s)(?:-[XfF]|--(?:method|field|raw-field|input))")   # prefix match: -XPOST, -fbody=x too
 # Allowlist, not denylist (#1342 R1): `git branch|worktree|remote` read only in these exact forms; `git diff|log|show --output=f` writes f.
 _GIT_LIST_FLAGS = {"branch": {"-a", "-r", "-v", "-vv", "-l", "--list", "--all", "--remotes", "--verbose", "--show-current"},
                    "remote": {"-v", "--verbose"}}
-# #1342 R3: these make git run an external program (grep -O<cmd>, external diff driver, textconv filter): not a read.
-_GIT_EXEC_FLAG = re.compile(r"-[a-zA-Z]*O|--open-files-in-pager|--ext-diff|--textconv")   # -[a-zA-Z]*O: bundled short flags (-nOsh)
+# #1342 R3/R5: flags that make a command write a file or run a program. Long flags match by unique PREFIX (git, GNU sort accept
+# `--out=`, `--ext-d`), short flags by a bundled letter (`-nOsh`, `-iXPOST`, `-uo`): so judge the parsed arg, never a fixed spelling.
+_GIT_BAD_LONG = ("--output", "--ext-diff", "--textconv", "--open-files-in-pager", "--no-index", "--filters")
+_BAD_LONG = {"git": _GIT_BAD_LONG, "sort": ("--output", "--compress-program"), "rg": ("--pre", "--pre-glob", "--hostname-bin"),
+             "gh": ("--method", "--field", "--raw-field", "--input")}
+_BAD_SHORT = {"git": "O", "sort": "o", "gh": "XfF"}
+def _flags_write(cmd, args):
+    for a in args:
+        if a.startswith("--"):
+            name = a.split("=", 1)[0]
+            if len(name) >= 3 and any(b.startswith(name) for b in _BAD_LONG.get(cmd, ())):
+                return True
+        elif a.startswith("-") and len(a) > 1 and any(c in _BAD_SHORT.get(cmd, "") for c in a[1:]):
+            return True
+    return False
 # #1342 R2: sed reads only as `sed [-n] '<N|N,M|N,$|$>p' file...`; any other script can `w`/`e`/`r` a file or run a command, and
 # -i / -f / -e / --expression / -s after the script can write or load one. Checked on the RAW command (bare text has no quotes).
 _SED_SAFE = re.compile(r"\bsed(?:\s+-n)?\s+(['\"]?)(?:\d+|\$)?(?:,(?:\d+|\$))?p\1(?=(?:\s+[^-\s]\S*)*\s*(?:[|;&\n]|$))")
@@ -3637,7 +3649,11 @@ def _read_segment(seg):
     w = seg.split()
     if not w:
         return True
-    if w[0] in BASH_READ_CMDS or w[0] in ("echo", "cd", "pwd", "date", "printf", "true"):
+    if w[0] == "date":
+        return all(a == "-u" or a.startswith("+") for a in w[1:])   # `date -s` sets the clock
+    if w[0] in ("sort", "rg"):
+        return not _flags_write(w[0], w[1:])
+    if w[0] in BASH_READ_CMDS or w[0] in ("echo", "cd", "pwd", "printf", "true"):
         return True
     if w[0] == "sed":
         return True   # script/flags are judged on the raw command by _sed_reads_only (quotes are stripped here)
@@ -3647,10 +3663,10 @@ def _read_segment(seg):
             return args == ["list"]
         if w[1] in _GIT_LIST_FLAGS:
             return all(a in _GIT_LIST_FLAGS[w[1]] or (a == "list" and w[1] == "branch") for a in args)
-        return not any(a == "--output" or a.startswith("--output=") or _GIT_EXEC_FLAG.match(a) for a in args)
+        return not _flags_write("git", args)
     if w[0] == "gh" and len(w) > 1:
         if w[1] == "api":
-            return not _GH_WRITE_FLAG.search(seg)
+            return not _flags_write("gh", w[2:])
         return len(w) > 2 and w[2] in ("view", "list", "diff", "checks", "status")
     return False
 def _read_cmd_writes(seg):
@@ -3682,6 +3698,8 @@ def _read_only_turn():
                 return False   # thay thế lệnh / chạy nền / đọc XML / ghi: check 2 xét lần chạy của ai
             if not _sed_reads_only(str(u["input"].get("command", ""))):
                 return False
+            if any(x.lstrip()[:1] in ("'", '"', "\\", "$") for x in _SEG_SPLIT.split(str(u["input"].get("command", "")))):
+                return False   # quoted/escaped command name: its real name is hidden from the classifier
             segs = _SEG_SPLIT.split(bare)
             if not all(_read_segment(seg) for seg in segs):
                 return False
