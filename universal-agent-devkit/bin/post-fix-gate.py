@@ -72,7 +72,7 @@ for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
         sys.path.insert(0, _sub_path)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
-from instincts import append_lesson, md_escape  # noqa: E402
+from instincts import append_lesson, md_escape, worktree_root  # noqa: E402
 # Who edited an existing test: the rule hooks/testsourceset_gate.sh scopes its compile with.
 import session_authorship  # noqa: E402
 
@@ -948,7 +948,7 @@ def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = Fa
     for sha in res.stdout.split():                    # newest first
         ok, note = _push_gate().approved(root, f"{sha}^!")
         m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None   # `antigravity <task-id>`
-        head = _push_gate().trailer_head(root, m.group(1), m.group(2), sha) if m else None
+        head = _push_gate().audited_head(root, m.group(2)) if m else None
         # auditedHead trước `since` (task cũ, commit rỗng ở nhánh phụ gộp vào range) kéo base lùi về cây yếu cũ: không duyệt.
         if head and _push_gate().head_after(root, since, head):
             base = sha
@@ -1261,7 +1261,7 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
         for sha in res.stdout.split():
             ok, note = _push_gate().approved(root, f"{sha}^!")
             m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None
-            head = _push_gate().trailer_head(root, m.group(1), m.group(2), sha) if m else None
+            head = _push_gate().audited_head(root, m.group(2)) if m else None
             if head and m.group(1) not in agents:
                 audited.append((head, m.group(1), m.group(2)))
         # R11: an older trailer head whose test blob differs from a newer accepted head's is a replay of a weaker, superseded test.
@@ -4117,7 +4117,7 @@ def check_anti_false_green(is_hardware_project: bool = False) -> tuple:
 def record_lesson(base_dir: Path, lesson: str, cause: str, prevention: str):
     """Same writer as `agent-kit learn` (bin/instincts.py): next [INSTINCT-NNN] id,
     a title already recorded is not added twice."""
-    instincts_file = base_dir / ".agents" / "instincts.md"
+    instincts_file = worktree_root(Path(base_dir).resolve()) / ".agents" / "instincts.md"
     try:
         status, inst_id, _ = append_lesson(instincts_file, lesson, cause=cause, rule=prevention,
                                            check="postfix-gate --run-tests")

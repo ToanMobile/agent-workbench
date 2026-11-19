@@ -4,14 +4,13 @@
 #  1. When the gate blocks (code edited, no fresh review after it), it now runs bin/ocr-review --delegate-only itself (OCR
 #     delegation: no LLM, no key, ~1 s, only on this block path) and names the spec in the block message, so every repo with
 #     the DevKit gets an OCR review spec without anyone remembering the tool. REVIEW_GATE_OCR=0 turns it off.
-#     What counts is a REPORT, never a word in the output (OpenCodeReview of this gate, 13/10): the helper's `report: <file>` or a
-#     plain `ocr review … -o <file>` must name an OCR JSON report (an object with a `comments` list) written after the last edit
-#     of the files edited this session. `--help`/`--version`, `echo mode: review`, a missing, malformed or older report: no.
+#     #1332 (lỗ P2 PR #1335): LLM của OCR đã gỡ, bin/ocr-review không còn in `mode: review` hay ghi report — một report OCR
+#     (`report: <file>` hay `ocr review … -o <file>`) giờ chỉ có thể do agent tự viết, nên không còn được tính là review.
+#     Chỉ lượt delegation (spec của chính nó) + một agent review sau nó mới đủ. `--help`/`--version`, `echo mode: review`: không.
 #  4. The delegation runs in the repo the gate checks (the git toplevel of the session cwd), not CLAUDE_PROJECT_DIR.
 #  3. A hung `ocr` (OCR_HANG) never costs the hook its own 20 s budget (hooks.json): Claude Code kills a hook that runs past it and the
 #     Stop goes through unreviewed. The helper bounds each `ocr delegate` call and the gate bounds the helper well inside 20 s.
-#  2. A full OCR review that SUCCEEDED after the last edit (a Bash `ocr review …` or `ocr-review` whose result is not an error
-#     and, for the helper, says `mode: review`) counts as the fresh review. A failed one (the endpoint error) does not.
+#  2. #1332: một "OCR review đầy đủ" (`mode: review` + `report:`, hay `ocr review -o <file>`) không còn là review (xem mục 1).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -74,7 +73,7 @@ spec="$(grep -o '/[^ ]*ocr-spec.md' "$TMP/err" | head -1)"
 stop b REVIEW_GATE_OCR=0; rc=$?
 [ "$rc" = 2 ] && ! grep -q 'ocr-spec.md' "$TMP/err" && ok "REVIEW_GATE_OCR=0: blocked without running OCR" || fail "switch ignored (rc $rc)"
 
-# 3. a full OCR review that succeeded after the edit counts as the review
+# 3. #1332: a report named after the edit (helper `mode: review` or plain `ocr review -o`) no longer counts: only an agent can write it
 mkdir -p "$TMP/rep"; printf '{"comments":[]}\n' > "$TMP/rep/ocr-review.json"; printf '{"comments":[]}\n' > "$TMP/rep/plain.json"
 mkdir -p "$TMP/spec" "$P/rel"; echo "# OCR review spec" > "$TMP/spec/ocr-spec.md"; echo "# OCR review spec" > "$P/rel/ocr-spec.md"
 chmod 700 "$TMP/spec" "$P/rel"   # what bin/ocr-review makes of its --out folder
@@ -83,10 +82,10 @@ python3 -c 'import os,sys,time; [os.utime(f,(time.time()-60,)*2) for f in sys.ar
   "$P/app.py" "$TMP/spec/ocr-spec.md" "$P/rel/ocr-spec.md"
 : > "$TR"; ev edit t1 "$P/app.py"; ev bash t2 ".agents/devkit/bin/ocr-review"; ev result t2 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/ocr-review.json")"
 stop c; rc=$?
-[ "$rc" = 0 ] && ok "ocr-review in review mode after the edit: counts as the fresh review (rc 0)" || fail "successful OCR review not counted (rc $rc)"
+[ "$rc" = 2 ] && ok "ocr-review 'mode: review' + report after the edit: no review (rc 2)" || fail "a 'mode: review' report counted as the review (rc $rc)"
 : > "$TR"; ev edit t1 "$P/app.py"; ev bash t2 "ocr review --format json -o $TMP/rep/plain.json"; ev result t2 ok ''
 stop d; rc=$?
-[ "$rc" = 0 ] && ok "a successful plain ocr review after the edit counts (rc 0)" || fail "plain ocr review not counted (rc $rc)"
+[ "$rc" = 2 ] && ok "a plain ocr review -o <report> after the edit: no review (rc 2)" || fail "a plain ocr review report counted (rc $rc)"
 
 # 4. what does not count
 : > "$TR"; ev edit t1 "$P/app.py"; ev bash t2 "ocr review"; ev result t2 err "Error: resolve LLM endpoint: no valid LLM endpoint configured"
@@ -110,17 +109,6 @@ stop j; rc=$?
 ev result t2 ok $'mode: delegate\nspec: /tmp/x/ocr-spec.md\nmode: review'
 stop k; rc=$?
 [ "$rc" = 2 ] && ok "a delegation run followed by 'echo mode: review' does not count (rc 2)" || fail "echoed mode counted (rc $rc)"
-: > "$TR"; ev edit t1 "$P/app.py"; ev bash t2 ".agents/devkit/bin/ocr-review"; ev result t2 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/none.json")"
-stop l; rc=$?
-[ "$rc" = 2 ] && ok "a report path that does not exist does not count (rc 2)" || fail "missing report counted (rc $rc)"
-printf '{"error":"x"}\n' > "$TMP/rep/bad.json"
-: > "$TR"; ev edit t1 "$P/app.py"; ev bash t2 ".agents/devkit/bin/ocr-review"; ev result t2 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/bad.json")"
-stop m; rc=$?
-[ "$rc" = 2 ] && ok "a report with no comments list does not count (rc 2)" || fail "malformed report counted (rc $rc)"
-printf '{"comments":[]}\n' > "$TMP/rep/old.json"; python3 -c 'import os,sys,time; t=time.time()-3600; os.utime(sys.argv[1],(t,t))' "$TMP/rep/old.json"
-: > "$TR"; ev edit t1 "$P/app.py"; ev bash t2 ".agents/devkit/bin/ocr-review"; ev result t2 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/old.json")"
-stop n; rc=$?
-[ "$rc" = 2 ] && ok "a report older than the edited file does not count (rc 2)" || fail "old report counted (rc $rc)"
 : > "$TR"; ev edit t1 "$P/app.py"; ev bash t2 "ocr review --format json"; ev result t2 ok '{"comments":[]}'
 stop o; rc=$?
 [ "$rc" = 2 ] && ok "a plain ocr review with no -o report file does not count (rc 2)" || fail "plain review without a report counted (rc $rc)"
@@ -143,7 +131,7 @@ stop q; rc=$?
 : > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer; ev bash t3 ".agents/devkit/bin/ocr-review"
 ev result t3 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/ocr-review.json")"
 stop r; rc=$?
-[ "$rc" = 0 ] && ok "  … then an OCR review: passes (rc 0)" || fail "principal + OCR review still blocked (rc $rc)"
+[ "$rc" = 2 ] && ok "  … then a 'mode: review' report (no delegation run): still blocked (rc 2)" || fail "principal + a report counted as OCR (rc $rc)"
 : > "$TR"; ev edit t1 "$P/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review --out $TMP/spec"; ev result t3 ok $'ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)\nmode: delegate\nspec: '"$TMP/spec/ocr-spec.md"
 ev agent t4 principal-code-reviewer
 stop s; rc=$?
@@ -170,14 +158,6 @@ stop x; rc=$?
 stop v REVIEW_GATE_REQUIRE_OCR=0; rc=$?
 [ "$rc" = 0 ] && ok "  … REVIEW_GATE_REQUIRE_OCR=0: the agent review alone passes (rc 0)" || fail "REVIEW_GATE_REQUIRE_OCR=0 ignored (rc $rc)"
 # review of this rule (13/10): what must NOT stand in for the OCR review
-printf '{"status":"skipped","comments":[]}\n' > "$TMP/rep/skipped.json"
-printf '{"status":"complete","summary":{"files_reviewed":0},"comments":[]}\n' > "$TMP/rep/zero.json"
-for rp in skipped zero; do
-  : > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer; ev bash t3 ".agents/devkit/bin/ocr-review"
-  ev result t3 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/$rp.json")"
-  stop "y$rp"; rc=$?
-  [ "$rc" = 2 ] && ok "  … an OCR report that reviewed nothing ($rp: the code was committed first) is no review (rc 2)" || fail "$rp report counted (rc $rc)"
-done
 : > "$TR"; ev edit t1 "$P/app.py"; ev agent t2 principal-code-reviewer; ev bash t3 ".agents/devkit/bin/ocr-review --out $TMP/spec"
 ev result t3 ok "$(printf '%s\nmode: delegate\nspec: %s' "ocr review needs an LLM endpoint (no valid LLM endpoint configured); using OCR delegation mode (no LLM, no key)" "$TMP/spec/ocr-spec.md")"
 stop z1; rc=$?
@@ -229,39 +209,33 @@ C="$TMP/c"; mkdir -p "$C/.claude/audit-gate"; (cd "$C" && git init -q && git con
   && echo "def g(x): return x" > app.py && git add app.py && git commit -qm i)
 printf '{"verified_head": "%s"}\n' "$(git -C "$C" rev-parse HEAD)" > "$C/.claude/audit-gate/regression_gate.state.json"
 echo "def g(x): return 2 / x" > "$C/app.py" && git -C "$C" commit -qam "committed before the review"
-printf '{"comments":[]}\n' > "$TMP/rep/c.json"
-python3 -c 'import os,sys,time; [os.utime(f,(time.time()+5,)*2) for f in sys.argv[1:]]' "$TMP/rep/c.json" "$TMP/spec/ocr-spec.md"   # newer than this app.py
+python3 -c 'import os,sys,time; [os.utime(f,(time.time()+5,)*2) for f in sys.argv[1:]]' "$TMP/spec/ocr-spec.md"   # newer than this app.py
 crun() { printf '{"session_id":"s-%s","transcript_path":"%s","cwd":"%s","hook_event_name":"Stop"}' "$1" "$TR" "$C" \
   | PATH="$TMP/bin:$PATH" CLAUDE_PROJECT_DIR="$C" bash "$DEVKIT_DIR/hooks/review_gate.sh" >"$TMP/out" 2>"$TMP/err"; }
 : > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer
 crun c1; rc=$?
 [ "$rc" = 2 ] && grep -q -- "--from $(git -C "$C" rev-parse --short=12 HEAD~1)" "$TMP/err" && ! grep -q 'out <thư mục tạm>$' "$TMP/err" \
   && ok "committed code: the block names the --from run only (no workspace run: nothing is dirty)" || fail "committed code message: rc $rc $(grep ocr-review "$TMP/err")"
-ev bash t3 ".agents/devkit/bin/ocr-review"; ev result t3 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
-crun c2; rc=$?
-[ "$rc" = 2 ] && ok "  … a workspace OCR report alone does not cover the committed code (rc 2)" || fail "workspace report counted for committed code (rc $rc)"
-for cmd in ".agents/devkit/bin/ocr-review --from=abc" "bash -c 'cd x; .agents/devkit/bin/ocr-review'" "git -c core.x=1 status; .agents/devkit/bin/ocr-review"; do
-  : > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer; ev bash t4 "$cmd"; ev result t4 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
+# #1332: các ca phạm vi đã commit đi qua lượt delegation (spec của chính lượt chạy + agent review sau nó), không còn qua report
+CFB="$(printf 'mode: delegate\nspec: %s' "$TMP/spec/ocr-spec.md")"
+for cmd in ".agents/devkit/bin/ocr-review --from=abc --out $TMP/spec" "bash -c 'cd x; .agents/devkit/bin/ocr-review --out $TMP/spec'" \
+    "git -c core.x=1 status; .agents/devkit/bin/ocr-review --out $TMP/spec"; do
+  : > "$TR"; ev edit t1 "$C/app.py"; ev bash t4 "$cmd"; ev result t4 ok "$CFB"; ev agent t5 principal-code-reviewer
   crun c4; rc=$?
   [ "$rc" = 2 ] && ok "  … '$cmd' is no run over the committed range (rc 2)" || fail "'$cmd' read as a ranged run (rc $rc)"
 done
-: > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer
-ev bash t4 ".agents/devkit/bin/ocr-review --from $(git -C "$C" rev-parse HEAD~1) --to HEAD"; ev result t4 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
-crun c3; rc=$?
-[ "$rc" = 0 ] && ok "  … an OCR report over the committed range does (rc 0)" || fail "ranged report not counted (rc $rc)"
-: > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer
-ev bash t4 ".agents/devkit/bin/ocr-review --from HEAD --to HEAD"; ev result t4 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
+: > "$TR"; ev edit t1 "$C/app.py"; ev bash t4 ".agents/devkit/bin/ocr-review --from HEAD --to HEAD --out $TMP/spec"; ev result t4 ok "$CFB"
+ev agent t5 principal-code-reviewer
 crun c5; rc=$?
 [ "$rc" = 2 ] && ok "  … a --from newer than the verified head covers only part of it: no (rc 2)" || fail "--from HEAD counted for the committed range (rc $rc)"
-: > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer
-ev bash t4 ".agents/devkit/bin/ocr-review -c HEAD"; ev result t4 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
+: > "$TR"; ev edit t1 "$C/app.py"; ev bash t4 ".agents/devkit/bin/ocr-review -c HEAD --out $TMP/spec"; ev result t4 ok "$CFB"
+ev agent t5 principal-code-reviewer
 crun c6; rc=$?
 [ "$rc" = 0 ] && ok "  … -c HEAD when the one commit since the verified head is HEAD: covers it (rc 0)" || fail "-c HEAD over the whole range not counted (rc $rc)"
-: > "$TR"; ev edit t1 "$C/app.py"; ev agent t2 principal-code-reviewer
-ev bash t4 "true || .agents/devkit/bin/ocr-review --from $(git -C "$C" rev-parse HEAD~1) --to HEAD"; ev result t4 ok "$(printf 'mode: review\nreport: %s' "$TMP/rep/c.json")"
+: > "$TR"; ev edit t1 "$C/app.py"; ev bash t4 "true || .agents/devkit/bin/ocr-review --from $(git -C "$C" rev-parse HEAD~1) --to HEAD --out $TMP/spec"
+ev result t4 ok "$CFB"; ev agent t5 principal-code-reviewer
 crun c7; rc=$?
-[ "$rc" = 2 ] && ok "  … a report named by a helper behind || (it never ran): no (rc 2)" || fail "short-circuited report counted (rc $rc)"
-CFB="$(printf 'ocr review needs an LLM endpoint (no valid LLM endpoint configured)\nmode: delegate\nspec: %s' "$TMP/spec/ocr-spec.md")"
+[ "$rc" = 2 ] && ok "  … a spec named by a helper behind || (it never ran): no (rc 2)" || fail "short-circuited helper counted (rc $rc)"
 : > "$TR"; ev edit t1 "$C/app.py"; ev bash t3 ".agents/devkit/bin/ocr-review --out $TMP/spec"; ev result t3 ok "$CFB"; ev agent t4 principal-code-reviewer
 crun c8; rc=$?
 [ "$rc" = 2 ] && ok "  … no endpoint: a workspace fallback spec does not cover the committed code either (rc 2)" || fail "workspace fallback counted for committed code (rc $rc)"
