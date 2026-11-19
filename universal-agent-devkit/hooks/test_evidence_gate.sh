@@ -3663,7 +3663,7 @@ def _read_segment(seg):
         if w[1] == "worktree":
             return args == ["list"]
         if w[1] in _GIT_LIST_FLAGS:
-            return all(a in _GIT_LIST_FLAGS[w[1]] or (a == "list" and w[1] == "branch") for a in args)
+            return all(a in _GIT_LIST_FLAGS[w[1]] for a in args)   # R8: a bare word is a branch NAME to create, never a verb
         return not _flags_write("git", args)
     if w[0] == "gh" and len(w) > 1:
         if w[1] == "api":
