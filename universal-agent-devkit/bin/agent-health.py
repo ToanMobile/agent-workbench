@@ -472,6 +472,51 @@ def project_wiring(target: Path, score: Score):
                 tr("`.claude/settings.json` đăng ký ít nhất một hook", "`.claude/settings.json` registers at least one hook"),
                 tr("`.claude/settings.json` không đăng ký hook nào (\"hooks\" rỗng) — chạy lại agent-kit init",
                    "`.claude/settings.json` registers no hook (\"hooks\" is empty) — re-run agent-kit init"))
+    # Kiểm tra cấu hình Antigravity (.agents/hooks.json) khi repo có dùng cầu nối Gemini/Antigravity
+    gem_path = target / ".gemini" / "settings.json"
+    has_gem_bridge = gem_path.is_file() and "agent_bridge.sh" in gem_path.read_text(encoding="utf-8", errors="replace")
+    ag_path = target / ".agents" / "hooks.json"
+    if ag_path.exists() or has_gem_bridge:
+        ag_cfg, ag_err = load_json(ag_path)
+        ag_raw = ag_path.read_text(encoding="utf-8", errors="replace") if ag_path.is_file() else ""
+        ag_has_bridge = "agent_bridge.sh" in ag_raw or (isinstance(ag_cfg, dict) and "universal-agent-devkit" in ag_cfg)
+        ag_missing = []
+        ag_seen = set()
+        if isinstance(ag_cfg, dict):
+            for entry in ag_cfg.values():
+                if not isinstance(entry, dict):
+                    continue
+                for ev, groups in entry.items():
+                    if not isinstance(groups, list):
+                        continue
+                    for grp in groups:
+                        hooks_list = grp.get("hooks") if isinstance(grp, dict) and isinstance(grp.get("hooks"), list) else []
+                        for h in hooks_list:
+                            cmd = h.get("command") if isinstance(h, dict) and isinstance(h.get("command"), str) else ""
+                            if not cmd:
+                                continue
+                            # Lệnh trong .agents/hooks.json chạy với cwd là .agents/
+                            refs = re.findall(r"(?:^|[\s\"'])hooks/([A-Za-z0-9_.-]+)", cmd) + re.findall(r"agent_bridge\.sh\s+antigravity\s+\S+\s+([A-Za-z0-9_.-]+)", cmd)
+                            for name in dict.fromkeys(refs):
+                                if not (target / ".agents" / "hooks" / name).exists():
+                                    ag_missing.append(f".agents/hooks/{name}")
+                            if ev == "PreToolUse":
+                                for g in ("block-dangerous-git.sh", "hardware_safety_gate.sh"):
+                                    if g in cmd:
+                                        ag_seen.add(g)
+        ag_no_file = not ag_path.is_file() or ag_cfg is None or ag_err is not None
+        require_devkit = ag_has_bridge or has_gem_bridge
+        ag_missing_guards = [g for g in ("block-dangerous-git.sh", "hardware_safety_gate.sh") if g not in ag_seen] if require_devkit else []
+        if ag_no_file or ag_missing or ag_missing_guards:
+            score.fatal.append(tr("thiếu hoặc hỏng `.agents/hooks.json`", "`.agents/hooks.json` missing or broken"))
+        ag_detail = (".agents/hooks.json missing/invalid" if ag_no_file else
+                     f"missing scripts: {sorted(set(ag_missing))[:5]}" if ag_missing else
+                     f"missing PreToolUse guards: {ag_missing_guards}")
+        score.check(not ag_no_file and not ag_missing and not ag_missing_guards,
+                    tr("Mọi guard Antigravity trong `.agents/hooks.json` đều đầy đủ và tồn tại",
+                       "Every guard in `.agents/hooks.json` is registered and exists"),
+                    tr(f"Cấu hình Antigravity `.agents/hooks.json` có lỗi ({ag_detail}) — chạy lại agent-kit init",
+                       f"Antigravity `.agents/hooks.json` wiring error ({ag_detail}) — re-run agent-kit init"))
     # Every DevKit command and skill the profile allows is linked in (an untracked link
     # removed by a merge or checkout leaves /qc, /fixbugs … dead without any error).
     prof, _ = load_json(target / ".agents" / "active-profile" / "profile.json")

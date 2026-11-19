@@ -112,7 +112,8 @@ STATE = "devkit-worktree.json"
 LOCAL_CONFIG = (".env", ".env.*", "*.env", "local.properties", "keystore.properties", "secrets.properties",
                 "google-services.json", "GoogleService-Info.plist", ".npmrc")
 AGENT_MARKERS = (("claude", ".claude/settings.json"), ("codex", ".codex/hooks.json"),
-                 ("gemini", ".gemini/settings.json"), ("cursor", ".cursor/hooks.json"))
+                 ("gemini", ".gemini/settings.json"), ("cursor", ".cursor/hooks.json"),
+                 ("antigravity", ".agents/hooks.json"))
 # Bookkeeping that the gate (post-fix-gate.py), the prompt and session hooks and render() regenerate: not the agent's work.
 # regression_checklist.py STATUS_FILE / VIEW_FILE / OLD_VIEW_FILE / ARCHIVE_FILE + the derived .agents/instincts-index.md
 # (tests/worktree_git/test_worktree_checklist.sh keeps them in step). INBOX.md is not here: people write it.
@@ -124,9 +125,8 @@ DURATIONS_HINT = "tests/lib/test_durations.txt"
 DURATIONS_HINT_PATHS = (DURATIONS_HINT, "universal-agent-devkit/" + DURATIONS_HINT, ".agents/devkit/" + DURATIONS_HINT)
 
 
-# #1201: files the kit / host regenerate (settings synced from the kit, PM task logs, build caches): a worktree holding only these is not
-# holding work; the removal keeps a fallback copy in refs/devkit/discarded first. A CLOSED list: any other path still counts.
-GENERATED_DIRTY = (".claude/settings.json",)
+# #1201: các tệp kit/host tự sinh lại (settings, hooks Antigravity, log PM, cache): worktree chỉ giữ các tệp này không tính là mất việc; bản sao dự phòng lưu ở refs/devkit/discarded trước.
+GENERATED_DIRTY = (".claude/settings.json", ".agents/hooks.json")
 GENERATED_DIRTY_PREFIX = (".antigravity-pm/tasks/",)
 
 

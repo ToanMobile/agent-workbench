@@ -65,14 +65,17 @@ if not isinstance(d, dict): d = {}
 kind = os.environ["KIND"]
 ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}
 tc = d.get("toolCall") if isinstance(d.get("toolCall"), dict) else {}
+tname = tc.get("name") if isinstance(tc.get("name"), str) else ""
 args = tc.get("args") if isinstance(tc.get("args"), dict) else {}  # Antigravity: toolCall.args.CommandLine / Cwd
-# Antigravity also types into terminals (send_command_input) and runs shell_exec; their argument names are not documented,
-# so a command is looked for under the known names, else in every other string argument (not the model-written summary,
-# the working directory or ids) — an unknown name must not let a command through unread.
-ag_cmd = next((args[k] for k in ("CommandLine", "Input", "Command") if isinstance(args.get(k), str) and args[k]), "")
-if not ag_cmd and args:
-    ag_cmd = "; ".join(v for k, v in args.items()
-                       if isinstance(v, str) and v and k not in ("toolSummary", "Cwd", "CommandId"))
+# Antigravity cũng có send_command_input (gõ vào terminal), shell_exec và manage_task (chỉ Action=send_input mới gửi Input vào task);
+# các action đọc/huỷ của manage_task (list, status, kill) không gửi lệnh vào shell nên không ghép TaskId/Action thành lệnh.
+if tname == "manage_task" and args.get("Action") in ("list", "status", "kill") and not (isinstance(args.get("Input"), str) and args.get("Input")):
+    ag_cmd = ""
+else:
+    ag_cmd = next((args[k] for k in ("CommandLine", "Input", "Command") if isinstance(args.get(k), str) and args[k]), "")
+    if not ag_cmd and args and tname != "manage_task":
+        ag_cmd = "; ".join(v for k, v in args.items()
+                           if isinstance(v, str) and v and k not in ("toolSummary", "Cwd", "CommandId", "Action", "TaskId"))
 views = []
 if kind == "shell":
     cmd = ti.get("command") or d.get("command") or ag_cmd or ""
