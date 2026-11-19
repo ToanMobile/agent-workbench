@@ -22,6 +22,7 @@
   "regression_matrix": "profiles/ios/regression_matrix.json",
   "exclude_skills": [
     "android-real-device-qa",
+    "blender-game-pipeline",
     "compose-recomp-audit",
     "deploy",
     "unity-gc-audit"

@@ -472,12 +472,13 @@ reconcile_write_halt() {
     hold_and_notify reconcile-budget "runner pid $1 halted (rc=79) on an uncertain GitHub write; $recent auto-reconciles in the last hour (max $RECONCILE_MAX) — a person must check it, then --resume --reconciled \"<what was checked>\""
     return 1
   fi
-  rc=0; out=$( (PATH="$env_path"; run_capped 90 python3 "$SCRIPT_DIR/super-board-github-read.py" --reconcile 2>&1 >/dev/null) ) || rc=$?
+  rc=0; out=$( (PATH="$env_path"; SB_GITHUB_RATE_RETRIES=1 run_capped 90 python3 "$SCRIPT_DIR/super-board-github-read.py" --reconcile 2>&1 >/dev/null) ) || rc=$?
   case "$rc" in
     0)
       { printf '%s\n' "$NOW" >> "$RECON_LOG"; } 2>/dev/null || echo "watchdog $SLUG: could not write $RECON_LOG" >&2
       wlog "auto-reconciled the GitHub halt of runner pid $1: $(printf '%s' "$out" | tr '\n' ' ')"
       return 0 ;;
+    68) wlog "GitHub rate limit while reconciling the halt of runner pid $1; retried at the next check"; return 1 ;;   # #1311: temporary, no hold/notify
     10) hold_and_notify write-not-applied "runner pid $1 halted (rc=79): GitHub shows the uncertain write was NOT applied ($(printf '%s' "$out" | tr '\n' ' ')) — halt kept, not resumed blindly; a person decides" ;;
     *) hold_and_notify github-halt "runner pid $1 halted (rc=79) on an uncertain GitHub write that cannot be verified — check it on GitHub, then --resume --reconciled \"<what was checked>\" and start the board explicitly" ;;
   esac
@@ -570,7 +571,7 @@ check() {
     # 90 s (--resume tối đa ~186 s: 2 lần đọc × 3 lần × gh 30 s) để lượt check xong trước khi khoá bị coi là bỏ lại (120 s).
     # Bị cắt giữa chừng vẫn an toàn: --resume chỉ đọc, lưu trữ halt bằng rename.
     local why
-    if ! why=$( (PATH="$env_path"; run_capped 90 python3 "$SCRIPT_DIR/super-board-github-read.py" --resume 2>&1 >/dev/null) ); then
+    if ! why=$( (PATH="$env_path"; SB_GITHUB_RATE_RETRIES=1 run_capped 90 python3 "$SCRIPT_DIR/super-board-github-read.py" --resume 2>&1 >/dev/null) ); then
       case "$why" in
         *reconcil*) reconcile_write_halt "$pid" || return 0 ;;
         *) verdict halt-wait "runner halted (rc=79): its saved GitHub read still fails — retried every check"; return 0 ;;

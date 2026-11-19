@@ -19,6 +19,7 @@
   "regression_matrix": "profiles/voice-assistant/regression_matrix.json",
   "rules_file": "profiles/voice-assistant/rules/voice-assistant-rules.md",
   "exclude_skills": [
+    "blender-game-pipeline",
     "compose-recomp-audit",
     "unity-gc-audit"
   ],

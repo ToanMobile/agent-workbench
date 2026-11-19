@@ -390,3 +390,6 @@ if __name__ == "__main__":
     except github_read.ReadHalted as error:
         print(f"GitHub read halt: {error}", file=sys.stderr)
         sys.exit(github_read.HALTED)
+    except github_read.RateLimited as error:   # #1311: temporary, nothing halted
+        print(f"GitHub rate limit: {error}", file=sys.stderr)
+        sys.exit(68)
