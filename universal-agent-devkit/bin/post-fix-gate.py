@@ -1154,6 +1154,18 @@ def _on_audit_chain(top, ch, sha) -> bool:
     return _FP_CHAIN_MEMO[key]
 
 
+def path_absent(p) -> bool:
+    """#1323: True chỉ khi đường dẫn chắc chắn không có (ENOENT / ENOTDIR). EACCES hay lỗi khác → False (coi như còn file, không duyệt
+    như test đã xoá). Đo 19/11 trên macOS: file dưới thư mục chmod 0 thì os.path.lexists trả False, os.lstat ném PermissionError."""
+    try:
+        os.lstat(p)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def audit_covers(top, prefix, project_root, f, head) -> tuple:
     """(True, "") khi biên bản audit có auditedHead `head` duyệt được nội dung HIỆN TẠI của test `f` (đường dẫn so với project_root);
     (False, lý do) khác. Một luật cho mục approved_tests.json, trailer `Test-approved-by:` và `agent-kit approve-tests` (đợt 2 lane A),
@@ -1179,7 +1191,7 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
     if not _on_audit_chain(top, ch, head):
         return False, (f"auditedHead {h10} không nằm trên chuỗi first-parent của PR (audit tới qua merge nhánh khác / cây khác): "
                        "cần audit lại")
-    if os.path.lexists(Path(project_root) / f):
+    if not path_absent(Path(project_root) / f):
         rc_c, cur = _git_out(top, "hash-object", "--", str(Path(project_root) / f))
         rc_h, at_head = _git_out(top, "rev-parse", "--verify", "-q", f"{head}:{prefix}{f}")
         if rc_c != 0 or not cur or rc_h != 0 or at_head != cur:
@@ -1395,7 +1407,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             pass                                  # deleted: nothing to bind a user answer or json entry to
     # #1323: a deleted test is approved only by an audit record (trailer / PM scoped record): audit_covers checks the audited
     # tree has no such file either. No user answer or approved_tests.json entry (sha256 of content) can name a deleted file.
-    deleted = [f for f in paths if f not in mtimes and not os.path.lexists(root / f)]
+    deleted = [f for f in paths if f not in mtimes and path_absent(root / f)]
     if deleted:
         for f, rv_tid in _trailer_cross_review(deleted, root).items():
             CROSS_REVIEW[f] = rv_tid
@@ -10021,7 +10033,7 @@ def main():
         else:
             rv, tid = CROSS_REVIEW.get(f, ("?", "?"))
             rv = _approval_reviewer_label(rv)
-            if not os.path.lexists(Path(get_project_dir()) / f):   # #1323: test đã xoá, cây đã audit cũng không có file
+            if path_absent(Path(get_project_dir()) / f):   # #1323: test đã xoá, cây đã audit cũng không có file
                 print(f"  • {GREEN}{tr(f'Test đã có bị xoá — duyệt chéo bởi {rv} (task {tid}), cây đã audit cũng không có file:', f'Existing test deleted — cross-reviewed by {rv} (task {tid}), the audited tree has no such file either:')}{RESET} {f}")
                 continue
             print(f"  • {GREEN}{tr(f'Test đã có bị sửa — duyệt chéo bởi {rv} (task {tid}), sha256 khớp nội dung hiện tại:', f'Existing test edited — cross-reviewed by {rv} (task {tid}), sha256 matches the current content:')}{RESET} {f}")

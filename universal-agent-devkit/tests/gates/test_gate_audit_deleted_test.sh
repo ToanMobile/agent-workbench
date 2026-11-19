@@ -5,8 +5,9 @@
 #  A1b: `agent-kit approve-tests` ghi mục cho t.sh, báo old.sh đã xoá được audit phủ (không ghi mục), gate exit 0.
 #  A2: PR chỉ xoá tests/old.sh, trailer `Test-approved-by: antigravity <task>` -> nhận.
 #  B1: xoá test, không audit -> vẫn chặn (exit 2, tên file trong danh sách cần duyệt).
-#  B2: audit ở head khi test còn, xoá SAU audit -> chặn (file còn ở cây đã audit).
-#  B3: test đã xoá nằm ngoài danh sách edited của lượt audit -> chặn.
+#  B2: audit ở head khi test còn, xoá SAU audit, có trailer -> chặn (file còn ở cây đã audit).
+#  B3: test đã xoá nằm ngoài danh sách edited của lượt audit -> chặn; B3b: approve-tests không báo "phủ" ca đó.
+#  B4: audit mới hơn còn file -> chặn (luật 4). B5: main sửa test sau audit -> chặn (luật 5). B6: phiên reviewer không tự duyệt.
 #  C1: xoá test + sửa test đã audit, rồi sửa tiếp tests/t.sh sau audit -> t.sh vẫn chặn (blob phải khớp auditedHead).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -26,17 +27,17 @@ FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 has() { printf '%s' "$OUT" | grep -qF -- "$1"; }
-pm_ag() {   # pm_ag <task-id> <project> <auditedHead> [skip]: audit pass Antigravity kèm phạm vi như PM ghi (auditBase = merge-base(main, head),
-  # edited = file đã có bị sửa/xoá trong auditBase..head); skip: bỏ <skip> khỏi edited (audit phạm vi hẹp)
+pm_ag() {   # pm_ag <task-id> <project> <auditedHead> [skip] [extra]: audit pass Antigravity kèm phạm vi như PM ghi (auditBase = merge-base(main,
+  # head), edited = file đã có bị sửa/xoá trong auditBase..head); skip: bỏ <skip> khỏi edited (audit phạm vi hẹp); extra: thêm <extra> vào edited
   local d="p-$1"
   mkdir -p "$TMP/pm/projects/$d/tasks/$1"
-  python3 - "$TMP/pm/projects/$d/tasks/$1/task.json" "$1" "$(cd "$2" && pwd -P)" "$3" "${4:-}" <<'PY2'
+  python3 - "$TMP/pm/projects/$d/tasks/$1/task.json" "$1" "$(cd "$2" && pwd -P)" "$3" "${4:-}" "${5:-}" <<'PY2'
 import json, subprocess, sys
-dest, tid, proj, head, skip = sys.argv[1:6]
+dest, tid, proj, head, skip, extra = sys.argv[1:7]
 g = lambda *a: subprocess.run(["git", "-C", proj, *a], capture_output=True, text=True).stdout.strip()
 mb = g("merge-base", "main", head)
 ns = g("diff", "--name-status", "--no-renames", mb, head).splitlines()
-edited = [l.split("\t", 1)[1] for l in ns if l[:1] in "MDT" and l.split("\t", 1)[1] != skip]
+edited = [l.split("\t", 1)[1] for l in ns if l[:1] in "MDT" and l.split("\t", 1)[1] != skip] + ([extra] if extra else [])
 disp = {"kind": "audit", "agent": "antigravity", "at": "2026-11-19T00:00:00Z", "auditedHead": head, "verdict": "pass",
         "auditBase": mb, "edited": edited}
 json.dump({"id": tid, "project": proj, "dispatches": [disp], "verdicts": {
@@ -74,7 +75,7 @@ else bad "A1: test đã xoá có audit pass: rc=$RC, $(tailout)"; fi
 # A1b. `agent-kit approve-tests` (ca PR #1335): ghi mục cho t.sh, báo old.sh đã xoá được audit phủ (không ghi mục); gate sau đó exit 0
 OUT="$(cd "$TMP/a1" && DEVKIT_AGENT_ID=claude CLAUDE_PROJECT_DIR="$TMP/a1" bash "$DEVKIT_DIR/bin/agent-kit" approve-tests T2001-a1 2>&1)"; RC=$?
 AK="$OUT"; run_gate "$TMP/a1"
-if printf '%s' "$AK" | grep -qF "tests/old.sh đã xoá — audit phủ việc xoá" && printf '%s' "$AK" | grep -qF "tests/t.sh sha256=" && [ "$RC" = 0 ] \
+if printf '%s' "$AK" | grep -qF "tests/old.sh đã xoá — cây đã audit cũng không có file, nằm trong phạm vi audit T2001-a1" && printf '%s' "$AK" | grep -qF "tests/t.sh sha256=" && [ "$RC" = 0 ] \
    && ! grep -qF '"tests/old.sh"' "$TMP/a1/.claude/audit-gate/approved_tests.json"; then ok "A1b: approve-tests báo test đã xoá được audit phủ, gate exit 0"
 else bad "A1b: approve-tests + test đã xoá: rc=$RC, $(printf '%s' "$AK" | tail -3)"; fi
 
@@ -91,9 +92,12 @@ run_gate "$TMP/b1"
 if [ "$RC" = 2 ] && ! has "duyệt chéo bởi" && has "tests/old.sh"; then ok "B1: xoá test không audit -> chặn"
 else bad "B1: xoá test không audit: rc=$RC, $(tailout)"; fi
 
-# B2. audit ở head khi tests/old.sh còn (chỉ sửa code), xoá test SAU audit -> chặn
-mk "$TMP/b2"; echo 'fun ok()=2' > src/Core.kt; git commit -qam "PR code"; X="$(git rev-parse HEAD)"; pm_ag T2012-b2 "$TMP/b2" "$X"
+# B2. audit ở head khi tests/old.sh còn (chỉ sửa code), xoá test SAU audit; trailer trỏ audit đó (trailer không lọc phạm vi, nên chỉ luật
+#     "cây đã audit còn file" của audit_covers chặn) -> chặn. B2p: biên bản PM có edited ghi cả tests/old.sh (phạm vi khai rộng) -> vẫn chặn
+#     nhờ cùng luật đó (ca duy nhất tới được nhánh này của audit_covers).
+mk "$TMP/b2"; echo 'fun ok()=2' > src/Core.kt; git commit -qam "PR code"; X="$(git rev-parse HEAD)"; pm_ag T2012-b2 "$TMP/b2" "$X" "" tests/old.sh
 git rm -q tests/old.sh && git commit -qm "xoá sau audit"
+git commit -q --allow-empty -m "audit" -m "Test-approved-by: antigravity T2012-b2"
 run_gate "$TMP/b2"
 if [ "$RC" = 2 ] && ! has "duyệt chéo bởi"; then ok "B2: xoá test sau audit -> chặn"
 else bad "B2: xoá sau audit: rc=$RC, $(tailout)"; fi
@@ -103,6 +107,31 @@ mk "$TMP/b3"; X="$(del_old)"; pm_ag T2013-b3 "$TMP/b3" "$X" tests/old.sh
 run_gate "$TMP/b3"
 if [ "$RC" = 2 ] && ! has "duyệt chéo bởi"; then ok "B3: test xoá ngoài phạm vi audit -> chặn"
 else bad "B3: ngoài phạm vi: rc=$RC, $(tailout)"; fi
+OUT="$(cd "$TMP/b3" && DEVKIT_AGENT_ID=claude CLAUDE_PROJECT_DIR="$TMP/b3" bash "$DEVKIT_DIR/bin/agent-kit" approve-tests T2013-b3 2>&1)"; RC=$?
+if [ "$RC" = 1 ] && has "không ghi phạm vi chứa file" && has "test đã xoá không cần mục"; then ok "B3b: approve-tests không báo 'phủ' khi phạm vi audit thiếu file"
+else bad "B3b: approve-tests phạm vi hẹp: rc=$RC, $(printf '%s' "$OUT" | tail -3)"; fi
+
+# B4. luật 4 (chỉ audit mới nhất): audit T1 ở X1 (đã xoá), khôi phục test ở X2 và audit T2 ở X2, rồi xoá lại; trailer trỏ T1 -> chặn
+mk "$TMP/b4"; X1="$(del_old)"; pm_ag T2041-b4 "$TMP/b4" "$X1"
+git show main:tests/old.sh > tests/old.sh && git add tests/old.sh && git commit -qm "khôi phục old.sh"; X2="$(git rev-parse HEAD)"; pm_ag T2042-b4 "$TMP/b4" "$X2"
+git rm -q tests/old.sh && git commit -qm "xoá lại"
+git commit -q --allow-empty -m "audit" -m "Test-approved-by: antigravity T2041-b4"
+run_gate "$TMP/b4"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi"; then ok "B4: audit mới hơn còn file -> audit cũ (đã xoá) không dùng được"
+else bad "B4: luật audit mới nhất: rc=$RC, $(tailout)"; fi
+
+# B5. luật 5: audit ở head đã xoá, sau đó main sửa tests/old.sh -> chặn (main đổi file kể từ audit)
+mk "$TMP/b5"; X="$(del_old)"; pm_ag T2051-b5 "$TMP/b5" "$X"
+git checkout -q main && printf '#!/bin/sh\ngrep -q "ok" src/Core.kt\n' > tests/old.sh && git commit -qam "main sửa old.sh" && git checkout -q feat
+run_gate "$TMP/b5"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi"; then ok "B5: main sửa test sau audit -> chặn"
+else bad "B5: luật nhánh đích: rc=$RC, $(tailout)"; fi
+
+# B6. phiên là reviewer (DEVKIT_AGENT_ID=antigravity) -> không tự duyệt việc xoá
+mk "$TMP/b6"; X="$(del_old)"; pm_ag T2061-b6 "$TMP/b6" "$X"
+run_gate "$TMP/b6" DEVKIT_AGENT_ID=antigravity
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi" && blocked "tests/old.sh"; then ok "B6: phiên antigravity không tự duyệt test đã xoá"
+else bad "B6: tự duyệt: rc=$RC, $(tailout)"; fi
 
 # C1. xoá old.sh + sửa t.sh (V1) đã audit, rồi sửa t.sh (V2) sau audit -> t.sh chặn (blob phải khớp auditedHead), old.sh vẫn nhận
 mk "$TMP/c1"; printf "$V1" > tests/t.sh; X="$(del_old "PR sửa t.sh, xoá old.sh")"; pm_ag T2021-c1 "$TMP/c1" "$X"

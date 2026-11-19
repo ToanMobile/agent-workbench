@@ -69,14 +69,24 @@ def main(argv):
                           capture_output=True, text=True, timeout=60)
     if diff.returncode != 0:
         return refuse(f"git diff {base[:10]} lỗi: {diff.stderr.strip()[:200]}")
-    entries, skipped = [], []
+    entries, skipped, deleted = [], [], []
+    scope = None
     for f in diff.stdout.splitlines():
-        if f and gate.is_test_path(f) and not os.path.lexists(project / f):
-            # #1323: test đã xoá không có nội dung để ghi mục (sha256); gate tự nhận qua biên bản PM có phạm vi / trailer nếu
-            # audit_covers nhận (cây đã audit cũng không có file). Chỉ báo, không ghi.
+        if f and gate.is_test_path(f) and gate.path_absent(project / f):
+            # #1323: test đã xoá không có nội dung để ghi mục (sha256): gate duyệt nó qua biên bản PM có phạm vi chứa file, hoặc trailer
+            # `Test-approved-by:`, khi audit_covers nhận (cây đã audit cũng không có file). Ở đây chỉ báo, không ghi; gate tự kiểm lại.
+            deleted.append(f)
             ok, why = gate.audit_covers(top, prefix, project, f, head)
-            print(f"approve-tests: {f} đã xoá — " + ("audit phủ việc xoá; gate tra thẳng biên bản PM / trailer, không cần mục"
-                                                      if ok else why), file=sys.stderr)
+            if ok and scope is None:
+                scope = pg.audit_scope(top, task_id) or ()
+            if not ok:
+                msg = why
+            elif scope and prefix + f in scope[1]:
+                msg = f"cây đã audit cũng không có file, nằm trong phạm vi audit {task_id}: gate tra thẳng biên bản PM, không cần mục"
+            else:
+                msg = (f"cây đã audit cũng không có file nhưng lượt audit {task_id} không ghi phạm vi chứa file: cần commit trailer "
+                       f"`Test-approved-by: {reviewer} {task_id}`")
+            print(f"approve-tests: {f} đã xoá — {msg}", file=sys.stderr)
             continue
         if not f or not gate.is_test_path(f) or not (project / f).is_file():
             continue
@@ -93,7 +103,8 @@ def main(argv):
     for f, why in skipped:
         print(f"approve-tests: bỏ qua {f} — {why}", file=sys.stderr)
     if not entries:
-        print("approve-tests: không có test sửa nào khớp cây đã audit; không ghi gì", file=sys.stderr)
+        print("approve-tests: không có test sửa nào khớp cây đã audit; không ghi gì"
+              + (f" (test đã xoá không cần mục: {len(deleted)} file, xem dòng trên)" if deleted else ""), file=sys.stderr)
         return 1
     ledger_dir = project / ".claude" / "audit-gate"
     # OCR P3 (đợt 2): kiểm realpath TRƯỚC mkdir — .claude là symlink ra ngoài thì không tạo thư mục nào ở đích.
