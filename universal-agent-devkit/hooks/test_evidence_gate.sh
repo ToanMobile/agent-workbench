@@ -3622,7 +3622,10 @@ _HIDDEN_CMD = re.compile(r"\$\(|<\(|>\(|`|(?<![&|])&(?![&>])")
 _SEG_SPLIT = re.compile(r"&&|\|\||[;|\n]")
 _GIT_READ = {"log", "show", "diff", "status", "ls-files", "rev-parse", "rev-list", "branch", "merge-base", "blame", "grep", "worktree",
              "remote", "describe", "cat-file", "check-ignore"}
-_GH_WRITE_FLAG = re.compile(r"(?:^|\s)(?:-X|--method|-f|-F|--field|--raw-field|--input)(?:\s|=|$)")
+_GH_WRITE_FLAG = re.compile(r"(?:^|\s)(?:-[XfF]|--(?:method|field|raw-field|input))")   # prefix match: -XPOST, -fbody=x too
+# Allowlist, not denylist (#1342 R1): `git branch|worktree|remote` read only in these exact forms; `git diff|log|show --output=f` writes f.
+_GIT_LIST_FLAGS = {"branch": {"-a", "-r", "-v", "-vv", "-l", "--list", "--all", "--remotes", "--verbose", "--show-current"},
+                   "remote": {"-v", "--verbose"}}
 def _read_segment(seg):
     w = seg.split()
     if not w:
@@ -3630,8 +3633,12 @@ def _read_segment(seg):
     if w[0] in BASH_READ_CMDS or w[0] in ("echo", "cd", "sed", "pwd", "date", "printf", "true"):
         return True
     if w[0] == "git" and len(w) > 1 and w[1] in _GIT_READ:
-        # `git branch x` / `git worktree add` / `git remote add` write; their bare or flag-only form lists
-        return not (w[1] in ("branch", "worktree", "remote") and len(w) > 2 and not w[2].startswith("-") and w[2] != "list")
+        args = w[2:]
+        if w[1] == "worktree":
+            return args == ["list"]
+        if w[1] in _GIT_LIST_FLAGS:
+            return all(a in _GIT_LIST_FLAGS[w[1]] or (a == "list" and w[1] == "branch") for a in args)
+        return not any(a == "--output" or a.startswith("--output=") for a in args)
     if w[0] == "gh" and len(w) > 1:
         if w[1] == "api":
             return not _GH_WRITE_FLAG.search(seg)

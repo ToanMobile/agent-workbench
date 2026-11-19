@@ -111,6 +111,24 @@ transcript "$TMP/b18.jsonl" "[[\"edit\",\"$P/src/a.py\"]]"
 run 2 "$TMP/b18.jsonl" "$OUTCOME_REPLY" "outcome claim after a code edit, no RED→GREEN (check 7 unchanged)"
 transcript "$TMP/b19.jsonl" '[["tool","ToolSearch"],["tool","Agent"]]'
 run 2 "$TMP/b19.jsonl" "$OUTCOME_REPLY" "outcome claim after a subagent ran (it may have edited code)"
+echo "-- #1342 review R1: write forms that look like reads must still block; plain listings still pass"
+i=0
+for cmd in 'gh api -XPOST repos/o/r/issues -fbody=x' 'gh api repos/o/r/issues -Fbody=@x' 'gh api --method=POST repos/o/r/issues' \
+           'git branch -D old' 'git branch -m a b' 'git branch newbranch' 'git worktree remove x' 'git remote add o u' 'git remote set-url o u' \
+           'git diff --output=src/a.py' 'git log --output=src/a.py' 'git show --output=src/a.py'; do
+  i=$((i + 1))
+  python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],"",False]]))' "$cmd" > "$TMP/s.json"
+  transcript "$TMP/w$i.jsonl" "$(cat "$TMP/s.json")"
+  run 2 "$TMP/w$i.jsonl" "$REPLY" "write form is not a read: $cmd"
+done
+i=0
+for cmd in 'git branch -a' 'git branch --show-current' 'git branch -vv' 'git branch --list' 'git worktree list' 'git remote -v' 'git remote' \
+           'git diff --stat' 'git log --oneline -3' 'gh api repos/o/r --jq .x --paginate' 'gh api -H Accept:x repos/o/r'; do
+  i=$((i + 1))
+  python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],"",False]]))' "$cmd" > "$TMP/s.json"
+  transcript "$TMP/p$i.jsonl" "$(cat "$TMP/s.json")"
+  run 0 "$TMP/p$i.jsonl" "$REPLY" "read form stays a read: $cmd"
+done
 echo "-- a successful run still backs the claim"
 transcript "$TMP/g1.jsonl" '[["bash","python3 -m pytest tests","12 passed in 0.30s",false]]'
 run 0 "$TMP/g1.jsonl" "$REPLY" "pytest run green"
