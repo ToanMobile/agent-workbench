@@ -82,6 +82,8 @@ BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 NOTIFY="$HERE/super-board-notify.py"
 posint() { case "$1" in ''|*[!0-9]*|0) echo "$2" ;; *) echo "$1" ;; esac; }
 REBUILD_CAP=$(posint "$(echo "$CONFIG_JSON" | jq -r '.rebuild_cap // empty')" 2)
+# #1318 R5: a pure rebase never counts toward rebuild_cap, so it has its own ceiling per PR (the brake against Ready -> loop:rebase -> queue forever).
+REBASE_PURE_MAX=$(posint "${SB_REBASE_PURE_MAX:-}" 5)
 REPO=$(echo "$CONFIG_JSON" | jq -r '.repo.remote // ""' | sed -E 's#^https?://github\.com/##; s#\.git$##')
 REPO_PATH=$(echo "$CONFIG_JSON" | jq -r '.repo.path // "."')
 export SB_REPO_PATH="$REPO_PATH"
@@ -280,6 +282,7 @@ RETRY=0; LABEL_DONE=0; CARD_RETRY=0; CARD_UNREAD=0; CARD_UNKNOWN=0
 # bị sửa/xoá" (EN: "UNVERIFIED — N existing test files were edited") VÀ đây là lần đầu cho head này. Sổ merge-queue.unverified: "<PR> <head> <n>";
 # head mới đếm lại từ 1; route lại (RETRY=1) không đếm thêm; lần thứ hai cùng head (RETRY=0) trả 1 để đi đường cũ.
 UNVERIFIED_F="$QDIR/merge-queue.unverified"
+REBASE_PURE_F="$QDIR/merge-queue.rebase-pure"   # "<PR> <pure rebases so far>" (#1318 R5)
 unverified_edited_first() {
   grep -Eq 'CHƯA XÁC MINH — [0-9]+ file test đã có bị sửa|UNVERIFIED — [0-9]+ existing test files? (was|were) edited' <<<"$3" || return 1
   local n
@@ -318,6 +321,16 @@ ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
     card_move "$k" Blocked
     return
   fi
+  if [ "$kind" = rebase-pure ]; then
+    local rn
+    rn=$(awk -v p="$p" '$1 == p {print $2; exit}' "$REBASE_PURE_F" 2>/dev/null || true); rn=$(( ${rn:-0} + 1 ))
+    if [ "$rn" -gt "$REBASE_PURE_MAX" ]; then
+      [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "pure rebase ceiling ${REBASE_PURE_MAX} reached: main keeps moving past this PR's approval"         "PR #${p} needed ${rn} pure rebases (${why})" "a person looks at why main keeps outrunning this card, then drags it to Ready"
+      card_move "$k" Blocked
+      return
+    fi
+    { awk -v p="$p" '$1 != p' "$REBASE_PURE_F" 2>/dev/null || true; echo "$p $rn"; } > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"
+  fi
   if [ "$kind" = rebuild ]; then
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
     add_label "$k" "loop:rebuild-$((cur + 1))" ${rm[@]+"${rm[@]}"} || return 1
@@ -330,6 +343,8 @@ Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "wha
 root-cause-hash: ${rch}}" || true
   else
     add_label "$k" "loop:rebase" || return 1
+    # R9: a pure rebase carries no root-cause-hash line (R2); a conflict does.
+    rhl=""; { [ "$kind" != rebase-pure ] && [ -n "$rch" ]; } && rhl=$'\nroot-cause-hash: '"${rch}"
     LABEL_DONE=1
     # tag ở nhánh rebase: `conflict`, hoặc `merge refused` khi train in lời git/hook (gate-exit-5 không file xung đột, #775). Chỉ
     # `merge refused` chép train-detail (một nơi quyết định: route_one chọn tag); conflict không kèm dòng nào, như comment PR.
@@ -338,7 +353,7 @@ root-cause-hash: ${rch}}" || true
 Did: merged the PR head into origin/<base> in the merge-queue batch
 ❌ Not done: ${why}${det:+; the git / hook lines:
 ${det}}
-Next: Builder rebases onto the base, verification green, then Review again${rch:+$([ "$kind" = rebase-pure ] || printf '\nroot-cause-hash: %s' "$rch")}" || true
+Next: Builder rebases onto the base, verification green, then Review again${rhl}" || true
   fi
   card_move "$k" Ready
 }

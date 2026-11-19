@@ -2446,8 +2446,16 @@ worker_dispatch_time() {
 # #1318: 0 khi worker build ($1 = issue) kết thúc sạch (exit 0 + result success), để lại comment `[builder]` mới sau lần giao
 # VÀ dòng `Next:` của comment đó nêu QA: việc đã xong, chỉ thiếu lệnh `move`. Mọi lỗi đọc GitHub = 1 (giữ đường reclaim cũ).
 build_handed_to_qa() {
-  local wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-build-${1}.log" since n
+  local wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-build-${1}.log" since n phead ref tip
   worker_ended_clean "$wlog" || return 1
+  # #1318 R6 (case #1295): QA must test what was built, so the card needs an open PR whose head holds every local issue-<N>-* commit.
+  # A PR head that is unknown locally fails the ancestor test: that is the safe side (the old reclaim path runs).
+  phead=$(issue_pr_head "$1" 2>/dev/null || true)
+  [ -n "$phead" ] || return 1
+  while read -r ref tip; do
+    [ -n "$tip" ] || continue
+    [ "$tip" = "$phead" ] || git merge-base --is-ancestor "$tip" "$phead" 2>/dev/null || return 1
+  done < <(git for-each-ref --format='%(refname) %(objectname)' "refs/heads/issue-${1}-*" 2>/dev/null)
   since=$(worker_dispatch_time "$wlog")
   builder_reported_since "$1" "$since" || return 1
   n=$(issue_comment_count "$1")
@@ -2485,7 +2493,13 @@ qa_apply_report() {
     gh_write_once issue edit "$issue" --add-label "loop:rebuild-$((cur + 1))" ${rm[@]+"${rm[@]}"} >/dev/null 2>&1 || return 1
     target=Ready
   fi
-  set_card_status "$item_id" "$target" || return 1
+  if ! set_card_status "$item_id" "$target"; then
+    # #1318 R8: the move failed after loop:rebuild-N+1 was added; undo it, or the next pass counts this QA failure twice.
+    if [ "$verdict" = fail ]; then
+      gh_write_once issue edit "$issue" --remove-label "loop:rebuild-$((cur + 1))" ${cur:+$([ "$cur" -gt 0 ] && echo "--add-label loop:rebuild-$cur")} >/dev/null 2>&1 || true
+    fi
+    return 1
+  fi
   [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
   gh_checkpoint
   log "↪ #${issue} QA → ${target}: QA worker ended clean with a [qa] [report] but did not move the card (routed by the runner)"
