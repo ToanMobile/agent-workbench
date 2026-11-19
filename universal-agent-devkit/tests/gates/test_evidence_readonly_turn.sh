@@ -121,7 +121,10 @@ for cmd in 'gh api -XPOST repos/o/r/issues -fbody=x' 'gh api repos/o/r/issues -F
            'git grep -nOsh x' 'git grep -On x' 'git grep -inOsh x' \
            'gh api -iXPOST repos/o/r/issues' 'gh api -iX DELETE repos/o/r/issues/1' 'git diff --out=o a b' 'git log --ext-d -p' 'git log --textc -p' \
            'git cat-file --filters HEAD:f' 'git diff --no-index a b' 'rg --pre ./evil x .' 'rg --hostname-bin ./evil x' 'sort --output=o f' 'sort --out=o f' \
-           'sort --compress-program=./evil f' 'sort --comp=./evil f' 'sort -uo o f' 'date -s 2020' "'rm' cat" "'sort' -o o f" "\\rm x" ; do
+           'sort --compress-program=./evil f' 'sort --comp=./evil f' 'sort -uo o f' 'date -s 2020' "'rm' cat" "'sort' -o o f" "\\rm x" \
+           'git diff HEAD HEAD "--output=o"' 'git diff "--output" o HEAD HEAD' 'git diff \--output=o HEAD HEAD' 'git diff {--output=o,} HEAD HEAD' \
+           'git diff --${PWD:0:0}output=o HEAD HEAD' 'sort "-o" o a' 'sort a "--output=o"' 'uniq a "o"' 'gh api repos/o/r/issues/1 "-XDELETE"' \
+           'gh api repos/o/r "--method" DELETE' 'rg "--pre" ./evil x .' 'date "-s" 12:00' 'sort -o"o" a' 'cat *' 'git diff --output=~/o' ; do
   i=$((i + 1))
   python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],"",False]]))' "$cmd" > "$TMP/s.json"
   transcript "$TMP/w$i.jsonl" "$(cat "$TMP/s.json")"

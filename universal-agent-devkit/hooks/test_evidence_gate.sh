@@ -3679,6 +3679,17 @@ def _read_cmd_writes(seg):
     if cmd == "uniq" and len([a for a in args if not a.startswith("-")]) >= 2:
         return True
     return False
+# #1342 R6: the classifier must judge the string the shell will RUN. Any word that the shell would rewrite (quotes, `\\`, `$`, braces,
+# globs, `~`) can hide a write flag, so such a command is not a read. Only a quoted PATTERN in the first positional slot of
+# jq/rg/grep (no `$`, backtick or backslash inside) and the `sed -n 'Np'` script are exempt; both sit at command position.
+_SHELL_ACTIVE = re.compile(r"""['"\\${}*?\[~]""")
+_CMD_POS = r"(?:^|(?<=[;&|\n])|(?<=&&)|(?<=\|\|))\s*"
+_PATTERN_ARG = re.compile(_CMD_POS + r"(jq|rg|grep)((?:\s+-[\w-]+)*)\s+(?:'(?!-)[^']*'|\"(?!-)[^\"$`\\]*\")")
+_SED_SCRIPT = re.compile(_CMD_POS + r"(sed(?:\s+-n)?)\s+(['\"]?)(?:\d+|\$)?(?:,(?:\d+|\$))?p\2(?=\s|$)")
+def _shell_literal(raw):
+    t = _PATTERN_ARG.sub(lambda m: f" {m.group(1)}{m.group(2)} PAT", raw)
+    t = _SED_SCRIPT.sub(lambda m: f" {m.group(1)} PAT", t)
+    return not _SHELL_ACTIVE.search(_DEVNULL.sub(" ", t))
 def _read_only_turn():
     if edit_log or last_src_edit_idx >= 0 or last_scratch_src_idx >= 0 or last_scratch_fix_idx >= 0 or runner_results:
         return False
@@ -3700,6 +3711,8 @@ def _read_only_turn():
                 return False
             if any(x.lstrip()[:1] in ("'", '"', "\\", "$") for x in _SEG_SPLIT.split(str(u["input"].get("command", "")))):
                 return False   # quoted/escaped command name: its real name is hidden from the classifier
+            if not _shell_literal(str(u["input"].get("command", ""))):
+                return False   # R6: quote/escape/expansion/glob can hide a write flag
             segs = _SEG_SPLIT.split(bare)
             if not all(_read_segment(seg) for seg in segs):
                 return False
