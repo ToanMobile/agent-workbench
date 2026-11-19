@@ -3143,6 +3143,58 @@ $(printf '%s' "$1" | jq -r '.flag[]? | [(.number | tostring), ((.why // "") | gs
 EOF
 }
 
+# #1342 part B: run.md says a different root-cause hash resets the rebuild counter, but a card Blocked at rebuild_cap stayed Blocked even when
+# every round found NEW findings (#1318, #1328, #1333). Seam for tests: JSON array of {body} (oldest first) of issue $1, read through an isolated
+# halt file so a failed read can never leave a real github-halt.json that stops the board; unreadable -> non-zero.
+cap_progress_comments() {
+  local haltf out rc=0
+  haltf=$(mktemp -u "${TMPDIR:-/tmp}/sb-cap-halt.XXXXXX") || return 1
+  out=$(SB_GITHUB_HALT_FILE="$haltf" python3 "$SB_GITHUB_READ" --kind json -- issue view "$1" --json comments 2>/dev/null) || rc=$?
+  rm -f "$haltf"
+  [ "$rc" -eq 0 ] || return 1
+  printf '%s' "$out" | jq -c '.comments // []' 2>/dev/null
+}
+# sweep_cap_progress: a Blocked card with loop:rebuild-N >= rebuild_cap whose last two refusals (reviewer / merge-queue / orchestrator comments with a
+# [blocker]/[report] header) have different root-cause hashes is progressing, not looping: lower the label to cap-1, move it to Ready, comment once.
+# Once per distinct latest hash and at most SB_CAP_PROGRESS_MAX (3) times per card, so it can never loop forever. Never touches needs-you /
+# human-gated cards or a 💳 🔐 🧑 🙋 blocker (those are a person's decision). Returns 0 when a card moved, 1 when none.
+sweep_cap_progress() {
+  local moved=1 issue item_id cur cap max cj bodies last prev hl hp key count
+  cap="${REBUILD_CAP:-2}"; max="${SB_CAP_PROGRESS_MAX:-3}"
+  while IFS=$'\t' read -r issue item_id cur; do
+    [ -n "$issue" ] && [ -n "$item_id" ] || continue
+    cj=$(cap_progress_comments "$issue" 2>/dev/null) || { log "cap-progress: #${issue} comments unreadable — skipped"; continue; }
+    bodies=$(printf '%s' "$cj" | jq -c '[.[] | select(.body | test("^\\[(reviewer|merge-queue|orchestrator)\\] \\[(blocker|report)\\]")) | .body]' 2>/dev/null) || continue
+    last=$(printf '%s' "$bodies" | jq -r '.[-1] // empty' 2>/dev/null); prev=$(printf '%s' "$bodies" | jq -r '.[-2] // empty' 2>/dev/null)
+    [ -n "$last" ] && [ -n "$prev" ] || continue
+    case "$last" in *💳*|*🔐*|*🧑*|*🙋*) continue ;; esac
+    hl=$(printf '%s' "$last" | python3 -I "$(dirname "$SB_GITHUB_READ")/super-board-root-cause-hash.py" hash --lane review 2>/dev/null) || continue
+    hp=$(printf '%s' "$prev" | python3 -I "$(dirname "$SB_GITHUB_READ")/super-board-root-cause-hash.py" hash --lane review 2>/dev/null) || continue
+    [ -n "$hl" ] && [ "$hl" != "$hp" ] || continue
+    key="${issue}:cap:${hl}"
+    swept_seen "$key" && continue
+    count=$(grep -c "^${issue}:cap:" "$(sweep_ledger)" 2>/dev/null || true)
+    if [ "${count:-0}" -ge "$max" ]; then log "cap-progress: #${issue} reached SB_CAP_PROGRESS_MAX=${max} — left Blocked"; continue; fi
+    set_card_status "$item_id" "Ready" || { log "⚠ cap-progress: could not move #${issue} to Ready"; continue; }
+    swept_add "$key"
+    gh_checkpoint
+    gh_write_once issue edit "$issue" --add-label "loop:rebuild-$((cap - 1))" --remove-label "loop:rebuild-${cur}" >/dev/null 2>&1 || log "⚠ cap-progress: could not lower the label of #${issue}"
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · the findings changed since the last round
+Did: the last two refusals have different root-cause hashes (${hp} → ${hl}), so the card is progressing, not looping
+✅ Done: loop:rebuild-${cur} → loop:rebuild-$((cap - 1)), card moved Blocked → Ready
+Next: builder fixes the newest findings (cap reset $(( ${count:-0} + 1 ))/${max} for this card)" >/dev/null 2>&1 || true
+    log "↩ cap-progress: #${issue} Blocked → Ready (hash ${hp} → ${hl})"
+    moved=0
+  done <<EOF
+$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson cap "$cap" '.items[] | select(.status == "Blocked")
+   | ((.labels // []) + (.content.labels // []) | map(if type == "object" then .name else . end | ascii_downcase)) as $l
+   | select(($l | index("needs-you") | not) and ($l | index("human-gated") | not))
+   | ([$l[] | capture("^loop:rebuild-(?<n>[0-9]+)$") | .n | tonumber] | max // 0) as $n
+   | select($n >= $cap) | [(.content.number | tostring), .id, ($n | tostring)] | @tsv' 2>/dev/null)
+EOF
+  return "$moved"
+}
+
 sweep_blocked_cards() {
   # Thẻ Blocked có mọi blocker trên dòng `blocked-by:` đã đóng thì về lại Ready: danh sách `sweep` của wave
   # planner, đúng luật backend workflow áp giữa các wave. Thẻ chờ người (`blocked-by: -`) không bao giờ có
@@ -3247,6 +3299,8 @@ $(printf '%s' "$plan" | jq -r '.resume[]? | [(.number | tostring), (if (.key // 
 EOF
   # #529: an approved card left Blocked by a failed unmark/move is retried by maybe_sweep_blocked (rc 2), not left until the board changes.
   [ "$retry" -eq 0 ] || return 2
+  # #1342 part B: a card at rebuild_cap whose findings changed since the last round is progressing: release it (never a human-owned card).
+  sweep_cap_progress && moved=0
   return "$moved"
 }
 
