@@ -117,7 +117,8 @@ for cmd in 'gh api -XPOST repos/o/r/issues -fbody=x' 'gh api repos/o/r/issues -F
            'git branch -D old' 'git branch -m a b' 'git branch newbranch' 'git worktree remove x' 'git remote add o u' 'git remote set-url o u' \
            'git diff --output=src/a.py' 'git log --output=src/a.py' 'git show --output=src/a.py' \
            "sed 's/x/y/w out.txt' f" "sed -n '1w out.txt' f" "sed -n 1p -i f" "sed -n -f s.sed f" "sed -e 1p f" "sed '1e id' f" "sed -n '1p;2w o' f" \
-           'git grep -Ots x' 'git grep --open-files-in-pager=sh x' 'git diff --ext-diff' 'git show --textconv HEAD:f' 'git log -p --ext-diff'; do
+           'git grep -Ots x' 'git grep --open-files-in-pager=sh x' 'git diff --ext-diff' 'git show --textconv HEAD:f' 'git log -p --ext-diff' \
+           'git grep -nOsh x' 'git grep -On x' 'git grep -inOsh x'; do
   i=$((i + 1))
   python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],"",False]]))' "$cmd" > "$TMP/s.json"
   transcript "$TMP/w$i.jsonl" "$(cat "$TMP/s.json")"

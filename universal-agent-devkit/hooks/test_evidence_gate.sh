@@ -3627,7 +3627,7 @@ _GH_WRITE_FLAG = re.compile(r"(?:^|\s)(?:-[XfF]|--(?:method|field|raw-field|inpu
 _GIT_LIST_FLAGS = {"branch": {"-a", "-r", "-v", "-vv", "-l", "--list", "--all", "--remotes", "--verbose", "--show-current"},
                    "remote": {"-v", "--verbose"}}
 # #1342 R3: these make git run an external program (grep -O<cmd>, external diff driver, textconv filter): not a read.
-_GIT_EXEC_FLAG = re.compile(r"-O|--open-files-in-pager|--ext-diff|--textconv")
+_GIT_EXEC_FLAG = re.compile(r"-[a-zA-Z]*O|--open-files-in-pager|--ext-diff|--textconv")   # -[a-zA-Z]*O: bundled short flags (-nOsh)
 # #1342 R2: sed reads only as `sed [-n] '<N|N,M|N,$|$>p' file...`; any other script can `w`/`e`/`r` a file or run a command, and
 # -i / -f / -e / --expression / -s after the script can write or load one. Checked on the RAW command (bare text has no quotes).
 _SED_SAFE = re.compile(r"\bsed(?:\s+-n)?\s+(['\"]?)(?:\d+|\$)?(?:,(?:\d+|\$))?p\1(?=(?:\s+[^-\s]\S*)*\s*(?:[|;&\n]|$))")
