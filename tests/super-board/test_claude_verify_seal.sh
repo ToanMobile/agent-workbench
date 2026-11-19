@@ -316,6 +316,13 @@ hook "bash -ce 'python3 .agents/devkit/bin/claude_verify.py register --lane revi
 hook "CLAUDE_CODE_SESSION_ID=abc bash -c 'python3 .agents/devkit/bin/claude_verify.py seal --repo . --head x --report r --branch b'"; HP=$?
 { [ "$HM" = 2 ] && [ "$HN" = 2 ] && [ "$HO" = 2 ] && [ "$HP" = 2 ]; } && ok "e6d hook: register qua pipe / <<< / -ce, gán sid ngoài bash -c → chặn" \
   || fail "e6d hook rc=$HM/$HN/$HO/$HP"
+# e6e (review 29e579ab): miễn trừ thông điệp chỉ cho `git … -m/--message`, không cho `bash -c 'eval "$1"' -m '<mã>'`; ANSI-C $'…'
+hook "bash -c 'eval \"\$1\"' -m 'env SB_RUNNER_REGISTER=1 python3 .agents/devkit/bin/claude_verify.py register --lane review --issue 7 --session x'"; HQ=$?
+hook "env \$'SB_RUNNER_REGISTER=1' python3 .agents/devkit/bin/claude_verify.py \$'register' --lane review --issue 7 --session x"; HR=$?
+hook 'git commit -am "chặn claude_verify.py register" -- a.py'; HS=$?
+hook 'git commit --message="chặn claude_verify.py register" -- a.py'; HT=$?
+{ [ "$HQ" = 2 ] && [ "$HR" = 2 ] && [ "$HS" = 0 ] && [ "$HT" = 0 ]; } && ok "e6e hook: -m của bash -c, \$'…' → chặn; git commit -am/--message= nhắc chữ → qua" \
+  || fail "e6e hook rc=$HQ/$HR/$HS/$HT"
 RS="$ROOT/.claude/bin/super-board-run.sh"
 grep -q 'SB_RUNNER_REGISTER=1 python3' "$RS" && ok "e7 runner tự đặt SB_RUNNER_REGISTER=1 inline cho lệnh register" || fail "e7 runner thiếu cờ inline"
 P_REV=$(grep -F 'The merge queue is on for this board' "$RS")

@@ -189,20 +189,23 @@ def session_problem(top, head, issue, reviewer, recorded_builders=()):
 
 
 def added_lines(top, base, head):
-    """{file: set(dòng thêm ở head)} của diff base..head; None khi git lỗi."""
+    """{file: set(dòng thêm ở head), hoặc None khi file bị xoá ở head} của diff base..head; None khi git lỗi."""
     rc, out = git(top, "-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", base, head)
     if rc != 0:
         return None
-    files, cur, header = {}, None, False
+    files, cur, header, minus = {}, None, False, None
     for line in out.splitlines():
         if line.startswith("diff --git "):
-            cur, header = None, True   # dòng ---/+++ chỉ đọc ở phần đầu, không nhầm dòng nội dung "++ x" được thêm
+            cur, header, minus = None, True, None   # dòng ---/+++ chỉ đọc ở phần đầu, không nhầm dòng nội dung "++ x" được thêm
         elif header and line.startswith("+++ "):
             cur = line[6:] if line.startswith("+++ b/") else None
             if cur is not None:
                 files.setdefault(cur, set())
+            elif line == "+++ /dev/null" and minus is not None:
+                files[minus] = None   # --no-renames: file bị xoá hẳn ở head
         elif header and line.startswith("--- a/"):
-            files.setdefault(line[6:], set())   # file bị xoá vẫn thuộc diff, không có dòng thêm
+            minus = line[6:]
+            files.setdefault(minus, set())   # file bị xoá vẫn thuộc diff, không có dòng thêm
         elif line.startswith("@@"):
             header = False
             m = HUNK.match(line)
@@ -223,9 +226,9 @@ def _finding_problem(top, head, base, f, lines):
     if f["file"] not in lines:
         return f"finding {f['id']}: {f['file']} không thuộc diff base..head"
     # #1323: file bị xoá ở head (thuộc diff, không có ở head) → dòng và snippet đối chiếu với base; không có hunk thêm để đòi.
-    rc, _ = git(top, "cat-file", "-e", f"{head}:{f['file']}")
-    ref, where = (head, "head") if rc == 0 else (base, "base (file đã xoá ở head)")
-    if rc == 0 and f["severity"] != "pre-existing" and ln not in lines[f["file"]]:
+    deleted = lines[f["file"]] is None
+    ref, where = (base, "base (file đã xoá ở head)") if deleted else (head, "head")
+    if not deleted and f["severity"] != "pre-existing" and ln not in lines[f["file"]]:
         return f"finding {f['id']}: {f['file']}:{ln} không nằm trong hunk thêm ở head"
     rc, text = git(top, "show", f"{ref}:{f['file']}")
     rows = text.split("\n") if rc == 0 else []

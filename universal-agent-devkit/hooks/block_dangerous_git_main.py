@@ -2380,9 +2380,12 @@ CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_up
 # (RETARGETED is set from the parsed tokens in analyse_simple: a regex over the raw text was beaten by GIT_""DIR.)
 # (#1328) Sổ phiên claude-verify (claude_verify.py register) chỉ do super-board-run.sh ghi, ngoài phiên agent. Chặn khi, sau khi tách token
 # như shell: `register` đứng ngay sau token claude_verify.py, hoặc cờ của runner ở dạng gán (`SB_RUNNER_REGISTER=…`, `export
-# SB_RUNNER_REGISTER`). Token có khoảng trắng (chuỗi của bash -c, eval, heredoc) được tách tiếp (tối đa 3 tầng). Lệnh chỉ NHẮC chữ (grep,
-# commit -m) thì qua. Không tách được → quét chữ thô (fail closed). ponytail: agent cùng uid cố ý vòng qua (python -c gọi subprocess,
-# tên ghép từ biến, script trong file, sửa thẳng file sổ) vẫn được — rủi ro chấp nhận, đóng khi có signer của chủ repo.
+# SB_RUNNER_REGISTER`), hoặc gán CLAUDE_CODE_SESSION_ID trong lệnh nhắc claude_verify (T0005). Mọi token có khoảng trắng được tách tiếp
+# (tối đa 3 tầng: bash -c, eval, pipe sang shell, <<<), trừ thông điệp của `git … -m/--message` (commit nhắc chữ thì qua). Lệnh khác chỉ
+# nhắc đúng cụm (grep/gh --body "claude_verify.py register") bị chặn oan: chấp nhận, đổi cách viết. Không tách được → quét chữ thô
+# (fail closed). Hook so chữ chỉ là lớp làm chậm, không phải ranh giới bảo mật (INSTINCT-045/104: lớp lỗ không đóng được bằng so
+# chữ). ponytail: agent cùng uid cố ý vòng qua (python -c gọi subprocess, tên ghép từ biến, glob, script trong file, sửa thẳng file
+# sổ) vẫn được — rủi ro chấp nhận, đóng khi có signer Ed25519 của chủ repo (seal mode).
 CV_REGISTER_MSG = "ghi sổ phiên claude-verify từ phiên agent"
 
 
@@ -2390,9 +2393,9 @@ _CV_DECL = ("export", "declare", "typeset", "local", "readonly")
 
 
 def _cv_register(text, depth=0, calls_cv=None):
-    """(T0005) Thêm: gán CLAUDE_CODE_SESSION_ID trong lệnh có nhắc claude_verify (seal đọc reviewer từ biến này; xét trên cả lệnh
-    gốc, nên gán ở tầng ngoài còn lệnh trong `bash -c` vẫn bị bắt). Mọi token có khoảng trắng được tách tiếp (mã shell có thể đi qua
-    pipe, `<<<`, `-ce`), trừ thông điệp ngay sau `-m`/`--message` (commit nhắc chữ)."""
+    """True khi lệnh ghi sổ phiên claude-verify hoặc giả phiên reviewer (luật ở comment trên). calls_cv xét trên lệnh gốc, nên gán
+    biến ở tầng ngoài còn claude_verify.py nằm trong `bash -c` vẫn bị bắt."""
+    text = text.replace("$'", "'")   # ANSI-C $'…': shlex không hiểu, bash bỏ dấu $ → coi như chuỗi nháy đơn
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
@@ -2402,15 +2405,23 @@ def _cv_register(text, depth=0, calls_cv=None):
                     or (re.search(r"\bCLAUDE_CODE_SESSION_ID\s*=", text) and "claude_verify" in text))
     if calls_cv is None:
         calls_cv = "claude_verify" in text
+    seg_cmd = None   # lệnh của simple command hiện tại (bỏ qua phép gán đứng đầu)
     for i, t in enumerate(toks):
         prev = toks[i - 1] if i else ""
+        if t and all(c in "();<>|&" for c in t):
+            if any(c in ";|&(" for c in t):
+                seg_cmd = None
+            continue
+        if seg_cmd is None and not re.match(r"[A-Za-z_]\w*=", t):
+            seg_cmd = os.path.basename(t)
         if t.startswith("SB_RUNNER_REGISTER=") or (t == "SB_RUNNER_REGISTER" and prev in _CV_DECL):
             return True
         if calls_cv and (t.startswith("CLAUDE_CODE_SESSION_ID=") or (t == "CLAUDE_CODE_SESSION_ID" and prev in _CV_DECL + ("unset",))):
             return True
         if os.path.basename(t) == "claude_verify.py" and i + 1 < len(toks) and toks[i + 1] == "register":
             return True
-        if depth < 3 and prev not in ("-m", "--message") and re.search(r"\s", t) and _cv_register(t, depth + 1, calls_cv):
+        git_msg = seg_cmd == "git" and (prev == "--message" or re.fullmatch(r"-[A-Za-z]*m", prev) or t.startswith("--message="))
+        if depth < 3 and not git_msg and re.search(r"\s", t) and _cv_register(t, depth + 1, calls_cv):
             return True
     return False
 
