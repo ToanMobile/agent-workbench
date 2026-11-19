@@ -83,7 +83,8 @@ fast_allow() { # $1 = trigger ERE
 # (#605) rm / unlink / find -delete: parser kiểm danh sách protected_delete. (#605 Lane H) gh (comment tự duyệt) và lời gọi xoá
 # của interpreter (os.remove, os.unlink, shutil.rmtree, fs.rmSync, File.delete, FileUtils.rm_rf …) cũng vào parser.
 # (audit T0066 vòng 2) ANTIGRAVITY_PM_STATE_HOME (chỉ dành cho test) cũng vào parser; (vòng 3) HOME= cũng vậy (lệnh gate / push kèm HOME lạ).
-fast_allow 'git|eval|devkit_precommit|hookspath|antigravity_pm_state_home|devkit_pm_home_test|(^|[^[:alnum:]_])home=|pkill|killall|pgrep|(^|[^[:alnum:]_.-])(rm|unlink|gh)([^[:alnum:]_.-]|$)|-delete|unlink|remove|rmtree|rmsync|rmdirsync|rm_r|[.]delete|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
+# (#1328) claude_verify / SB_RUNNER_REGISTER: parser chặn lệnh agent ghi sổ phiên claude-verify (chỉ runner được ghi).
+fast_allow 'git|eval|claude_verify|sb_runner_register|devkit_precommit|hookspath|antigravity_pm_state_home|devkit_pm_home_test|(^|[^[:alnum:]_])home=|pkill|killall|pgrep|(^|[^[:alnum:]_.-])(rm|unlink|gh)([^[:alnum:]_.-]|$)|-delete|unlink|remove|rmtree|rmsync|rmdirsync|rm_r|[.]delete|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "BLOCKED: block-dangerous-git.sh cần 'python3' để phân tích lệnh. Chặn để an toàn." >&2

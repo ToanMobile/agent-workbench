@@ -717,6 +717,21 @@
       ]
     },
     {
+      "component": "Game Blender 5.2+ & Unity 6.3 Pipeline",
+      "watch_files": [
+        "universal-agent-devkit/profiles/game/scripts/blender/*",
+        "universal-agent-devkit/skills/blender-game-pipeline/*",
+        "universal-agent-devkit/profiles/game/rules/game-rules.md"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-GAME-BLENDER-PIPELINE",
+          "command": "bash universal-agent-devkit/tests/verification/test_game_blender_pipeline.sh",
+          "description": "Kiểm định 4 script Blender headless (qa_check, make_lods, export_unity, review_shots), skill blender-game-pipeline, exclude_skills và quy tắc Unity 6.3 GRD"
+        }
+      ]
+    },
+    {
       "component": "super-board-runner-reclaim-dead-build",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
@@ -941,6 +956,21 @@
           "id": "REG-SB-PREFLIGHT-STALE-OVERLAP-01",
           "name": "preflight câu 3: PR của thẻ Backlog/Blocked không chặn; PR của thẻ đang chạy vẫn chặn; thẻ có PR riêng không bị sequence lại; không --inflight giữ hành vi cũ (#280)",
           "command": "bash tests/super-board/test_preflight_overlap_stale.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "android-dexscan",
+      "watch_files": [
+        "universal-agent-devkit/profiles/android/scripts/qa/dexscan.py",
+        "universal-agent-devkit/tests/verification/test_dexscan.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-DEXSCAN-1308-01",
+          "name": "dexscan: aab, method count, exported, exit codes",
+          "command": "bash universal-agent-devkit/tests/verification/test_dexscan.sh",
           "parallel_safe": true
         }
       ]
@@ -2494,6 +2524,23 @@
       ]
     },
     {
+      "component": "antigravity-hook-bridge",
+      "watch_files": [
+        "universal-agent-devkit/hooks/agent_bridge.sh",
+        "universal-agent-devkit/scripts/context/agent_hooks.py",
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/tests/verification/test_agent_bridge_antigravity.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ANTIGRAVITY-BRIDGE-1308-01",
+          "name": "Antigravity .agents/hooks.json destructive-command guards",
+          "command": "bash universal-agent-devkit/tests/verification/test_agent_bridge_antigravity.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "review-wait-receipt-671",
       "trigger_files": [
         ".claude/bin/super-board-gate-receipt.sh",
@@ -2787,6 +2834,21 @@
           "id": "REG-SB-CARD-WRITE-RETRY-01",
           "name": "#520: thẻ Blocked vì lệnh ghi GitHub hỏng (card-write-failed) được runner ghi lại mỗi tick từ state cục bộ: được thì về cột cũ, 3 tick hỏng liên tiếp thì needs-you một lần rồi thôi thử (sống qua restart, không bao giờ halt); không phát lại chuyển cột / nhận thẻ đã huỷ; cột cũ Blocked thì giữ Blocked; người kéo thẻ ra thì bỏ state",
           "command": "bash tests/super-board/test_card_write_failed_sweep.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "android-dexscan-app-package",
+      "watch_files": [
+        "universal-agent-devkit/profiles/android/scripts/qa/dexscan.py",
+        "universal-agent-devkit/tests/verification/test_dexscan_app_package.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-DEXSCAN-PKG-01",
+          "name": "dexscan --app-package bytecode caller filtering",
+          "command": "bash universal-agent-devkit/tests/verification/test_dexscan_app_package.sh",
           "parallel_safe": true
         }
       ]
@@ -3771,6 +3833,22 @@
       ]
     },
     {
+      "component": "super-collect-not-planned-dedupe",
+      "watch_files": [
+        ".claude/skills/super-collect/scripts/super-collect-file.sh",
+        ".claude/bin/super-board-github-read.py",
+        "tests/super-board/test_collect_file_not_planned.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-COLLECT-NOT-PLANNED-1308-01",
+          "name": "super-collect skips issues closed NOT_PLANNED",
+          "command": "bash tests/super-board/test_collect_file_not_planned.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "merge-gate-autosync-pm-approval",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
@@ -3967,6 +4045,22 @@
       ]
     },
     {
+      "component": "android-dump-view-hierarchy",
+      "watch_files": [
+        "universal-agent-devkit/profiles/android/scripts/qa/dump-view-hierarchy.sh",
+        "universal-agent-devkit/profiles/android/scripts/qa/adb-safe-exec.sh",
+        "universal-agent-devkit/tests/verification/test_dump_view_hierarchy.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-DUMP-VIEW-1308-01",
+          "name": "dump-view-hierarchy: no silent pass, device policy, density",
+          "command": "bash universal-agent-devkit/tests/verification/test_dump_view_hierarchy.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "review-gate-handover-merge-gate-forms-992",
       "watch_files": [
         "universal-agent-devkit/hooks/review_gate.sh",
@@ -4116,6 +4210,28 @@
           "id": "REG-SB-MERGE-OPT-LOAD-CAP-01",
           "name": "05/11 chủ repo: hạn số merge gate chạy cùng lúc theo tải — tải ≥ số lõi thì verify lạc quan (ngoài khoá) chỉ thấy N−1 slot pool gate, slot cuối để dành cho verify trong khoá; 3 merge gate cùng lúc tối đa 1 verify lạc quan chạy suite; hết SB_MERGE_OPT_SLOT_WAIT_S thì chạy với cả pool; tải thấp và verify trong khoá như cũ",
           "command": "bash tests/super-board/test_merge_gate_opt_load_cap.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "antigravity-hooks-lifecycle",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/bin/tree_fp.py",
+        "universal-agent-devkit/bin/parity_check.py",
+        "universal-agent-devkit/bin/agent-health.py",
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/hooks/agent_bridge.sh",
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/tests/verification/test_antigravity_hooks_lifecycle.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-AG-LIFECYCLE-01",
+          "name": "Antigravity .agents/hooks.json state, parity/health, manage_task bridge",
+          "command": "bash universal-agent-devkit/tests/verification/test_antigravity_hooks_lifecycle.sh",
           "parallel_safe": true
         }
       ]
@@ -4632,6 +4748,57 @@
           "id": "REG-1290-GATE-FULL-PROVABLE-AC-01",
           "name": "#1290: thẻ gate-full mới không mang AC 'lượt gate_full kế tiếp'; đỏ kinh niên có thẻ đã đóng mà không thẻ mở thì mở thẻ mới; còn thẻ mở hoặc chưa từng có thẻ thì không",
           "command": "bash universal-agent-devkit/tests/gates/test_gate_full_card_ac_provable.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "qa-report-review-only-ac-1298",
+      "watch_files": [
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/skills/super-qa/SKILL.md",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-board/references/writing-standard.md",
+        "tests/super-board/test_qa_report_review_only_ac.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1298-QA-REPORT-REVIEW-ONLY-AC-01",
+          "name": "#1298: QA ghi AC chỉ lane Review chứng minh được ở ✅ Done + Next: reviewer; cổng qa-report không nới (Not done nêu AC vẫn chặn)",
+          "command": "bash tests/super-board/test_qa_report_review_only_ac.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "active-profile-clean-tree-1265",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-config.py",
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_active_profile_clean.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1265-ACTIVE-PROFILE-CLEAN-01",
+          "name": "#1265: agent-config.py, install.sh và worktree add --lane=review giữ sạch .agents/active-profile.json (không làm bẩn updated_at/newline), dispatch audit ghi được Pham vi:",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_active_profile_clean.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-audit-deleted-test-1323",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/governance/approve_tests.py",
+        "universal-agent-devkit/tests/gates/test_gate_audit_deleted_test.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1323-GATE-AUDIT-DELETED-TEST-01",
+          "name": "#1323: audit pass (biên bản PM có phạm vi / trailer) duyệt test đã xoá khi cây đã audit cũng không có file; xoá không audit, xoá sau audit, ngoài phạm vi vẫn chặn; sửa test vẫn đòi blob khớp auditedHead",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_audit_deleted_test.sh",
           "parallel_safe": true
         }
       ]

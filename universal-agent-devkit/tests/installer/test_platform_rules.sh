@@ -128,6 +128,12 @@ install "$A" -a claude
 got="$(servers "$A/.mcp.json")"
 case " $got " in *" android-code-search "*) ok "android: Android MCPs installed" ;; *) fail "android: Android MCPs missing: $got" ;; esac
 case " $got " in *" codebase-memory-mcp "*) ok "android: codebase-memory-mcp installed" ;; *) fail "android: codebase-memory-mcp missing: $got" ;; esac
+# A backend service has no screen: the device-UI auditor is not offered there (its description sat in every session's agent list).
+B="$(newproj backend)"; touch "$B/go.mod"
+install "$B" -a claude -p backend
+[ ! -e "$B/.claude/agents/real-device-ui-auditor.md" ] && [ ! -L "$B/.claude/agents/real-device-ui-auditor.md" ] \
+  && ok "backend: real-device-ui-auditor is not linked (exclude_agents)" || fail "backend: real-device-ui-auditor linked"
+[ -L "$B/.claude/agents/principal-code-reviewer.md" ] && ok "backend: principal-code-reviewer still linked" || fail "backend: principal-code-reviewer missing"
 
 # --- Re-init with the SAME profile never removes MCP servers the project declares ----------
 # OfficeReader 2026-10-01: an Android app on the universal profile kept the Android MCPs in

@@ -24,6 +24,7 @@
   "regression_matrix": "profiles/android/regression_matrix.json",
   "rules_file": "profiles/android/rules/android-rules.md",
   "exclude_skills": [
+    "blender-game-pipeline",
     "unity-gc-audit"
   ],
   "source_extensions": [

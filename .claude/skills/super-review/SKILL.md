@@ -73,6 +73,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    - `[builder]` open → comment, move card Review → Ready.
    - `[qa]` open → comment, move card Review → QA.
    - Both open → bounce to whichever is older.
+   - A bounce is never the last act while the card sits in Review (#1316): the final command that ends every bounce, even when the PR head did not change since the last bounce and you post no duplicate report, is `.claude/bin/super-board-card.sh --config <cfg> move <N> Ready` (`QA` for a `[qa]` finding). Applies to every bounce (steps 2, 3b, 5, 6, 7). Ending the turn with "not approved, stays in Review" strands the card: the runner blocks it ❓.
    - Clean up worktree, exit.
 3. Read PR + spot-check Tester evidence + read CLAUDE.md / AGENTS.md.
    **3b. Prior-report check** — load `prior_report` (see "Review remembers"); if present, round 1 checks each prior finding; any `not fixed` → re-open its thread, bounce by prefix, post the report, exit.
@@ -81,7 +82,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    - Bring the review worktree to the PR head: `git fetch origin && git -C .claude/worktrees/issue-<N>-review checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the EXACT command from Tester's PR `Local tests:` line.
    - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the `post-fix-gate.py --run-tests --scoped` exit 0 (its scoped receipt) for this exact head SHA. When `.claude/bin/super-board-qa-exit2.sh` printed `review`, that is the only reason an existing test was edited: do not demand QA exit 0; the card is in Review for Antigravity, not Blocked, not needs-you. The merge point runs `--scoped`, never `--full` (#741; review `core-touched` files closely; run.md → Merge protocol).
-   - Before `pm_dispatch kind=audit`: `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. True → audit this HEAD. False → move the card Review → Ready with label `loop:rebase` (the Builder merges `origin/<base>` and pushes; the Reviewer never commits or pushes). After the Antigravity audit pass, run `agent-kit approve-tests <that T… id>` (exit 2/3: no approval), do not set `ANTIGRAVITY_PM_STATE_HOME`, then `gate_receipt=$(.claude/bin/super-board-gate-receipt.sh <head sha40>)`: skip the rerun only on exit 0 with this tree's fp, else run `post-fix-gate.py --run-tests --scoped --brief` once (must exit 0), read it again (empty fp: no comment; run.md step 5).
+   - Before `pm_dispatch kind=audit`: `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. True → audit this HEAD. False → move the card Review → Ready with label `loop:rebase` (the Builder merges `origin/<base>` and pushes; the Reviewer never commits or pushes). A missing rebase is not a bounce: it does not count toward `rebuild_cap`, and a card that already hit the cap still goes Review → Ready `loop:rebase` (never Blocked for it, #1319). Only a real conflict or a red verify after the rebase counts as one bounce. After the Antigravity audit pass, run `agent-kit approve-tests <that T… id>` (exit 2/3: no approval), do not set `ANTIGRAVITY_PM_STATE_HOME`, then `gate_receipt=$(.claude/bin/super-board-gate-receipt.sh <head sha40>)`: skip the rerun only on exit 0 with this tree's fp, else run `post-fix-gate.py --run-tests --scoped --brief` once (must exit 0), read it again (empty fp: no comment; run.md step 5).
    - Green → continue. Red → open new `[qa]`-prefixed thread quoting failure, move card Review → QA with `loop:rebuild-N`, exit.
    - If QA includes `Runtime checks:`, follow
      [optional runtime verification](../super-qa/references/runtime-verification.md):
@@ -104,11 +105,13 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
 ### Merge protocol — Done means merged
 
 Builder opens PRs as **drafts**, and GitHub never merges a draft: skipping `gh pr ready`
-once left a six-hour run with zero commits on `main`. In order, no shortcuts:
+once left a six-hour run with zero commits on `main`. In order:
 
-1. `gh pr ready <PR>` — idempotent, safe on an already-ready PR.
-   **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` (its runner drains
-   the queue every tick) or `"workflow"` (the launchd schedule `super-board-queue-schedule.sh` does), without `--codex`): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP:
+1. `gh pr ready <PR>` (idempotent).
+   **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend` `"claude-p"` or `"workflow"`, without `--codex`): never call the merge gate (exit 13). After your own review passes, the cross-review is **claude-verify** ([seal steps](references/claude-verify-seal.md)).
+   claude-verify only works for cards the board dispatched, and only the `claude-p` worker backend uses claude-verify.
+   edited_existing PRs (test edit/delete): Antigravity until #1331.
+   Antigravity (`review_tiers` or `SB_REVIEW_ANTIGRAVITY=1`): audit the PR head via the antigravity-pm MCP:
    `pm_task_create` (project = this card's review worktree `.claude/worktrees/issue-<N>-review`, already at the PR head, never the main checkout; put the focus in its `brief`), `pm_dispatch kind=audit` WITHOUT `message`; the dispatch output must contain `Pham vi:` and must NOT contain `Khong ghi pham vi`, else do not `pm_verdict` (with `message`, or a project not at the PR head, the PM records no scope and the gate ignores the audit). Read its `audit-agent.json`, and only on Antigravity's
    pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR as its own comment `approved-head:<sha40>`
    with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}` and NO `edited-tests:` line (queue on only): the queue approves edited tests via the PM audit record from `pm_verdict`, which survives main moving ahead; an `edited-tests:` line pins the approval to this head, so every main move forces gate-exit-2 (RUNAWAY loop of 2026-11-12). `gate_receipt` as above (empty fp: do not comment).

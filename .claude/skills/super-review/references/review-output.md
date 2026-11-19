@@ -84,3 +84,39 @@ Outside super-board (no PR), `prior_report` is whatever earlier review the calle
 Any `not fixed` (other than Over-engineering, which never bounces alone) → **bounce again**: set those rows to `❌ not fixed`, keeping their
 original ids and owners. Skip the fresh pass; it would review code that is about to change.
 All clear → round 2 is the normal fresh pass. New findings take ids after the highest one used.
+
+## Convergence — every round is narrower than the last
+
+A review loop that keeps finding something never ends: PR #1312 opened four new findings (R5–R8)
+in round 2 and its card reached `loop:rebuild-4`; two of them (R6, R7) were more places of a
+pattern round 1 had already reported once (R3, R2). These rules come from Anthropic's "Solving
+code review" convergence fixes. No rule here adds a human step.
+
+1. **Report the class, not the line (every round, round 1 above all).** Before you post a
+   finding, ask whether it is one place of a pattern: an exit code a caller does not handle, a
+   missing rate-limit or error check, an unescaped input, a test that cuts the function out with
+   `sed`. If so, search the whole merge-base diff and the callers of what it changes for the
+   other places, and write ONE finding: the class in the Finding cell, every place in `Where`, and
+   the sentence `class: fix every place, also ones not listed`. A later round that finds another
+   place of a class already reported adds it to that row; it is not a new finding.
+2. **Pre-existing code is not this PR's finding.** A defect on lines the merge-base diff
+   (`git diff origin/<base>...HEAD`) neither adds nor changes gets Class `Pre-existing`: no PR
+   thread, never a bounce, never a block. A real bug is filed for the board
+   (`.claude/bin/super-qa-file-bug.sh`, Status `filed #<issue>`); style or taste is dropped.
+   It is the PR's own Bug, not Pre-existing, when the diff makes old code fail or reachable
+   (a new exit code an old caller mishandles, a new caller of an unsafe function).
+3. **From the second review on, the fresh pass reads only what changed.** Write the head you
+   reviewed on the `Did:` line as `@ <sha>`. Next time, after the prior findings are all clear,
+   review `git diff <that sha>..HEAD` (that sha is not an ancestor of HEAD, or the report has
+   none: the merge-base diff, commits that only merge `origin/<base>` skipped). Raise a new
+   finding only on those lines or on what they break. One exception: a Blocker for security,
+   auth, money, data loss or a destructive migration anywhere in the merge-base diff is still
+   raised; say in the row that round 1 missed it.
+4. **A Nit never costs a round.** Nit / optional findings get a row, no thread, and never
+   bounce a card, alone or together. If the card bounces for another finding, the builder may
+   take them in the same push.
+5. **Never post a finding twice.** A finding already in the table keeps its id and row; a new
+   wording of it is not a new finding.
+
+The audit, the test rerun and the merge gate still run on the whole PR head: narrowing the
+reviewer's fresh pass removes none of them.

@@ -71,6 +71,7 @@ INTEGRATE = ("push lên trunk / release/* chỉ qua `agent-kit integrate` (đi�
              "Repo đi PR: push nhánh PR bằng tên (`git push origin <nhánh>`), merge gate lo phần còn lại")
 APPROVED = "Test-approved-by:"
 # 13/11 (chủ repo bỏ Grok): chỉ reviewer antigravity duyệt test sửa; chữ trong trailer phải khớp audit_reviewer().
+# #1332: bỏ người duyệt `ocr` (#1258) — LLM của OCR gỡ hẳn; trailer `ocr <uuid>` giờ là giá trị lạ, bị từ chối.
 APPROVED_VALUE = re.compile(r"(antigravity)\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
 HEX_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 

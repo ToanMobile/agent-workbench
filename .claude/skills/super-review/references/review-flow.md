@@ -11,7 +11,7 @@
    - Load `prior_report`. If one exists, run round 1 of "Review remembers" before step 2.
    - Review tier (#858): run `.claude/bin/super-board-review-plan.sh --base origin/<base>` (on the board add
      `--config <config path>`; add `--deletes-data` when the card deletes data) once, on the first head you review; its `reviewers:` line is the set of review sides
-     (S: claude, M and L: claude ocr, OCR in delegate mode while its LLM has no credit; Antigravity is no content-review side since 17/11 but still signs `approved-by` and approves edited tests; no Grok since 13/11). How each side runs, the retry-then-drop rule and the merge-queue
+     (S: claude, M and L: claude ocr, OCR runs in delegate mode; Antigravity is no content-review side since 17/11 but still signs `approved-by` and approves edited tests; no Grok since 13/11). How each side runs, the retry-then-drop rule and the merge-queue
      Antigravity approval: super-board `run.md` → Reviewer step 4.
 
 2. **Inspect changes — your own pass first**
@@ -72,6 +72,9 @@
      stdlib? native? an installed dep? one line? Always **Should fix**, routed to
      Super Build — it **never blocks a merge on its own**. A simplification that would
      cut validation, security, data-loss protection or accessibility is not a finding.
+   - **Pre-existing** — a defect on lines this PR's merge-base diff neither adds nor changes.
+     No thread, never bounces or blocks; a real bug is filed for the board. Rules and the one
+     exception: [review-output.md](review-output.md) → "Convergence".
    - **No issue** — you checked a hypothesis or claim and it holds. Not a finding: list it
      on the report's `✅ Done` line with the file:line or command that showed it. Saying what is
      right stops the next round re-litigating it.

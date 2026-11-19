@@ -23,7 +23,7 @@
 #                                 board, #637) không mang ac-open: đóng issue, card Done, comment ✅ merged <sha>
 #   red · gate-exit-11            thẻ về Ready với loop:rebuild-(K+1) (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn. gate-exit-11 = preflight
 #                                 (qa-report / AC) chặn trước khi dựng cây: comment nói nguồn đó, không nói verify đỏ (#639).
-#   conflict · gate-exit-2/5/14   thẻ về Ready với loop:rebase (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn
+#   conflict · gate-exit-2/5/14   thẻ về Ready với loop:rebase (#1319: chỉ gate-exit-2 = thiếu rebase thuần không tính rebuild_cap, chạm cap vẫn về Ready; conflict thật vẫn chịu cap → Blocked 🛡); gỡ nhãn
 #   gate-exit-7/8                 comment 🙋 chép nguyên văn dòng approval-request/human-gate/needs-you, needs-you mark, Blocked, một tin
 #                                 super-board-notify.py approve-button (cùng chữ ký merge gate dùng); gỡ nhãn
 #   gate-exit-3                   comment chép dòng của gate (GitHub từ chối merge / PR đóng), Blocked; gỡ nhãn
@@ -48,7 +48,7 @@ export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
 APPROVED_HEAD_JQ="$HERE/super-board-approved-head.jq"   # #605: luật approved-head dùng chung với runner
-AUDIT_CHECK="$HERE/super-board-audit-check.py"           # #605: task_id của approved-by ↔ biên bản audit antigravity-pm
+AUDIT_CHECK="$HERE/super-board-audit-check.py"           # #605: task_id của approved-by ↔ biên bản audit antigravity-pm / claude-verify (#1328)
 TRAIN="$HERE/super-board-merge-train.sh"
 CARD="$HERE/super-board-card.sh"
 NEEDS_YOU="$HERE/super-board-needs-you.py"
@@ -82,6 +82,8 @@ BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 NOTIFY="$HERE/super-board-notify.py"
 posint() { case "$1" in ''|*[!0-9]*|0) echo "$2" ;; *) echo "$1" ;; esac; }
 REBUILD_CAP=$(posint "$(echo "$CONFIG_JSON" | jq -r '.rebuild_cap // empty')" 2)
+# #1318 R5: a pure rebase never counts toward rebuild_cap, so it has its own ceiling per PR (the brake against Ready -> loop:rebase -> queue forever).
+REBASE_PURE_MAX=$(posint "${SB_REBASE_PURE_MAX:-}" 5)
 REPO=$(echo "$CONFIG_JSON" | jq -r '.repo.remote // ""' | sed -E 's#^https?://github\.com/##; s#\.git$##')
 REPO_PATH=$(echo "$CONFIG_JSON" | jq -r '.repo.path // "."')
 export SB_REPO_PATH="$REPO_PATH"
@@ -189,10 +191,12 @@ resolve_card() {   # resolve_card <PR>: gán CARD_OF = số thẻ trên board ("
 head_of() { awk -v p="$1" '$2 == p {print $3; exit}' <<<"$ROUTE_ROWS"; }
 # #637: lỗi đọc GitHub trong lượt route chỉ bỏ PR đó (nhãn giữ, lượt sau route lại), các PR còn lại và merge-queue.attempts vẫn được ghi.
 # github-read thoát 79 (halt) thì nhớ lại: route nốt phần không cần đọc rồi thoát 79 (như exit 9 của train).
-# ROUTE_HALT: lượt route_one hiện tại gặp halt (đọc hay card_move) ⇒ ghi pending nhưng không tính lần thử (như exit 79 của train).
+# ROUTE_HALT: lượt route_one hiện tại gặp halt (79) hoặc rate limit (68) ở bước đọc hay card_move ⇒ ghi pending nhưng không tính lần thử.
+# Chỉ 79 đặt READ_HALT=1 (thoát 79 sau khi route xong); 68 giữ READ_HALT=0 để hàng đợi không dừng kiểu halt.
 READ_HALT=0; ROUTE_HALT=0
 read_failed() {   # read_failed <rc> <PR> <đọc gì>
   [ "$1" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; }
+  [ "$1" -ne 68 ] || ROUTE_HALT=1
   say "PR #$2: reading $3 failed (github-read exit $1); label kept, the next run routes it again"
 }
 issue_json() { python3 "$GITHUB_READ" --kind issue -- issue view "$1" ${REPO:+--repo "$REPO"} --json number,title,body,labels,state,comments; }
@@ -205,11 +209,31 @@ unproven_ac() {   # unproven_ac <PR> <issue>: in các dòng AC chưa tick của 
   rm -f "$QDIR/ac-pr-$1.md"
   return $rc
 }
+# #1310: ac_autofix <PR> <issue> <detail>: 0 = khối đã dựng và đăng (MỌI lý do gate-exit-11 là ac-check "ít dòng sb:ac hơn AC" VÀ thân PR chưa có
+# khối mà đã có đủ dòng AC dưới mục AC: không phải lỗi code, không loop:rebuild-N, không Blocked). 1 = không áp dụng (đường cũ). Khác = lỗi đọc/ghi
+# (79 = halt): người gọi giữ nhãn và route lại lượt sau, KHÔNG rơi xuống đường rebuild.
+ac_autofix() {
+  local p="$1" k="$2" det="$3" body ibody rc=0 new="$QDIR/ac-fix-$1.md"
+  grep -qE "^ac-check: card #[0-9]+ has [0-9]+ acceptance criteria" <<<"$det" || return 1
+  ! grep -E '^[a-z-]+:' <<<"$det" | grep -qvE '^ac-check: card #[0-9]+ has [0-9]+ acceptance criteria' || return 1
+  body=$(python3 "$GITHUB_READ" --kind body -- pr view "$p" ${REPO:+--repo "$REPO"} --json body,headRefOid) || return $?
+  ibody=$(issue_json "$k") || return $?
+  printf '%s' "$body" | jq -r '.body // ""' > "$QDIR/ac-pr-$p.md" || rc=2
+  printf '%s' "$ibody" | jq -r '.body // ""' > "$QDIR/ac-issue-$p.md" || rc=2
+  if [ "$rc" -eq 0 ]; then
+    python3 "$HERE/super-board-ac-check.py" --synthesize-block --issue-body "$QDIR/ac-issue-$p.md" --pr-body "$QDIR/ac-pr-$p.md" \
+      --branch "$(awk -v p="$p" '$2 == p {print $4; exit}' <<<"$ROUTE_ROWS")" > "$new" || rc=1
+  fi
+  [ "$rc" -ne 0 ] || gh_w pr edit "$p" ${REPO:+--repo "$REPO"} --body-file "$new" || rc=2
+  rm -f "$new" "$QDIR/ac-pr-$p.md" "$QDIR/ac-issue-$p.md"
+  return $rc
+}
 reopen_issue() { [ "$2" = OPEN ] || gh_w issue reopen "$1" ${REPO:+--repo "$REPO"} || true; }   # reopen_issue <issue> <state>
-card_move() {   # card_move <issue> <Status>: lỗi log rồi trả 1 (nhãn giữ lại, lượt sau route lại); 79 nhớ halt, thoát 79 sau khi route xong
+card_move() {   # card_move <issue> <Status>: lỗi log rồi trả 1 (nhãn giữ lại, lượt sau route lại); 79 nhớ halt, 68 dừng route không tính lần thử
   local rc=0
   bash "$CARD" --config "$CONFIG" move "$1" "$2" >/dev/null || rc=$?
   [ "$rc" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; say "card move #$1 $2: GitHub reads halted"; return 1; }
+  [ "$rc" -ne 68 ] || { ROUTE_HALT=1; say "card move #$1 $2: GitHub rate limit (exit 68)"; return 1; }
   [ "$rc" -eq 0 ] || { say "card move #$1 $2 failed (exit ${rc})"; return 1; }
 }
 UNLABELED=" "   # #676: PR đã gỡ nhãn trong lượt này (trễ nhất quán của nhãn trên GitHub): không phóng train cho nó nữa
@@ -250,7 +274,7 @@ detail_lines() {
       print l; used += length(l) + 1 }
     END { if (cut) print "… (rest of the gate log is in the merge-queue output)" }' <<<"$raw"
 }
-# rebuild_or_rebase <PR> <issue> <rebuild|rebase> <why> [tag] [did]: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
+# rebuild_or_rebase <PR> <issue> <rebuild|rebase|rebase-pure> <why> [tag] [did]: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
 # tag / did: chữ đầu và dòng Did của comment rebuild (mặc định của verify đỏ; preflight exit 11 truyền chữ riêng, #639).
 # Trả 0 chỉ khi các bước bắt buộc (nhãn loop:*, card_move) xong. Lượt route lại (RETRY=1): không comment lại; nhãn loop:* đã gắn ở lượt
 # trước (LABEL_DONE=1) thì không gắn lần nữa (không đẩy loop:rebuild-N lên hai lần cho cùng một lần đỏ).
@@ -261,6 +285,9 @@ RETRY=0; LABEL_DONE=0; CARD_RETRY=0; CARD_UNREAD=0; CARD_UNKNOWN=0
 # bị sửa/xoá" (EN: "UNVERIFIED — N existing test files were edited") VÀ đây là lần đầu cho head này. Sổ merge-queue.unverified: "<PR> <head> <n>";
 # head mới đếm lại từ 1; route lại (RETRY=1) không đếm thêm; lần thứ hai cùng head (RETRY=0) trả 1 để đi đường cũ.
 UNVERIFIED_F="$QDIR/merge-queue.unverified"
+REBASE_PURE_F="$QDIR/merge-queue.rebase-pure"   # "<PR> <pure rebases so far>" (#1318 R5)
+# The ledger counts pure rebases of a PR that is still in play; a PR that merged or left the queue Blocked starts from zero if it comes back.
+rebase_pure_drop() { [ -f "$REBASE_PURE_F" ] || return 0; awk -v p="$1" '$1 != p' "$REBASE_PURE_F" > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"; }
 unverified_edited_first() {
   grep -Eq 'CHƯA XÁC MINH — [0-9]+ file test đã có bị sửa|UNVERIFIED — [0-9]+ existing test files? (was|were) edited' <<<"$3" || return 1
   local n
@@ -271,6 +298,24 @@ unverified_edited_first() {
     return 1
   fi
   { awk -v p="$1" '$1 != p' "$UNVERIFIED_F" 2>/dev/null || true; echo "$1 $2 1"; } > "$UNVERIFIED_F.tmp" && mv -f "$UNVERIFIED_F.tmp" "$UNVERIFIED_F"
+  return 0
+}
+# #1342: noproof_first <PR> <head> <detail>: 0 khi MỌI dòng qa-report/ac-check của detail là `qa-report: AC đã tích [x] nhưng không có dòng bằng chứng '↳'`
+# (lỗi trình bày thân PR, không phải lỗi code) VÀ đây là lần đầu cho head này. Sổ merge-queue.noproof: "<PR> <head> <n>", cùng luật đếm như
+# unverified_edited_first; lý do khác lẫn vào, hay lần hai cùng head, trả 1 để đi đường cũ (rebuild_cap -> Blocked 🛡).
+NOPROOF_F="$QDIR/merge-queue.noproof"
+noproof_first() {
+  local re="^qa-report: AC đã tích \\[x\\] nhưng không có dòng bằng chứng"
+  grep -q "$re" <<<"$3" || return 1
+  ! grep -E '^(qa-report|ac-check):' <<<"$3" | grep -qv "$re" || return 1
+  local n
+  n=$(awk -v p="$1" -v h="$2" '$1 == p && $2 == h {print $3; exit}' "$NOPROOF_F" 2>/dev/null || true)
+  if [ "${n:-0}" -ge 1 ]; then
+    [ "$RETRY" -eq 1 ] && [ "$n" -eq 1 ] && return 0
+    [ "$n" -ge 2 ] || { { awk -v p="$1" '$1 != p' "$NOPROOF_F" 2>/dev/null || true; echo "$1 $2 2"; } > "$NOPROOF_F.tmp" && mv -f "$NOPROOF_F.tmp" "$NOPROOF_F"; }
+    return 1
+  fi
+  { awk -v p="$1" '$1 != p' "$NOPROOF_F" 2>/dev/null || true; echo "$1 $2 1"; } > "$NOPROOF_F.tmp" && mv -f "$NOPROOF_F.tmp" "$NOPROOF_F"
   return 0
 }
 rebuild_or_rebase() {
@@ -287,13 +332,28 @@ rebuild_or_rebase() {
     rch=$(printf '%s\n%s' "$why" "$det" | python3 -I "$HERE/super-board-root-cause-hash.py" hash --lane review) || rch=""
     prevh=$(printf '%s' "$ij" | python3 -I "$HERE/super-board-root-cause-hash.py" last --from "[merge-queue]") || prevh=""
   fi
-  if [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
-  if [ "$cur" -ge "$REBUILD_CAP" ]; then
+  if [ "$kind" != rebase-pure ] && [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
+  # #1319: only a pure rebase (`rebase-pure`: train gate-exit-2, edited-test approval stale because the base moved, no conflicting file)
+  # is mechanical and never counts toward rebuild_cap: a card at the cap that only needs it still goes Ready `loop:rebase`. A real
+  # conflict (`conflict`, gate-exit-5/14) stays a bounce held by the cap (the brake against Ready → loop:rebase → queue forever),
+  # and so does a red verify after the rebase.
+  if [ "$kind" != rebase-pure ] && [ "$cur" -ge "$REBUILD_CAP" ]; then
     [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
       "train-result for PR #${p}: ${why}${det:+
 ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
-    card_move "$k" Blocked
-    return
+    card_move "$k" Blocked; local brc=$?
+    [ "$brc" -ne 0 ] || rebase_pure_drop "$p"
+    return "$brc"
+  fi
+  if [ "$kind" = rebase-pure ]; then
+    local rn
+    rn=$(awk -v p="$p" '$1 == p {print $2; exit}' "$REBASE_PURE_F" 2>/dev/null || true); rn=$(( ${rn:-0} + 1 ))
+    if [ "$rn" -gt "$REBASE_PURE_MAX" ]; then
+      [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "pure rebase ceiling ${REBASE_PURE_MAX} reached: main keeps moving past this PR's approval"         "PR #${p} needed ${rn} pure rebases (${why})" "a person looks at why main keeps outrunning this card, then drags it to Ready"
+      card_move "$k" Blocked; local prc=$?
+      [ "$prc" -ne 0 ] || rebase_pure_drop "$p"
+      return "$prc"
+    fi
   fi
   if [ "$kind" = rebuild ]; then
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
@@ -307,6 +367,12 @@ Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "wha
 root-cause-hash: ${rch}}" || true
   else
     add_label "$k" "loop:rebase" || return 1
+    # Count the pure rebase only now that its label is on: a failed add_label is routed again and must not count twice.
+    if [ "$kind" = rebase-pure ]; then
+      { awk -v p="$p" '$1 != p' "$REBASE_PURE_F" 2>/dev/null || true; echo "$p $rn"; } > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"
+    fi
+    # R9: a pure rebase carries no root-cause-hash line (R2); a conflict does.
+    rhl=""; { [ "$kind" != rebase-pure ] && [ -n "$rch" ]; } && rhl=$'\nroot-cause-hash: '"${rch}"
     LABEL_DONE=1
     # tag ở nhánh rebase: `conflict`, hoặc `merge refused` khi train in lời git/hook (gate-exit-5 không file xung đột, #775). Chỉ
     # `merge refused` chép train-detail (một nơi quyết định: route_one chọn tag); conflict không kèm dòng nào, như comment PR.
@@ -315,8 +381,7 @@ root-cause-hash: ${rch}}" || true
 Did: merged the PR head into origin/<base> in the merge-queue batch
 ❌ Not done: ${why}${det:+; the git / hook lines:
 ${det}}
-Next: Builder rebases onto the base, verification green, then Review again${rch:+
-root-cause-hash: ${rch}}" || true
+Next: Builder rebases onto the base, verification green, then Review again${rhl}" || true
   fi
   card_move "$k" Ready
 }
@@ -341,12 +406,12 @@ attempt_retry() {
   n=$((n + 1))
   { awk -v p="$p" '$1 != p' "$ATTEMPTS" 2>/dev/null || true; echo "$p $head $n $(date +%s)"; } > "$ATTEMPTS.tmp" && mv -f "$ATTEMPTS.tmp" "$ATTEMPTS"
   if [ "$n" -lt "$ATTEMPT_MAX" ]; then say "PR #${p}: ${res}; stays queued for the next batch (try ${n}/${ATTEMPT_MAX})"; return 0; fi
-  # Chỉ tra thẻ khi đã chạm trần (n < trần không dùng thẻ). Nếu card.sh halt (79): dừng ngay trước block_comment để không ghi nhầm lên
-  # issue ngoài board, giữ nhãn + dòng attempts; lỗi khác 79 (69/66): k="" để PR vẫn rời hàng mà không đụng issue chưa xác minh.
+  # Chỉ tra thẻ khi đã chạm trần (n < trần không dùng thẻ). Nếu card.sh halt (79) hoặc rate limit (68): dừng ngay trước block_comment để
+  # không ghi nhầm lên issue ngoài board hoặc gỡ nhãn oan, giữ nhãn + dòng attempts; lỗi khác (vd 66): k="" để PR vẫn rời hàng mà không đụng issue chưa xác minh.
   if resolve_card "$p"; then
     k=$CARD_OF
   elif [ "$ROUTE_HALT" -eq 1 ]; then
-    say "PR #${p}: GitHub reads halted while checking its card at the retry cap; label kept, the next run retries"
+    say "PR #${p}: GitHub reads halted or rate-limited while checking its card at the retry cap; label kept, the next run retries"
     return 0
   else
     ok=1
@@ -357,20 +422,19 @@ attempt_retry() {
       "a person looks at why its batches keep ending in ${res}, then labels the PR ${LABEL} again or drags the card to Ready"
     card_move "$k" Blocked || ok=1
   fi
-  # Halt (79) khi chuyển thẻ: như bản cũ thoát 79 ngay tại card_move — PR giữ nhãn và dòng attempts, chưa comment rời hàng (thẻ chưa
-  # Blocked); lượt sau (sau --resume) chạm trần lần nữa và chuyển thẻ (comment blocker trên thẻ có thể lặp một lần, như bản cũ).
-  if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted while moving card #${k} to Blocked; label kept, the next run retries"; return 0; fi
+  # Halt (79) hoặc rate limit (68) khi chuyển thẻ: PR giữ nhãn và dòng attempts, chưa comment rời hàng (thẻ chưa Blocked); lượt sau thử lại.
+  if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted or rate-limited while moving card #${k} to Blocked; label kept, the next run retries"; return 0; fi
   gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 left the queue · 🛡 ${why}
 Next: a person looks at why, then labels the PR ${LABEL} again${k:+ (card #$k is Blocked)}" || true
   # Trần: PR rời hàng dù card_move / tra thẻ lỗi, để không route lại vô hạn mỗi tick.
   [ "$ok" -eq 0 ] || say "PR #${p}: moving its card to Blocked failed too; the PR leaves the queue anyway (comment above)"
-  unlabel "$p"; attempt_clear "$p"
+  unlabel "$p"; attempt_clear "$p"; rebase_pure_drop "$p"
 }
 # route_one <PR> <kết quả>: một train-result. Nhãn chỉ gỡ khi mọi bước bắt buộc của nhánh trả 0; bước nào lỗi (lỗi đọc qua read_failed)
 # thì giữ nhãn, ghi merge-queue.pending và tính một lần thử (halt 79 thì không tính): lượt sau route lại từ pending, chỉ làm lại các bước
 # bắt buộc.
 route_one() {
-  local p="$1" res="$2" k="" st msha ij det title ok=0 head prow tag did src why
+  local p="$1" res="$2" k="" st msha ij det title ok=0 head prow tag did src why af
   head=$(head_of "$p")
   prow=$(awk -v p="$p" -v h="$head" '$1 == p && $2 == h {print $4; exit}' "$PENDING" 2>/dev/null || true)
   RETRY=0; LABEL_DONE=0; CARD_UNREAD=0; CARD_UNKNOWN=0; ROUTE_HALT=0
@@ -395,9 +459,9 @@ route_one() {
         ij=$(issue_json "$k") || { read_failed $? "$p" "card #${k}"; return 0; }
         if printf '%s' "$ij" | jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' >/dev/null; then
           say "PR #${p} merged; card #${k} carries ac-open: left open (the gate moved it to Ready)"
-        elif unticked=$(unproven_ac "$p" "$k"); urc=$?; [ "$urc" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; }; [ "$urc" -ne 0 ]; then
+        elif unticked=$(unproven_ac "$p" "$k"); urc=$?; [ "$urc" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; }; [ "$urc" -ne 68 ] || ROUTE_HALT=1; [ "$urc" -ne 0 ]; then
           # #531 R5: an ac-check failure other than 79 fails this PR only (retried next pass), never the whole pass.
-          say "PR #${p} merged; card #${k}: ac-check failed (exit ${urc}), retry next pass"; ok=1
+          say "PR #${p} merged; card #${k}: ac-check failed (exit ${urc}), retry next pass"; CARD_UNKNOWN=1; ok=1
         elif [ -n "$unticked" ]; then
           # #531: the gate labels ac-open only after the merge and only warns when that fails; an unticked sb:ac line is the proof gap itself.
           say "PR #${p} merged; card #${k}: sb:ac still has unticked line(s): left open, labelled ac-open"
@@ -431,7 +495,21 @@ Did: merged through the merge queue (one verify for the batch)
             # là QA chạy lại, không phải Build: thẻ Review → QA, không nhãn loop:rebuild-N, không tính vòng rebuild.
             # #1235: verify đỏ chỉ vì CHƯA XÁC MINH (test đã có bị sửa, chưa có audit có phạm vi) không phải đỏ thật: lần đầu cho một head, thẻ về
             # Review kèm chỉ dẫn audit đúng cách, KHÔNG tăng loop:rebuild-N, KHÔNG Blocked. Lần hai cùng head: đường cũ (rebuild_cap / Blocked).
-            if [ -n "$k" ] && unverified_edited_first "$p" "$head" "$det"; then
+            af=1
+            if [ "$res" = gate-exit-11 ] && [ -n "$k" ]; then af=0; ac_autofix "$p" "$k" "$det" || af=$?; fi
+            if [ "$af" -eq 0 ]; then
+              # #1310: thân PR thiếu khối sb:ac nhưng đủ dòng AC → đã dựng khối; PR giữ nhãn để train chạy lại, không tính lần thử, không rebuild.
+              # attempt_clear xoá pending/attempts/detail của head này (không thì lượt sau route lại kết quả cũ thay vì phóng train).
+              [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] 🔧 sb:ac block rebuilt · ${res}
+Did: the PR body had the AC lines but no <!-- sb:ac --> pair; the queue added it from those lines (no code change, no rebuild counted)
+Next: the next batch merges it" || true
+              attempt_clear "$p"
+              say "PR #${p}: sb:ac block rebuilt from its AC lines; stays queued, no rebuild counted"; return 0
+            elif [ "$af" -ne 1 ]; then
+              # Lỗi đọc/ghi tạm, rate limit (68) hay halt (79): bước bắt buộc hỏng, chưa ghi gì lên PR/thẻ (CARD_UNKNOWN=1 -> u), giữ nhãn, route lại lượt sau.
+              read_failed "$af" "$p" "or rewriting its sb:ac block"; CARD_UNKNOWN=1; ok=1
+              continue_route=0
+            elif [ -n "$k" ] && unverified_edited_first "$p" "$head" "$det"; then
               [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ⏳ unverified · PR #${p} back to Review, no rebuild counted
 Did: the verify found an existing test edited without a cross-review (UNVERIFIED, not red)
 ❌ Not done: no scoped Antigravity audit is recorded for head ${head:0:7}
@@ -439,6 +517,18 @@ Next: pm_task_create with project = the review worktree .claude/worktrees/issue-
 Next: the output must show a Pham vi: line (not Khong ghi pham vi), then pm_verdict kind=audit verdict=pass auditedHead=<sha40>, then the ${LABEL} label again
 blocked-by: agent" || true
               card_move "$k" Review || ok=1
+              continue_route=0
+            elif [ "$res" = gate-exit-11 ] && [ -n "$k" ] && noproof_first "$p" "$head" "$det"; then
+              # #1342: the PR body ticks an AC without its `↳` proof line. Presentation, not code: QA fixes the body, no Build round, no loop:rebuild-N.
+              [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ AC without proof line · ${res}
+Did: the merge gate preflight found ticked AC lines with no ↳ proof line; no verify ran
+${det}
+Next: back to QA (card #${k}), no Build round" || true
+              [ "$RETRY" -eq 1 ] || [ "$CARD_RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ AC without proof line · PR #${p} back to QA
+Did: the merge gate preflight refused the PR body before any tree was built
+❌ Not done: ${det}
+Next: QA adds the \`↳ <proof>\` line under each ticked AC of the PR body, then the PR queues again (no rebuild counted)" || true
+              card_move "$k" QA || ok=1
               continue_route=0
             elif [ "$res" = gate-exit-11 ] && grep -q '^qa-report: stale' <<<"$det" && ! grep -E '^(qa-report|ac-check):' <<<"$det" | grep -qv '^qa-report: stale'; then
               [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ stale QA · ${res}
@@ -482,6 +572,8 @@ Next: back to Build${k:+ (card #$k)}" || true
             elif [ "$res" = gate-exit-14 ]; then
               # Gate thoát 14: GitHub báo CONFLICTING (driver gộp chỉ có ở local), không verify nào chạy.
               tag="GitHub CONFLICTING"; why="${res} (GitHub reports the PR CONFLICTING with the base; nothing verified)"; det=""
+            elif [ "$res" = gate-exit-2 ]; then
+              tag=conflict; why="${res} (the base moved past the edited-test approval; a rebase pass only, no conflicting file)"; det=""
             else
               tag=conflict; why="${res} (the base does not merge in cleanly)"; det=""
             fi
@@ -489,7 +581,8 @@ Next: back to Build${k:+ (card #$k)}" || true
 Did: merged this PR into origin/<base> for the merge-queue batch${det:+
 ${det}}
 Next: rebase pass${k:+ (card #$k)}" || true
-            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebase "$why" "$tag" || ok=1 ;;
+            rk=rebase; [ "$res" = gate-exit-2 ] && rk=rebase-pure
+            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" "$rk" "$why" "$tag" || ok=1 ;;
           gate-exit-7|gate-exit-8)
             det=$(detail_lines "$p")
             if [ -n "$k" ]; then
@@ -549,6 +642,7 @@ Next: a fresh review of the new head, then a new approved-head and the ${LABEL} 
         attempt_retry "$p" "base-moved ${bm} times in a row (origin/${BASE} keeps moving while its train verifies)"; return 0
       fi
       say "PR #${p}: base-moved (origin/${BASE} kept moving during its train, ${bm}/5); stays queued, no attempt counted"; return 0 ;;
+    gate-exit-68) say "PR #${p}: GitHub rate limit (gate-exit-68); label kept, no attempt counted"; return 0 ;;   # #1311
     deferred|timeout|gate-exit-4|*) attempt_retry "$p" "$res"; return 0 ;;
   esac
   if [ "$ok" -ne 0 ]; then
@@ -558,11 +652,12 @@ Next: a fresh review of the new head, then a new approved-head and the ${LABEL} 
     fi
     local col=$LABEL_DONE; [ "$CARD_UNREAD" -eq 0 ] || col=r; [ "$CARD_UNKNOWN" -eq 0 ] || col=u
     { awk -v p="$p" '$1 != p' "$PENDING" 2>/dev/null || true; echo "$p $head $res $col"; } > "$PENDING.new" && mv -f "$PENDING.new" "$PENDING"
-    if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted; not counted as a try"; return 0; fi
+    if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted or rate-limited; not counted as a try"; return 0; fi
     attempt_retry "$p" "routing ${res} failed"
     return 0
   fi
   unlabel "$p"; attempt_clear "$p"
+  [ "$res" != merged ] || rebase_pure_drop "$p"
 }
 # ---- train nền theo PR (#676) -----------------------------------------------------------------------------------------------------------
 # merge-queue.inflight: "<PR> <head> <ref> <issue đóng|0> <pid> <dir>" mỗi dòng — train của PR đang chạy nền (pid = subshell phóng nó),
@@ -605,6 +700,9 @@ collect() {
       attempt_retry "$n" "train died without a result" </dev/null
     elif [ "$trc" -eq 79 ]; then
       say "PR #${n}: train exit 79 (GitHub reads halted); nothing routed, label kept"; HALT_RC=79
+    elif [ "$trc" -eq 68 ]; then
+      # #1311: GitHub rate limit sau backoff: tạm thời. Không route, không tính lần thử, không Blocked; nhãn giữ, lượt sau thử lại.
+      say "PR #${n}: train exit 68 (GitHub rate limit); nothing routed, no attempt counted, label kept"
     elif ! grep -q '^train-result: ' "$TOUT" 2>/dev/null; then
       if [ "$trc" -eq 4 ]; then say "PR #${n}: train exit 4 (another train holds this PR); nothing ran, no attempt counted"
       else
@@ -761,6 +859,10 @@ while read -r at n head ref; do
     task:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" --pr "$n" "${vwhy#task:}" "$head" ) 2>/dev/null; then
                reject "$n" "approved-by task_id ${vwhy#task:} has no antigravity-pm audit pass with auditedHead ${head:0:7}" "$ref"; continue
              fi ;;
+    # #1328: biên bản claude-verify (audit-check chuyển cho claude_verify.py check: verdict pass, head + tree, reviewer ≠ builder).
+    cv:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" --pr "$n" --branch "$ref" "${vwhy#cv:}" "$head" ) 2>/dev/null; then
+             reject "$n" "approved-by task_id ${vwhy#cv:} has no claude-verify pass record for head ${head:0:7} (verdict pass, same tree, card of the PR branch, reviewer session from the runner ledger and != builder session)" "$ref"; continue
+           fi ;;
     *) reject "$n" "approved-head ${approved:0:7}: approval source unreadable" "$ref"; continue ;;
   esac
   if [ "$NB" -ge "$SLOTS" ]; then say "PR #${n}: ${NLIVE} train(s) running + ${NB} started ≥ merge_queue.max_trains ${MAX_TRAINS}; waits for the next run"; continue; fi

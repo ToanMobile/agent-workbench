@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # agent_bridge.sh — OPT-IN HELPER: run the DevKit's Claude Code hooks from other
-# agents (OpenAI Codex, Gemini CLI, Cursor). Not wired in hooks/hooks.json; the
-# adapters register it in .codex/hooks.json, .gemini/settings.json and
-# .cursor/hooks.json (scripts/agent_hooks.py).
+# agents (OpenAI Codex, Gemini CLI, Cursor, Antigravity). Not wired in hooks/hooks.json; the
+# adapters register it in .codex/hooks.json, .gemini/settings.json, .cursor/hooks.json
+# and .agents/hooks.json (scripts/agent_hooks.py).
 #
-# Usage: agent_bridge.sh <codex|gemini|cursor> <session|prompt|shell|stop> <hook.sh>
+# Usage: agent_bridge.sh <codex|gemini|cursor|antigravity> <session|prompt|shell|stop> <hook.sh>
+#   antigravity: shell only — PreToolUse(run_command|send_command_input|shell_exec), command from
+#   toolCall.args CommandLine / Input / Command (else every other string arg), answer
+#   {"decision":"deny","reason":…} on stdout (exit 0); an allowed command prints nothing.
 #   session  SessionStart / sessionStart        → session_context.sh
 #   prompt   UserPromptSubmit / BeforeAgent     → prompt_context.sh
 #   shell    PreToolUse(Bash) / BeforeTool(run_shell_command) / beforeShellExecution
@@ -43,24 +46,54 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 RAW="$(cat)"
 command -v python3 >/dev/null 2>&1 || exit 0
 [ -f "${HERE}/${HOOK}" ] || exit 0
-case "${PLATFORM}:${KIND}" in codex:*|gemini:*|cursor:*) ;; *) exit 0 ;; esac
+case "${PLATFORM}:${KIND}" in codex:*|gemini:*|cursor:*|antigravity:shell) ;; *) exit 0 ;; esac
 
+# Antigravity runs the hook from the folder holding .agents/hooks.json, not the agent's: its cwd comes from the payload.
 ROOT="$(printf '%s' "${RAW}" | python3 -I -c 'import json,sys
 try: d = json.load(sys.stdin)
 except Exception: d = {}
-print(d.get("cwd") or "")' 2>/dev/null)"
+if not isinstance(d, dict): d = {}
+c = d.get("cwd")
+print(c if isinstance(c, str) else "")' 2>/dev/null)"   # never toolCall.args.Cwd: the model writes it, and it would move the policy files (.adb-denylist) out of reach
 [ -n "${ROOT}" ] && [ -d "${ROOT}" ] || ROOT="$PWD"
 ROOT="$(git -C "${ROOT}" rev-parse --show-toplevel 2>/dev/null || printf '%s' "${ROOT}")"
 
 IN="$(printf '%s' "${RAW}" | KIND="${KIND}" python3 -I -c 'import json,os,sys
 try: d = json.load(sys.stdin)
 except Exception: d = {}
+if not isinstance(d, dict): d = {}
 kind = os.environ["KIND"]
 ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}
+tc = d.get("toolCall") if isinstance(d.get("toolCall"), dict) else {}
+tname = tc.get("name") if isinstance(tc.get("name"), str) else ""
+args = tc.get("args") if isinstance(tc.get("args"), dict) else {}  # Antigravity: toolCall.args.CommandLine / Cwd
+# Antigravity cũng có send_command_input (gõ vào terminal), shell_exec và manage_task (chỉ Action=send_input mới gửi Input vào task);
+# các action đọc/huỷ của manage_task (list, status, kill) không gửi lệnh vào shell nên không ghép TaskId/Action thành lệnh.
+if tname == "manage_task" and args.get("Action") in ("list", "status", "kill") and not (isinstance(args.get("Input"), str) and args.get("Input")):
+    ag_cmd = ""
+else:
+    ag_cmd = next((args[k] for k in ("CommandLine", "Input", "Command") if isinstance(args.get(k), str) and args[k]), "")
+    if not ag_cmd and args and tname != "manage_task":
+        ag_cmd = "; ".join(v for k, v in args.items()
+                           if isinstance(v, str) and v and k not in ("toolSummary", "Cwd", "CommandId", "Action", "TaskId"))
+views = []
 if kind == "shell":
-    out = {"tool_name": "Bash", "tool_input": {"command": ti.get("command") or d.get("command") or ""}}
-    if isinstance(d.get("cwd"), str) and d["cwd"]:
-        out["cwd"] = d["cwd"]  # where the command runs: relative rm targets start here
+    cmd = ti.get("command") or d.get("command") or ag_cmd or ""
+    views = [cmd]  # the command exactly as it will run is ALWAYS checked
+    if ag_cmd and cmd == ag_cmd:
+        # Extra views, each checked SEPARATELY, never instead of the original: a lone CR is the Enter key typed into a
+        # terminal (send_command_input), VT/FF/CR/LF split commands, and a literal backslash-n/r slipped past the fast path
+        # of the guard (board audit + probe 2026-11-19). Rewriting the command itself broke `git clea\n -fdx` (bash runs
+        # git clean): a view can only add a block, never remove one.
+        import re
+        lines = re.sub(r"\r\n|[\r\n\x0b\x0c]", "; ", cmd)
+        for v in (lines, re.sub(r"\\[nr]", "; ", lines)):
+            if v not in views:
+                views.append(v)
+    cwd = args.get("Cwd") or d.get("cwd")
+    out = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+    if isinstance(cwd, str) and cwd:
+        out["cwd"] = cwd  # where the command runs: relative rm targets start here
 elif kind == "prompt":
     out = {"prompt": d.get("prompt") or "", "session_id": d.get("session_id") or d.get("conversation_id") or ""}
 elif kind == "stop":
@@ -75,15 +108,25 @@ elif kind == "stop":
         out["last_assistant_message"] = reply
 else:
     out = {"session_id": d.get("session_id") or "", "hook_event_name": "SessionStart"}
-print(json.dumps(out))' 2>/dev/null)"
+if not views:
+    print(json.dumps(out))
+for v in views:  # one hook input per line (json.dumps escapes every line break)
+    print(json.dumps({**out, "tool_input": {"command": v}}))' 2>/dev/null)"
 
 OUT_F="$(mktemp "${TMPDIR:-/tmp}/devkit-bridge-out.XXXXXX")"; ERR_F="$(mktemp "${TMPDIR:-/tmp}/devkit-bridge-err.XXXXXX")"
 trap 'rm -f "${OUT_F}" "${ERR_F}"' EXIT
 # DEVKIT_AGENT names the platform to the hook (hooks/devkit_harness.py): the prompt hook
 # still records the user's bug prompts (only the prompt's content filters them), and Stop
 # gates use their per-session loop guard.
-printf '%s' "${IN}" | DEVKIT_AGENT="${PLATFORM}" CLAUDE_PROJECT_DIR="${ROOT}" bash "${HERE}/${HOOK}" >"${OUT_F}" 2>"${ERR_F}"
-RC=$?
+# One run per input line: the original command first, then each extra view; the first block (exit 2) wins.
+RC=0
+while IFS= read -r LINE; do
+  printf '%s' "${LINE}" | DEVKIT_AGENT="${PLATFORM}" CLAUDE_PROJECT_DIR="${ROOT}" bash "${HERE}/${HOOK}" >"${OUT_F}" 2>"${ERR_F}"
+  RC=$?
+  [ "${RC}" = 2 ] && break
+done <<EOF_BRIDGE_IN
+${IN}
+EOF_BRIDGE_IN
 
 PLATFORM="${PLATFORM}" KIND="${KIND}" RC="${RC}" OUT_F="${OUT_F}" ERR_F="${ERR_F}" python3 -I - <<'PY'
 import json, os, sys
@@ -105,6 +148,11 @@ if kind in ("session", "prompt"):
 if rc != 2:
     sys.exit(0)  # allowed (a hook's own warnings stay in its log)
 reason = err or "blocked by a Universal Agent DevKit gate"
+if platform == "antigravity":
+    # deny on stdout with exit 0 (real run 2026-11-18: "tool call denied by pre-tool hook: <reason>"). Never "allow":
+    # that auto-approves and skips Antigravity's own permission prompt; an allowed command gets an empty stdout.
+    print(json.dumps({"decision": "deny", "reason": reason}, ensure_ascii=False))
+    sys.exit(0)
 if platform == "cursor":
     if kind == "shell":
         print(json.dumps({"permission": "deny", "user_message": reason.splitlines()[0][:300],

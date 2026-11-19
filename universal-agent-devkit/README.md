@@ -1,14 +1,14 @@
 <div align="center">
 
 # 🚀 Universal AI Agent DevKit & Quality Protocol
-### *Shared rules, lifecycle hooks, 33 skills, domain profiles (Android, iOS, web, backend, game, automotive, voice, universal) and a static post-fix diff gate for Claude Code, OpenAI Codex, Google Gemini/Antigravity and Cursor — installed into your project without overwriting what is already there.*
+### *Shared rules, lifecycle hooks, 34 skills, domain profiles (Android, iOS, web, backend, game, automotive, voice, universal) and a static post-fix diff gate for Claude Code, OpenAI Codex, Google Gemini/Antigravity and Cursor — installed into your project without overwriting what is already there.*
 
 [![GitHub Repository](https://img.shields.io/badge/GitHub-ToanMobile%2Fagent--workbench-blue.svg?style=for-the-badge&logo=github)](https://github.com/ToanMobile/agent-workbench)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](./LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-agent--kit%20test-success.svg?style=for-the-badge)](#-verification--devkit-cli-agent-kit)
 [![Supported Agents](https://img.shields.io/badge/Agents-4%20Core%20Platforms-orange.svg?style=for-the-badge)](#-universal-multi-agent-matrix)
 [![Rulebook](https://img.shields.io/badge/Rules-AGENTS.md%20(SSOT)-red.svg?style=for-the-badge)](#-complete-rulebook--engineering-standards-single-source-of-truth)
-[![Skills Catalog](https://img.shields.io/badge/Skills-33%20Curated-purple.svg?style=for-the-badge)](#-33-curated-engineering-skills-catalog)
+[![Skills Catalog](https://img.shields.io/badge/Skills-34%20Curated-purple.svg?style=for-the-badge)](#-34-curated-engineering-skills-catalog)
 [![Domain Profiles](https://img.shields.io/badge/Profiles-Android%20%C2%B7%20iOS%20%C2%B7%20Web%20%C2%B7%20Backend%20%C2%B7%20more-cyan.svg?style=for-the-badge)](#-dynamic-domain-profiles-system)
 [![Review Councils](https://img.shields.io/badge/Councils-10%20Reviewer%20Prompts-yellow.svg?style=for-the-badge)](#-10-review-councils--self-consistency-checks)
 [![MCP Servers](https://img.shields.io/badge/MCP-6%20Integrated-brightgreen.svg?style=for-the-badge)](#-mcp-model-context-protocol-hub)
@@ -21,7 +21,7 @@
   <b>One DevKit to rule them all:</b> Elevate your AI coding assistants from conversational LLMs into rigorous, disciplined, and evidence-backed <b>Principal Pair Programmers</b>.
 </p>
 
-[Quick Start](#-quick-start--installation) • [Architecture](#-system-architecture) • [Workflows](#-production-engineering-workflows) • [Domain Profiles](#-dynamic-domain-profiles-system) • [Post-Fix Gate](#-post-fix-gate-static-diff-gate--regression-tests) • [Councils](#-10-review-councils--self-consistency-checks) • [Which command when](#-qa-commands-which-one-when) • [Team / CI](#-team--ci-usage) • [Uninstall](#-uninstall--restoring-_old-backups) • [Troubleshooting](#-troubleshooting) • [Multi-Agent Matrix](#-universal-multi-agent-matrix) • [Rulebook SSOT](#-complete-rulebook--engineering-standards-single-source-of-truth) • [Skills Catalog](#-33-curated-engineering-skills-catalog) • [MCP Hub](#-mcp-model-context-protocol-hub) • [Verification](#-verification--devkit-cli-agent-kit)
+[Quick Start](#-quick-start--installation) • [Architecture](#-system-architecture) • [Workflows](#-production-engineering-workflows) • [Domain Profiles](#-dynamic-domain-profiles-system) • [Post-Fix Gate](#-post-fix-gate-static-diff-gate--regression-tests) • [Councils](#-10-review-councils--self-consistency-checks) • [Which command when](#-qa-commands-which-one-when) • [Team / CI](#-team--ci-usage) • [Uninstall](#-uninstall--restoring-_old-backups) • [Troubleshooting](#-troubleshooting) • [Multi-Agent Matrix](#-universal-multi-agent-matrix) • [Rulebook SSOT](#-complete-rulebook--engineering-standards-single-source-of-truth) • [Skills Catalog](#-34-curated-engineering-skills-catalog) • [MCP Hub](#-mcp-model-context-protocol-hub) • [Verification](#-verification--devkit-cli-agent-kit)
 
 ---
 
@@ -100,9 +100,9 @@ It delivers a complete, closed-loop software engineering ecosystem:
 3. **Dynamic Domain Profiles:** Instant project domain switching between **Android** (Compose/Vitals/Tombstones), **iOS** (Swift 6/SwiftUI/Concurrency), **Automotive** (AAOS/CAN), **Game** (Unity 6/Zero-GC), **Voice Assistant** (edge audio AI), **Web** (TypeScript/React/Next.js), **Backend** (API services in Python/Go/Rust/Node) and **Universal** clean architecture via `agent-kit profile`.
 4. **Post-Fix Gate (`/audit-gate`, `agent-kit gate`, `postfix-gate`):** a static diff gate. What can make it fail: 6 static checks on the changed files (secrets, lazy placeholders, dependencies — floating versions like `1.+`/`latest`/`*` and `http://` package sources — performance anti-patterns, swallowed exceptions, raw logging) plus, with `--run-tests`, the regression tests from the active matrix. DESIGN.md/a11y, RED→GREEN proof, screenshots/devices and OpenCodeReview are printed as reminders — the gate does not verify them. The same static checks run as a git pre-commit hook on the staged content (installed by `agent-kit init` in git projects, or `agent-kit githooks install`), so a plain `git commit` from a terminal or IDE is checked too (you can skip once with `git commit --no-verify`; the agent cannot — the git guard blocks it); `agent-kit learn "<trap>" --cause=… --rule=…` records a lesson in `.agents/instincts.md` under the next `[INSTINCT-NNN]` id. With `--json`, the last stdout line also lists every static finding as `{category, rule, message, file, line, snippet}` (secrets: line only, never the value), so an agent can jump to `file:line`.
 
-   **What runs by itself (hooks):** a new session loads the trap map of `.agents/instincts.md` and the regression checklist state; every request gets the traps that match it and, for a bug fix, the RED→GREEN rule; Bash blocks destructive git, `--no-verify` and device-bricking commands; stopping runs the active regression matrix (generated from the project's own test runner when the profile only ships a sample — `agent-kit matrix`), refuses “tests pass” when a newly written test never ran red, “fixed” without a red→green test pair in the session and changed code without a fresh-context review, and after a proven fix asks once to record the lesson (`agent-kit learn`). Claude Code gets all of these, and its worktree guard (`worktree_guard.sh`) stops an agent that works in a git worktree from writing into the main checkout (`DEVKIT_WORKTREE=<path>` declares one by hand, `WORKTREE_GUARD=0` turns it off; `AGENTS.md` §7.1); OpenAI Codex, Gemini CLI and Cursor get the context, the guards and the regression run through `hooks/agent_bridge.sh` (Codex keeps the hooks you approved in `~/.codex/config.toml`: after an `agent-kit init` that changes `.codex/hooks.json`, approve the new entries with `/hooks`); Antigravity has rules only (`AGENTS.md` §7). Harmless Bash calls pass the guards in ~5 ms (bash fast path); `agent-kit clean` removes the hooks' old logs and backups.
+   **What runs by itself (hooks):** a new session loads the trap map of `.agents/instincts.md` and the regression checklist state; every request gets the traps that match it and, for a bug fix, the RED→GREEN rule; Bash blocks destructive git, `--no-verify` and device-bricking commands; stopping runs the active regression matrix (generated from the project's own test runner when the profile only ships a sample — `agent-kit matrix`), refuses “tests pass” when a newly written test never ran red, “fixed” without a red→green test pair in the session and changed code without a fresh-context review, and after a proven fix asks once to record the lesson (`agent-kit learn`). Claude Code gets all of these, and its worktree guard (`worktree_guard.sh`) stops an agent that works in a git worktree from writing into the main checkout (`DEVKIT_WORKTREE=<path>` declares one by hand, `WORKTREE_GUARD=0` turns it off; `AGENTS.md` §7.1); OpenAI Codex, Gemini CLI and Cursor get the context, the guards and the regression run through `hooks/agent_bridge.sh` (Codex keeps the hooks you approved in `~/.codex/config.toml`: after an `agent-kit init` that changes `.codex/hooks.json`, approve the new entries with `/hooks`); Antigravity gets the two destructive-command guards through `.agents/hooks.json` (installed with `-a gemini` or `antigravity`) and rules for the rest (`AGENTS.md` §7). Harmless Bash calls pass the guards in ~5 ms (bash fast path); `agent-kit clean` removes the hooks' old logs and backups.
 5. **10 Review Councils:** reviewer prompts in `agents/councils/` (subsystem isolation, architecture/blast radius, TDD, OpenCodeReview, security, game/Unity/Blender, performance/ANR, memory governance, solo-dev process, standards/delivery) that a profile activates.
-6. **33 Curated Engineering Skills:** Standardized `SKILL.md` packages in 5 groups, including `impeccable` (UI/UX design & anti-slop craft), the domain performance skills `compose-recomp-audit` and `unity-gc-audit`, and a wrapper for the **Alibaba OpenCodeReview (`ocr`)** CLI.
+6. **34 Curated Engineering Skills:** Standardized `SKILL.md` packages in 5 groups, including `impeccable` (UI/UX design & anti-slop craft), the domain performance skills `compose-recomp-audit` and `unity-gc-audit`, and a wrapper for the **Alibaba OpenCodeReview (`ocr`)** CLI.
 7. **X_old Conflict Isolation Protection:** Non-destructive installation for existing repositories. Same-named skills/commands/agents/hooks move to the project tier `.agents/local/` (DevKit wins, yours stays committed and is re-linked when its name is free); colliding top-level files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`) keep a `*_old` snapshot; root `commands/`, `rules/`, `skills/` holding your agent material move to `.agents/local/` (source-code dirs stay, with the DevKit items placed inside). Rule files kept in `.agents/local/rules/` stay active: every install lists them in the DevKit block of each agent's rule file — `CLAUDE.md` (Claude Code expands the `@` imports), `.cursor/rules/universal-agent-devkit.mdc` (Cursor includes them), `GEMINI.md` (Gemini imports files inside the repo; in symlink mode the DevKit folder is added to `context.includeDirectories` so the linked ones can be read) and `AGENTS.md` / `CODEX.md` (Codex reads them as plain text: the block tells it which files to open). They add to the DevKit rules, and where one contradicts the master rules' §6 or `rules/core-rules.md` the DevKit rule wins. Inspect with `agent-kit list-old`, restore with `agent-kit restore-old`.
 8. **Design System & Proactive Failure Memory:** Strict UI/UX token baselines (`DESIGN.md`, Touch Target $\ge 48\text{dp}$, WCAG AA, Debounced buttons) paired with persistent repository failure lessons (`.agents/instincts.md`).
 9. **Android Device Safety & Native Crash Diagnostics:**
@@ -133,7 +133,7 @@ It delivers a complete, closed-loop software engineering ecosystem:
 │ Static diff + regression   │ Android, iOS, Automotive,  │ Reviewer prompts             │
 │ (/audit-gate / agent-kit)  │ Game, Voice, Universal     │ (agents/councils/)           │
 ├────────────────────────────┴────────────────────────────┴──────────────────────────────┤
-│ 🧰 33 Curated Skills (incl. Compose & Unity performance) • 🛡️ X_old Conflict Protection │
+│ 🧰 34 Curated Skills (incl. Compose & Unity performance) • 🛡️ X_old Conflict Protection │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -167,7 +167,7 @@ It delivers a complete, closed-loop software engineering ecosystem:
 - **Reviewer prompts:** each council in `agents/councils/` is a subagent prompt with 5 focus areas; the active profile chooses which councils apply.
 - **Workflow engine receipts:** the `workflows/` engines bind evidence with SHA-256 content hashes (not signatures).
 
-### 7. 🧰 33 Curated Engineering Skills
+### 7. 🧰 34 Curated Engineering Skills
 - **Complete Software Lifecycle:** foundation skills plus `impeccable` (UI/UX craft & anti-slop detector) and the domain performance skills `compose-recomp-audit` and `unity-gc-audit`, covering TDD, Bug Fixing, Spec-Kit Lite Planning, Visual QA, Crashlytics Triage, Conflict Resolution, Knowledge Graph discovery, and Alibaba OpenCodeReview (`ocr`).
 
 ### 8. 🛡️ X_old Conflict Isolation & P0 Security Hardening
@@ -188,7 +188,7 @@ graph TD
         PostFixGate["⚡ Post-Fix Gate<br/>(static diff gate + regression tests)"]
         AuditCouncils["🏛️ 10 Review Councils<br/>(agents/councils/)"]
         Gates["🔒 Lifecycle Hooks<br/>(wired + opt-in helpers)"]
-        SkillsCatalog["🧰 33 Curated Skills"]
+        SkillsCatalog["🧰 34 Curated Skills"]
         DesignMemory["🎨 DESIGN.md & Failure Memory (.agents/instincts.md)"]
         MCPHub["🔌 6-Server MCP Hub"]
     end
@@ -294,7 +294,7 @@ Used when adding new features or making changes touching $\ge 3$ files or $\ge 2
 
 #### 🛠️ Workflow 2: Zero-Defect Bug Diagnostic & Repair (Bug Fixing)
 Used for resolving crashes, UI defects, logic bugs, or regressions:
-1. **Triage & Trace:** Inspect stack traces (Crashlytics/ANR) via `/fix` or trace call graphs via `/graph` (AST Knowledge Graph).
+1. **Triage & Trace:** Inspect stack traces (Crashlytics/ANR) via `/fix` or trace call graphs via `/codebase-memory` (AST Knowledge Graph).
 2. **Author Failing Test Oracle (`/fixbugs`):** Formulate a deterministic test reproducing the exact defect on the failure boundary. Run to verify **RED** exit code.
 3. **Surgical Root-Cause Fix:** Apply the minimal surgical change directly targeting the root cause. Avoid unneeded refactoring.
 4. **Verify Passing Oracle:** Re-run the exact same oracle to verify **GREEN** exit code with identical execution parameters.
@@ -510,7 +510,7 @@ The imported files are real copies, not links: an `@` import whose real path is 
 
 ---
 
-## 🧰 33 Curated Engineering Skills Catalog
+## 🧰 34 Curated Engineering Skills Catalog
 
 Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclosure) in **5 groups**:
 
@@ -544,7 +544,7 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 | **`spec-driven-development`** | `/plan` | Spec-Kit Lite planning for all changes touching $\ge 3$ files or $\ge 2$ modules. |
 | **`grill-plan`** | `/grill` | Adversarial plan stress-testing, unearthing hidden assumptions before coding. |
 | **`documentation-and-adrs`** | `/adr` | Records Architecture Decision Records and long-term technical trade-offs. |
-| **`deep-module-design`** | `/module-design` | Deep interface design, independent test seams, and modular testability. |
+| **`deep-module-design`** | `/deep-module-design` | Deep interface design, independent test seams, and modular testability. |
 | **`merge-conflict-resolver`** | `/conflict` | Resolves complex Git merge, rebase, and stash conflicts with semantic 3-way analysis. |
 | **`session-handoff`** | `/handoff` | Packages active session context, uncommitted changes, and test proofs for seamless handoff. |
 | **`worktree-sandbox`** | `/sandbox` | Instant APFS Copy-on-Write worktrees with dependency isolation and merge auto-cleanup. |
@@ -554,11 +554,11 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 ### 4. 🚀 Execution Refinement & System Governance
 | Skill | Slash Command | Description & Purpose |
 |---|---|---|
-| **`context-enricher`** | `/enrich` | Gateway 5-dimensional context enrichment (5D Dossier) for all terse user prompts. |
+| **`context-enricher`** | `/context-enricher` | Gateway 5-dimensional context enrichment (5D Dossier) for all terse user prompts. |
 | **`giao`** | `/giao` | Dual-Agent Orchestration: Leader PM (Claude) ↔ Worker (Antigravity), task packet allocation and receipt audit. |
 | **`parallel-lanes`** | — | Parallel agent lanes: critical-path lane first, lane count capped by free CPU (`agent-kit lanes plan\|slots\|record`), pre-briefed traps, one worktree per lane, risk-tiered review that never skips a round, one full gate per batch. |
-| **`codebase-memory`** | `/graph`, `/codebase-memory` | **SSOT Knowledge Graph:** AST structural navigation, inbound/outbound call-chain tracing, Cypher queries, and Read/Grep fallback. |
-| **`incremental-implementation`** | `/step` | Breaks complex features into incremental surgical steps with continuous verification. |
+| **`codebase-memory`** | `/codebase-memory` | **SSOT Knowledge Graph:** AST structural navigation, inbound/outbound call-chain tracing, Cypher queries, and Read/Grep fallback. |
+| **`incremental-implementation`** | `/incremental-implementation` | Breaks complex features into incremental surgical steps with continuous verification. |
 | **`deprecation-migration`** | `/deprecate` | Safe 3-phase API deprecation, consumer caller migration, and legacy code retirement. |
 | **`security-checklist`** | `/scan` | Mobile & platform OWASP security checklist: Intent filters, URI traversal, Storage Access Framework, exported components, permissions. |
 | **`observability-instrumentation`** | `/logging` | Structured logging standardization, metric/trace instrumentation, Crashlytics telemetry, and 100% PII masking. |
@@ -577,7 +577,7 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 
 ## ⌨️ Complete Slash Commands Catalog
 
-32 of the 33 skills (all but parallel-lanes, which the agent picks from context), the profile switcher and the post-fix gate are bound to auto-discovered slash commands with shorthand aliases (`agent-kit commands` lists them):
+32 of the 34 skills (all but parallel-lanes and blender-game-pipeline, which the agent picks from context), the profile switcher and the post-fix gate are bound to auto-discovered slash commands with shorthand aliases (`agent-kit commands` lists them):
 
 | Slash Command | Shorthand Aliases | Backing Skill / Target | Key Functionality |
 |---|---|---|---|
@@ -594,15 +594,15 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 | `/spec-driven-development` | `/plan` | `skills/spec-driven-development` | Spec-Kit Lite planning for multi-file/multi-module features. |
 | `/grill-plan` | `/grill` | `skills/grill-plan` | Adversarial critique and technical stress-testing. |
 | `/documentation-and-adrs` | `/adr` | `skills/documentation-and-adrs` | Documents Architecture Decision Records and architectural trade-offs. |
-| `/deep-module-design` | `/module-design` | `skills/deep-module-design` | Designs deep interfaces and testable module boundaries. |
+| `/deep-module-design` | — | `skills/deep-module-design` | Designs deep interfaces and testable module boundaries. |
 | `/merge-conflict-resolver` | `/conflict` | `skills/merge-conflict-resolver` | Semantic Git 3-way conflict resolver. |
 | `/session-handoff` | `/handoff` | `skills/session-handoff` | Session context packaging and continuity export. |
 | `/worktree-sandbox` | `/sandbox` | `skills/worktree-sandbox` | Instant APFS Copy-on-Write worktrees with dependency isolation and merge auto-cleanup. |
-| `/context-enricher` | `/enrich` | `skills/context-enricher` | Automatically enriches terse user prompts into 5D dossiers. |
+| `/context-enricher` | — | `skills/context-enricher` | Automatically enriches terse user prompts into 5D dossiers. |
 | `/devkit-audit` | — | `skills/devkit-audit` | Daily measured audit and optimisation of the DevKit (Stop-hook cost first), scored against a 100-point rubric. |
 | `/giao` | `/giao` | `skills/giao` | Task allocation and receipt verification between Leader PM and Worker. |
-| `/codebase-memory` | `/graph` | `skills/codebase-memory` | SSOT Knowledge Graph navigation and blast radius tracing. |
-| `/incremental-implementation` | `/step` | `skills/incremental-implementation` | Executes incremental changes with test gates. |
+| `/codebase-memory` | — | `skills/codebase-memory` | SSOT Knowledge Graph navigation and blast radius tracing. |
+| `/incremental-implementation` | — | `skills/incremental-implementation` | Executes incremental changes with test gates. |
 | `/deprecation-migration` | `/deprecate` | `skills/deprecation-migration` | Sunsets APIs and migrates callers safely. |
 | `/security-checklist` | `/scan` | `skills/security-checklist` | Mobile & platform security checklist inspection. |
 | `/observability-instrumentation` | `/logging` | `skills/observability-instrumentation` | Structured logging, telemetry, and PII masking. |
@@ -696,7 +696,7 @@ eval "$(agent-kit completion bash)"
 # 5. Run every regression suite:
 agent-kit test
 
-# 6. List all 33 curated skills:
+# 6. List all 34 curated skills:
 agent-kit list
 
 # 7. List all available slash commands:
@@ -766,7 +766,7 @@ universal-agent-devkit/
 │   ├── game/scripts/            # Unity test runners and bot marathon
 │   └── ios/                     # iOS Swift 6, SwiftUI, Concurrency rules & matrix
 ├── rules/                       # Core rules & dynamic profile rules symlinks
-├── skills/                      # 33 Curated Skills
+├── skills/                      # 34 Curated Skills
 ├── commands/                    # Slash commands & aliases (links into skills/, plus audit-gate & profile)
 ├── agents/                      # Subagents (.md), 5 Specialized Audit Agents, and 10 Councils (agents/councils/)
 ├── hooks/                       # Lifecycle hooks (hooks.json) and their contract tests (hooks/tests/)

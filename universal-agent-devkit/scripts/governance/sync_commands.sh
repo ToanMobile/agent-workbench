@@ -12,7 +12,7 @@ mkdir -p "$COMMANDS_DIR"
 # Skill cố ý không có slash command: agent tự chọn theo ngữ cảnh, không ai gõ. parallel-lanes: dòng "Song song" của prompt
 # hook khởi động nó, và một command MỚI làm `agent-kit health` FAIL ở mọi repo đã cài cho tới khi từng repo chạy
 # `agent-kit init` (không có SessionStart relink nào thêm command). Tên skill cách nhau bằng dấu cách.
-NO_COMMAND_SKILLS="parallel-lanes"
+NO_COMMAND_SKILLS="parallel-lanes blender-game-pipeline"
 
 # 1. Link each canonical skill
 for skill_dir in "$SKILLS_DIR"/*; do
@@ -42,7 +42,6 @@ ALIASES=(
   "verify:verification-before-completion"
   "conflict:merge-conflict-resolver"
   "handoff:session-handoff"
-  "graph:codebase-memory"
   "visual:qa-visual"
   "ocr:open-code-review"
   "recomp-audit:compose-recomp-audit"
@@ -50,12 +49,9 @@ ALIASES=(
   "adr:documentation-and-adrs"
   "android-qa:android-real-device-qa"
   "deprecate:deprecation-migration"
-  "enrich:context-enricher"
   "grill:grill-plan"
   "logging:observability-instrumentation"
-  "module-design:deep-module-design"
   "skill-author:writing-skills"
-  "step:incremental-implementation"
   "sandbox:worktree-sandbox"
   # QA ladder (1.1.0): plan-tests -> review-code -> check -> done (+ /audit-gate)
   "plan-tests:qa-review"

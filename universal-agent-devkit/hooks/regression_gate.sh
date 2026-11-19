@@ -732,11 +732,11 @@ def watched(f, pats):
 
 
 def no_test_needed(p):
-    # a subset of post-fix-gate needs_no_test (documentation, agent state): a narrower list only blocks more, never lets code through
+    # Tập con của post-fix-gate needs_no_test (tài liệu, cấu hình harness/trạng thái agent): danh sách hẹp hơn chỉ chặn chặt thêm, không để lọt code
     p = p.replace("\\", "/")
     name = p.rsplit("/", 1)[-1]
     return (p.lower().endswith((".md", ".rst", ".adoc", ".log")) or name in ("LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS", ".gitignore")
-            or p in (".antigravity-pm.json", ".adb-denylist", ".claude/settings.json", ".claude/settings.local.json")
+            or p in (".antigravity-pm.json", ".adb-denylist", ".claude/settings.json", ".claude/settings.local.json", ".agents/hooks.json")
             or p.startswith(".agents/local/memory/") or re.fullmatch(r"reports/proof-[^/]+\.png", p) is not None)
 
 
