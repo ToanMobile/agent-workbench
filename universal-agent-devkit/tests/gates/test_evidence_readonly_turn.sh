@@ -97,6 +97,51 @@ transcript "$TMP/b14.jsonl" '[["bash","cat \"$(rm src/a.py)\"","",false]]'
 run 2 "$TMP/b14.jsonl" "$REPLY" "command substitution inside double quotes at end"
 transcript "$TMP/b15.jsonl" '[["bash","cat \"`rm src/a.py`\" x","",false]]'
 run 2 "$TMP/b15.jsonl" "$REPLY" "backtick inside double quotes, then a word"
+echo "-- 19/11 audit session: a read-only research turn (ToolSearch, WebFetch, chained reads, gh api GET) was held by check 2 and check 7"
+OUTCOME_REPLY='Lane review đánh dấu R1 fixed ở merge-queue.sh:210; hook bắt cặp ĐỎ→XANH.'
+RS='[["tool","ToolSearch"],["tool","WebFetch"],["bash","cd /x; echo == a; ls a b 2>/dev/null | head -5; git ls-files | grep -iE x | head","",false],["bash","echo == p; gh api repos/o/r/branches/main/protection --jq .x 2>&1 | head -12; wc -l AGENTS.md 2>/dev/null","",false],["bash","sed -n 1,40p hooks/x.sh; git log --oneline -3","",false]]'
+transcript "$TMP/r8.jsonl" "$RS"
+run 0 "$TMP/r8.jsonl" "$REPLY" "research turn: chained reads, gh api GET, WebFetch, ToolSearch (check 2)"
+run 0 "$TMP/r8.jsonl" "$OUTCOME_REPLY" "research turn quoting a reviewer's 'fixed' (check 7)"
+transcript "$TMP/b16.jsonl" '[["bash","cd /x; gh api -X PATCH repos/o/r/issues/1 -f body=x | head","",false]]'
+run 2 "$TMP/b16.jsonl" "$REPLY" "gh api write in a chain"
+transcript "$TMP/b17.jsonl" '[["bash","cd /x; echo a; python3 fix.py","",false]]'
+run 2 "$TMP/b17.jsonl" "$REPLY" "interpreter run in a chain"
+transcript "$TMP/b18.jsonl" "[[\"edit\",\"$P/src/a.py\"]]"
+run 2 "$TMP/b18.jsonl" "$OUTCOME_REPLY" "outcome claim after a code edit, no RED→GREEN (check 7 unchanged)"
+transcript "$TMP/b19.jsonl" '[["tool","ToolSearch"],["tool","Agent"]]'
+run 2 "$TMP/b19.jsonl" "$OUTCOME_REPLY" "outcome claim after a subagent ran (it may have edited code)"
+echo "-- #1342 review R1: write forms that look like reads must still block; plain listings still pass"
+i=0
+for cmd in 'gh api -XPOST repos/o/r/issues -fbody=x' 'gh api repos/o/r/issues -Fbody=@x' 'gh api --method=POST repos/o/r/issues' \
+           'git branch -D old' 'git branch -m a b' 'git branch newbranch' 'git worktree remove x' 'git remote add o u' 'git remote set-url o u' \
+           'git diff --output=src/a.py' 'git log --output=src/a.py' 'git show --output=src/a.py' \
+           "sed 's/x/y/w out.txt' f" "sed -n '1w out.txt' f" "sed -n 1p -i f" "sed -n -f s.sed f" "sed -e 1p f" "sed '1e id' f" "sed -n '1p;2w o' f" \
+           'git grep -Ots x' 'git grep --open-files-in-pager=sh x' 'git diff --ext-diff' 'git show --textconv HEAD:f' 'git log -p --ext-diff' \
+           'git grep -nOsh x' 'git grep -On x' 'git grep -inOsh x' \
+           'gh api -iXPOST repos/o/r/issues' 'gh api -iX DELETE repos/o/r/issues/1' 'git diff --out=o a b' 'git log --ext-d -p' 'git log --textc -p' \
+           'git cat-file --filters HEAD:f' 'git diff --no-index a b' 'rg --pre ./evil x .' 'rg --hostname-bin ./evil x' 'sort --output=o f' 'sort --out=o f' \
+           'sort --compress-program=./evil f' 'sort --comp=./evil f' 'sort -uo o f' 'date -s 2020' "'rm' cat" "'sort' -o o f" "\\rm x" \
+           'git branch list' 'git branch -a list' 'git branch --list list' 'git remote origin' 'git worktree list x' 'git branch -v newbranch' \
+           'git diff HEAD HEAD "--output=o"' 'git diff "--output" o HEAD HEAD' 'git diff \--output=o HEAD HEAD' 'git diff {--output=o,} HEAD HEAD' \
+           'git diff --${PWD:0:0}output=o HEAD HEAD' 'sort "-o" o a' 'sort a "--output=o"' 'uniq a "o"' 'gh api repos/o/r/issues/1 "-XDELETE"' \
+           'gh api repos/o/r "--method" DELETE' 'rg "--pre" ./evil x .' 'date "-s" 12:00' 'sort -o"o" a' 'cat *' 'git diff --output=~/o' \
+           'cat a >&1o' 'cat a 2>&1o' 'cat a >&1.log' 'cat a >/dev/nullx' 'cat a 2>/dev/null.log' 'cat a >&10' 'cat a >/dev/null/x' ; do
+  i=$((i + 1))
+  python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],"",False]]))' "$cmd" > "$TMP/s.json"
+  transcript "$TMP/w$i.jsonl" "$(cat "$TMP/s.json")"
+  run 2 "$TMP/w$i.jsonl" "$REPLY" "write form is not a read: $cmd"
+done
+i=0
+for cmd in 'git branch -a' 'git branch --show-current' 'git branch -vv' 'git branch --list' 'git worktree list' 'git remote -v' 'git remote' \
+           'git diff --stat' 'git log --oneline -3' 'gh api repos/o/r --jq .x --paginate' 'gh api -H Accept:x repos/o/r' \
+           "sed -n '1,40p' f" "sed -n 5p f" "sed -n '10,\$p' f | head" 'git grep -n x' \
+           'date' 'date -u' 'date +%s' 'sort -u f' 'sort -k2 f' 'rg -n x .' 'gh api -i repos/o/r' 'git log --oneline --no-ext-diff -3' 'git diff --no-color'; do
+  i=$((i + 1))
+  python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],"",False]]))' "$cmd" > "$TMP/s.json"
+  transcript "$TMP/p$i.jsonl" "$(cat "$TMP/s.json")"
+  run 0 "$TMP/p$i.jsonl" "$REPLY" "read form stays a read: $cmd"
+done
 echo "-- a successful run still backs the claim"
 transcript "$TMP/g1.jsonl" '[["bash","python3 -m pytest tests","12 passed in 0.30s",false]]'
 run 0 "$TMP/g1.jsonl" "$REPLY" "pytest run green"

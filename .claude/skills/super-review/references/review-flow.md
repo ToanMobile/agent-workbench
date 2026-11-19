@@ -72,6 +72,9 @@
      stdlib? native? an installed dep? one line? Always **Should fix**, routed to
      Super Build — it **never blocks a merge on its own**. A simplification that would
      cut validation, security, data-loss protection or accessibility is not a finding.
+   - **Pre-existing** — a defect on lines this PR's merge-base diff neither adds nor changes.
+     No thread, never bounces or blocks; a real bug is filed for the board. Rules and the one
+     exception: [review-output.md](review-output.md) → "Convergence".
    - **No issue** — you checked a hypothesis or claim and it holds. Not a finding: list it
      on the report's `✅ Done` line with the file:line or command that showed it. Saying what is
      right stops the next round re-litigating it.

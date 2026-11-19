@@ -3601,7 +3601,7 @@ if new_run:
 # claim that this session ran anything; check 2 needs a run to compare against, so it has nothing to say. An EMPTY transcript
 # (no tool at all) is not "read-only", it is "unknown" and keeps blocking. Edits (Edit/Write, even in a temp dir), a test
 # runner command or any Bash write keep the old check; check 7 (outcome) is not touched.
-READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "LS")
+READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "ToolSearch")   # 19/11: research tools write nothing
 # Bỏ chuỗi trong nháy trước khi xét ghi/xâu lệnh, để jq 'select(.x > 0)' và rg "PASS|FAIL" không bị coi là ghi hay xâu lệnh.
 # Nháy kép vẫn thực thi $(...) và `...`: chuỗi nháy kép có chúng thì giữ nguyên để BASH_CHAIN_RX/BASH_WRITE_RX còn thấy.
 _SHELL_QUOTED = re.compile(r"""\$'(?:\\.|[^'])*'|'(?:\\.|[^'])*'|"(?:\\.|[^"\\]|\\.)*\"""")
@@ -3614,6 +3614,62 @@ BASH_WRITE_RX = re.compile(r"(?:[0-9]*>>|[0-9]*<>|&>>?|(?<![&<>])[0-9]*>(?!&))"
                            r"|\b(?:npm|yarn|pnpm|pip3?|brew|cargo|go)\s+(?:install|add|run|build|get)\b|\bpython\S*\s|\bbash\s|\bsh\s|\bnode\s|\bsource\s|\beval\b")
 BASH_READ_CMDS = ("cat", "head", "tail", "jq", "grep", "rg", "wc", "ls", "sort", "uniq", "cut", "column")
 BASH_CHAIN_RX = re.compile(r"&&|\|\||;|(?<!&)&(?!&)|\$\(|<\(|>\(|`|\n")
+# 19/11 (audit session held 4 times): a research turn chains reads (`cd x; echo ==; ls a 2>/dev/null | head; gh api … --jq`). `;` `&&`
+# `||` and newlines between reads are allowed; `$(`, backticks, `<(`/`>(` and a lone `&` still are not (they can hide any command).
+# `>/dev/null` / `2>&1` write no file. `gh` only reads with `api` minus a method/field flag, or `view|list|diff|checks|status`.
+# #1342 R7: anchor at the END of the word: `>&1o`, `>/dev/nullx`, `>&1.log` name a real file bash creates.
+_DEVNULL = re.compile(r"[0-9]*>>?\s*/dev/null(?![^\s;&|)])|[0-9]*>&[0-9](?![^\s;&|)])")
+_HIDDEN_CMD = re.compile(r"\$\(|<\(|>\(|`|(?<![&|])&(?![&>])")
+_SEG_SPLIT = re.compile(r"&&|\|\||[;|\n]")
+_GIT_READ = {"log", "show", "diff", "status", "ls-files", "rev-parse", "rev-list", "branch", "merge-base", "blame", "grep", "worktree",
+             "remote", "describe", "cat-file", "check-ignore"}
+# Allowlist, not denylist (#1342 R1): `git branch|worktree|remote` read only in these exact forms; `git diff|log|show --output=f` writes f.
+_GIT_LIST_FLAGS = {"branch": {"-a", "-r", "-v", "-vv", "-l", "--list", "--all", "--remotes", "--verbose", "--show-current"},
+                   "remote": {"-v", "--verbose"}}
+# #1342 R3/R5: flags that make a command write a file or run a program. Long flags match by unique PREFIX (git, GNU sort accept
+# `--out=`, `--ext-d`), short flags by a bundled letter (`-nOsh`, `-iXPOST`, `-uo`): so judge the parsed arg, never a fixed spelling.
+_GIT_BAD_LONG = ("--output", "--ext-diff", "--textconv", "--open-files-in-pager", "--no-index", "--filters")
+_BAD_LONG = {"git": _GIT_BAD_LONG, "sort": ("--output", "--compress-program"), "rg": ("--pre", "--pre-glob", "--hostname-bin"),
+             "gh": ("--method", "--field", "--raw-field", "--input")}
+_BAD_SHORT = {"git": "O", "sort": "o", "gh": "XfF"}
+def _flags_write(cmd, args):
+    for a in args:
+        if a.startswith("--"):
+            name = a.split("=", 1)[0]
+            if len(name) >= 3 and any(b.startswith(name) for b in _BAD_LONG.get(cmd, ())):
+                return True
+        elif a.startswith("-") and len(a) > 1 and any(c in _BAD_SHORT.get(cmd, "") for c in a[1:]):
+            return True
+    return False
+# #1342 R2: sed reads only as `sed [-n] '<N|N,M|N,$|$>p' file...`; any other script can `w`/`e`/`r` a file or run a command, and
+# -i / -f / -e / --expression / -s after the script can write or load one. Checked on the RAW command (bare text has no quotes).
+_SED_SAFE = re.compile(r"\bsed(?:\s+-n)?\s+(['\"]?)(?:\d+|\$)?(?:,(?:\d+|\$))?p\1(?=(?:\s+[^-\s]\S*)*\s*(?:[|;&\n]|$))")
+def _sed_reads_only(raw):
+    return len(re.findall(r"\bsed\b", raw)) == len(_SED_SAFE.findall(raw))
+def _read_segment(seg):
+    w = seg.split()
+    if not w:
+        return True
+    if w[0] == "date":
+        return all(a == "-u" or a.startswith("+") for a in w[1:])   # `date -s` sets the clock
+    if w[0] in ("sort", "rg"):
+        return not _flags_write(w[0], w[1:])
+    if w[0] in BASH_READ_CMDS or w[0] in ("echo", "cd", "pwd", "printf", "true"):
+        return True
+    if w[0] == "sed":
+        return True   # script/flags are judged on the raw command by _sed_reads_only (quotes are stripped here)
+    if w[0] == "git" and len(w) > 1 and w[1] in _GIT_READ:
+        args = w[2:]
+        if w[1] == "worktree":
+            return args == ["list"]
+        if w[1] in _GIT_LIST_FLAGS:
+            return all(a in _GIT_LIST_FLAGS[w[1]] for a in args)   # R8: a bare word is a branch NAME to create, never a verb
+        return not _flags_write("git", args)
+    if w[0] == "gh" and len(w) > 1:
+        if w[1] == "api":
+            return not _flags_write("gh", w[2:])
+        return len(w) > 2 and w[2] in ("view", "list", "diff", "checks", "status")
+    return False
 def _read_cmd_writes(seg):
     parts = seg.split()
     if not parts:
@@ -3624,6 +3680,17 @@ def _read_cmd_writes(seg):
     if cmd == "uniq" and len([a for a in args if not a.startswith("-")]) >= 2:
         return True
     return False
+# #1342 R6: the classifier must judge the string the shell will RUN. Any word that the shell would rewrite (quotes, `\\`, `$`, braces,
+# globs, `~`) can hide a write flag, so such a command is not a read. Only a quoted PATTERN in the first positional slot of
+# jq/rg/grep (no `$`, backtick or backslash inside) and the `sed -n 'Np'` script are exempt; both sit at command position.
+_SHELL_ACTIVE = re.compile(r"""['"\\${}*?\[~]""")
+_CMD_POS = r"(?:^|(?<=[;&|\n])|(?<=&&)|(?<=\|\|))\s*"
+_PATTERN_ARG = re.compile(_CMD_POS + r"(jq|rg|grep)((?:\s+-[\w-]+)*)\s+(?:'(?!-)[^']*'|\"(?!-)[^\"$`\\]*\")")
+_SED_SCRIPT = re.compile(_CMD_POS + r"(sed(?:\s+-n)?)\s+(['\"]?)(?:\d+|\$)?(?:,(?:\d+|\$))?p\2(?=\s|$)")
+def _shell_literal(raw):
+    t = _PATTERN_ARG.sub(lambda m: f" {m.group(1)}{m.group(2)} PAT", raw)
+    t = _SED_SCRIPT.sub(lambda m: f" {m.group(1)} PAT", t)
+    return not _SHELL_ACTIVE.search(_DEVNULL.sub(" ", t))
 def _read_only_turn():
     if edit_log or last_src_edit_idx >= 0 or last_scratch_src_idx >= 0 or last_scratch_fix_idx >= 0 or runner_results:
         return False
@@ -3638,18 +3705,27 @@ def _read_only_turn():
         if u["name"] == "Bash":
             if not isinstance(u.get("input"), dict):
                 return False
-            bare = _bash_bare(str(u["input"].get("command", "")))
-            if TEST_RUNNER_RX.search(bare) or BASH_WRITE_RX.search(bare) or BASH_CHAIN_RX.search(bare) or ".xml" in bare.lower():
-                return False   # xâu lệnh / thay thế / đọc XML: check 2 xét lần chạy của ai
-            segs = bare.split("|")
-            if not all(seg.split()[:1] and seg.split()[0] in BASH_READ_CMDS for seg in segs):
+            bare = _DEVNULL.sub(" ", _bash_bare(str(u["input"].get("command", ""))))
+            if ">&" in bare:
+                return False   # R7: `>&word` writes file `word` (only `>&N` / `>/dev/null` were stripped above)
+            if TEST_RUNNER_RX.search(bare) or BASH_WRITE_RX.search(bare) or _HIDDEN_CMD.search(bare) or ".xml" in bare.lower():
+                return False   # thay thế lệnh / chạy nền / đọc XML / ghi: check 2 xét lần chạy của ai
+            if not _sed_reads_only(str(u["input"].get("command", ""))):
+                return False
+            if any(x.lstrip()[:1] in ("'", '"', "\\", "$") for x in _SEG_SPLIT.split(str(u["input"].get("command", "")))):
+                return False   # quoted/escaped command name: its real name is hidden from the classifier
+            if not _shell_literal(str(u["input"].get("command", ""))):
+                return False   # R6: quote/escape/expansion/glob can hide a write flag
+            segs = _SEG_SPLIT.split(bare)
+            if not all(_read_segment(seg) for seg in segs):
                 return False
             if any(_read_cmd_writes(seg) for seg in segs):
                 return False
             continue
         return False
     return True
-read_only_turn = claimed and _read_only_turn()
+read_only_session = (claimed or outcome_claimed) and _read_only_turn()
+read_only_turn = claimed and read_only_session
 if read_only_turn:
     logline(f"[{ts}] read-only turn ({len(tool_uses)} read tool calls, no edit, no test run): test-pass text is a quotation, check 2 skipped")
 
@@ -3758,6 +3834,11 @@ if claimed:
 # ── check 7: an outcome claim needs scoped structured proof ─────────────────
 check7 = None
 fix_proven = False        # an outcome claim this session backed by real proof
+# The same session (19/11): it changed no file, so an outcome phrase quotes someone else's work (a reviewer's "fixed"), and the
+# RED→GREEN pair check 7 asks for needs a source edit that cannot exist. A subagent or any non-read tool keeps the check.
+if outcome_claimed and read_only_session:
+    logline(f"[{ts}] read-only session: outcome text is a quotation, check 7 skipped")
+    outcome_claimed = False
 if outcome_claimed:
     def cites_exact_value(text, value):
         # Values are whole fields, not prefixes. A terminal period is allowed
