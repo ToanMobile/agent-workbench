@@ -19,12 +19,18 @@ while [ $# -gt 0 ]; do
     *) echo "blocked: đối số lạ $1"; exit 11 ;;
   esac
 done
-[ -n "$branch" ] && [ -n "$sha" ] || { echo "blocked: thiếu --branch hoặc --sha"; exit 11; }
+[ -n "$branch" ] && [ -n "$sha" ] && [ -n "$base" ] || { echo "blocked: thiếu --branch, --sha hoặc --base rỗng"; exit 11; }
+if [ "$branch" = "main" ] || [ "$branch" = "$base" ]; then
+  echo "blocked: không đồng bộ nhánh gốc ($branch)"
+  exit 11
+fi
 remote="${SB_QA_HEAD_REMOTE:-origin}"
 if [ -n "$wt" ]; then g() { git -C "$wt" "$@"; }; else g() { git "$@"; }; fi
 
 ferr="$(g fetch -q "$remote" "refs/heads/$branch" 2>&1)" || { echo "blocked: git fetch $remote lỗi: $ferr"; exit 11; }
 full="$(g rev-parse --verify -q "$sha^{commit}")" || { echo "blocked: sha $sha không phải commit sau fetch"; exit 11; }
+# Ràng buộc --sha phải thuộc FETCH_HEAD của chính nhánh vừa fetch (INSTINCT-027).
+g merge-base --is-ancestor "$full" FETCH_HEAD >/dev/null 2>&1 || { echo "blocked: sha $full không thuộc $remote/$branch"; exit 11; }
 if ! local_head="$(g rev-parse --verify -q "refs/heads/$branch")"; then
   # Chưa có nhánh cục bộ: không worktree nào giữ nó, tạo tại <sha>. Có --worktree mà thiếu nhánh là lỗi gọi.
   [ -z "$wt" ] || { echo "blocked: không có nhánh cục bộ $branch"; exit 11; }
@@ -34,9 +40,6 @@ fi
 if [ -n "$wt" ]; then
   cur="$(g symbolic-ref -q --short HEAD)" || cur=""
   [ "$cur" = "$branch" ] || { echo "blocked: worktree $wt đang ở '${cur:-detached}', không phải $branch"; exit 11; }
-  # Kiểm tra mã thoát của git status (fail-closed theo INSTINCT-020) trước khi đọc stdout.
-  st="$(g status --porcelain -uall)" || { echo "blocked: git status trên $wt lỗi"; exit 11; }
-  [ -z "$st" ] || { echo "blocked: worktree $wt có thay đổi chưa commit"; exit 11; }
 fi
 if [ "$local_head" = "$full" ]; then echo "synced $full"; exit 0; fi
 
@@ -44,6 +47,15 @@ if [ -n "$wt" ] && g merge --ff-only "$full" >/dev/null 2>&1; then echo "synced 
 if [ -z "$wt" ] && g merge-base --is-ancestor "$local_head" "$full"; then
   g branch -f "$branch" "$full" >/dev/null 2>&1 || { echo "blocked: không đặt được $branch về $full"; exit 11; }
   echo "synced $full (ff)"; exit 0
+fi
+if [ -n "$wt" ]; then
+  # Kiểm tra mã thoát của git status (fail-closed theo INSTINCT-020) trước khi đọc stdout;
+  # bỏ qua file cài đặt DevKit worktree chưa track do agent-kit worktree add tạo sẵn.
+  st="$(g status --porcelain -uall)" || { echo "blocked: git status trên $wt lỗi"; exit 11; }
+  if [ -n "$st" ]; then
+    st="$(printf '%s\n' "$st" | grep -Ev '^$|^\?\? (\.agents/hooks\.json|\.claude/settings\.json|\.claude/settings\.local\.json)$' || true)"
+  fi
+  [ -z "$st" ] || { echo "blocked: worktree $wt có thay đổi chưa commit"; exit 11; }
 fi
 
 # Phân kỳ: chỉ hủy được khi các commit không-merge của nhánh cục bộ (ngoài origin/<base>, vd. main đã merge ở 4c)

@@ -222,5 +222,60 @@ else
   fail "20: git status lỗi vẫn đi tiếp: rc=$rc head=$(cd "$TMP/qf" && G rev-parse HEAD) out=$out"
 fi
 
+# 21. R15: worktree từ `agent-kit worktree add` luôn có `?? .agents/hooks.json` (và có thể có `.claude/settings.local.json`).
+#     ff sạch (21a) và hủy commit QA phân kỳ (21b) đều phải synced; file bẩn khác vẫn bị từ chối (21c).
+G clone -q "$ORIG" "$TMP/qg" 2>/dev/null
+( cd "$TMP/qg" && G checkout -q -B pr origin/pr && mkdir -p .agents .claude && echo '{"hooks":1}' > .agents/hooks.json && echo '{}' > .claude/settings.local.json )
+( cd "$TMP/w" && G checkout -q pr && G pull -q --ff-only origin pr 2>/dev/null; echo o6 > o6 && G add o6 && G commit -q -m "other 6" && G push -q origin pr 2>/dev/null )
+S6=$(cd "$TMP/w" && G rev-parse HEAD)
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S6" --base main --worktree "$TMP/qg" 2>&1); rc=$?
+if [ "$rc" = 0 ] && [ "$(cd "$TMP/qg" && G rev-parse HEAD)" = "$S6" ] && [ -f "$TMP/qg/.agents/hooks.json" ]; then
+  ok "21a: worktree có ?? .agents/hooks.json vẫn ff về $S6"
+else
+  fail "21a: rc=$rc head=$(cd "$TMP/qg" && G rev-parse HEAD) out=$out"
+fi
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S6" --base main --worktree "$TMP/qg" 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "21a-bis: local_head == full với ?? .agents/hooks.json trả exit 0" || fail "21a-bis: rc=$rc out=$out"
+
+( cd "$TMP/qg" && mkdir -p docs/super-board/runs && echo e6 > docs/super-board/runs/ev6 && G add docs/super-board/runs/ev6 && G commit -q -m "qa evidence v6" )
+( cd "$TMP/w" && echo o7 > o7 && G add o7 && G commit -q -m "other 7" && G push -q origin pr 2>/dev/null )
+S7=$(cd "$TMP/w" && G rev-parse HEAD)
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S7" --base main --worktree "$TMP/qg" 2>&1); rc=$?
+if [ "$rc" = 0 ] && [ "$(cd "$TMP/qg" && G rev-parse HEAD)" = "$S7" ] && [ -f "$TMP/qg/.agents/hooks.json" ]; then
+  ok "21b: phân kỳ chỉ ở runs/ + ?? .agents/hooks.json vẫn synced về $S7"
+else
+  fail "21b: rc=$rc head=$(cd "$TMP/qg" && G rev-parse HEAD) out=$out"
+fi
+
+( cd "$TMP/qg" && echo e6b > docs/super-board/runs/ev6b && G add docs/super-board/runs/ev6b && G commit -q -m "qa evidence v6b" && echo dirty > real_dirty.txt )
+( cd "$TMP/w" && echo o8 > o8 && G add o8 && G commit -q -m "other 8" && G push -q origin pr 2>/dev/null )
+S8=$(cd "$TMP/w" && G rev-parse HEAD); G0=$(cd "$TMP/qg" && G rev-parse HEAD)
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$S8" --base main --worktree "$TMP/qg" 2>&1); rc=$?
+if [ "$rc" = 11 ] && printf '%s' "$out" | grep -q "chưa commit" && [ "$(cd "$TMP/qg" && G rev-parse HEAD)" = "$G0" ]; then
+  ok "21c: worktree có file bẩn thật (cùng .agents/hooks.json) vẫn bị từ chối exit 11"
+else
+  fail "21c: rc=$rc head=$(cd "$TMP/qg" && G rev-parse HEAD) out=$out"
+fi
+rm -f "$TMP/qg/real_dirty.txt"
+
+# 22. R16: từ chối --branch main / --branch "$base", và từ chối --sha không thuộc FETCH_HEAD của origin/$branch.
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch main --sha "$C1" --base main 2>&1); rc=$?
+[ "$rc" = 11 ] && ok "22a: từ chối --branch main với exit 11" || fail "22a: --branch main: rc=$rc out=$out"
+
+( cd "$TMP/w" && G push -q origin "$C1:refs/heads/staging" 2>/dev/null )
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch staging --base staging --sha "$C1" 2>&1); rc=$?
+[ "$rc" = 11 ] && ok "22b: từ chối --branch == --base với exit 11" || fail "22b: --branch == --base: rc=$rc out=$out"
+
+( cd "$TMP/w" && G checkout -q main && echo m2 > main2 && G add main2 && G commit -q -m "main only" && G push -q origin main 2>/dev/null && G checkout -q pr )
+OTHER_C=$(cd "$TMP/w" && G rev-parse origin/main)
+G clone -q "$ORIG" "$TMP/qh" 2>/dev/null
+( cd "$TMP/qh" && G checkout -q -B pr "$C1" && G fetch -q "$ORIG" refs/heads/main )
+out=$(SB_QA_HEAD_REMOTE="$ORIG" bash "$SYNC" --branch pr --sha "$OTHER_C" --base main --worktree "$TMP/qh" 2>&1); rc=$?
+if [ "$rc" = 11 ] && [ "$(cd "$TMP/qh" && G rev-parse HEAD)" = "$C1" ]; then
+  ok "22c: từ chối sha ($OTHER_C) không thuộc FETCH_HEAD của origin/pr"
+else
+  fail "22c: chấp nhận sha ngoài nhánh: rc=$rc head=$(cd "$TMP/qh" && G rev-parse HEAD) out=$out"
+fi
+
 echo "---"
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL: $FAILS"; exit 1; }
