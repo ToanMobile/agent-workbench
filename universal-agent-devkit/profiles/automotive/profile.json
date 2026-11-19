@@ -23,6 +23,7 @@
   "regression_matrix": "profiles/automotive/regression_matrix.json",
   "rules_file": "profiles/automotive/rules/automotive-rules.md",
   "exclude_skills": [
+    "blender-game-pipeline",
     "unity-gc-audit"
   ],
   "source_extensions": [

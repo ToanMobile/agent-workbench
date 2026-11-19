@@ -717,6 +717,21 @@
       ]
     },
     {
+      "component": "Game Blender 5.2+ & Unity 6.3 Pipeline",
+      "watch_files": [
+        "universal-agent-devkit/profiles/game/scripts/blender/*",
+        "universal-agent-devkit/skills/blender-game-pipeline/*",
+        "universal-agent-devkit/profiles/game/rules/game-rules.md"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-GAME-BLENDER-PIPELINE",
+          "command": "bash universal-agent-devkit/tests/verification/test_game_blender_pipeline.sh",
+          "description": "Kiểm định 4 script Blender headless (qa_check, make_lods, export_unity, review_shots), skill blender-game-pipeline, exclude_skills và quy tắc Unity 6.3 GRD"
+        }
+      ]
+    },
+    {
       "component": "super-board-runner-reclaim-dead-build",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
