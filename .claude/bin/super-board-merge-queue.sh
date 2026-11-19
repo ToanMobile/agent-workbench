@@ -282,6 +282,11 @@ RETRY=0; LABEL_DONE=0; CARD_RETRY=0; CARD_UNREAD=0; CARD_UNKNOWN=0
 # bị sửa/xoá" (EN: "UNVERIFIED — N existing test files were edited") VÀ đây là lần đầu cho head này. Sổ merge-queue.unverified: "<PR> <head> <n>";
 # head mới đếm lại từ 1; route lại (RETRY=1) không đếm thêm; lần thứ hai cùng head (RETRY=0) trả 1 để đi đường cũ.
 UNVERIFIED_F="$QDIR/merge-queue.unverified"
+# #1319: sổ lượt rebase-stale theo thẻ ("<issue> <n>"): rebase-stale không tính rebuild_cap nhưng có trần riêng SB_REBASE_STALE_MAX
+# (mặc định 5) để main bận không quay vòng vô hạn; quá trần thì đi đường rebase cũ (rebuild_cap).
+# ponytail: sổ không tự xoá khi thẻ merge (mỗi thẻ một dòng); dọn khi sổ đo được là lớn.
+STALE_F="$QDIR/merge-queue.rebase-stale"
+REBASE_STALE_MAX=$(posint "${SB_REBASE_STALE_MAX:-}" 5)
 unverified_edited_first() {
   grep -Eq 'CHƯA XÁC MINH — [0-9]+ file test đã có bị sửa|UNVERIFIED — [0-9]+ existing test files? (was|were) edited' <<<"$3" || return 1
   local n
@@ -309,6 +314,15 @@ rebuild_or_rebase() {
     prevh=$(printf '%s' "$ij" | python3 -I "$HERE/super-board-root-cause-hash.py" last --from "[merge-queue]") || prevh=""
   fi
   if [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
+  if [ "$kind" = rebase-stale ]; then
+    local sn
+    sn=$(awk -v k="$k" '$1 == k {print $2; exit}' "$STALE_F" 2>/dev/null || true); sn=$(posint "$sn" 0)
+    if [ "$sn" -ge "$REBASE_STALE_MAX" ]; then
+      kind=rebase   # quá trần riêng: lượt rebase này đi đường cũ, rebuild_cap áp như conflict
+    elif [ "$RETRY" -ne 1 ]; then
+      { { awk -v k="$k" '$1 != k' "$STALE_F" 2>/dev/null || true; echo "$k $((sn + 1))"; } > "$STALE_F.tmp" && mv -f "$STALE_F.tmp" "$STALE_F"; } || true
+    fi
+  fi
   if [ "$kind" != rebase-stale ] && [ "$cur" -ge "$REBUILD_CAP" ]; then
     [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
       "train-result for PR #${p}: ${why}${det:+

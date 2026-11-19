@@ -7,6 +7,9 @@
 #  C: QA thoát không comment mới -> vẫn Blocked ❓ sau SB_NOOP_MAX lượt (không nới).
 #  D: build exit 0 không comment mới -> vẫn trả về Ready + ghi sổ reclaim như cũ.
 #  E: build exit 0, comment `[builder]` có trước lúc dispatch -> không tính là bàn giao (sổ reclaim như cũ).
+#  B4: QA worker đã tự gắn loop:rebuild-N rồi quên move -> chỉ move Ready, không gắn thêm (không đếm hai lần). B5: đọc events hỏng -> không chuyển.
+#  B6: ❌ lần đầu -> tạo nhãn (label create --force) trước khi gắn (repo app có thể chưa có nhãn).
+#  G: đường đọc thật issue_comments_since qua SB_GITHUB_READ giả (--paginate --slurp: mảng các trang), body CRLF, body null, comment cũ.
 #  F: super-build/SKILL.md ghim dòng push commit local + một lần move trước khi kết thúc lượt.
 # Tương thích bash 3.2.
 set -u
@@ -39,6 +42,8 @@ issue_comment_count() { printf '%s' "$COUNT"; }
 issue_last_comment() { printf '%s' ""; }
 COMMENTS='[]'
 issue_comments_since() { printf '%s' "$COMMENTS"; }
+LABELED=no
+loop_label_added_since() { printf '%s' "$LABELED"; }
 sleep 0 & DEAD=$!; wait "$DEAD"
 set_card() { # <issue> <status> [labels json]
   PROJECT_ITEMS_JSON="{\"items\":[{\"id\":\"PVTI_$1\",\"status\":\"$2\",\"labels\":${3:-[]},\"content\":{\"type\":\"Issue\",\"number\":$1,\"title\":\"card $1\",\"labels\":${3:-[]},\"assignees\":[\"sb-bot\"]}}]}"
@@ -52,7 +57,7 @@ lock() { # <lane> <issue> [FROM_COL COMMENTS0]
 }
 build_turn() { lock build "$1"; reap_finished_locks; reclaim_dead_builds; }
 qa_turn() { lock qa "$1" QA 3; reap_finished_locks; block_noop_workers; }
-reset_case() { : > "$TMP/writes"; : > "$TMP/log"; NOOP_CHECK=""; NOOP_MOVED=0; RECLAIM_BUILDING=""; rm -rf "$INFLIGHT_DIR"/noops "$INFLIGHT_DIR"/reclaims; COUNT=3; COMMENTS='[]'; }
+reset_case() { : > "$TMP/writes"; : > "$TMP/log"; NOOP_CHECK=""; NOOP_MOVED=0; RECLAIM_BUILDING=""; BUILD_CLEAN=""; LABELED=no; rm -rf "$INFLIGHT_DIR"/noops "$INFLIGHT_DIR"/reclaims; COUNT=3; COMMENTS='[]'; }
 cmt() { # <created_at> <body> -> one comment JSON object
   jq -nc --arg t "$1" --arg b "$2" '{created_at: $t, body: $b}'
 }
@@ -101,6 +106,54 @@ build_turn 1506
 if grep -qx "move PVTI_1506 Ready" "$TMP/writes" && ! grep -q " QA" "$TMP/writes" && [ -s "$INFLIGHT_DIR/reclaims/1506" ]; then
   ok "D: build exit 0 without a new comment -> Ready + reclaim ledger as before"
 else fail "D: writes: $(w) reclaims=$(cat "$INFLIGHT_DIR/reclaims/1506" 2>/dev/null)"; fi
+
+# B4
+reset_case; set_card 1508 QA '["loop:rebuild-1"]'; wlog qa 1508; COUNT=4; LABELED=yes
+COMMENTS="[$(cmt 2026-11-19T12:04:00Z $'[qa] [report] ❌ failing · round 2 @ 3f9c2ab\nNext: builder')]"
+qa_turn 1508
+if grep -qx "move PVTI_1508 Ready" "$TMP/writes" && ! grep -q "add-label" "$TMP/writes"; then ok "B4: QA already labelled loop:rebuild-N -> only Ready, no second label"
+else fail "B4: writes: $(w)"; fi
+
+# B5
+reset_case; set_card 1509 QA; wlog qa 1509; COUNT=4; LABELED=""
+COMMENTS="[$(cmt 2026-11-19T12:04:00Z $'[qa] [report] ❌ failing · round 1 @ 3f9c2ab')]"
+qa_turn 1509
+if ! grep -q "move PVTI_1509\|add-label" "$TMP/writes"; then ok "B5: label events unreadable -> nothing routed"
+else fail "B5: writes: $(w)"; fi
+
+# B6 (from case B's writes: label create before add-label)
+reset_case; set_card 1510 QA; wlog qa 1510; COUNT=4
+COMMENTS="[$(cmt 2026-11-19T12:04:00Z $'[qa] [report] ❌ failing · round 1 @ 3f9c2ab')]"
+qa_turn 1510
+lc=$(grep -n "gh label create loop:rebuild-1 .*--force" "$TMP/writes" | head -1 | cut -d: -f1)
+le=$(grep -n "gh issue edit 1510 --add-label loop:rebuild-1" "$TMP/writes" | head -1 | cut -d: -f1)
+if [ -n "$lc" ] && [ -n "$le" ] && [ "$lc" -lt "$le" ]; then ok "B6: loop:rebuild-1 label created before it is added"
+else fail "B6: writes: $(w)"; fi
+
+# G: real issue_comments_since + lane_report_pick through a fake SB_GITHUB_READ (paginated slurp output)
+cat > "$TMP/fake-read.py" <<'PY'
+import json, os, sys
+open(os.environ["FAKE_ARGS"], "w").write(" ".join(sys.argv[1:]))
+page1 = [{"created_at": "2026-11-19T11:00:00Z", "body": "[builder] [report] old\nNext: qa"},
+         {"created_at": "2026-11-19T12:01:00Z", "body": None}]
+page2 = [{"created_at": "2026-11-19T12:02:00Z", "body": "<!-- m -->\r\n[builder] [report] ✅ built\r\nNext: QA rồi Review\r\n"},
+         {"created_at": "2026-11-19T12:03:00Z", "body": "[orchestrator] [report] x"}]
+print(json.dumps([page1, page2]))
+PY
+(
+  unset -f issue_comments_since
+  . /dev/stdin <<EOF
+$(sed -n '/^issue_comments_since() {/,/^}/p' "$RUNNER")
+EOF
+  SB_GITHUB_READ="$TMP/fake-read.py"; export FAKE_ARGS="$TMP/fake-args"
+  wlog build 1511
+  if builder_handed_to_qa 1511 "$WORKER_LOG_DIR/worker-build-1511.log"; then r=yes; else r=no; fi
+  args=$(cat "$FAKE_ARGS" 2>/dev/null)
+  case "$args" in *"--kind array -- api repos/{owner}/{repo}/issues/1511/comments?since=2026-11-19T12:00:00Z&per_page=100 --paginate --slurp"*) a=ok ;; *) a="$args" ;; esac
+  echo "$r|$a"
+) > "$TMP/g.out" 2>&1
+if [ "$(cat "$TMP/g.out")" = "yes|ok" ]; then ok "G: real comment read (paged, CRLF, null body, marker line) finds the [builder] Next: QA handoff"
+else fail "G: $(cat "$TMP/g.out")"; fi
 
 # E
 reset_case; set_card 1507 Building; wlog build 1507; COUNT=4

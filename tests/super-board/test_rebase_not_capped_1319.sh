@@ -3,6 +3,7 @@
 # lượt rebase không phải bounce, không tính vào rebuild_cap. Conflict thật (gate-exit-5) tại cap vẫn Blocked 🛡 như cũ.
 #  A: thẻ #11 loop:rebuild-2 (cap 2), PR 1 gate-exit-2 -> loop:rebase, Ready, không Blocked (ĐỎ trên merge-queue cũ).
 #  B: thẻ #12 loop:rebuild-2, PR 2 gate-exit-5 (conflict thật) -> Blocked, không Ready (giữ hành vi cũ).
+#  B2: gate-exit-14 và conflict tại cap -> vẫn Blocked. D: thẻ đã đủ SB_REBASE_STALE_MAX lượt rebase-stale -> đường cũ (Blocked tại cap).
 #  C: super-review/SKILL.md và run.md ghim câu "a `loop:rebase` pass never counts toward `rebuild_cap`".
 # Chạy offline: gh (python giả), train / card.sh / needs-you.py / notify.py là stub (khung test_merge_queue_refused_detail.sh). bash 3.2.
 set -u
@@ -82,11 +83,13 @@ PY
 chmod +x "$TMP/path/gh"
 export PATH="$TMP/path:$PATH" FAKE="$F" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_NOTIFY_SKIP=1
 unset SB_MERGE_QUEUE SB_MERGE_CALLER SB_GITHUB_READ_STRICT
-printf '{"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"worker_backend":"claude-p","rebuild_cap":2,"verify_commands":["true"],"merge_queue":{"enabled":true}}\n' > "$TMP/cfg.json"
+printf '{"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"worker_backend":"claude-p","rebuild_cap":2,"verify_commands":["true"],"merge_queue":{"enabled":true,"max_trains":8}}\n' > "$TMP/cfg.json"
 sha() { printf '%040d' "$1" | tr 0 a; }
-printf '[{"number":1,"headRefName":"issue-11-a","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]},{"number":2,"headRefName":"issue-12-b","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]}]\n' "$(sha 1)" "$(sha 2)" > "$F/prs.json"
-for n in 1 2; do : > "$F/labeled/$n"; sha "$n" > "$F/head-$n"; printf '{"number":1%s,"title":"card","body":"","state":"OPEN","labels":[{"name":"loop:rebuild-2"}]}' "$n" > "$F/issue-1$n.json"; done
-printf 'train-result: 1 gate-exit-2\ntrain-result: 2 gate-exit-5\n' > "$F/train.out"
+pj() { printf '{"number":%s,"headRefName":"issue-1%s-x","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]}' "$1" "$1" "$(sha "$1")"; }
+printf '[%s,%s,%s,%s,%s]\n' "$(pj 1)" "$(pj 2)" "$(pj 3)" "$(pj 4)" "$(pj 5)" > "$F/prs.json"
+mkdir -p "$R/.git/super-board"; echo "15 1" > "$R/.git/super-board/merge-queue.rebase-stale"; export SB_REBASE_STALE_MAX=1
+for n in 1 2 3 4 5; do : > "$F/labeled/$n"; sha "$n" > "$F/head-$n"; printf '{"number":1%s,"title":"card","body":"","state":"OPEN","labels":[{"name":"loop:rebuild-2"}]}' "$n" > "$F/issue-1$n.json"; done
+printf 'train-result: 1 gate-exit-2\ntrain-result: 2 gate-exit-5\ntrain-result: 3 gate-exit-14\ntrain-result: 4 conflict\ntrain-result: 5 gate-exit-2\n' > "$F/train.out"
 echo 5 > "$F/train.rc"; : > "$F/writes"
 ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait ) >"$TMP/out" 2>"$TMP/err"; rc=$?
 
@@ -96,6 +99,12 @@ grep -q "issue-labels 11 .*loop:rebase" "$F/writes" && grep -q "card move 11 Rea
 grep -q "🛡" "$F/issue-comment-11.txt" 2>/dev/null && fail "  … card #11 got a 🛡 block comment" || ok "  … no 🛡 block comment on #11"
 grep -q "card move 12 Blocked" "$F/writes" && ! grep -q "card move 12 Ready" "$F/writes" \
   && ok "B: real conflict at rebuild_cap (gate-exit-5) -> still Blocked" || fail "B: gate-exit-5 at cap: $(tr '\n' ';' < "$F/writes")"
+
+grep -q "card move 13 Blocked" "$F/writes" && grep -q "card move 14 Blocked" "$F/writes" && ! grep -q "card move 1[34] Ready" "$F/writes" \
+  && ok "B2: gate-exit-14 and conflict at rebuild_cap -> still Blocked" || fail "B2: $(tr '\n' ';' < "$F/writes")"
+grep -q "card move 15 Blocked" "$F/writes" && ! grep -q "card move 15 Ready" "$F/writes" \
+  && ok "D: SB_REBASE_STALE_MAX stale passes used -> back to the rebuild_cap path (Blocked)" || fail "D: $(tr '\n' ';' < "$F/writes")"
+grep -q "^11 1$" "$R/.git/super-board/merge-queue.rebase-stale" && ok "  … card #11's stale pass recorded in the ledger" || fail "  … ledger: $(cat "$R/.git/super-board/merge-queue.rebase-stale")"
 
 PIN='a `loop:rebase` pass never counts toward `rebuild_cap`'
 for f in .claude/skills/super-review/SKILL.md .claude/skills/super-board/references/run.md; do

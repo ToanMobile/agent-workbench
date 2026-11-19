@@ -2412,15 +2412,33 @@ dispatch_started_at() {
 # filters on created_at). Prints nothing when GitHub cannot say: the caller then concludes nothing.
 issue_comments_since() {
   [ -n "${2:-}" ] || return 0
-  python3 "$SB_GITHUB_READ" --kind json -- api "repos/{owner}/{repo}/issues/$1/comments?since=$2&per_page=100" 2>/dev/null || true
+  python3 "$SB_GITHUB_READ" --kind array -- api "repos/{owner}/{repo}/issues/$1/comments?since=$2&per_page=100" --paginate --slurp 2>/dev/null || true
 }
 
-# #1318: stdin = a JSON array of comments. Prints the body of the newest one created at/after $2 whose first line (after `<!--` marker
+# #1318: stdin = a JSON array of comments (or of pages, `--paginate --slurp`). Prints the body of the newest one created at/after $2 whose first line (after `<!--` marker
 # lines) starts with $1 (e.g. `[builder]`, `[qa] [report]`); nothing when there is none.
 lane_report_pick() {
-  jq -r --arg p "$1" --arg t "$2" '[.[]? | select((.created_at // "") >= $t)
+  jq -r --arg p "$1" --arg t "$2" '[(if (.[0]? | type) == "array" then add else . end) | .[]? | select((.created_at // "") >= $t)
     | select((.body // "") | split("\n") | map(sub("\r$"; "")) | map(select(test("\\S") and (startswith("<!--") | not)))
       | (.[0] // "") | startswith($p))] | last | .body // empty' 2>/dev/null || true
+}
+
+# #1318: 0 when the issue's newest `[builder]` comment created since the dispatch in worker log $2 has a `Next: qa` line (the builder
+# handed the card to QA). One GitHub read; any read failure = 1.
+builder_handed_to_qa() {
+  local ts body
+  ts=$(dispatch_started_at "$2")
+  [ -n "$ts" ] || return 1
+  body=$(issue_comments_since "$1" "$ts" | lane_report_pick '[builder]' "$ts")
+  grep -Eiq '^Next:[[:space:]]*[*_`]*(qa|tester)([^[:alnum:]]|$)' <<<"$(printf '%s' "$body" | tr -d '\r')"
+}
+
+# #1318: prints `yes` when a loop:rebuild-N label was added to issue $1 at/after $2 (ISO UTC), `no` when not, nothing when GitHub cannot say.
+loop_label_added_since() {
+  local raw
+  raw=$(python3 "$SB_GITHUB_READ" --kind array -- api "repos/{owner}/{repo}/issues/$1/events?per_page=100" --paginate --slurp 2>/dev/null) || return 0
+  printf '%s' "$raw" | jq -r --arg t "$2" '(if (.[0]? | type) == "array" then add else . end)
+    | if any(.[]?; .event == "labeled" and ((.label.name // "") | test("^loop:rebuild-[0-9]+$")) and (.created_at // "") >= $t) then "yes" else "no" end' 2>/dev/null || true
 }
 
 # #1318: QA worker ended clean with a new `[qa] [report]` but left the card in QA: apply that report's verdict. $1 issue, $2 worker log.
@@ -2447,8 +2465,20 @@ qa_route_verdict() {
     | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)' 2>/dev/null || true)
   cur=$(printf '%s\n' "$labs" | sed -nE 's/^loop:rebuild-([0-9]+)$/\1/p' | sort -n | tail -1)
   cur=${cur:-0}
+  # The QA worker may have added loop:rebuild-N itself before it forgot the move (super-qa: label, then move): then only move, so one
+  # failing round never counts twice. GitHub cannot say: conclude nothing.
+  case "$(loop_label_added_since "$1" "$ts")" in
+    yes)
+      set_card_status "$item_id" "Ready" || return 1
+      log "↩ #${1} QA → Ready (loop:rebuild-${cur}, labelled by the QA worker): QA worker exited 0 after a new [qa] [report] ❌ without moving the card (verdict routed by the runner)"
+      return 0 ;;
+    no) ;;
+    *) return 1 ;;
+  esac
   [ "$cur" -lt "${REBUILD_CAP:-2}" ] || return 1
   for l in $(printf '%s\n' "$labs" | grep -E '^loop:rebuild-[0-9]+$' | sort -u || true); do rm+=(--remove-label "$l"); done
+  # An app repo may not have the label yet: create it first (idempotent --force; SB_CARD_BLOCKING: a failure only returns 1, never Blocks).
+  SB_CARD_BLOCKING=1 gh_write_once label create "loop:rebuild-$((cur + 1))" --color BFD4F2 --force >/dev/null 2>&1 || true
   gh_write_once issue edit "$1" --add-label "loop:rebuild-$((cur + 1))" ${rm[@]+"${rm[@]}"} >/dev/null 2>&1 || return 1
   set_card_status "$item_id" "Ready" || return 1
   log "↩ #${1} QA → Ready (loop:rebuild-$((cur + 1))): QA worker exited 0 after a new [qa] [report] ❌ without moving the card (verdict routed by the runner)"
@@ -2469,13 +2499,10 @@ note_worker_exit() {
      && builder_reported_since "$1" "$(grep '^=== dispatch ' "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}" 2>/dev/null | tail -1 | sed 's/.* at \(.*\) ===.*/\1/')"; then
     rm -f "$INFLIGHT_DIR/reclaims/$1" 2>/dev/null || true
   fi
-  # #1318: a build worker that ended clean after a new `[builder]` comment saying `Next: qa` handed the card over but forgot the move:
-  # reclaim_dead_builds moves it to QA instead of counting a death (the reclaim ledger and the 🔁 Block are for crashes).
+  # #1318: a clean build exit is queued for reclaim_dead_builds as `<issue>:<log>` (lock paths hold no spaces): if the card is still in
+  # Building there, a new `[builder] … Next: qa` comment means it handed over and only forgot the move (builder_handed_to_qa).
   if [ "${LANE:-}" = build ] && worker_ended_clean "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}"; then
-    local hts hbody
-    hts=$(dispatch_started_at "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}")
-    hbody=$(issue_comments_since "$1" "$hts" | lane_report_pick '[builder]' "$hts")
-    if grep -Eiq '^Next:[[:space:]]*[*_`]*(qa|tester)([^[:alnum:]]|$)' <<<"$hbody"; then BUILD_HANDOFF="${BUILD_HANDOFF:-} $1"; fi
+    BUILD_CLEAN="${BUILD_CLEAN:-} ${1}:${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}"
   fi
   # exit=0: finished; exit=143: stopped by the runner itself (super-board stop sends TERM), not a death worth a card comment.
   case "$line" in *"exit=0 "*|*"exit=143 "*) return 0 ;; esac
@@ -3030,9 +3057,9 @@ reclaim_dead_builds() {
   #    sổ $INFLIGHT_DIR/reclaims/<issue> rồi trả thẻ về Ready qua reclaim_stranded_building.
   #  - Đạt/vượt trần: chuyển thẻ sang Blocked kèm comment theo block-template (dòng cuối `blocked-by:  agent`, #529).
   # Luôn return 0; đặt RECLAIM_MOVED=1 khi có thẻ được chuyển (Ready hoặc Blocked).
-  local pending="${RECLAIM_BUILDING:-}" handoff="${BUILD_HANDOFF:-}"
-  RECLAIM_BUILDING=""; BUILD_HANDOFF=""
-  [ -n "${pending// /}" ] || return 0
+  local pending="${RECLAIM_BUILDING:-}" hlog
+  RECLAIM_BUILDING=""
+  [ -n "${pending// /}" ] || { BUILD_CLEAN=""; return 0; }
   local window="${SB_RECLAIM_WINDOW_S:-86400}" max="${SB_RECLAIM_MAX:-2}"
   local issue item_id title seen=" " now f n wlog
   while IFS=$'\t' read -r issue item_id title; do
@@ -3040,15 +3067,17 @@ reclaim_dead_builds() {
     case "$seen" in *" $issue "*) continue ;; esac
     seen="${seen}${issue} "
     issue_locked "$issue" && continue
-    # #1318: the worker exited 0 after a `[builder] … Next: qa` report (note_worker_exit): hand over, no reclaim, no 🔁 Block.
-    case " $handoff " in *" $issue "*)
+    # #1318: the worker exited 0 (note_worker_exit; read after issue_locked, which may reap it now) and left a `[builder] … Next: qa`
+    # report: hand over, no reclaim, no 🔁 Block.
+    hlog=$(printf '%s\n' ${BUILD_CLEAN:-} | awk -F: -v n="$issue" '$1 == n {sub(/^[^:]*:/, ""); l=$0} END{print l}')
+    if [ -n "$hlog" ] && builder_handed_to_qa "$issue" "$hlog"; then
       if set_card_status "$item_id" "QA"; then
         RECLAIM_MOVED=1
         gh_checkpoint
         log "→ #${issue} Building → QA: build worker exited 0 after a new [builder] report with Next: qa (handoff routed by the runner, no reclaim)"
         continue
-      fi ;;
-    esac
+      fi
+    fi
     now=$(date +%s)
     f="$INFLIGHT_DIR/reclaims/$issue"
     n=0
@@ -3097,7 +3126,7 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" --arg only " $pendin
     | select(((.content.assignees // []) - [$bot]) | length == 0)
     | [(.content.number | tostring), (.id // ""), (.content.title // "")] | @tsv')
 EOF
-  RECLAIM_BUILDING=""
+  RECLAIM_BUILDING=""; BUILD_CLEAN=""
   return 0
 }
 
