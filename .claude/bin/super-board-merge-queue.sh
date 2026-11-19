@@ -298,6 +298,24 @@ unverified_edited_first() {
   { awk -v p="$1" '$1 != p' "$UNVERIFIED_F" 2>/dev/null || true; echo "$1 $2 1"; } > "$UNVERIFIED_F.tmp" && mv -f "$UNVERIFIED_F.tmp" "$UNVERIFIED_F"
   return 0
 }
+# #1342: noproof_first <PR> <head> <detail>: 0 khi MỌI dòng qa-report/ac-check của detail là `qa-report: AC đã tích [x] nhưng không có dòng bằng chứng '↳'`
+# (lỗi trình bày thân PR, không phải lỗi code) VÀ đây là lần đầu cho head này. Sổ merge-queue.noproof: "<PR> <head> <n>", cùng luật đếm như
+# unverified_edited_first; lý do khác lẫn vào, hay lần hai cùng head, trả 1 để đi đường cũ (rebuild_cap -> Blocked 🛡).
+NOPROOF_F="$QDIR/merge-queue.noproof"
+noproof_first() {
+  local re="^qa-report: AC đã tích \\[x\\] nhưng không có dòng bằng chứng"
+  grep -q "$re" <<<"$3" || return 1
+  ! grep -E '^(qa-report|ac-check):' <<<"$3" | grep -qv "$re" || return 1
+  local n
+  n=$(awk -v p="$1" -v h="$2" '$1 == p && $2 == h {print $3; exit}' "$NOPROOF_F" 2>/dev/null || true)
+  if [ "${n:-0}" -ge 1 ]; then
+    [ "$RETRY" -eq 1 ] && [ "$n" -eq 1 ] && return 0
+    [ "$n" -ge 2 ] || { { awk -v p="$1" '$1 != p' "$NOPROOF_F" 2>/dev/null || true; echo "$1 $2 2"; } > "$NOPROOF_F.tmp" && mv -f "$NOPROOF_F.tmp" "$NOPROOF_F"; }
+    return 1
+  fi
+  { awk -v p="$1" '$1 != p' "$NOPROOF_F" 2>/dev/null || true; echo "$1 $2 1"; } > "$NOPROOF_F.tmp" && mv -f "$NOPROOF_F.tmp" "$NOPROOF_F"
+  return 0
+}
 rebuild_or_rebase() {
   local p="$1" k="$2" kind="$3" why="$4" tag="${5:-red}" did="${6:-verified the merge-queue batch with super-board-merge-train.sh}" ij labs cur rm=() l det
   det=$(detail_lines "$p")
@@ -492,6 +510,18 @@ Next: pm_task_create with project = the review worktree .claude/worktrees/issue-
 Next: the output must show a Pham vi: line (not Khong ghi pham vi), then pm_verdict kind=audit verdict=pass auditedHead=<sha40>, then the ${LABEL} label again
 blocked-by: agent" || true
               card_move "$k" Review || ok=1
+              continue_route=0
+            elif [ "$res" = gate-exit-11 ] && [ -n "$k" ] && noproof_first "$p" "$head" "$det"; then
+              # #1342: the PR body ticks an AC without its `↳` proof line. Presentation, not code: QA fixes the body, no Build round, no loop:rebuild-N.
+              [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ AC without proof line · ${res}
+Did: the merge gate preflight found ticked AC lines with no ↳ proof line; no verify ran
+${det}
+Next: back to QA (card #${k}), no Build round" || true
+              [ "$RETRY" -eq 1 ] || [ "$CARD_RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ AC without proof line · PR #${p} back to QA
+Did: the merge gate preflight refused the PR body before any tree was built
+❌ Not done: ${det}
+Next: QA adds the \`↳ <proof>\` line under each ticked AC of the PR body, then the PR queues again (no rebuild counted)" || true
+              card_move "$k" QA || ok=1
               continue_route=0
             elif [ "$res" = gate-exit-11 ] && grep -q '^qa-report: stale' <<<"$det" && ! grep -E '^(qa-report|ac-check):' <<<"$det" | grep -qv '^qa-report: stale'; then
               [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ stale QA · ${res}
