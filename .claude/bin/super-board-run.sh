@@ -456,7 +456,8 @@ set_card_status() {
   opt_id=$(status_option_id "$name") || {
     log "⚠ Status option '${name}' not present on the board — skipping reconcile"; return 1; }
   local project_id
-  project_id=$(project_node_id) || return $?
+  # #1350: strict read halted (79): the shared recovery (3 tries), then read again; persistent -> exit 79 (callers only test CARD_WRITE_BLOCKED and swallowed a plain return 79)
+  project_id=$(project_node_id) || { local prc=$?; [ "$prc" -eq 79 ] || return "$prc"; recover_read_halt || exit 79; project_id=$(project_node_id) || return $?; }
   gh_checkpoint
   gh_write_once project item-edit --id "$item_id" --project-id "$project_id" \
     --field-id "$STATUS_FIELD_ID" --single-select-option-id "$opt_id" >/dev/null 2>&1 || return $?

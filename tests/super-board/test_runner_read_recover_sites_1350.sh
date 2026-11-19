@@ -116,6 +116,16 @@ reset; export MODE=read FAILS_LEFT=0
 ( rate_limit_skip 79 ) >/dev/null 2>&1; rc=$?
 [ "$rc" = 1 ] && [ ! -e "$TMP/calls" ] && ok "J: 79 with no halt record is not swallowed (returns 1, no --resume)" || fail "J: rc=$rc"
 
+# K: set_card_status — project_node_id (đọc strict) gặp 79: tạm thời -> nhả rồi ghi tiếp (return 0); kéo dài -> exit 79 (caller không nuốt).
+resolve_status_field() { return 0; }; status_option_id() { echo opt; }; gh_checkpoint() { :; }
+gh_write_once() { echo "write $*" >> "$TMP/writes"; return 0; }
+reset; : > "$TMP/writes"; PROJECT_NODE_ID=""; export MODE=read FAILS_LEFT=2; halt
+( set_card_status item1 Blocked; echo "rc=$?" ) > "$TMP/k1.out" 2>/dev/null
+grep -q '^rc=0$' "$TMP/k1.out" && grep -q '^write ' "$TMP/writes" && ok "K1: set_card_status 79 on a transient read halt: released, the write goes through" || fail "K1: $(tr '\n' ' ' < "$TMP/k1.out")"
+reset; PROJECT_NODE_ID=""; export MODE=read FAILS_LEFT=99; halt
+( set_card_status item1 Blocked; echo survived ) > "$TMP/k2.out" 2>/dev/null; rc=$?
+[ "$rc" = 79 ] && ! grep -q survived "$TMP/k2.out" && ok "K2: set_card_status 79 with a persistent failure exits 79" || fail "K2: rc=$rc"
+
 # G: watchdog — quá trần khởi động lại: giữ nguyên không khởi động, và gửi notify đúng một lần.
 if [ "$(uname -s)" = Darwin ]; then
   R="$TMP/repo"; BIN="$R/.claude/bin"; STUB="$TMP/stub"; mkdir -p "$BIN" "$R/.claude/super-board/runner" "$STUB" "$TMP/home"
