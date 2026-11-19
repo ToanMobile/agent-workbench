@@ -987,6 +987,31 @@ PROVISIONAL_TTL_S = 900.0   # a set-up that has not finished in 15 min crashed: 
 LANES = ("build", "qa", "review")   # super-board lanes (run.md): `add --lane` (agent-workbench#93)
 
 
+def _dirty_tracked_paths(wt):
+    """Tập đường dẫn đã track đang bẩn trong wt, hoặc None nếu git không trả kết quả."""
+    r = _git_bytes(wt, "status", "--porcelain", "-z", "--no-renames", "--untracked-files=no")
+    if r.returncode != 0:
+        return None
+    text = r.stdout.decode("utf-8", "surrogateescape")
+    return {e[3:] for e in text.split("\0") if len(e) > 3}
+
+
+def _run_install_in_worktree(wt, ran, preserve_tracked, err_vi, err_en):
+    """Chạy trình cài đặt DevKit trong worktree và giữ nguyên các tệp đã track sạch trước khi cài."""
+    if not ran:
+        return
+    before = _dirty_tracked_paths(wt) if preserve_tracked else None
+    r = subprocess.run(ran, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.stderr.write(r.stdout[-2000:] + r.stderr[-2000:])
+        die(tr(err_vi.format(rc=r.returncode, wt=wt), err_en.format(rc=r.returncode, wt=wt)), 1)
+    if before is not None:
+        after = _dirty_tracked_paths(wt)
+        newly_dirty = sorted(after - before) if after is not None else []
+        if newly_dirty:
+            git(wt, "checkout", "-q", "--", *newly_dirty, check=False)
+
+
 def _reuse_lane(main, wt, branch, base, lane, no_init=False, profile=None):
     """`add --lane` at a path that already is a registered worktree of this repo — the Builder resuming a card super-board-run.sh moved
     back to Ready keeps its issue-<N>-build worktree: set it up again (heal: DevKit links, local config, hooks) instead of refusing a
@@ -1017,12 +1042,11 @@ def _reuse_lane(main, wt, branch, base, lane, no_init=False, profile=None):
     # one an old plain `git worktree add` made has no DevKit and no Library at all: set them up as add does (each step leaves what is there)
     copy_unity_library(main, wt)
     ran = install_args(main, wt, profile) if not no_init else None
-    if ran:
-        r = subprocess.run(ran, capture_output=True, text=True)
-        if r.returncode != 0:
-            sys.stderr.write(r.stdout[-2000:] + r.stderr[-2000:])
-            die(tr(f"cài DevKit vào worktree lane thất bại (exit {r.returncode}); worktree vẫn ở {wt}",
-                   f"DevKit install in the lane worktree failed (exit {r.returncode}); the worktree stays at {wt}"), 1)
+    _run_install_in_worktree(
+        wt, ran, profile is None,
+        "cài DevKit vào worktree lane thất bại (exit {rc}); worktree vẫn ở {wt}",
+        "DevKit install in the lane worktree failed (exit {rc}); the worktree stays at {wt}",
+    )
     cmd_heal(wt, [])
     if state is not None:
         if state.get("adopted"):   # never written (_adopted_state): a fresh one as add writes it, over a tree that holds no work
@@ -1173,12 +1197,11 @@ def cmd_add(cwd, args):
     metas = copy_meta_assets(main, wt)   # K2: trước snapshot, nên là một phần của bước dựng
     unity_libs = copy_unity_library(main, wt)   # W1 R6
     ran = install_args(main, wt, profile) if not no_init else None
-    if ran:
-        r = subprocess.run(ran, capture_output=True, text=True)
-        if r.returncode != 0:
-            sys.stderr.write(r.stdout[-2000:] + r.stderr[-2000:])
-            die(tr(f"cài DevKit vào worktree thất bại (exit {r.returncode}); worktree vẫn ở {wt}",
-                   f"DevKit install in the worktree failed (exit {r.returncode}); the worktree stays at {wt}"), 1)
+    _run_install_in_worktree(
+        wt, ran, profile is None,
+        "cài DevKit vào worktree thất bại (exit {rc}); worktree vẫn ở {wt}",
+        "DevKit install in the worktree failed (exit {rc}); the worktree stays at {wt}",
+    )
     hooks = copy_local_hooks(main, wt) if not no_init else []   # after the installer: only what it does not link (the user's guards)
     shared = share_main_memory(main, wt) if share_memory and not no_init else False   # only when asked; before the snapshot: it is part of the setup
     state = {"branch": branch, "base": start, "main": main, "baseline": snapshot(wt), "fp": FP_VERSION}
