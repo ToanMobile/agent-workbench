@@ -909,3 +909,19 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** self_reload_tick: ff bị file sửa dở của phiên khác chặn nên chỉ swap runner rồi exec; từ đó new == RELOAD_RUN_SUM trả về sớm mỗi tick, không bao giờ thử ff lại; cảnh báo duy nhất đổ lỗi cho runner rồi im; mọi bản sửa kit đã merge chạy bằng code cũ 14 commit
 - **Quy tắc phòng ngừa & Cách fix:** Lối thoát sớm theo blob của một file không được che trạng thái của cả checkout: mỗi tick đang ở nhánh base, HEAD là tổ tiên origin và HEAD != origin thì thử ff lại (reload_catchup_ff); vẫn chặn thì đặt lại runner origin, không exec, không stash, cảnh báo một lần mỗi sha origin kèm đúng các file chặn
 - **Lệnh kiểm tra:** `bash tests/super-board/test_runner_self_reload_catchup_ff.sh`
+
+---
+
+### [INSTINCT-116] Xoá workflow CI không xoá check đỏ cũ trên PR đang mở, gate vẫn chặn
+- **Ngày phát hiện:** 2026-11-19
+- **Hiện tượng lỗi:** Xoá workflow CI không xoá check đỏ cũ trên PR đang mở, gate vẫn chặn
+- **Nguyên nhân:** Merge gate đọc gh pr checks của head PR; kết quả đỏ của workflow đã xoá vẫn gắn trên head cũ nên thẻ bị Blocked (#1328 / PR #1336). Thêm: main đỏ sẵn test trần byte SKILL.md (super-qa 20208 >= 20000) làm mọi PR chạm skill bị chặn.
+- **Quy tắc phòng ngừa & Cách fix:** Sau khi xoá hoặc tắt một workflow, quét check-runs của mọi PR mở (gh api commits/&lt;sha>/check-runs) và cập nhật nhánh PR mang check đỏ cũ; trước khi merge thay đổi skill chạy test_risk_door_blast để biết main đỏ sẵn.
+
+---
+
+### [INSTINCT-117] Giữ worktree của thẻ board bằng EnterWorktree rồi keep làm QA bị Blocked
+- **Ngày phát hiện:** 2026-11-19
+- **Hiện tượng lỗi:** Giữ worktree của thẻ board bằng EnterWorktree rồi keep làm QA bị Blocked
+- **Nguyên nhân:** Phiên agent vào worktree issue-N-build của thẻ board rồi ExitWorktree keep: khóa phiên devkit-session.lock còn tươi (heartbeat 10 phút, hoặc đến khi phiên nhàn rỗi), hook session_lock chặn lệnh ff bằng chứng của lane QA, QA thử 2 lần rồi Blocked 🛡 (#1328, 19/11).
+- **Quy tắc phòng ngừa & Cách fix:** Không vào worktree của thẻ đang trên board bằng EnterWorktree path=...; sửa nhánh PR của thẻ thì dùng worktree riêng, hoặc để lane builder làm. Nếu đã vào thì dừng lượt sớm để khóa nhả (idle ~60 s).

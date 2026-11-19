@@ -310,7 +310,7 @@ run_loop_scenario() {  # $1 = LOOP_MODE, $2 = state dir, $3 = out, $4 = err, $5 
   ( cd "$RR" && PATH="$TMP/rbin:$PATH" LOOP_MODE="$mode" LOOP_STATE_DIR="$sd" SB_GLOBAL_SLOT_DIR="$sd/slots" \
       SB_GITHUB_HALT_FILE="$RR/.claude/super-board/github-halt.json" \
       SB_GITHUB_RATE_RETRIES=1 SB_GITHUB_RATE_DELAY=0 SB_GITHUB_RETRY_DELAY=0 \
-      SB_READ_SKIP_MAX=2 SB_FETCH_RETRY_DELAYS="1 1 1" SB_NOTIFY_SKIP=1 \
+      SB_READ_SKIP_MAX=2 SB_FETCH_RETRY_DELAYS="1 1 1" SB_NOTIFY_SKIP=1 SB_DAEMON=1 \
       bash "$RR/.claude/bin/super-board-run.sh" test >"$out" 2>"$err" ) &
   pid=$!
   while [ "$n" -lt 150 ]; do   # up to ~15 s

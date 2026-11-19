@@ -3084,10 +3084,14 @@ reclaim_stranded_building() {
   # nhánh issue được giữ nguyên để Builder kế tiếp làm tiếp thay vì làm lại từ đầu. Thẻ nhãn `session` (hooks/session_card.sh: task từ
   # chat, phiên đang làm) nằm Building không có lock là bình thường: không trả về Ready, runner sẽ build trùng việc của phiên.
   local only="${1:-}" did="${2:-found no live worker; the last run stopped mid-build}"
-  local issue item_id branch wt wt_branch
-  while IFS=$'\t' read -r issue item_id; do
+  local issue item_id is_session branch wt wt_branch
+  while IFS=$'\t' read -r issue item_id is_session; do
     [ -n "$issue" ] || continue
     issue_locked "$issue" && continue
+    # #1295: a `session` card is only left alone while NO PR runs on branch issue-<N>-*. With an open PR it is real work (card #1295 sat in
+    # Building for a day after its builder finished, and its orphan PR held #1350 through the file-overlap preflight). An unreadable PR list
+    # counts as no PR: the old behaviour.
+    if [ "${is_session:-0}" = 1 ] && [ -z "$(issue_pr_head "$issue" 2>/dev/null || true)" ]; then continue; fi
     # #254: builder đóng issue khi AC đã đạt sẵn trên main (không PR) — thẻ đóng ở Building đi thẳng Done, không quay về Ready.
     local issue_rc=0
     issue_is_open "$issue" || issue_rc=$?
@@ -3133,11 +3137,11 @@ Next: builder (next tick${branch:+, continues on the branch})" >/dev/null 2>&1 |
 $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" --arg only " $only " '
     .items[]
     | select(.status == "Building" and .content.type == "Issue")
-    | select([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("session") | not)
     | (" " + (.content.number | tostring) + " ") as $n
     | select($only == "  " or ($only | contains($n)))
     | select(((.content.assignees // []) - [$bot]) | length == 0)
-    | [(.content.number | tostring), (.id // "")] | @tsv')
+    | [(.content.number | tostring), (.id // ""),
+       (if ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index("session")) then "1" else "0" end)] | @tsv')
 EOF
 }
 
