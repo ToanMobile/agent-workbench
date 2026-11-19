@@ -23,7 +23,7 @@
 #                                 board, #637) không mang ac-open: đóng issue, card Done, comment ✅ merged <sha>
 #   red · gate-exit-11            thẻ về Ready với loop:rebuild-(K+1) (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn. gate-exit-11 = preflight
 #                                 (qa-report / AC) chặn trước khi dựng cây: comment nói nguồn đó, không nói verify đỏ (#639).
-#   conflict · gate-exit-2/5/14   thẻ về Ready với loop:rebase (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn
+#   conflict · gate-exit-2/5/14   thẻ về Ready với loop:rebase (#1319: chỉ gate-exit-2 = thiếu rebase thuần không tính rebuild_cap, chạm cap vẫn về Ready; conflict thật vẫn chịu cap → Blocked 🛡); gỡ nhãn
 #   gate-exit-7/8                 comment 🙋 chép nguyên văn dòng approval-request/human-gate/needs-you, needs-you mark, Blocked, một tin
 #                                 super-board-notify.py approve-button (cùng chữ ký merge gate dùng); gỡ nhãn
 #   gate-exit-3                   comment chép dòng của gate (GitHub từ chối merge / PR đóng), Blocked; gỡ nhãn
@@ -82,6 +82,8 @@ BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 NOTIFY="$HERE/super-board-notify.py"
 posint() { case "$1" in ''|*[!0-9]*|0) echo "$2" ;; *) echo "$1" ;; esac; }
 REBUILD_CAP=$(posint "$(echo "$CONFIG_JSON" | jq -r '.rebuild_cap // empty')" 2)
+# #1318 R5: a pure rebase never counts toward rebuild_cap, so it has its own ceiling per PR (the brake against Ready -> loop:rebase -> queue forever).
+REBASE_PURE_MAX=$(posint "${SB_REBASE_PURE_MAX:-}" 5)
 REPO=$(echo "$CONFIG_JSON" | jq -r '.repo.remote // ""' | sed -E 's#^https?://github\.com/##; s#\.git$##')
 REPO_PATH=$(echo "$CONFIG_JSON" | jq -r '.repo.path // "."')
 export SB_REPO_PATH="$REPO_PATH"
@@ -272,7 +274,7 @@ detail_lines() {
       print l; used += length(l) + 1 }
     END { if (cut) print "… (rest of the gate log is in the merge-queue output)" }' <<<"$raw"
 }
-# rebuild_or_rebase <PR> <issue> <rebuild|rebase> <why> [tag] [did]: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
+# rebuild_or_rebase <PR> <issue> <rebuild|rebase|rebase-pure> <why> [tag] [did]: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
 # tag / did: chữ đầu và dòng Did của comment rebuild (mặc định của verify đỏ; preflight exit 11 truyền chữ riêng, #639).
 # Trả 0 chỉ khi các bước bắt buộc (nhãn loop:*, card_move) xong. Lượt route lại (RETRY=1): không comment lại; nhãn loop:* đã gắn ở lượt
 # trước (LABEL_DONE=1) thì không gắn lần nữa (không đẩy loop:rebuild-N lên hai lần cho cùng một lần đỏ).
@@ -283,6 +285,9 @@ RETRY=0; LABEL_DONE=0; CARD_RETRY=0; CARD_UNREAD=0; CARD_UNKNOWN=0
 # bị sửa/xoá" (EN: "UNVERIFIED — N existing test files were edited") VÀ đây là lần đầu cho head này. Sổ merge-queue.unverified: "<PR> <head> <n>";
 # head mới đếm lại từ 1; route lại (RETRY=1) không đếm thêm; lần thứ hai cùng head (RETRY=0) trả 1 để đi đường cũ.
 UNVERIFIED_F="$QDIR/merge-queue.unverified"
+REBASE_PURE_F="$QDIR/merge-queue.rebase-pure"   # "<PR> <pure rebases so far>" (#1318 R5)
+# The ledger counts pure rebases of a PR that is still in play; a PR that merged or left the queue Blocked starts from zero if it comes back.
+rebase_pure_drop() { [ -f "$REBASE_PURE_F" ] || return 0; awk -v p="$1" '$1 != p' "$REBASE_PURE_F" > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"; }
 unverified_edited_first() {
   grep -Eq 'CHƯA XÁC MINH — [0-9]+ file test đã có bị sửa|UNVERIFIED — [0-9]+ existing test files? (was|were) edited' <<<"$3" || return 1
   local n
@@ -327,13 +332,28 @@ rebuild_or_rebase() {
     rch=$(printf '%s\n%s' "$why" "$det" | python3 -I "$HERE/super-board-root-cause-hash.py" hash --lane review) || rch=""
     prevh=$(printf '%s' "$ij" | python3 -I "$HERE/super-board-root-cause-hash.py" last --from "[merge-queue]") || prevh=""
   fi
-  if [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
-  if [ "$cur" -ge "$REBUILD_CAP" ]; then
+  if [ "$kind" != rebase-pure ] && [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
+  # #1319: only a pure rebase (`rebase-pure`: train gate-exit-2, edited-test approval stale because the base moved, no conflicting file)
+  # is mechanical and never counts toward rebuild_cap: a card at the cap that only needs it still goes Ready `loop:rebase`. A real
+  # conflict (`conflict`, gate-exit-5/14) stays a bounce held by the cap (the brake against Ready → loop:rebase → queue forever),
+  # and so does a red verify after the rebase.
+  if [ "$kind" != rebase-pure ] && [ "$cur" -ge "$REBUILD_CAP" ]; then
     [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
       "train-result for PR #${p}: ${why}${det:+
 ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
-    card_move "$k" Blocked
-    return
+    card_move "$k" Blocked; local brc=$?
+    [ "$brc" -ne 0 ] || rebase_pure_drop "$p"
+    return "$brc"
+  fi
+  if [ "$kind" = rebase-pure ]; then
+    local rn
+    rn=$(awk -v p="$p" '$1 == p {print $2; exit}' "$REBASE_PURE_F" 2>/dev/null || true); rn=$(( ${rn:-0} + 1 ))
+    if [ "$rn" -gt "$REBASE_PURE_MAX" ]; then
+      [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "pure rebase ceiling ${REBASE_PURE_MAX} reached: main keeps moving past this PR's approval"         "PR #${p} needed ${rn} pure rebases (${why})" "a person looks at why main keeps outrunning this card, then drags it to Ready"
+      card_move "$k" Blocked; local prc=$?
+      [ "$prc" -ne 0 ] || rebase_pure_drop "$p"
+      return "$prc"
+    fi
   fi
   if [ "$kind" = rebuild ]; then
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
@@ -347,6 +367,12 @@ Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "wha
 root-cause-hash: ${rch}}" || true
   else
     add_label "$k" "loop:rebase" || return 1
+    # Count the pure rebase only now that its label is on: a failed add_label is routed again and must not count twice.
+    if [ "$kind" = rebase-pure ]; then
+      { awk -v p="$p" '$1 != p' "$REBASE_PURE_F" 2>/dev/null || true; echo "$p $rn"; } > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"
+    fi
+    # R9: a pure rebase carries no root-cause-hash line (R2); a conflict does.
+    rhl=""; { [ "$kind" != rebase-pure ] && [ -n "$rch" ]; } && rhl=$'\nroot-cause-hash: '"${rch}"
     LABEL_DONE=1
     # tag ở nhánh rebase: `conflict`, hoặc `merge refused` khi train in lời git/hook (gate-exit-5 không file xung đột, #775). Chỉ
     # `merge refused` chép train-detail (một nơi quyết định: route_one chọn tag); conflict không kèm dòng nào, như comment PR.
@@ -355,8 +381,7 @@ root-cause-hash: ${rch}}" || true
 Did: merged the PR head into origin/<base> in the merge-queue batch
 ❌ Not done: ${why}${det:+; the git / hook lines:
 ${det}}
-Next: Builder rebases onto the base, verification green, then Review again${rch:+
-root-cause-hash: ${rch}}" || true
+Next: Builder rebases onto the base, verification green, then Review again${rhl}" || true
   fi
   card_move "$k" Ready
 }
@@ -403,7 +428,7 @@ attempt_retry() {
 Next: a person looks at why, then labels the PR ${LABEL} again${k:+ (card #$k is Blocked)}" || true
   # Trần: PR rời hàng dù card_move / tra thẻ lỗi, để không route lại vô hạn mỗi tick.
   [ "$ok" -eq 0 ] || say "PR #${p}: moving its card to Blocked failed too; the PR leaves the queue anyway (comment above)"
-  unlabel "$p"; attempt_clear "$p"
+  unlabel "$p"; attempt_clear "$p"; rebase_pure_drop "$p"
 }
 # route_one <PR> <kết quả>: một train-result. Nhãn chỉ gỡ khi mọi bước bắt buộc của nhánh trả 0; bước nào lỗi (lỗi đọc qua read_failed)
 # thì giữ nhãn, ghi merge-queue.pending và tính một lần thử (halt 79 thì không tính): lượt sau route lại từ pending, chỉ làm lại các bước
@@ -547,6 +572,8 @@ Next: back to Build${k:+ (card #$k)}" || true
             elif [ "$res" = gate-exit-14 ]; then
               # Gate thoát 14: GitHub báo CONFLICTING (driver gộp chỉ có ở local), không verify nào chạy.
               tag="GitHub CONFLICTING"; why="${res} (GitHub reports the PR CONFLICTING with the base; nothing verified)"; det=""
+            elif [ "$res" = gate-exit-2 ]; then
+              tag=conflict; why="${res} (the base moved past the edited-test approval; a rebase pass only, no conflicting file)"; det=""
             else
               tag=conflict; why="${res} (the base does not merge in cleanly)"; det=""
             fi
@@ -554,7 +581,8 @@ Next: back to Build${k:+ (card #$k)}" || true
 Did: merged this PR into origin/<base> for the merge-queue batch${det:+
 ${det}}
 Next: rebase pass${k:+ (card #$k)}" || true
-            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebase "$why" "$tag" || ok=1 ;;
+            rk=rebase; [ "$res" = gate-exit-2 ] && rk=rebase-pure
+            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" "$rk" "$why" "$tag" || ok=1 ;;
           gate-exit-7|gate-exit-8)
             det=$(detail_lines "$p")
             if [ -n "$k" ]; then
@@ -629,6 +657,7 @@ Next: a fresh review of the new head, then a new approved-head and the ${LABEL} 
     return 0
   fi
   unlabel "$p"; attempt_clear "$p"
+  [ "$res" != merged ] || rebase_pure_drop "$p"
 }
 # ---- train nền theo PR (#676) -----------------------------------------------------------------------------------------------------------
 # merge-queue.inflight: "<PR> <head> <ref> <issue đóng|0> <pid> <dir>" mỗi dòng — train của PR đang chạy nền (pid = subshell phóng nó),
