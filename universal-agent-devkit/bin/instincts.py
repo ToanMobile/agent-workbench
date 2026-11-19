@@ -109,6 +109,29 @@ def format_entry(inst_id, title, cause=None, rule=None, symptom=None, check=None
     return "\n".join(lines) + "\n"
 
 
+def _is_trunk_main_default(path: Path) -> bool:
+    """#1372: True when `path` is the default `.agents/instincts.md` of a MAIN checkout whose repo has trunk mode switched ON explicitly
+    (`devkit.trunkMode` = true, what `agent-kit worktree trunk on` writes) and WORKTREE_TRUNK_MODE is not 0. The main checkout is merge-only there:
+    a lesson written into its tracked file leaves it dirty, so `git merge --ff-only origin/main` fails and the board runner reloads only
+    super-board-run.sh. A repo with no `devkit.trunkMode` key keeps the old behaviour (a main session writes to main, test_learn_worktree_root),
+    as do a linked worktree, a non-repo and any other file. A failed git read counts as 'not trunk main'."""
+    path = Path(path)
+    if path.name != "instincts.md" or path.parent.name != ".agents":
+        return False
+    if os.environ.get("WORKTREE_TRUNK_MODE", "1") == "0":
+        return False
+    root = path.parent.parent
+
+    def git(*a: str) -> str:
+        res = subprocess.run(["git", "-C", str(root), *a], capture_output=True, text=True)
+        return res.stdout.strip() if res.returncode == 0 else ""
+
+    if git("config", "--get", "devkit.trunkMode").lower() not in ("true", "1", "yes", "on"):
+        return False
+    gitdir, common = git("rev-parse", "--git-dir"), git("rev-parse", "--git-common-dir")
+    return bool(gitdir and common) and (root / gitdir).resolve() == (root / common).resolve()
+
+
 def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=None,
                   force=False, dry_run=False, source=None, found_on=None, seed=None, seeded=None):
     """Returns (status, inst_id, entry): status is "added", "dry-run" or "duplicate"
@@ -118,6 +141,10 @@ def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=
     cho post-fix-gate; người thua cuộc đua thấy file đã có nội dung nên không seed và không báo "Created")."""
     if not md_escape(title):
         raise ValueError(tr("tiêu đề bài học rỗng", "the lesson title is empty"))
+    if not dry_run and _is_trunk_main_default(path):
+        raise ValueError(tr(
+            f"{path} nằm trong main checkout ở trunk mode (main chỉ để gộp, ghi vào đây làm main bẩn và chặn ff). Chạy lệnh trong một worktree riêng (EnterWorktree hoặc `agent-kit worktree add`).",
+            f"{path} is in a trunk-mode main checkout (merge-only: writing here leaves main dirty and blocks its fast-forward). Run this from your own worktree (EnterWorktree or `agent-kit worktree add`)."))
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a+", encoding="utf-8") as f:
         if fcntl is not None:
