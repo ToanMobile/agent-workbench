@@ -50,8 +50,6 @@ CLI: push_gate.py <dir> [<rev>] [--tag-remote <name>] [--dst <remote> <branch>] 
 → exit 0 covered · 2 not covered (reason on stdout).
 100% standard library.
 """
-import calendar
-import datetime
 import glob
 import json
 import os
@@ -73,8 +71,8 @@ INTEGRATE = ("push lên trunk / release/* chỉ qua `agent-kit integrate` (đi�
              "Repo đi PR: push nhánh PR bằng tên (`git push origin <nhánh>`), merge gate lo phần còn lại")
 APPROVED = "Test-approved-by:"
 # 13/11 (chủ repo bỏ Grok): chỉ reviewer antigravity duyệt test sửa; chữ trong trailer phải khớp audit_reviewer().
-# #1258: `ocr <session-uuid>` is the second cross-reviewer (OpenCodeReview LLM range review, ocr_review below); one of the two is enough.
-APPROVED_VALUE = re.compile(r"(antigravity|ocr)\s+(T\d{4,}-[a-z0-9-]{1,48}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+# #1332: bỏ người duyệt `ocr` (#1258) — LLM của OCR gỡ hẳn; trailer `ocr <uuid>` giờ là giá trị lạ, bị từ chối.
+APPROVED_VALUE = re.compile(r"(antigravity)\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
 HEX_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
@@ -867,99 +865,6 @@ def _repo_tasks(top, task_id=None, any_project=False):
         yield task
 
 
-OCR_BINS = ("/opt/homebrew/bin/ocr", "/usr/local/bin/ocr", "/usr/bin/ocr")    # fixed install paths: an author-edited $PATH never picks the binary
-OCR_TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|androidtest|unittest|integrationtest|testfixtures|specs?|mocks?|__mocks__)/"
-                           r"|(^|[/_.-])tests?[_.-]|\.(test|spec)\.|(Test|Tests|Spec)\.\w+$|(_test|_spec)\.\w+$", re.I)
-OCR_OK_SEVERITY = ("low", "medium", "info", "nit")      # anything else (high, critical, unknown) blocks
-
-
-def _same_repo(a, b):
-    """True when two directories belong to one repository (same git-common-dir): the main checkout, a linked worktree and the merge
-    gate's .merge-scratch-* all share it, so an OCR session made in any of them is for this repo."""
-    def common(d):
-        rc, out = git(d, "rev-parse", "--path-format=absolute", "--git-common-dir")
-        return os.path.realpath(out.strip()) if rc == 0 and out.strip() else None
-    ca = common(a) if a and os.path.isdir(a) else None
-    return ca is not None and ca == common(b)
-
-
-def _ocr_json(binary, top, sub, session_id):
-    try:
-        res = subprocess.run([binary, "session", sub, "--json", "--repo", top, session_id], capture_output=True, text=True,
-                             timeout=30, stdin=subprocess.DEVNULL)
-        return json.loads(res.stdout) if res.returncode == 0 else None
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
-
-
-def ocr_review(top, session_id, head):
-    """(True, why) when OpenCodeReview's OWN session store holds an independent LLM review of exactly `head`; (False, why) otherwise
-    (#1258; fail closed on every doubt). Kill switch: DEVKIT_OCR_CROSS_REVIEW=0. Accepted only when ALL hold: `head` is 40 hex; the
-    session is read through `ocr session show|comments --json` (never a file in the repo or scratch dir); review_mode is `range` with
-    a model recorded (so `ocr delegate`, where the host agent is the author, and workspace mode never count); the run completed with
-    no failed file / LLM failure / abort; resolved_head == head and resolved_base == merge-base(trunk, head); the session started
-    after the head commit; every edited (M/D/R) test file of base..head is in its completed coverage; no critical/high/unknown finding.
-    Threat model: the author agent cannot make a session by writing evidence into the work tree, only through the `ocr` it
-    does not control (fixed binary path; DEVKIT_OCR_BIN is honoured only when _seal_fixture(top): the pm-home switch AND the repo itself
-    under a temp dir, as the author can set the env but not move the real repo). Accepted residuals, same class as a hand-written
-    ~/.antigravity-pm record: a same-uid agent that edits ocr's store under ~, and the author agent running `ocr review` itself on its
-    own head (same binary and uid, so it is not an independent reviewer by construction: the independence rests on the LLM, not the uid)."""
-    if os.environ.get("DEVKIT_OCR_CROSS_REVIEW") == "0":
-        return False, "DEVKIT_OCR_CROSS_REVIEW=0"
-    if not isinstance(head, str) or not SHA40.fullmatch(head) or not re.fullmatch(r"[0-9a-f-]{36}", str(session_id)):
-        return False, "ocr: head must be 40 hex and the session a uuid"
-    binary = os.environ.get("DEVKIT_OCR_BIN") if _seal_fixture(top) else None
-    binary = binary or next((b for b in OCR_BINS if os.access(b, os.X_OK)), None)
-    if not binary or not os.access(binary, os.X_OK):
-        return False, "ocr: binary not found"
-    show = _ocr_json(binary, top, "show", session_id)
-    summ = show.get("summary") if isinstance(show, dict) else None
-    man = summ.get("run_manifest") if isinstance(summ, dict) else None
-    if not isinstance(man, dict) or not isinstance(man.get("input"), dict) or not isinstance(man.get("coverage"), dict):
-        return False, f"ocr: no readable session {session_id}"
-    inp = man["input"]
-    if summ.get("review_mode") != "range" or inp.get("mode") != "range" or not summ.get("model"):
-        return False, "ocr: not an LLM range review (delegate/workspace/no model)"
-    if man.get("terminal_state") != "complete" or summ.get("aborted") or summ.get("legacy") or summ.get("failed_files") \
-            or summ.get("llm_failures") or man["coverage"].get("failed"):
-        return False, "ocr: session not complete"
-    if not _same_repo(str(summ.get("repo_dir") or ""), top) or inp.get("resolved_head") != head:
-        return False, "ocr: session is for another repo or head"
-    trunk = _trunk_ref(top)
-    rc, mb = git(top, "merge-base", trunk, head) if trunk else (1, "")
-    mb = mb.strip()
-    if rc != 0 or inp.get("resolved_base") != mb or not SHA40.fullmatch(mb):
-        return False, "ocr: session base is not merge-base(trunk, head)"
-    rc, ct = git(top, "log", "-1", "--format=%ct", head)
-    try:
-        st = datetime.datetime.fromisoformat(str(summ.get("start_time")).replace("Z", "+00:00"))
-        if st.tzinfo is None:
-            return False, "ocr: start_time has no timezone"
-        if rc != 0 or st.timestamp() < int(ct):
-            return False, "ocr: session started before the head commit"
-    except ValueError:
-        return False, "ocr: unreadable start_time"
-    rc, names = git(top, "diff", "--name-only", "--diff-filter=MDR", "--no-renames", "-z", f"{mb}..{head}")
-    done = {c.get("path") for c in man["coverage"].get("completed") or [] if isinstance(c, dict)}
-    missing = [f for f in names.split("\0") if f and OCR_TEST_PATH.search(f) and f not in done] if rc == 0 else ["?"]
-    if missing:
-        return False, f"ocr: edited test not covered: {missing[0]}"
-    comments = _ocr_json(binary, top, "comments", session_id)
-    if not isinstance(comments, list) or any(not isinstance(c, dict) or str(c.get("severity", "")).lower() not in OCR_OK_SEVERITY
-                                             for c in comments):
-        return False, "ocr: comments unreadable or a blocking/unknown finding"
-    return True, "ocr review"
-
-
-def trailer_head(top, word, ident, sha):
-    """The reviewed commit an accepted `Test-approved-by: <word> <ident>` trailer (on commit `sha`) points at: antigravity -> the PM
-    record's auditedHead; ocr -> the parent of the (empty) trailer commit, which approved() already matched to the session head."""
-    if word == "ocr":
-        rc, out = git(top, "rev-parse", f"{sha}^")
-        return out.strip() if rc == 0 and SHA40.fullmatch(out.strip()) else None
-    return audited_head(top, ident)
-
-
 def approved(top, rng):
     """(True, note) when a commit of rng ends with the trailer `Test-approved-by: antigravity <task-id>` (git's own trailer
     parsing: the last paragraph, line-anchored) and antigravity-pm recorded an audit pass for that task (audit_record) whose
@@ -984,18 +889,6 @@ def approved(top, rng):
             whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task`)")
             continue
         word, task_id = m.group(1), m.group(2)
-        if word == "ocr":
-            # #1258: the standard flow is an empty trailer commit on top of the reviewed head: its parent is the session's head, and the
-            # trailer commit's tree and the range tip's tree must equal the parent's (any later change needs a new review).
-            rc_tip, tip_out = git(top, "rev-list", "-1", rng)
-            trees = git(top, "rev-parse", f"{sha}^{{tree}}", f"{sha}^^{{tree}}", f"{tip_out.strip()}^{{tree}}", f"{sha}^") if rc_tip == 0 else (1, "")
-            got = trees[1].split() if trees[0] == 0 else []
-            lows = range_lower_bounds(top, rng)
-            ok, why = ocr_review(top, task_id, got[3]) if len(got) == 4 and len(set(got[:3])) == 1 else (False, "tree differs from the reviewed head")
-            if ok and lows and all(head_after(top, low, got[3]) for low in lows):
-                return True, f"{APPROVED} {word} {task_id} ({why})"
-            whys.append(f"{APPROVED} {word} {task_id}: {why if not ok else 'reviewed head is not after the range base'}")
-            continue
         # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
         # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
         if pm_home_overridden() and not pm_home_test_fixture():

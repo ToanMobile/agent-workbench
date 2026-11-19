@@ -213,8 +213,7 @@ lệnh và số dòng vào PROGRESS và file duyệt.
 - **S**: 1 bên, Claude bối cảnh sạch (Claude lỗi/limit thì OCR thay); không `plan_review`.
 - **M**: 2 bên, Claude bối cảnh sạch + OCR; không `plan_review`. Một bên lỗi công cụ thì đi tiếp 1 bên.
 - **L**: Antigravity `plan_review` trước code, rồi 2 bên song song trên head cuối: Claude bối cảnh sạch, OCR.
-- **OCR** = `ocr-review -b … --out …`; máy không có endpoint LLM (17/11: LLM hết credit, chủ repo cho chạy delegate toàn bộ) thì
-  helper tự ra spec delegation, đưa spec cho một subagent ngữ cảnh mới, phát hiện của nó là lượt OCR. Từ 17/11 Antigravity
+- **OCR** = `ocr-review -b … --out …`; LLM của OCR đã gỡ (#1332, 19/11), helper luôn ra spec delegation, đưa spec cho một subagent ngữ cảnh mới, phát hiện của nó là lượt OCR. Từ 17/11 Antigravity
   không còn là bên review nội dung ở M/L (chủ repo); Grok không còn là bên review (13/11). Bên dính limit/429/quota/lỗi công cụ (không
   phải FAIL nội dung): thử lại 1 lần, còn lỗi thì bỏ bên đó và đi tiếp 2→1, không dừng task, không ghi BLOCKED vì thiếu
   reviewer; tối thiểu 1 bên PASS thật; ghi bên bị bỏ, lý do và log lỗi.
