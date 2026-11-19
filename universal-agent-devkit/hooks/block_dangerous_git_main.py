@@ -2389,9 +2389,10 @@ CV_REGISTER_MSG = "ghi sổ phiên claude-verify từ phiên agent"
 _CV_DECL = ("export", "declare", "typeset", "local", "readonly")
 
 
-def _cv_register(text, depth=0):
-    """(T0005) Thêm: gán CLAUDE_CODE_SESSION_ID trong lệnh có gọi claude_verify.py (seal đọc reviewer từ biến này). Chỉ tách tiếp
-    chuỗi là mã shell (sau `-c` của shell, eval, xargs), không tách chuỗi dữ liệu như `commit -m "..."`."""
+def _cv_register(text, depth=0, calls_cv=None):
+    """(T0005) Thêm: gán CLAUDE_CODE_SESSION_ID trong lệnh có nhắc claude_verify (seal đọc reviewer từ biến này; xét trên cả lệnh
+    gốc, nên gán ở tầng ngoài còn lệnh trong `bash -c` vẫn bị bắt). Mọi token có khoảng trắng được tách tiếp (mã shell có thể đi qua
+    pipe, `<<<`, `-ce`), trừ thông điệp ngay sau `-m`/`--message` (commit nhắc chữ)."""
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
@@ -2399,7 +2400,8 @@ def _cv_register(text, depth=0):
     except ValueError:
         return bool(re.search(r"\bSB_RUNNER_REGISTER\s*=|claude_verify\.py['\"]?\s+['\"]?register\b", text)
                     or (re.search(r"\bCLAUDE_CODE_SESSION_ID\s*=", text) and "claude_verify" in text))
-    calls_cv = any(os.path.basename(t) == "claude_verify.py" for t in toks)
+    if calls_cv is None:
+        calls_cv = "claude_verify" in text
     for i, t in enumerate(toks):
         prev = toks[i - 1] if i else ""
         if t.startswith("SB_RUNNER_REGISTER=") or (t == "SB_RUNNER_REGISTER" and prev in _CV_DECL):
@@ -2408,8 +2410,7 @@ def _cv_register(text, depth=0):
             return True
         if os.path.basename(t) == "claude_verify.py" and i + 1 < len(toks) and toks[i + 1] == "register":
             return True
-        code = prev == "-c" or re.fullmatch(r"-[a-z]*c", prev or "x") or os.path.basename(prev) in ("eval", "xargs")
-        if depth < 3 and code and re.search(r"\s", t) and _cv_register(t, depth + 1):
+        if depth < 3 and prev not in ("-m", "--message") and re.search(r"\s", t) and _cv_register(t, depth + 1, calls_cv):
             return True
     return False
 

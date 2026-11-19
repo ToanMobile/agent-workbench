@@ -169,7 +169,8 @@ def lock_builders(top, head):
 
 def session_problem(top, head, issue, reviewer, recorded_builders=()):
     """Lý do từ chối phiên reviewer của thẻ `issue`, hoặc None; lỗi kiểm → Unchecked."""
-    builders = ledger_sessions(top, "build", issue) | lock_builders(top, head) | set(recorded_builders)
+    build_rows = ledger_rows(top, "build", issue)
+    builders = {s for s, _ in build_rows} | lock_builders(top, head) | set(recorded_builders)
     builders.discard("")
     if not builders:
         return f"không biết phiên builder của thẻ #{issue} (sổ builders rỗng): claude-verify chỉ dùng cho thẻ board giao"
@@ -181,7 +182,7 @@ def session_problem(top, head, issue, reviewer, recorded_builders=()):
     if not reviews:
         return f"phiên reviewer không có trong sổ reviewers của thẻ #{issue} (runner chưa giao review cho phiên này)"
     # T0005: reviewer của vòng trước (sid đã lộ trong sổ/log worker) không duyệt được commit của lượt build sau nó.
-    builds = [t for _, t in ledger_rows(top, "build", issue)]
+    builds = [t for _, t in build_rows]
     if builds and max(reviews) <= max(builds):
         return f"phiên reviewer được giao trước lượt build mới nhất của thẻ #{issue}: chỉ reviewer giao sau lượt build đó mới duyệt được"
     return None
@@ -211,7 +212,7 @@ def added_lines(top, base, head):
     return files
 
 
-def _finding_problem(top, head, f, lines):
+def _finding_problem(top, head, base, f, lines):
     if not isinstance(f, dict) or not all(isinstance(f.get(k), str) and f[k].strip() for k in ("id", "severity", "file", "snippet")):
         return "finding thiếu id/severity/file/snippet"
     if f["severity"] not in SEVERITIES:
@@ -221,12 +222,15 @@ def _finding_problem(top, head, f, lines):
         return f"finding {f['id']}: thiếu số dòng (line)"
     if f["file"] not in lines:
         return f"finding {f['id']}: {f['file']} không thuộc diff base..head"
-    if f["severity"] != "pre-existing" and ln not in lines[f["file"]]:
+    # #1323: file bị xoá ở head (thuộc diff, không có ở head) → dòng và snippet đối chiếu với base; không có hunk thêm để đòi.
+    rc, _ = git(top, "cat-file", "-e", f"{head}:{f['file']}")
+    ref, where = (head, "head") if rc == 0 else (base, "base (file đã xoá ở head)")
+    if rc == 0 and f["severity"] != "pre-existing" and ln not in lines[f["file"]]:
         return f"finding {f['id']}: {f['file']}:{ln} không nằm trong hunk thêm ở head"
-    rc, text = git(top, "show", f"{head}:{f['file']}")
+    rc, text = git(top, "show", f"{ref}:{f['file']}")
     rows = text.split("\n") if rc == 0 else []
     if ln > len(rows) or f["snippet"].strip() not in rows[ln - 1]:
-        return f"finding {f['id']}: snippet không khớp {f['file']}:{ln} ở head"
+        return f"finding {f['id']}: snippet không khớp {f['file']}:{ln} ở {where}"
     return None
 
 
@@ -268,7 +272,7 @@ def seal(repo, head, report_path, branch):
     if lines is None:
         return 3, "git diff base..head lỗi"
     for f in rep["findings"]:
-        why = _finding_problem(top, head, f, lines)
+        why = _finding_problem(top, head, mb.strip(), f, lines)
         if why:
             return 2, why
     why = session_problem(top, head, issue, reviewer)
