@@ -97,6 +97,7 @@ install_stubs() {
   ready_card_held() { return 1; }
   resolve_worker_account() { POOL_ENGINE=""; POOL_ACCT=""; POOL_CFG=""; return 0; }
   note_worker_limit() { :; }
+  worker_session_args() { :; }   # #1328: sổ claude-verify không thuộc phạm vi test này; không stub thì log runner hiện tại có thêm dòng ⚠ so với runner gốc
   cd "$TMP/repo" || exit 1
 }
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
