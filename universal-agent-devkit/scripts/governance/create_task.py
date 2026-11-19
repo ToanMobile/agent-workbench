@@ -32,6 +32,7 @@ import re
 import json
 import argparse
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -833,11 +834,13 @@ def record_new_card(session_id, url):
         if not isinstance(data, dict):
             data = {}
         cutoff = time.time() - NEW_CARD_WINDOW_S
-        data = {k: v for k, v in data.items() if isinstance(v, dict) and v.get("ts", 0) >= cutoff}
+        data = {k: v for k, v in data.items() if isinstance(v, dict) and isinstance(v.get("ts"), (int, float))
+                and not isinstance(v.get("ts"), bool) and v["ts"] >= cutoff}
         data[session_id] = {"ts": time.time(), "url": url}
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+        # Tên tạm riêng mỗi lần ghi: sổ dùng chung giữa các worktree, hai tiến trình song song không đụng file tạm của nhau.
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False) as tmp:
+            tmp.write(json.dumps(data, ensure_ascii=False))
+        os.replace(tmp.name, path)
     except OSError as e:
         print(f"   ⚠️  Không ghi được sổ --new-card {path}: {e}", file=sys.stderr)
 
@@ -971,9 +974,11 @@ def main():
     # 24/10: trước đây chỉ 🟢 mới gom, mà gần như mọi thẻ ghi 🟡 nên không bao giờ gom (người dùng: "gom … không hoạt động").
     # Only the risk LABEL counts, not the description after it: an emoji wins; without one, the first word (High / Cao).
     # --from-file --title đọc body từ file (không truyền --risk/--blocked-by), nên kiểm luôn mục Risk / Blocked by của body.
-    risk_text = args.risk if args.risk is not None else "\n".join(section(body, "Risk")).strip()
+    # --from-file (kể cả --title): body của file là nguồn duy nhất, cờ CLI --risk/--blocked-by đã bị bỏ qua (cảnh báo ở trên).
+    cli_risk, cli_blocked = (None, None) if args.from_file else (args.risk, args.blocked_by)
+    risk_text = cli_risk if cli_risk is not None else "\n".join(section(body, "Risk")).strip()
     low_risk = not is_high(risk_text)
-    has_blocker = bool(args.blocked_by) or [l.strip() for l in section(body, "Blocked by") if l.strip()] not in ([], ["- None."])
+    has_blocker = bool(cli_blocked) or [l.strip() for l in section(body, "Blocked by") if l.strip()] not in ([], ["- None."])
     # Nhãn ngoài bug/feature/qa (needs-device…) có tác dụng với runner; đường gom không áp nhãn lên thẻ cũ → thẻ riêng.
     plain_labels = set(auto_labels(title, args.labels)) <= KINDS
     batch_labels = []

@@ -6318,6 +6318,7 @@ def suite_env():
             "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
             "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
             "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
+            "CLAUDE_CODE_SESSION_ID",  # #1333: create_task.py áp hạn mức --new-card theo id phiên; suite không mang id của phiên cha
             "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",  # `git -c k=v commit` reaches the hook as GIT_CONFIG_PARAMETERS
             "DEVKIT_LEDGER_ROOT",  # regression_gate's hint for THIS run: a gate a suite starts on a scratch repo reads that repo's own ledger
             # CI=true của worker ép --full. Để lọt vào suite thì gate lồng (test_postfix_gate) chặn file test mới.

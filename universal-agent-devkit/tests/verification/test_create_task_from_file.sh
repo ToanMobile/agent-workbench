@@ -81,7 +81,7 @@ grep -q "Chưa có mô tả chi tiết" "$TMP/out" && fail "1c vẫn ra body m�
 grep -qF "$TITLE" "$TMP/out" && ok "1d title lấy từ --title" || fail "1d title sai"
 
 # 2. Chạy thật (gh giả): issue create nhận đúng body từ file.
-rc=$(run --from-file "$TMP/card.md" --title "$TITLE")
+rc=$(run --new-card "kiểm đường tạo thẻ từ file" --from-file "$TMP/card.md" --title "$TITLE")
 [ "$rc" = "0" ] && [ "$(created_body | grep -c FROMFILE-MARKER-123)" = "1" ] && ok "2 gh issue create nhận body của file" || fail "2 rc=$rc"
 
 # 3. File thiếu ## Problem → exit 2 kèm lý do; log gh rỗng (assert 3c) nên thẻ chưa được tạo.

@@ -1078,7 +1078,8 @@ def escape_check(run: Run, repo: str, scratch: str, sha: str, matrix_path, slug:
             "--new-card", "gate scoped lọt lưới", "--labels", "bug", "--title", title, "--problem", problem,
             "--fix", "Thêm cạnh/luật để bin/scoped_gate.py (hoặc watch_files của %s) chọn test này khi đổi các file trên." % e["id"],
             "--ac", "Gate --scoped tại %s chạy %s" % (e["sha"][:12], ", ".join(e["tests"]) or e["id"]),
-            "--risk", "🟡 Medium — gate PR báo xanh mà test liên quan không chạy", "--blocked-by", "None."], cwd=repo, timeout=300)
+            "--risk", "🟡 Medium — gate PR báo xanh mà test liên quan không chạy", "--blocked-by", "None."], cwd=repo, timeout=300,
+            env=_no_session_env())
         run.raw(out)
         m = ISSUE_URL.search(out or "")
         e["card"] = m.group(0) if m else "tạo thẻ lỗi (exit %d)" % rc
@@ -1208,6 +1209,11 @@ def closed_cards(slug: str, before: dt.datetime) -> dict:
     return {sid: v[2] for sid, v in latest.items() if v[1] == "COMPLETED"}
 
 
+def _no_session_env() -> dict:
+    """#1333: hạn mức --new-card 1 lần/12 giờ theo CLAUDE_CODE_SESSION_ID là cho agent gõ tay; lượt đêm mở nhiều thẻ nên không mang id phiên."""
+    return {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+
+
 def card_cmd() -> list:
     """Lệnh tạo/đưa thẻ lên board: DEVKIT_GATE_FULL_CARD_CMD (test) hoặc create_task.py của kit."""
     return shlex.split(os.environ["DEVKIT_GATE_FULL_CARD_CMD"]) if os.environ.get("DEVKIT_GATE_FULL_CARD_CMD") \
@@ -1288,7 +1294,7 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
             "--ac", "%s chạy lại PASS trên origin/main" % sid,
             "--risk", "🟡 Medium — nhóm b (thời gian thực / môi trường), chưa chứng minh main đỏ" if env else "🔴 High — main đỏ",
             "--blocked-by", "None."]
-        rc, out = sh(cmd, cwd=repo, timeout=300)
+        rc, out = sh(cmd, cwd=repo, timeout=300, env=_no_session_env())
         run.raw(out)
         m = ISSUE_URL.search(out or "")
         if not m:

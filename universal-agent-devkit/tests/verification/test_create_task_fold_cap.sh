@@ -142,4 +142,49 @@ rc=$(run --dry-run --from-file "$TMP/high.md" --title "$BUGTITLE")
 rc=$(run --dry-run --from-file "$TMP/blocked.md" --title "$BUGTITLE")
 [ "$rc" = "0" ] && ! grep -q "Sẽ gom" "$TMP/out" && ok "8b --from-file --title có Blocked by trong file không gom" || fail "8b rc=$rc: $(cat "$TMP/out")"
 
+# 9. #1333 review R4: cờ CLI --risk 🟢 không được che mục ## Risk 🔴 của file (body là nguồn duy nhất).
+rc=$(run --dry-run --from-file "$TMP/high.md" --risk "🟢 Low" --title "$BUGTITLE")
+[ "$rc" = "0" ] && ! grep -q "Sẽ gom" "$TMP/out" && ok "9 --risk CLI không che Risk 🔴 trong file" || fail "9 rc=$rc: $(cat "$TMP/out")"
+
+# 10. R3: sổ chứa bản ghi ts sai kiểu (null, chuỗi): create_task thoát 0, ghi phiên vào sổ, file tạm có tên riêng mỗi lần.
+mkdir -p "$TMP/repo/.agents/local/state"
+printf '{"old":{"ts":null,"url":"x"},"old2":{"ts":"abc","url":"y"}}' > "$TMP/repo/.agents/local/state/create_task_new_card.json"
+rc=$(CLAUDE_CODE_SESSION_ID=sess-r3 run --new-card "việc riêng" "${NEWARGS[@]}")
+[ "$rc" = "0" ] && ! grep -q "TypeError" "$TMP/out" && ok "10a ts hỏng kiểu trong sổ không gây lỗi" || fail "10a rc=$rc: $(cat "$TMP/out")"
+grep -q '"sess-r3"' "$TMP/repo/.agents/local/state/create_task_new_card.json" && ok "10b phiên được ghi vào sổ" || fail "10b sổ không có phiên"
+[ -e "$TMP/repo/.agents/local/state/create_task_new_card.tmp" ] && fail "10c còn file .tmp cố định" || ok "10c không dùng tên .tmp cố định"
+
+# 11. R1: caller tự động không mang CLAUDE_CODE_SESSION_ID xuống create_task.py.
+cat > "$TMP/probe.py" <<'PY'
+import importlib.util, subprocess, sys, types
+kit = sys.argv[1]
+def load(name, rel):
+    spec = importlib.util.spec_from_file_location(name, kit + "/" + rel); m = importlib.util.module_from_spec(spec)
+    sys.modules[name] = m; spec.loader.exec_module(m); return m
+seen = {}
+def fake_run(cmd, **kw):
+    seen["env"] = kw.get("env")
+    return types.SimpleNamespace(returncode=0, stdout="https://github.com/o/r/issues/5", stderr="")
+inc = load("devkit_incident_t", "scripts/governance/devkit_incident.py")
+subprocess.run = fake_run
+try:
+    inc.card_args = lambda fp, i: []
+    inc.create_card("abcd", {})
+except Exception:
+    pass
+env = seen.get("env")
+print("incident", "ok" if env is not None and "CLAUDE_CODE_SESSION_ID" not in env else "leak")
+gf = load("gate_full_t", "bin/gate_full.py")
+print("gate_full", "ok" if "CLAUDE_CODE_SESSION_ID" not in gf._no_session_env() else "leak")
+PY
+out=$(CLAUDE_CODE_SESSION_ID=sess-r1 python3 "$TMP/probe.py" "$DEVKIT_DIR" 2>&1)
+echo "$out" | grep -q "^incident ok" && ok "11a devkit_incident không truyền id phiên" || fail "11a: $out"
+echo "$out" | grep -q "^gate_full ok" && ok "11b gate_full không truyền id phiên" || fail "11b: $out"
+
+# 12. R2: clean_git_env.sh và suite_env() của post-fix-gate gỡ CLAUDE_CODE_SESSION_ID.
+[ -z "$(CLAUDE_CODE_SESSION_ID=x bash -c '. "$1/tests/lib/clean_git_env.sh"; echo ${CLAUDE_CODE_SESSION_ID:-}' _ "$DEVKIT_DIR")" ] \
+  && ok "12a clean_git_env.sh gỡ id phiên" || fail "12a clean_git_env.sh giữ id phiên"
+grep -q '"CLAUDE_CODE_SESSION_ID",  # #1333' "$DEVKIT_DIR/bin/post-fix-gate.py" \
+  && ok "12b suite_env() gỡ id phiên" || fail "12b suite_env() chưa gỡ id phiên"
+
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi
