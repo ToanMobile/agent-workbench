@@ -3601,7 +3601,7 @@ if new_run:
 # claim that this session ran anything; check 2 needs a run to compare against, so it has nothing to say. An EMPTY transcript
 # (no tool at all) is not "read-only", it is "unknown" and keeps blocking. Edits (Edit/Write, even in a temp dir), a test
 # runner command or any Bash write keep the old check; check 7 (outcome) is not touched.
-READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "LS")
+READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "ToolSearch")   # 19/11: research tools write nothing
 # Bỏ chuỗi trong nháy trước khi xét ghi/xâu lệnh, để jq 'select(.x > 0)' và rg "PASS|FAIL" không bị coi là ghi hay xâu lệnh.
 # Nháy kép vẫn thực thi $(...) và `...`: chuỗi nháy kép có chúng thì giữ nguyên để BASH_CHAIN_RX/BASH_WRITE_RX còn thấy.
 _SHELL_QUOTED = re.compile(r"""\$'(?:\\.|[^'])*'|'(?:\\.|[^'])*'|"(?:\\.|[^"\\]|\\.)*\"""")
@@ -3614,6 +3614,29 @@ BASH_WRITE_RX = re.compile(r"(?:[0-9]*>>|[0-9]*<>|&>>?|(?<![&<>])[0-9]*>(?!&))"
                            r"|\b(?:npm|yarn|pnpm|pip3?|brew|cargo|go)\s+(?:install|add|run|build|get)\b|\bpython\S*\s|\bbash\s|\bsh\s|\bnode\s|\bsource\s|\beval\b")
 BASH_READ_CMDS = ("cat", "head", "tail", "jq", "grep", "rg", "wc", "ls", "sort", "uniq", "cut", "column")
 BASH_CHAIN_RX = re.compile(r"&&|\|\||;|(?<!&)&(?!&)|\$\(|<\(|>\(|`|\n")
+# 19/11 (audit session held 4 times): a research turn chains reads (`cd x; echo ==; ls a 2>/dev/null | head; gh api … --jq`). `;` `&&`
+# `||` and newlines between reads are allowed; `$(`, backticks, `<(`/`>(` and a lone `&` still are not (they can hide any command).
+# `>/dev/null` / `2>&1` write no file. `gh` only reads with `api` minus a method/field flag, or `view|list|diff|checks|status`.
+_DEVNULL = re.compile(r"[0-9]*>>?\s*/dev/null|[0-9]*>&[0-9]")
+_HIDDEN_CMD = re.compile(r"\$\(|<\(|>\(|`|(?<![&|])&(?![&>])")
+_SEG_SPLIT = re.compile(r"&&|\|\||[;|\n]")
+_GIT_READ = {"log", "show", "diff", "status", "ls-files", "rev-parse", "rev-list", "branch", "merge-base", "blame", "grep", "worktree",
+             "remote", "describe", "cat-file", "check-ignore"}
+_GH_WRITE_FLAG = re.compile(r"(?:^|\s)(?:-X|--method|-f|-F|--field|--raw-field|--input)(?:\s|=|$)")
+def _read_segment(seg):
+    w = seg.split()
+    if not w:
+        return True
+    if w[0] in BASH_READ_CMDS or w[0] in ("echo", "cd", "sed", "pwd", "date", "printf", "true"):
+        return True
+    if w[0] == "git" and len(w) > 1 and w[1] in _GIT_READ:
+        # `git branch x` / `git worktree add` / `git remote add` write; their bare or flag-only form lists
+        return not (w[1] in ("branch", "worktree", "remote") and len(w) > 2 and not w[2].startswith("-") and w[2] != "list")
+    if w[0] == "gh" and len(w) > 1:
+        if w[1] == "api":
+            return not _GH_WRITE_FLAG.search(seg)
+        return len(w) > 2 and w[2] in ("view", "list", "diff", "checks", "status")
+    return False
 def _read_cmd_writes(seg):
     parts = seg.split()
     if not parts:
@@ -3638,18 +3661,19 @@ def _read_only_turn():
         if u["name"] == "Bash":
             if not isinstance(u.get("input"), dict):
                 return False
-            bare = _bash_bare(str(u["input"].get("command", "")))
-            if TEST_RUNNER_RX.search(bare) or BASH_WRITE_RX.search(bare) or BASH_CHAIN_RX.search(bare) or ".xml" in bare.lower():
-                return False   # xâu lệnh / thay thế / đọc XML: check 2 xét lần chạy của ai
-            segs = bare.split("|")
-            if not all(seg.split()[:1] and seg.split()[0] in BASH_READ_CMDS for seg in segs):
+            bare = _DEVNULL.sub(" ", _bash_bare(str(u["input"].get("command", ""))))
+            if TEST_RUNNER_RX.search(bare) or BASH_WRITE_RX.search(bare) or _HIDDEN_CMD.search(bare) or ".xml" in bare.lower():
+                return False   # thay thế lệnh / chạy nền / đọc XML / ghi: check 2 xét lần chạy của ai
+            segs = _SEG_SPLIT.split(bare)
+            if not all(_read_segment(seg) for seg in segs):
                 return False
             if any(_read_cmd_writes(seg) for seg in segs):
                 return False
             continue
         return False
     return True
-read_only_turn = claimed and _read_only_turn()
+read_only_session = (claimed or outcome_claimed) and _read_only_turn()
+read_only_turn = claimed and read_only_session
 if read_only_turn:
     logline(f"[{ts}] read-only turn ({len(tool_uses)} read tool calls, no edit, no test run): test-pass text is a quotation, check 2 skipped")
 
@@ -3758,6 +3782,11 @@ if claimed:
 # ── check 7: an outcome claim needs scoped structured proof ─────────────────
 check7 = None
 fix_proven = False        # an outcome claim this session backed by real proof
+# The same session (19/11): it changed no file, so an outcome phrase quotes someone else's work (a reviewer's "fixed"), and the
+# RED→GREEN pair check 7 asks for needs a source edit that cannot exist. A subagent or any non-read tool keeps the check.
+if outcome_claimed and read_only_session:
+    logline(f"[{ts}] read-only session: outcome text is a quotation, check 7 skipped")
+    outcome_claimed = False
 if outcome_claimed:
     def cites_exact_value(text, value):
         # Values are whole fields, not prefixes. A terminal period is allowed

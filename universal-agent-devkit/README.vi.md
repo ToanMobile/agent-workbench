@@ -293,7 +293,7 @@ Engine kiểm toán chạy trong sandbox độc lập, rà soát toàn diện di
 
 #### 🛠️ Quy Trình 2: Chẩn Đoán & Sửa Lỗi Triệt Để (Paired RED ➔ GREEN)
 Áp dụng khi sửa crash, lỗi giao diện, sai logic hoặc lỗi hồi quy:
-1. **Chẩn Đoán & Lần Vết:** Phân tích stack trace (Crashlytics/ANR) qua `/fix` hoặc truy vết luồng gọi hàm qua `/graph` (AST Knowledge Graph).
+1. **Chẩn Đoán & Lần Vết:** Phân tích stack trace (Crashlytics/ANR) qua `/fix` hoặc truy vết luồng gọi hàm qua `/codebase-memory` (AST Knowledge Graph).
 2. **Viết Oracle Kiểm Thử Thất Bại (`/fixbugs`):** Viết bài test tái hiện chính xác lỗi tại failure boundary. Xác nhận mã lỗi **RED**.
 3. **Sửa Đúng Nguyên Nhân Gốc:** Tác động phẫu thuật vào đúng vị trí gây lỗi, tránh refactor lan man làm phát sinh lỗi mới.
 4. **Xác Minh Bằng Chứng Thành Công:** Chạy lại đúng oracle với tham số tương đương để xác nhận trạng thái **GREEN**.
@@ -543,7 +543,7 @@ Kho 33 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter 
 | **`spec-driven-development`** | `/plan` | Lập kế hoạch theo mô hình Spec-Kit Lite cho mọi thay đổi chạm $\ge 3$ files hoặc $\ge 2$ modules. |
 | **`grill-plan`** | `/grill` | Phản biện đối lập, stress-test kế hoạch kỹ thuật, lật tẩy các giả định ngầm trước khi code. |
 | **`documentation-and-adrs`** | `/adr` | Ghi nhận quyết định kiến trúc quan trọng (ADRs) và lưu trữ trade-offs lâu dài. |
-| **`deep-module-design`** | `/module-design` | Thiết kế interface sâu, seam kiểm thử độc lập và kiến trúc module testable. |
+| **`deep-module-design`** | `/deep-module-design` | Thiết kế interface sâu, seam kiểm thử độc lập và kiến trúc module testable. |
 | **`merge-conflict-resolver`** | `/conflict` | Giải quyết Git merge / rebase / stash conflict an toàn dựa trên phân tích ngữ nghĩa 3-way merge. |
 | **`session-handoff`** | `/handoff` | Đóng gói toàn bộ ngữ cảnh, công việc dở dang và bằng chứng để chuyển giao sang session mới. |
 | **`worktree-sandbox`** | `/sandbox` | Tạo nhanh APFS CoW worktree sandbox với dependency độc lập và tự động dọn rác khi merge. |
@@ -553,11 +553,11 @@ Kho 33 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter 
 ### 4. 🚀 Tinh Chỉnh Thực Thi & Quản Trị Hệ Thống
 | Skill | Slash Command | Chức Năng & Mục Đích Sử Dụng |
 |---|---|---|
-| **`context-enricher`** | `/enrich` | Gateway tự động làm giàu ngữ cảnh 5 chiều (5D Dossier) cho mọi prompt ngắn gọn của User. |
+| **`context-enricher`** | `/context-enricher` | Gateway tự động làm giàu ngữ cảnh 5 chiều (5D Dossier) cho mọi prompt ngắn gọn của User. |
 | **`giao`** | `/giao` | Điều phối Dual-Agent: Leader PM (Claude) ↔ Worker (Antigravity), giao việc và nghiệm thu task packet. |
 | **`parallel-lanes`** | — | Nhiều lane/agent song song: lane đường găng chạy trước, số lane theo CPU còn trống (`agent-kit lanes plan\|slots\|record`), brief sẵn các bẫy lặp lại, mỗi lane một worktree, review theo rủi ro không bỏ vòng nào, một gate full cho cả đợt. |
-| **`codebase-memory`** | `/graph`, `/codebase-memory` | **SSOT Đồ Thị Tri Thức:** Khám phá cấu trúc code, trace inbound/outbound callers, Cypher query, fallback Read/Grep. |
-| **`incremental-implementation`** | `/step` | Chia nhỏ feature lớn thành các bước phẫu thuật tăng dần, kiểm chứng liên tục từng bước. |
+| **`codebase-memory`** | `/codebase-memory` | **SSOT Đồ Thị Tri Thức:** Khám phá cấu trúc code, trace inbound/outbound callers, Cypher query, fallback Read/Grep. |
+| **`incremental-implementation`** | `/incremental-implementation` | Chia nhỏ feature lớn thành các bước phẫu thuật tăng dần, kiểm chứng liên tục từng bước. |
 | **`deprecation-migration`** | `/deprecate` | Sunset API cũ, di chuyển callers và dọn dẹp mã nguồn lỗi thời an toàn. |
 | **`security-checklist`** | `/scan` | Audit an ninh OWASP Mobile: Intent filter, URI traversal, Storage Access Framework, exported components, permissions. |
 | **`observability-instrumentation`** | `/logging` | Chuẩn hóa structured logging, phân cấp DEBUG/INFO/ERROR, telemetry Crashlytics, mask 100% PII. |
@@ -593,15 +593,15 @@ Kho 33 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter 
 | `/spec-driven-development` | `/plan` | `skills/spec-driven-development` | Lập kế hoạch chi tiết Spec-Kit Lite cho tính năng chạm nhiều file/module. |
 | `/grill-plan` | `/grill` | `skills/grill-plan` | Phản biện đối lập và stress-test kế hoạch kỹ thuật. |
 | `/documentation-and-adrs` | `/adr` | `skills/documentation-and-adrs` | Ghi nhận Architecture Decision Records và trade-offs. |
-| `/deep-module-design` | `/module-design` | `skills/deep-module-design` | Thiết kế interface sâu và kiến trúc module testable. |
+| `/deep-module-design` | — | `skills/deep-module-design` | Thiết kế interface sâu và kiến trúc module testable. |
 | `/merge-conflict-resolver` | `/conflict` | `skills/merge-conflict-resolver` | Xử lý xung đột Git merge/rebase dựa trên phân tích ngữ nghĩa 3 chiều. |
 | `/session-handoff` | `/handoff` | `skills/session-handoff` | Đóng gói ngữ cảnh và bằng chứng để chuyển giao sang phiên làm việc mới. |
 | `/worktree-sandbox` | `/sandbox` | `skills/worktree-sandbox` | Quản lý sandbox worktree APFS CoW với môi trường độc lập và tự động dọn dẹp khi merge. |
-| `/context-enricher` | `/enrich` | `skills/context-enricher` | Tự động làm giàu ngữ cảnh 5 chiều (5D Dossier). |
+| `/context-enricher` | — | `skills/context-enricher` | Tự động làm giàu ngữ cảnh 5 chiều (5D Dossier). |
 | `/devkit-audit` | — | `skills/devkit-audit` | Audit và tối ưu DevKit hằng ngày bằng số đo (ưu tiên chi phí hook Stop), chấm theo rubric 100 điểm. |
 | `/giao` | `/giao` | `skills/giao` | Phân công và nghiệm thu task giữa Leader PM ↔ Worker Agent. |
-| `/codebase-memory` | `/graph` | `skills/codebase-memory` | SSOT điều hướng Knowledge Graph AST và truy vết blast radius. |
-| `/incremental-implementation` | `/step` | `skills/incremental-implementation` | Thực thi thay đổi theo từng bước phẫu thuật tăng dần. |
+| `/codebase-memory` | — | `skills/codebase-memory` | SSOT điều hướng Knowledge Graph AST và truy vết blast radius. |
+| `/incremental-implementation` | — | `skills/incremental-implementation` | Thực thi thay đổi theo từng bước phẫu thuật tăng dần. |
 | `/deprecation-migration` | `/deprecate` | `skills/deprecation-migration` | Sunset API và di chuyển caller an toàn. |
 | `/security-checklist` | `/scan` | `skills/security-checklist` | Kiểm tra checklist bảo mật ứng dụng di động và nền tảng. |
 | `/observability-instrumentation` | `/logging` | `skills/observability-instrumentation` | Chuẩn hóa structured logging, telemetry và mask PII. |

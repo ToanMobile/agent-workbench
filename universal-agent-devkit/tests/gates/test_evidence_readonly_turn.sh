@@ -97,6 +97,20 @@ transcript "$TMP/b14.jsonl" '[["bash","cat \"$(rm src/a.py)\"","",false]]'
 run 2 "$TMP/b14.jsonl" "$REPLY" "command substitution inside double quotes at end"
 transcript "$TMP/b15.jsonl" '[["bash","cat \"`rm src/a.py`\" x","",false]]'
 run 2 "$TMP/b15.jsonl" "$REPLY" "backtick inside double quotes, then a word"
+echo "-- 19/11 audit session: a read-only research turn (ToolSearch, WebFetch, chained reads, gh api GET) was held by check 2 and check 7"
+OUTCOME_REPLY='Lane review đánh dấu R1 fixed ở merge-queue.sh:210; hook bắt cặp ĐỎ→XANH.'
+RS='[["tool","ToolSearch"],["tool","WebFetch"],["bash","cd /x; echo == a; ls a b 2>/dev/null | head -5; git ls-files | grep -iE x | head","",false],["bash","echo == p; gh api repos/o/r/branches/main/protection --jq .x 2>&1 | head -12; wc -l AGENTS.md 2>/dev/null","",false],["bash","sed -n 1,40p hooks/x.sh; git log --oneline -3","",false]]'
+transcript "$TMP/r8.jsonl" "$RS"
+run 0 "$TMP/r8.jsonl" "$REPLY" "research turn: chained reads, gh api GET, WebFetch, ToolSearch (check 2)"
+run 0 "$TMP/r8.jsonl" "$OUTCOME_REPLY" "research turn quoting a reviewer's 'fixed' (check 7)"
+transcript "$TMP/b16.jsonl" '[["bash","cd /x; gh api -X PATCH repos/o/r/issues/1 -f body=x | head","",false]]'
+run 2 "$TMP/b16.jsonl" "$REPLY" "gh api write in a chain"
+transcript "$TMP/b17.jsonl" '[["bash","cd /x; echo a; python3 fix.py","",false]]'
+run 2 "$TMP/b17.jsonl" "$REPLY" "interpreter run in a chain"
+transcript "$TMP/b18.jsonl" "[[\"edit\",\"$P/src/a.py\"]]"
+run 2 "$TMP/b18.jsonl" "$OUTCOME_REPLY" "outcome claim after a code edit, no RED→GREEN (check 7 unchanged)"
+transcript "$TMP/b19.jsonl" '[["tool","ToolSearch"],["tool","Agent"]]'
+run 2 "$TMP/b19.jsonl" "$OUTCOME_REPLY" "outcome claim after a subagent ran (it may have edited code)"
 echo "-- a successful run still backs the claim"
 transcript "$TMP/g1.jsonl" '[["bash","python3 -m pytest tests","12 passed in 0.30s",false]]'
 run 0 "$TMP/g1.jsonl" "$REPLY" "pytest run green"

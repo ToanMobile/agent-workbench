@@ -32,7 +32,7 @@ Skills live in `skills/` (source of truth); `.agents/skills/` and `commands/` li
 | `/verify`, `/done` | [verification-before-completion](skills/verification-before-completion/SKILL.md) | Verification gate before declaring task completion | Verification Gate |
 | `/conflict` | [merge-conflict-resolver](skills/merge-conflict-resolver/SKILL.md) | Resolve Git merge / rebase / cherry-pick / stash conflicts | Git 3-way merge |
 | `/handoff` | [session-handoff](skills/session-handoff/SKILL.md) | Transfer work-in-progress context across sessions | Session Handoff |
-| `/graph`, `/codebase-memory` | [codebase-memory](skills/codebase-memory/SKILL.md) | Explore codebase, trace call flow, blast radius, AST knowledge graph & Cypher | Codebase Navigation & Graph |
+| `/codebase-memory` | [codebase-memory](skills/codebase-memory/SKILL.md) | Explore codebase, trace call flow, blast radius, AST knowledge graph & Cypher | Codebase Navigation & Graph |
 | `/plan-tests`, `/qa-review` | [qa-review](skills/qa-review/SKILL.md) | Audit diff before PR, acceptance criteria, test scenario matrix | Code / PR Review |
 | `/review-code`, `/ocr`, `/open-code-review` | [open-code-review](skills/open-code-review/SKILL.md) | Alibaba OpenCodeReview: Deterministic line resolver, file bundling, code audit | Automated Diff Review |
 | `/visual`, `/qa-visual` | [qa-visual](skills/qa-visual/SKILL.md) | Automated screenshot capture and DOM layout audit | Visual UI QA |

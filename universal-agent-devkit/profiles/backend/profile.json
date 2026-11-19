@@ -31,7 +31,8 @@
   "exclude_agents": [
     "android-principal-architect",
     "game-gc-rendering-auditor",
-    "mobile-release-auditor"
+    "mobile-release-auditor",
+    "real-device-ui-auditor"
   ],
   "source_extensions": [
     ".py",
