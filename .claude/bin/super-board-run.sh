@@ -321,14 +321,14 @@ def file_wait: [((.labels // []) + (.content.labels // []))[] | (if type == "obj
 # #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
 session_sweep_helper() { printf '%s' "${SB_SESSION_SWEEP:-$(dirname "$SB_GITHUB_READ")/super-board-session-sweep.py}"; }
 waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
-# P3: cờ dependency_unblock_v1 (mặc định tắt). Env SB_DEPENDENCY_UNBLOCK_V1=0|1 thắng; không thì `dependency_unblock_v1` trong
-# <checkout chính>/.agents/local/flags.json (git common dir, như guard_v2 của super-board-needs-you.py). Thiếu/hỏng = tắt.
+# P3: cờ dependency_unblock_v1 (#1320: mặc định BẬT). Env SB_DEPENDENCY_UNBLOCK_V1=0|1 thắng; không thì chỉ `"dependency_unblock_v1": false`
+# trong <checkout chính>/.agents/local/flags.json (git common dir, như guard_v2 của super-board-needs-you.py) tắt cờ. Thiếu/hỏng = bật.
 dependency_unblock_v1_on() {
   case "${SB_DEPENDENCY_UNBLOCK_V1:-}" in 1) return 0 ;; 0) return 1 ;; esac
   local common
-  common=$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-  [ -n "$common" ] || return 1
-  jq -e '.dependency_unblock_v1 == true' "$(dirname "$common")/.agents/local/flags.json" >/dev/null 2>&1
+  common=$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+  [ -n "$common" ] || return 0
+  ! jq -e '.dependency_unblock_v1 == false' "$(dirname "$common")/.agents/local/flags.json" >/dev/null 2>&1
 }
 
 # #95: a card whose QA needs a real device (label needs-device, any case) — in QA, or in Ready labelled `qa` (the Tester takes it
@@ -1938,7 +1938,7 @@ dispatch_lane() {
   # Sau các kiểm tra đĩa/account (không tốn một lượt preflight mỗi tick khi chưa giao được), trước khi nhận thẻ.
   # #619: preflight không giao (mark/fold hỏng, đang chờ, đã sang Blocked…) → trong dispatch_ready_tick, thẻ bị bỏ qua tới hết tick
   # để lane build thử thẻ Ready kế; gọi lẻ (ngoài dispatch_ready_tick) giữ hành vi cũ.
-  # P3: dependency_gate trước preflight. Cờ tắt: hàm trả 0 ngay sau dependency_unblock_v1_on (test_dependency_unblock_v1.sh T1 đo).
+  # P3: dependency_gate trước preflight. Cờ tắt (env 0 / flags false): hàm trả 0 ngay sau dependency_unblock_v1_on (test_dependency_unblock_v1.sh T1 đo).
   if [ "$lane" = "build" ]; then
     { dependency_gate "$issue" && preflight_gate "$issue"; } || { [ "${SB_READY_TICK:-0}" != 1 ] || PREFLIGHT_SKIP="${PREFLIGHT_SKIP:-} ${issue}"; return 0; }
   fi
@@ -2403,6 +2403,58 @@ builder_reported_since() {
   [ "${meta%% *}" \> "$2" ] || [ "${meta%% *}" = "$2" ]
 }
 
+# #1318: dispatch time (ISO UTC) of the latest dispatch in a worker log; empty when none.
+dispatch_started_at() {
+  { grep '^=== dispatch ' "$1" 2>/dev/null || true; } | tail -1 | sed 's/.* at \(.*\) ===.*/\1/'
+}
+
+# #1318: the issue's comments created at/after $2 (ISO UTC) as a JSON array (GitHub `since` filters on updated_at; lane_report_pick
+# filters on created_at). Prints nothing when GitHub cannot say: the caller then concludes nothing.
+issue_comments_since() {
+  [ -n "${2:-}" ] || return 0
+  python3 "$SB_GITHUB_READ" --kind json -- api "repos/{owner}/{repo}/issues/$1/comments?since=$2&per_page=100" 2>/dev/null || true
+}
+
+# #1318: stdin = a JSON array of comments. Prints the body of the newest one created at/after $2 whose first line (after `<!--` marker
+# lines) starts with $1 (e.g. `[builder]`, `[qa] [report]`); nothing when there is none.
+lane_report_pick() {
+  jq -r --arg p "$1" --arg t "$2" '[.[]? | select((.created_at // "") >= $t)
+    | select((.body // "") | split("\n") | map(sub("\r$"; "")) | map(select(test("\\S") and (startswith("<!--") | not)))
+      | (.[0] // "") | startswith($p))] | last | .body // empty' 2>/dev/null || true
+}
+
+# #1318: QA worker ended clean with a new `[qa] [report]` but left the card in QA: apply that report's verdict. $1 issue, $2 worker log.
+# ✅ → Review; ❌ → label loop:rebuild-(N+1) then Ready (as super-qa's fail step). N already at rebuild_cap, no verdict, or any read or
+# write failure: 1 (nothing moved; the caller keeps the old path).
+qa_route_verdict() {
+  local ts body head item_id cur l rm=()
+  ts=$(dispatch_started_at "$2")
+  [ -n "$ts" ] || return 1
+  body=$(issue_comments_since "$1" "$ts" | lane_report_pick '[qa] [report]' "$ts")
+  head=$(printf '%s\n' "$body" | tr -d '\r' | awk 'NF && $0 !~ /^<!--/ {print; exit}')
+  item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$1" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
+  [ -n "$item_id" ] || return 1
+  case "$head" in
+    "[qa] [report] ✅"*)
+      set_card_status "$item_id" "Review" || return 1
+      log "→ #${1} QA → Review: QA worker exited 0 after a new [qa] [report] ✅ without moving the card (verdict routed by the runner)"
+      return 0 ;;
+    "[qa] [report] ❌"*) ;;
+    *) return 1 ;;
+  esac
+  local labs
+  labs=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$1" '[.items[] | select(.content.number == $n)][0]
+    | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)' 2>/dev/null || true)
+  cur=$(printf '%s\n' "$labs" | sed -nE 's/^loop:rebuild-([0-9]+)$/\1/p' | sort -n | tail -1)
+  cur=${cur:-0}
+  [ "$cur" -lt "${REBUILD_CAP:-2}" ] || return 1
+  for l in $(printf '%s\n' "$labs" | grep -E '^loop:rebuild-[0-9]+$' | sort -u || true); do rm+=(--remove-label "$l"); done
+  gh_write_once issue edit "$1" --add-label "loop:rebuild-$((cur + 1))" ${rm[@]+"${rm[@]}"} >/dev/null 2>&1 || return 1
+  set_card_status "$item_id" "Ready" || return 1
+  log "↩ #${1} QA → Ready (loop:rebuild-$((cur + 1))): QA worker exited 0 after a new [qa] [report] ❌ without moving the card (verdict routed by the runner)"
+  return 0
+}
+
 note_worker_exit() {
   # $1 = issue; the lock just read (LANE) is the worker that died. Logs its exit record and, unless it exited 0, comments on the card.
   # No record = the wrapper itself was killed (SIGKILL, host asleep) or the worker predates the wrapper.
@@ -2416,6 +2468,14 @@ note_worker_exit() {
   if [ "${LANE:-}" = build ] && worker_ended_clean "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}" \
      && builder_reported_since "$1" "$(grep '^=== dispatch ' "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}" 2>/dev/null | tail -1 | sed 's/.* at \(.*\) ===.*/\1/')"; then
     rm -f "$INFLIGHT_DIR/reclaims/$1" 2>/dev/null || true
+  fi
+  # #1318: a build worker that ended clean after a new `[builder]` comment saying `Next: qa` handed the card over but forgot the move:
+  # reclaim_dead_builds moves it to QA instead of counting a death (the reclaim ledger and the 🔁 Block are for crashes).
+  if [ "${LANE:-}" = build ] && worker_ended_clean "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}"; then
+    local hts hbody
+    hts=$(dispatch_started_at "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}")
+    hbody=$(issue_comments_since "$1" "$hts" | lane_report_pick '[builder]' "$hts")
+    if grep -Eiq '^Next:[[:space:]]*[*_`]*(qa|tester)([^[:alnum:]]|$)' <<<"$hbody"; then BUILD_HANDOFF="${BUILD_HANDOFF:-} $1"; fi
   fi
   # exit=0: finished; exit=143: stopped by the runner itself (super-board stop sends TERM), not a death worth a card comment.
   case "$line" in *"exit=0 "*|*"exit=143 "*) return 0 ;; esac
@@ -2591,6 +2651,14 @@ EOF
         log "↩ #${issue} Review → Ready: review worker concluded not approved without moving the card (bounce routed by the runner)"
         continue
       fi
+    fi
+    # #1318: a QA worker that ended clean after a new `[qa] [report]` but left the card in QA: apply the report's verdict (qa_route_verdict).
+    if [ "$lane" = qa ] && [ "$col" = QA ] && [ "$from" = QA ] && [ "$count" -gt "$c0" ] && worker_ended_clean "$wlog" \
+       && qa_route_verdict "$issue" "$wlog"; then
+      NOOP_MOVED=1
+      rm -f "$f" 2>/dev/null || true
+      gh_checkpoint
+      continue
     fi
     if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
       rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # it moved the card or wrote something: progress
@@ -2962,8 +3030,8 @@ reclaim_dead_builds() {
   #    sổ $INFLIGHT_DIR/reclaims/<issue> rồi trả thẻ về Ready qua reclaim_stranded_building.
   #  - Đạt/vượt trần: chuyển thẻ sang Blocked kèm comment theo block-template (dòng cuối `blocked-by:  agent`, #529).
   # Luôn return 0; đặt RECLAIM_MOVED=1 khi có thẻ được chuyển (Ready hoặc Blocked).
-  local pending="${RECLAIM_BUILDING:-}"
-  RECLAIM_BUILDING=""
+  local pending="${RECLAIM_BUILDING:-}" handoff="${BUILD_HANDOFF:-}"
+  RECLAIM_BUILDING=""; BUILD_HANDOFF=""
   [ -n "${pending// /}" ] || return 0
   local window="${SB_RECLAIM_WINDOW_S:-86400}" max="${SB_RECLAIM_MAX:-2}"
   local issue item_id title seen=" " now f n wlog
@@ -2972,6 +3040,15 @@ reclaim_dead_builds() {
     case "$seen" in *" $issue "*) continue ;; esac
     seen="${seen}${issue} "
     issue_locked "$issue" && continue
+    # #1318: the worker exited 0 after a `[builder] … Next: qa` report (note_worker_exit): hand over, no reclaim, no 🔁 Block.
+    case " $handoff " in *" $issue "*)
+      if set_card_status "$item_id" "QA"; then
+        RECLAIM_MOVED=1
+        gh_checkpoint
+        log "→ #${issue} Building → QA: build worker exited 0 after a new [builder] report with Next: qa (handoff routed by the runner, no reclaim)"
+        continue
+      fi ;;
+    esac
     now=$(date +%s)
     f="$INFLIGHT_DIR/reclaims/$issue"
     n=0

@@ -105,7 +105,7 @@ Follow spec `.claude/skills/super-board/references/run.md` → Builder (first pa
 5. Commit + push (always).
 6. Open **draft PR** with the PR description template from `run.md` — title in commit-subject format, every marker block filled, `Docs:` bullets in Solution, Risk with `Door:` (one-way/two-way) and `Blast radius:` lines (writing-standard.md § 2).
 7. Follow [PR author notes](../super-board/references/pr-author-notes.md), then post the `[builder] [report]` PR comment + the short issue comment with the PR URL (writing-standard.md § 4).
-8. Move card Ready/Building → QA.
+8. Move card Ready/Building → QA. Before ending any turn, push every local commit (`git status -sb` shows no `ahead`), or say in the `[builder] [report]` why not; the last command of the turn is one `.claude/bin/super-board-card.sh --config <cfg> move <N> QA` (`Blocked` when you Block). A turn that ends after `Next: qa` with the card still in Building, or with commits QA cannot fetch, strands it (#1318).
 
 ### Keep each PR small (only when the board set a positive cap)
 Unset `merge_policy.auto_max_lines` is 0: there is no line-count cap. Build the card's ACs as one
