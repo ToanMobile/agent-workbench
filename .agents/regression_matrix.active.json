@@ -4717,6 +4717,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "active-profile-clean-tree-1265",
+      "watch_files": [
+        "universal-agent-devkit/bin/agent-config.py",
+        "universal-agent-devkit/bin/install.sh",
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_active_profile_clean.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-1265-ACTIVE-PROFILE-CLEAN-01",
+          "name": "#1265: agent-config.py, install.sh và worktree add --lane=review giữ sạch .agents/active-profile.json (không làm bẩn updated_at/newline), dispatch audit ghi được Pham vi:",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_active_profile_clean.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

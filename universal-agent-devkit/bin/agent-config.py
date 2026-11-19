@@ -259,6 +259,19 @@ SIDE_MATRIX_NAME = "regression_matrix.generated.json"
 LEGACY_PROFILE_FILE = ".active-profile.json"          # at the project root before DevKit 1.3
 
 
+def _is_git_tracked(target_dir: Path, rel_path: Path) -> bool:
+    """Kiểm tra tệp đích có đang được git theo dõi trong target_dir không."""
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(target_dir), "ls-files", "--error-unmatch", "--", str(rel_path)],
+            capture_output=True,
+            timeout=5,
+        )
+        return res.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def profile_state_file(target_dir: Path) -> Path:
     """The project's profile state: .agents/active-profile.json (everything agent-related
     lives in .agents/). The DevKit's own checkout keeps its root .active-profile.json."""
@@ -323,16 +336,31 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
     mcp_profile = os.environ.get("DEVKIT_MCP_APPLIED") or old.get("mcp_profile") or old.get("profile")
     if mcp_profile:
         status_data["mcp_profile"] = mcp_profile
-    # Re-applying the same profile (a re-init) keeps the old timestamp: a tracked
-    # .active-profile.json must not turn dirty on every `agent-kit init`.
+    # Giữ nguyên timestamp và tệp hiện có nếu nội dung (trừ updated_at) không đổi:
+    # tránh làm bẩn git status khi tệp có trailing newline hoặc định dạng khác.
+    same_content = False
     try:
-        if {k: v for k, v in old.items() if k != "updated_at"} == {k: v for k, v in status_data.items() if k != "updated_at"}:
-            status_data["updated_at"] = old.get("updated_at", status_data["updated_at"])
+        same_content = bool(old) and {k: v for k, v in old.items() if k != "updated_at"} == {
+            k: v for k, v in status_data.items() if k != "updated_at"
+        }
     except (OSError, ValueError, AttributeError):
+        same_content = False
+
+    keep_tracked = (
+        os.environ.get("DEVKIT_KEEP_TRACKED_PROFILE") == "1"
+        and active_file.exists()
+        and _is_git_tracked(target_dir, active_file.relative_to(target_dir))
+    )
+
+    if (same_content and active_file.exists()) or keep_tracked:
+        # Bỏ qua ghi đè khi tệp đã khớp nội dung hoặc đang được git theo dõi trong worktree liên kết
         pass
-    active_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(active_file, "w", encoding="utf-8") as f:
-        json.dump(status_data, f, indent=2, ensure_ascii=False)
+    else:
+        if same_content:
+            status_data["updated_at"] = old.get("updated_at", status_data["updated_at"])
+        active_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(active_file, "w", encoding="utf-8") as f:
+            json.dump(status_data, f, indent=2, ensure_ascii=False)
     if legacy != active_file and legacy.is_file():
         legacy.unlink()                 # moved into .agents/ (DevKit 1.3)
         log_ok(tr("Đã chuyển `.active-profile.json` vào `.agents/active-profile.json`",
@@ -407,6 +435,12 @@ def apply_profile(profile_id: str, target_dir_str: str = None, lang: str = None)
                         f"bản mới để so sánh ở `{side.relative_to(target_dir)}`",
                         f"Kept the project's own matrix `{ACTIVE_MATRIX_REL}` (not a DevKit sample/generation); "
                         f"the new one is at `{side.relative_to(target_dir)}` for comparison"))
+        elif os.environ.get("DEVKIT_KEEP_TRACKED_PROFILE") == "1" and reg_dest.exists() and _is_git_tracked(target_dir, ACTIVE_MATRIX_REL):
+            # Không ghi đè ma trận đã track trong worktree liên kết khi cài đặt lại cùng profile
+            log_ok(tr(f"Giữ nguyên ma trận đang được git theo dõi: `{ACTIVE_MATRIX_REL}`",
+                      f"Kept git-tracked regression matrix: `{ACTIVE_MATRIX_REL}`"))
+        elif reg_dest.exists() and not reg_dest.is_symlink() and reg_dest.read_bytes() == new_bytes:
+            log_ok(tr(f"Đã kích hoạt ma trận kiểm thử: `{ACTIVE_MATRIX_REL}`", f"Activated regression matrix: `{ACTIVE_MATRIX_REL}`"))
         else:
             reg_dest.write_bytes(new_bytes)
             if generated is not None:
