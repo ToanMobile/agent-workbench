@@ -1582,13 +1582,13 @@ review_approved_head() {
   # `!<nhãn>` (vòng sửa 1, R3) = PR không draft và KHÔNG mang nhãn đó (thẻ đã duyệt nhưng mất nhãn hàng đợi).
   # #607/#614: PR không nằm trên nhánh issue-<N>- (PR tay, nhánh fix-…) thì nhận PR mở duy nhất có closingIssuesReferences chứa N;
   # hai PR cùng đóng N là mơ hồ → không chọn (review đầy đủ).
-  local prs pr head approved want="${2:-}"
+  local prs pr head hbranch approved want="${2:-}"
   prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid,closingIssuesReferences${want:+,labels,isDraft}" 2>/dev/null) || return 1
-  read -r pr head <<EOF
+  read -r pr head hbranch <<EOF
 $(printf '%s' "$prs" | jq -r --arg p "issue-$1-" --argjson n "$1" --arg l "$want" '([.[] | select(.headRefName | startswith($p))][0]
     // ([.[] | select(any((.closingIssuesReferences // [])[]; .number == $n))] | if length == 1 then .[0] else null end)) | select(. != null)
   | select($l == "" or ((.isDraft != true) and (if ($l | startswith("!")) then (any((.labels // [])[]; .name == ($l | ltrimstr("!"))) | not)
-      else any((.labels // [])[]; .name == $l) end))) | "\(.number) \(.headRefOid)"' 2>/dev/null)
+      else any((.labels // [])[]; .name == $l) end))) | "\(.number) \(.headRefOid) \(.headRefName)"' 2>/dev/null)
 EOF
   [ -n "${pr:-}" ] && [ -n "${head:-}" ] || return 1
   # #605: luật chung trong super-board-approved-head.jq; chỉ `ok` (bare hoặc approved-by hợp lệ, không tự duyệt) mới tính.
@@ -1600,6 +1600,7 @@ EOF
   case "$vwhy" in
     owner) ;;
     task:?*) python3 "$SB_AUDIT_CHECK" --top "${REPO_ROOT:-.}" --pr "$pr" "${vwhy#task:}" "$head" 2>/dev/null || return 1 ;;
+    cv:?*) python3 "$SB_AUDIT_CHECK" --top "${REPO_ROOT:-.}" --pr "$pr" --branch "${hbranch:-}" "${vwhy#cv:}" "$head" 2>/dev/null || return 1 ;;   # #1328 claude-verify
     *) return 1 ;;
   esac
   printf '%s %s' "$pr" "$head"
@@ -1665,6 +1666,44 @@ agent_office_args() {
   AO_ARGS=(--session-id "$sid" --settings "$settings" --append-system-prompt "$sys_prompt")
   AO_NONCE="$nonce"
   printf 'agent_office: session_id=%s\n' "$sid" >> "$1" 2>/dev/null || true
+}
+
+worker_session_args() {
+  # #1328: $1 = lane, $2 = issue, $3 = log worker. Mọi worker claude có --session-id do runner gán (Agent Office đã gán thì dùng đúng sid
+  # đó, không gán 2 lần). Lane build/review: ghi sid vào sổ claude-verify (claude_verify.py register) TRƯỚC khi worker chạy, nên builder
+  # không tránh được việc bị ghi; seal/check của claude-verify đòi reviewer có trong sổ reviewers và không thuộc sổ builders của thẻ.
+  # Ghi sổ hỏng chỉ cảnh báo: thẻ đó không dùng được claude-verify (fail closed ở seal/check), worker vẫn chạy.
+  local sid="" i cv
+  for ((i = 0; i < ${#AO_ARGS[@]}; i++)); do [ "${AO_ARGS[$i]}" = --session-id ] && sid="${AO_ARGS[$((i + 1))]:-}"; done
+  if [ -z "$sid" ]; then
+    sid=$(python3 -I -S -c 'import uuid; print(uuid.uuid4())' 2>/dev/null) || return 0
+    [ -n "$sid" ] || return 0
+    AO_ARGS+=(--session-id "$sid")
+    printf 'worker: session_id=%s\n' "$sid" >> "$3" 2>/dev/null || true
+  fi
+  case "$1" in build|review) ;; *) return 0 ;; esac
+  for cv in "$SCRIPT_DIR/../../universal-agent-devkit/bin/claude_verify.py" "$SCRIPT_DIR/../../.agents/devkit/bin/claude_verify.py"; do
+    [ -f "$cv" ] || continue
+    SB_RUNNER_REGISTER=1 python3 -I "$cv" register --lane "$1" --repo "${REPO_ROOT:-.}" --issue "$2" --session "$sid" 2>>"$3" \
+      || log "⚠ claude-verify: could not record the ${1} session of #${2}; that card cannot use claude-verify"
+    return 0
+  done
+}
+
+agy_session_register() {
+  # #1328 (review vòng 1, R1/R2): agy không chạy hook và không có env phiên Claude. Runner ghi lượt build của nó vào sổ builders kèm
+  # engine=antigravity TRƯỚC khi chạy; claude-verify thấy lượt build không phải Claude thì từ chối thẻ (fail closed).
+  # $1 = lane, $2 = issue, $3 = log worker. Chỉ lane build. Ghi sổ hỏng chỉ cảnh báo (ponytail: lượt agy không ghi được thì sổ thiếu nó;
+  # nâng cấp khi seal mode có signer của chủ repo).
+  local sid cv
+  [ "$1" = build ] || return 0
+  sid="agy-$(python3 -I -S -c 'import uuid; print(uuid.uuid4())' 2>/dev/null)" || return 0
+  for cv in "$SCRIPT_DIR/../../universal-agent-devkit/bin/claude_verify.py" "$SCRIPT_DIR/../../.agents/devkit/bin/claude_verify.py"; do
+    [ -f "$cv" ] || continue
+    SB_RUNNER_REGISTER=1 python3 -I "$cv" register --lane build --repo "${REPO_ROOT:-.}" --issue "$2" --session "$sid" --engine antigravity 2>>"$3" \
+      || log "⚠ claude-verify: could not record the antigravity build of #${2}; check the card by hand"
+    return 0
+  done
 }
 
 hold_for_open_pr() {
@@ -2052,7 +2091,7 @@ EOF
         prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
       elif merge_queue_on; then
       # Pha 2 (Q1): reviewer vào hàng thay cho gọi merge gate; super-board-merge-queue.sh gom và merge cả đợt, rồi chuyển thẻ Done.
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; the cross-review is Antigravity's. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: run an Antigravity audit of the PR head through the antigravity-pm MCP (pm_task_create with project = this card's review worktree .claude/worktrees/issue-${issue}-review, already at the PR head, never the main checkout, and the focus in its brief; pm_dispatch kind=audit on that task WITHOUT a message parameter, the dispatch output must contain a Pham vi: line and must not contain Khong ghi pham vi, else do not record pm_verdict; read its audit-agent.json, and only when Antigravity's verdict is pass record pm_verdict kind=audit verdict=pass auditedHead=<the 40-char head sha>), then post a PR comment whose first line is exactly approved-head:<the 40-char head sha you reviewed> and whose second line is approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"<the builder lane id>\",\"task_id\":\"<that T… task id>\",\"gate_receipt\":\"<impacted task receipt id: output of .claude/bin/super-board-gate-receipt.sh <the 40-char head sha>>\"}. No Antigravity pass: post no approval, leave the card in Review with a [reviewer] comment. Last line blocked-by: agent when Antigravity is absent, erroring or limited (MCP tools absent, pm_dispatch errors); last line blocked-by: - when the audit ran and the verdict is not pass (a person must look) (never a bare approved-head line: the git guard blocks it). After the approval, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; the cross-review is claude-verify by default (worker backend claude-p): write the review JSON, run python3 .agents/devkit/bin/claude_verify.py seal --repo <review worktree> --head <the 40-char head sha> --report <file> --branch <PR branch>, and on exit 0 approve with reviewer claude-verify and the printed CV… task id (super-review SKILL.md, Merge step 1). Take the Antigravity path instead when the PR edits or deletes an existing test (edited_existing), the worker backend is workflow, config review_tiers names antigravity, SB_REVIEW_ANTIGRAVITY=1, or the seal refuses. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: on the Antigravity path run an Antigravity audit of the PR head through the antigravity-pm MCP (pm_task_create with project = this card's review worktree .claude/worktrees/issue-${issue}-review, already at the PR head, never the main checkout, and the focus in its brief; pm_dispatch kind=audit on that task WITHOUT a message parameter, the dispatch output must contain a Pham vi: line and must not contain Khong ghi pham vi, else do not record pm_verdict; read its audit-agent.json, and only when Antigravity's verdict is pass record pm_verdict kind=audit verdict=pass auditedHead=<the 40-char head sha>), then post a PR comment whose first line is exactly approved-head:<the 40-char head sha you reviewed> and whose second line is approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"<the builder lane id>\",\"task_id\":\"<that T… task id>\",\"gate_receipt\":\"<impacted task receipt id: output of .claude/bin/super-board-gate-receipt.sh <the 40-char head sha>>\"}. No Antigravity pass: post no approval, leave the card in Review with a [reviewer] comment. Last line blocked-by: agent when Antigravity is absent, erroring or limited (MCP tools absent, pm_dispatch errors); last line blocked-by: - when the audit ran and the verdict is not pass (a person must look) (never a bare approved-head line: the git guard blocks it). After the approval, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
       else
       prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; a cross-review-approved marker (gate exit 7/8) is posted only after an Antigravity audit pass of the head (run.md → Reviewer lifecycle). When ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
       fi ;;
@@ -2094,14 +2133,15 @@ EOF
     # review of a card whose build worktree stays), never the main checkout by default. `exec` keeps `$!` = the wrapper's PID (the subshell
     # becomes it), the log path is absolute because the cd moves away from $REPO_ROOT. ponytail: a lane worktree the worker itself creates
     # later does not exist yet at dispatch, so a first build still starts in main; upgrade: create the lane worktree here with the DevKit.
+    agy_session_register "$lane" "$issue" "$worker_log"
     ( lane_wt="$REPO_ROOT/.claude/worktrees/issue-${issue}-${lane}"
       [ -d "$lane_wt" ] && cd "$lane_wt"
       exec nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-hydrogen-high --dangerously-skip-permissions -p "$prompt" ) >> "$worker_log_abs" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
-    agent_office_args "$worker_log"
+    agent_office_args "$worker_log"; worker_session_args "$lane" "$issue" "$worker_log"
     AGENT_OFFICE_NONCE="$AO_NONCE" CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
   else
-    agent_office_args "$worker_log"
+    agent_office_args "$worker_log"; worker_session_args "$lane" "$issue" "$worker_log"
     AGENT_OFFICE_NONCE="$AO_NONCE" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
   fi
   pid=$!

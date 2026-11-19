@@ -1199,7 +1199,9 @@ MQ_LABEL = "merge-queue"
 MQ_MSG = "gắn nhãn merge-queue khi PR chưa có approved-head khớp head"
 MQ_HELPER = os.path.join(".claude", "bin", "super-board-queue-label.sh")
 MQ_HELPER_DEPS = [os.path.join(".claude", "bin", "super-board-approved-head.jq"), os.path.join(".claude", "bin", "super-board-audit-check.py"),
-                  os.path.join("universal-agent-devkit", "bin", "push_gate.py"), os.path.join(".agents", "devkit", "bin", "push_gate.py")]
+                  os.path.join("universal-agent-devkit", "bin", "push_gate.py"), os.path.join(".agents", "devkit", "bin", "push_gate.py"),
+                  # #1328: audit-check chuyển id CV… cho claude_verify.py (bản kit hoặc .agents/devkit)
+                  os.path.join("universal-agent-devkit", "bin", "claude_verify.py"), os.path.join(".agents", "devkit", "bin", "claude_verify.py")]
 MQ_BUDGET_S = 9.0   # tổng thời gian của guard khi có lời gọi helper: dưới timeout 10 s của hook ở Codex/Gemini/Cursor
 # Cờ KHÔNG mang giá trị của gh pr edit / issue edit / pr create (gh 2.103.3 --help); mọi cờ dài khác mang giá trị.
 MQ_BOOL_LONG = {"--remove-milestone", "--remove-parent", "--remove-type", "--draft", "--dry-run", "--editor", "--fill",
@@ -2376,7 +2378,59 @@ _rs = [m.start() for m in re.finditer(r"\brestore\b", cmd)]
 _upto = len(cmd) if not _rs or re.search(r"\b(do|done|eval|xargs|function)\b|\(\)\s*\{", cmd) else _rs[-1]
 CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_upto]))
 # (RETARGETED is set from the parsed tokens in analyse_simple: a regex over the raw text was beaten by GIT_""DIR.)
+# (#1328) Sổ phiên claude-verify (claude_verify.py register) chỉ do super-board-run.sh ghi, ngoài phiên agent. Chặn khi, sau khi tách token
+# như shell: `register` đứng ngay sau token claude_verify.py, hoặc cờ của runner ở dạng gán (`SB_RUNNER_REGISTER=…`, `export
+# SB_RUNNER_REGISTER`), hoặc gán CLAUDE_CODE_SESSION_ID trong lệnh nhắc claude_verify (T0005). Mọi token có khoảng trắng được tách tiếp
+# (tối đa 3 tầng: bash -c, eval, pipe sang shell, <<<), kể cả thông điệp -m (miễn trừ nó từng lọt mã qua alias, $(…), dòng sau:
+# review cabd91dd). Lệnh chỉ nhắc đúng cụm trong chuỗi (grep/commit -m/gh --body "claude_verify.py register") bị chặn oan: chấp
+# nhận, đổi cách viết (vd "claude-verify register"). Không tách được → quét chữ thô
+# (fail closed). Hook so chữ chỉ là lớp làm chậm, không phải ranh giới bảo mật (INSTINCT-045/104: lớp lỗ không đóng được bằng so
+# chữ). ponytail: agent cùng uid cố ý vòng qua (python -c gọi subprocess, tên ghép từ biến, glob, script trong file, sửa thẳng file
+# sổ) vẫn được — rủi ro chấp nhận, đóng khi có signer Ed25519 của chủ repo (seal mode).
+CV_REGISTER_MSG = "ghi sổ phiên claude-verify từ phiên agent"
+
+
+_CV_DECL = ("export", "declare", "typeset", "local", "readonly")
+
+
+def _cv_after(toks, j):
+    """Token ngay sau claude_verify.py, bỏ cờ `-x`/`--x` và giá trị của chúng (`--repo . register`, `-- register`): đủ để thấy subcommand."""
+    out = []
+    while j < len(toks) and len(out) < 8:
+        out.append(toks[j])
+        j += 1
+    return [t for t in out if not t.startswith("-")][:3]
+
+
+def _cv_register(text, depth=0, calls_cv=None):
+    """True khi lệnh ghi sổ phiên claude-verify hoặc giả phiên reviewer (luật ở comment trên). calls_cv xét trên lệnh gốc, nên gán
+    biến ở tầng ngoài còn claude_verify.py nằm trong `bash -c` vẫn bị bắt."""
+    text = text.replace("$'", "'")   # ANSI-C $'…': shlex không hiểu, bash bỏ dấu $ → coi như chuỗi nháy đơn
+    try:
+        lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        return bool(re.search(r"\bSB_RUNNER_REGISTER\s*=|claude_verify\.py['\"]?\s+['\"]?register\b", text)
+                    or (re.search(r"\bCLAUDE_CODE_SESSION_ID\s*=", text) and "claude_verify" in text))
+    if calls_cv is None:
+        calls_cv = "claude_verify" in text
+    for i, t in enumerate(toks):
+        prev = toks[i - 1] if i else ""
+        if t.startswith("SB_RUNNER_REGISTER=") or (t == "SB_RUNNER_REGISTER" and prev in _CV_DECL):
+            return True
+        if calls_cv and (t.startswith("CLAUDE_CODE_SESSION_ID=") or (t == "CLAUDE_CODE_SESSION_ID" and prev in _CV_DECL + ("unset",))):
+            return True
+        if os.path.basename(t) == "claude_verify.py" and "register" in _cv_after(toks, i + 1):
+            return True
+        if depth < 3 and re.search(r"\s", t) and _cv_register(t, depth + 1, calls_cv):
+            return True
+    return False
+
+
 reason = analyse(cmd) or (PENDING_FEED[0] if PENDING_FEED else None)
+if not reason and _cv_register(cmd):
+    reason = CV_REGISTER_MSG
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"
 if reason and reason.startswith("push") and "agent-kit integrate" in reason:
@@ -2410,6 +2464,10 @@ if reason and reason.startswith(MQ_MSG):
 if reason and reason.startswith(PM_STATE_MSG):
     print(f"BLOCKED: {cmd!r} — {reason}. Luật #605: biên bản audit antigravity-pm chỉ do PM server ghi ở ~/.antigravity-pm; ANTIGRAVITY_PM_STATE_HOME / DEVKIT_PM_HOME_TEST "
           "chỉ test tự đặt bên trong script của nó. Chạy lệnh không kèm biến; chạy test thì gọi thẳng script test.", file=sys.stderr)
+    sys.exit(2)
+if reason and reason.startswith(CV_REGISTER_MSG):
+    print(f"BLOCKED: {cmd!r} — {reason}. Luật #1328: sổ builders/reviewers của claude-verify chỉ do super-board-run.sh ghi lúc giao "
+          "worker (agent tự ghi = tự cấp quyền duyệt). Thẻ không có sổ thì đi đường Antigravity hoặc chủ repo duyệt.", file=sys.stderr)
     sys.exit(2)
 if reason and reason.startswith("kill theo tên"):
     print(f"BLOCKED: {cmd!r} — {reason}. Chạy lệnh nền rồi giữ PID của chính nó: `cmd & pid=$!`, sau đó `wait $pid` / `kill -0 $pid` / "
