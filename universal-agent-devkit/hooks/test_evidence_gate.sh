@@ -3626,19 +3626,28 @@ _GH_WRITE_FLAG = re.compile(r"(?:^|\s)(?:-[XfF]|--(?:method|field|raw-field|inpu
 # Allowlist, not denylist (#1342 R1): `git branch|worktree|remote` read only in these exact forms; `git diff|log|show --output=f` writes f.
 _GIT_LIST_FLAGS = {"branch": {"-a", "-r", "-v", "-vv", "-l", "--list", "--all", "--remotes", "--verbose", "--show-current"},
                    "remote": {"-v", "--verbose"}}
+# #1342 R3: these make git run an external program (grep -O<cmd>, external diff driver, textconv filter): not a read.
+_GIT_EXEC_FLAG = re.compile(r"-O|--open-files-in-pager|--ext-diff|--textconv")
+# #1342 R2: sed reads only as `sed [-n] '<N|N,M|N,$|$>p' file...`; any other script can `w`/`e`/`r` a file or run a command, and
+# -i / -f / -e / --expression / -s after the script can write or load one. Checked on the RAW command (bare text has no quotes).
+_SED_SAFE = re.compile(r"\bsed(?:\s+-n)?\s+(['\"]?)(?:\d+|\$)?(?:,(?:\d+|\$))?p\1(?=(?:\s+[^-\s]\S*)*\s*(?:[|;&\n]|$))")
+def _sed_reads_only(raw):
+    return len(re.findall(r"\bsed\b", raw)) == len(_SED_SAFE.findall(raw))
 def _read_segment(seg):
     w = seg.split()
     if not w:
         return True
-    if w[0] in BASH_READ_CMDS or w[0] in ("echo", "cd", "sed", "pwd", "date", "printf", "true"):
+    if w[0] in BASH_READ_CMDS or w[0] in ("echo", "cd", "pwd", "date", "printf", "true"):
         return True
+    if w[0] == "sed":
+        return True   # script/flags are judged on the raw command by _sed_reads_only (quotes are stripped here)
     if w[0] == "git" and len(w) > 1 and w[1] in _GIT_READ:
         args = w[2:]
         if w[1] == "worktree":
             return args == ["list"]
         if w[1] in _GIT_LIST_FLAGS:
             return all(a in _GIT_LIST_FLAGS[w[1]] or (a == "list" and w[1] == "branch") for a in args)
-        return not any(a == "--output" or a.startswith("--output=") for a in args)
+        return not any(a == "--output" or a.startswith("--output=") or _GIT_EXEC_FLAG.match(a) for a in args)
     if w[0] == "gh" and len(w) > 1:
         if w[1] == "api":
             return not _GH_WRITE_FLAG.search(seg)
@@ -3671,6 +3680,8 @@ def _read_only_turn():
             bare = _DEVNULL.sub(" ", _bash_bare(str(u["input"].get("command", ""))))
             if TEST_RUNNER_RX.search(bare) or BASH_WRITE_RX.search(bare) or _HIDDEN_CMD.search(bare) or ".xml" in bare.lower():
                 return False   # thay thế lệnh / chạy nền / đọc XML / ghi: check 2 xét lần chạy của ai
+            if not _sed_reads_only(str(u["input"].get("command", ""))):
+                return False
             segs = _SEG_SPLIT.split(bare)
             if not all(_read_segment(seg) for seg in segs):
                 return False
