@@ -22,7 +22,7 @@ Mã thoát:
   0   đã tạo (hoặc --dry-run / gom vào thẻ chưa chạy)
   2   --from-file không kèm --ticket mà file thiếu `## Problem` hoặc không đọc được: không tạo thẻ
   3   thẻ đã tạo nhưng chưa đánh dấu "cần người" hoặc chưa gán cột Backlog
-  64  đối số sai: --new-card thiếu lý do, --needs-you rỗng, --ticket nhỏ hơn 1, --from-file không kèm --ticket
+  64  đối số sai: --new-card thiếu lý do hoặc phiên đã dùng --new-card trong 12 giờ, --needs-you rỗng, --ticket nhỏ hơn 1, --from-file không kèm --ticket
       mà thiếu --title (hoặc --title toàn khoảng trắng), hoặc thẻ nhắc tên repo khác mà chưa có --repo / --here
 """
 
@@ -32,6 +32,8 @@ import re
 import json
 import argparse
 import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 PROJECT_OWNER = "ToanMobile"
@@ -784,6 +786,66 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
     return {"url": issue_url, "item_id": item_id, "project_url": project_url, "needs_you_marked": marked,
             "column_ok": column_ok}
 
+# Hạn mức --new-card (#1333): 19/11 một phiên mở 15 thẻ bằng --new-card "<lý do bất kỳ>", nhiều thẻ cùng gốc.
+# Mỗi CLAUDE_CODE_SESSION_ID được 1 lần trong 12 giờ; không có session id (script, CI) thì không áp.
+# ponytail: sổ JSON theo phiên là hạn mức mềm (agent vẫn có thể bỏ env var); nâng lên khóa phía server khi có thẻ tràn lan lặp lại.
+NEW_CARD_WINDOW_S = 12 * 3600
+NEW_CARD_LEDGER = Path(".agents/local/state/create_task_new_card.json")
+
+
+def new_card_ledger_path():
+    """Sổ nằm ở checkout chính của repo đích (dùng chung giữa các worktree); không phải repo git thì None."""
+    r = run_cmd(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], check=False)
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return Path(r.stdout.strip()).parent / NEW_CARD_LEDGER
+
+
+def new_card_used(session_id, now=None):
+    """Trả bản ghi {ts, url} khi phiên đã dùng --new-card trong 12 giờ qua, không thì None."""
+    path = new_card_ledger_path()
+    if not session_id or path is None or not path.is_file():
+        return None
+    try:
+        entry = json.loads(path.read_text(encoding="utf-8")).get(session_id)
+    except (OSError, ValueError, AttributeError) as e:
+        # Sổ hỏng thì không chặn (không làm kẹt việc tạo thẻ), nhưng nói ra.
+        print(f"   ⚠️  Không đọc được sổ --new-card {path}: {e}", file=sys.stderr)
+        return None
+    if not isinstance(entry, dict) or isinstance(entry.get("ts"), bool) or not isinstance(entry.get("ts"), (int, float)):
+        return None
+    return entry if (now or time.time()) - entry["ts"] < NEW_CARD_WINDOW_S else None
+
+
+def record_new_card(session_id, url):
+    path = new_card_ledger_path()
+    if not session_id or path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ignore = path.parent / ".gitignore"
+        if not ignore.exists():
+            ignore.write_text("*\n", encoding="utf-8")   # thư mục tự ignore: repo app không cần sửa .gitignore
+        data = {}
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except ValueError:
+                data = {}
+        if not isinstance(data, dict):
+            data = {}
+        cutoff = time.time() - NEW_CARD_WINDOW_S
+        data = {k: v for k, v in data.items() if isinstance(v, dict) and isinstance(v.get("ts"), (int, float))
+                and not isinstance(v.get("ts"), bool) and v["ts"] >= cutoff}
+        data[session_id] = {"ts": time.time(), "url": url}
+        # Tên tạm riêng mỗi lần ghi: sổ dùng chung giữa các worktree, hai tiến trình song song không đụng file tạm của nhau.
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False) as tmp:
+            tmp.write(json.dumps(data, ensure_ascii=False))
+        os.replace(tmp.name, path)
+    except OSError as e:
+        print(f"   ⚠️  Không ghi được sổ --new-card {path}: {e}", file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Tạo Task chuẩn Super-Board và đẩy lên Backlog GitHub Project Board")
     parser.add_argument("summary", nargs="?", help="Mô tả tóm tắt hoặc tiêu đề task")
@@ -815,6 +877,16 @@ def main():
     if args.new_card is not None and not args.new_card.strip():
         print("❌ --new-card cần lý do (vì sao việc này không nhập vào thẻ Backlog đang có).", file=sys.stderr)
         sys.exit(64)
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+    if args.new_card is not None and session_id:
+        used = new_card_used(session_id)
+        if used:
+            url = str(used.get("url") or "?")
+            print(f"❌ Phiên này đã mở thẻ riêng #{url.rstrip('/').rsplit('/', 1)[-1]} bằng --new-card ({url}); mỗi phiên "
+                  "chỉ được 1 lần trong 12 giờ. Gom việc này vào thẻ đã tạo: thêm AC/ghi chú vào thẻ đó "
+                  "(gh api repos/<repo>/issues/<số> -X PATCH), hoặc bỏ --new-card để script tự gom vào thẻ chưa chạy.",
+                  file=sys.stderr)
+            sys.exit(64)
 
     title = None
     body = None
@@ -898,16 +970,22 @@ def main():
             except ValueError as e:
                 print(f"   ⚠️  AC có vẻ cần người nhưng {e}: chưa đánh dấu; truyền --needs-you \"<việc cụ thể>\".")
 
-    # Gom: thẻ thường (không cần người, không từ file có chủ đích, không --new-card) nhập vào thẻ Backlog hoặc Ready chưa chạy.
+    # Gom: thẻ thường (không cần người, không phải --from-file --ticket, không --new-card) nhập vào thẻ Backlog hoặc Ready chưa chạy.
     # Không gom việc có --blocked-by hoặc rủi ro 🔴: blocker và rủi ro cao của một việc không tách được khỏi thẻ chứa nó.
     # 24/10: trước đây chỉ 🟢 mới gom, mà gần như mọi thẻ ghi 🟡 nên không bao giờ gom (người dùng: "gom … không hoạt động").
     # Only the risk LABEL counts, not the description after it: an emoji wins; without one, the first word (High / Cao).
-    low_risk = not is_high(args.risk)
+    # --from-file --title đọc body từ file (không truyền --risk/--blocked-by), nên kiểm luôn mục Risk / Blocked by của body.
+    # --from-file (kể cả --title): body của file là nguồn duy nhất, cờ CLI --risk/--blocked-by đã bị bỏ qua (cảnh báo ở trên).
+    cli_risk, cli_blocked = (None, None) if args.from_file else (args.risk, args.blocked_by)
+    risk_text = cli_risk if cli_risk is not None else "\n".join(section(body, "Risk")).strip()
+    low_risk = not is_high(risk_text)
+    has_blocker = bool(cli_blocked) or [l.strip() for l in section(body, "Blocked by") if l.strip()] not in ([], ["- None."])
     # Nhãn ngoài bug/feature/qa (needs-device…) có tác dụng với runner; đường gom không áp nhãn lên thẻ cũ → thẻ riêng.
     plain_labels = set(auto_labels(title, args.labels)) <= KINDS
     batch_labels = []
-    if (needs_you is None and args.new_card is None and not args.from_file
-            and not args.blocked_by and low_risk and plain_labels):
+    # #1333: chỉ backlog soạn sẵn (--from-file --ticket) bỏ gom; --from-file --title là đường agent dùng, vẫn gom.
+    if (needs_you is None and args.new_card is None and not from_ticket
+            and not has_blocker and low_risk and plain_labels):
         repo = args.repo or detect_repo()
         items = cards = None
         try:
@@ -972,6 +1050,8 @@ def main():
 
     result = create_and_push(title, body, labels=args.labels, repo=args.repo, dry_run=args.dry_run,
                              needs_you=needs_you, needs_you_next=needs_you_next, extra_labels=batch_labels)
+    if args.new_card is not None and not args.dry_run:
+        record_new_card(session_id, result.get("url", ""))
     if not result.get("needs_you_marked", True) or not result.get("column_ok", True):
         sys.exit(3)
 

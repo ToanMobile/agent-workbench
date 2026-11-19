@@ -403,8 +403,10 @@ def card_args(fp: str, inc: dict) -> list[str]:
 
 
 def create_card(fp: str, inc: dict):
+    # #1333: hạn mức --new-card theo phiên là cho agent gõ tay; quét tự động mở tới 3 thẻ mỗi lần nên không mang id phiên.
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
     res = subprocess.run([sys.executable, str(CREATE_TASK), *card_args(fp, inc)], capture_output=True, text=True,
-                         timeout=GH_TIMEOUT_S * 4)
+                         timeout=GH_TIMEOUT_S * 4, env=env)
     out = res.stdout + res.stderr
     m = re.search(r"/issues/(\d+)", out) or re.search(r"vào thẻ Backlog #(\d+)", out)
     if res.returncode not in (0, 3) or not m:

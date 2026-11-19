@@ -31,7 +31,8 @@ EXCLUDE = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regr
            ".agents/.regression_status." + "[a-z0-9_]" * 8)
 # #691: file bản cài kit sửa cục bộ trong mỗi worktree; tree_fingerprint() chỉ tính bản đã commit của chúng (xem trong hàm), và biên nhận
 # gate (post-fix-gate head_and_dirty) không ghi chúng vào `dirty`. Không nằm trong EXCLUDE: EXCLUDE bỏ cả nội dung đã commit.
-HEAD_PINNED = (".claude/settings.json",)
+# .agents/hooks.json cũng được install.sh sinh/cập nhật cục bộ cho Antigravity khi dựng worktree nên phải ghim theo HEAD như .claude/settings.json.
+HEAD_PINNED = (".claude/settings.json", ".agents/hooks.json")
 
 
 def head_pinned(path, prefix=""):

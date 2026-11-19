@@ -717,6 +717,21 @@
       ]
     },
     {
+      "component": "Game Blender 5.2+ & Unity 6.3 Pipeline",
+      "watch_files": [
+        "universal-agent-devkit/profiles/game/scripts/blender/*",
+        "universal-agent-devkit/skills/blender-game-pipeline/*",
+        "universal-agent-devkit/profiles/game/rules/game-rules.md"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-GAME-BLENDER-PIPELINE",
+          "command": "bash universal-agent-devkit/tests/verification/test_game_blender_pipeline.sh",
+          "description": "Kiểm định 4 script Blender headless (qa_check, make_lods, export_unity, review_shots), skill blender-game-pipeline, exclude_skills và quy tắc Unity 6.3 GRD"
+        }
+      ]
+    },
+    {
       "component": "super-board-runner-reclaim-dead-build",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
@@ -2824,6 +2839,21 @@
       ]
     },
     {
+      "component": "android-dexscan-app-package",
+      "watch_files": [
+        "universal-agent-devkit/profiles/android/scripts/qa/dexscan.py",
+        "universal-agent-devkit/tests/verification/test_dexscan_app_package.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-DEXSCAN-PKG-01",
+          "name": "dexscan --app-package bytecode caller filtering",
+          "command": "bash universal-agent-devkit/tests/verification/test_dexscan_app_package.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-waiting-on-skip-619",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
@@ -4180,6 +4210,28 @@
           "id": "REG-SB-MERGE-OPT-LOAD-CAP-01",
           "name": "05/11 chủ repo: hạn số merge gate chạy cùng lúc theo tải — tải ≥ số lõi thì verify lạc quan (ngoài khoá) chỉ thấy N−1 slot pool gate, slot cuối để dành cho verify trong khoá; 3 merge gate cùng lúc tối đa 1 verify lạc quan chạy suite; hết SB_MERGE_OPT_SLOT_WAIT_S thì chạy với cả pool; tải thấp và verify trong khoá như cũ",
           "command": "bash tests/super-board/test_merge_gate_opt_load_cap.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "antigravity-hooks-lifecycle",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/bin/tree_fp.py",
+        "universal-agent-devkit/bin/parity_check.py",
+        "universal-agent-devkit/bin/agent-health.py",
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/hooks/agent_bridge.sh",
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/tests/verification/test_antigravity_hooks_lifecycle.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-AG-LIFECYCLE-01",
+          "name": "Antigravity .agents/hooks.json state, parity/health, manage_task bridge",
+          "command": "bash universal-agent-devkit/tests/verification/test_antigravity_hooks_lifecycle.sh",
           "parallel_safe": true
         }
       ]

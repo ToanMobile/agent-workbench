@@ -21,6 +21,7 @@
   "rules_file": "profiles/web/rules/web-rules.md",
   "exclude_skills": [
     "android-real-device-qa",
+    "blender-game-pipeline",
     "compose-recomp-audit",
     "deploy",
     "taste-mobile-app",

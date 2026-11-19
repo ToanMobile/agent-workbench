@@ -34,6 +34,11 @@ _CMD_SEP = set(";&|<>)}`\n")             # hết lệnh gate: cùng tập dấu 
 LINK_DIRS = (".agents", ".claude", ".gemini", ".githooks", ".codex", ".cursor")
 SKIP_DIRS = {".git", "node_modules", "__pycache__", "worktrees", "Library", "build"}
 HOOK_REF_RE = re.compile(r"\.claude/hooks/([A-Za-z0-9_.-]+)")
+AG_HOOK_REF_RE = re.compile(r"(?:^|[\s\"'])hooks/([A-Za-z0-9_.-]+)")
+AG_BRIDGE_SCRIPT_RE = re.compile(r"agent_bridge\.sh\s+antigravity\s+\S+\s+([A-Za-z0-9_.-]+)")
+# Antigravity matcher chuẩn của DevKit (cho phép kèm thêm manage_task)
+AG_REQUIRED_MATCHERS = {"run_command", "send_command_input", "shell_exec"}
+AG_REQUIRED_GUARDS = ("block-dangerous-git.sh", "hardware_safety_gate.sh")
 
 
 def git_root(path):
@@ -276,6 +281,68 @@ def check_settings(repo):
     return out
 
 
+def check_antigravity_hooks(repo):
+    """Kiểm tra .agents/hooks.json khi repo bật Gemini/Antigravity: phát hiện thiếu file, thiếu guard, sai matcher hoặc script treo."""
+    ag_path = os.path.join(repo, ".agents", "hooks.json")
+    gem_path = os.path.join(repo, ".gemini", "settings.json")
+    has_gemini_bridge = False
+    if os.path.isfile(gem_path):
+        try:
+            with open(gem_path, encoding="utf-8", errors="replace") as gf:
+                has_gemini_bridge = "agent_bridge.sh" in gf.read()
+        except OSError:
+            has_gemini_bridge = False
+
+    if not os.path.exists(ag_path):
+        if has_gemini_bridge:
+            return ["hook-missing: .agents/hooks.json — Antigravity PreToolUse guards not registered (re-run agent-kit init)"]
+        return []
+
+    try:
+        with open(ag_path, encoding="utf-8", errors="replace") as af:
+            raw = af.read()
+    except OSError:
+        return ["hook-missing: .agents/hooks.json — cannot read file"]
+
+    cfg = load_json(ag_path)
+    if not isinstance(cfg, dict):
+        return ["hook-missing: .agents/hooks.json — not valid JSON, no Antigravity hook can run"]
+
+    ag_has_bridge = "agent_bridge.sh" in raw or "universal-agent-devkit" in cfg
+    out = []
+    seen_guards = set()
+    # Thu thập các script được lệnh hook trong .agents/hooks.json gọi tới (cwd của Antigravity là thư mục .agents/)
+    for entry in cfg.values():
+        if not isinstance(entry, dict):
+            continue
+        for ev, groups in entry.items():
+            if not isinstance(groups, list):
+                continue
+            for grp in groups:
+                if not isinstance(grp, dict):
+                    continue
+                matcher_tokens = {t.strip() for t in str(grp.get("matcher", "")).split("|") if t.strip()}
+                hooks = grp.get("hooks") if isinstance(grp.get("hooks"), list) else []
+                for h in hooks:
+                    cmd = h.get("command") if isinstance(h, dict) and isinstance(h.get("command"), str) else ""
+                    if not cmd:
+                        continue
+                    refs = list(AG_HOOK_REF_RE.findall(cmd)) + list(AG_BRIDGE_SCRIPT_RE.findall(cmd))
+                    for name in dict.fromkeys(refs):
+                        if not os.path.exists(os.path.join(repo, ".agents", "hooks", name)):
+                            out.append(f"hook-dangling: .agents/hooks.json — {ev} runs .agents/hooks/{name}, which does not exist")
+                    if ev == "PreToolUse" and AG_REQUIRED_MATCHERS.issubset(matcher_tokens):
+                        for guard in AG_REQUIRED_GUARDS:
+                            if guard in cmd:
+                                seen_guards.add(guard)
+
+    if ag_has_bridge or has_gemini_bridge:
+        for guard in AG_REQUIRED_GUARDS:
+            if guard not in seen_guards:
+                out.append(f"hook-missing: .agents/hooks.json — PreToolUse {'|'.join(sorted(AG_REQUIRED_MATCHERS))}: {guard}")
+    return out
+
+
 def drift_result(repo):
     """(missing, changed, lỗi) của bản sao super-board ở repo so với nguồn; None khi không có gì để so (repo không có configs, kit không
     nằm cạnh .claude/bin/super-board-drift.py, repo chính là nguồn)."""
@@ -339,7 +406,7 @@ def main(argv):
     flags, fixed = check_flags(repo, "--fix" in opts)
     if "--fix" in opts:
         fixed += sync_drift(repo)
-    findings = flags + check_links(repo) + check_copied_hooks(repo) + check_settings(repo) + check_drift(repo)
+    findings = flags + check_links(repo) + check_copied_hooks(repo) + check_settings(repo) + check_antigravity_hooks(repo) + check_drift(repo)
     for line in fixed + findings:
         print(line)
     if findings:
