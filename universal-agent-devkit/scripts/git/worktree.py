@@ -2515,7 +2515,9 @@ def _keep_ref(main, label, tree, parents, message):
     """Một ref mới refs/devkit/discarded/<label>-<stamp>-<pid> trỏ vào commit (tree, parents): sống DISCARD_KEEP_DAYS ngày, worktree gc
     dọn. Không bao giờ đè một bản cất khác (update-ref với cũ = ""). Git lỗi: SystemExit (người gọi không xoá gì)."""
     sha = git(main, "commit-tree", tree, *[a for p in parents for a in ("-p", p)], "-m", message, env=_devkit_env()).stdout.strip()
-    name = re.sub(r"[^A-Za-z0-9._-]", "_", label)[:80] or "worktree"
+    # A ref component may not start with a dot nor contain `..` (git check-ref-format): a dot-named folder such as the merge gate's
+    # `.merge-scratch-keep-pr…` made update-ref fail, so that worktree could be neither removed nor discarded. Collapse `..`, drop leading dots.
+    name = re.sub(r"\.{2,}", "_", re.sub(r"[^A-Za-z0-9._-]", "_", label)).lstrip(".")[:80] or "worktree"
     ref = f"{DISCARD_REF}{name}-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
     git(main, "update-ref", ref, sha, "")
     return ref
