@@ -113,4 +113,33 @@ rc1=$(run --new-card "a" "${NEWARGS[@]}"); rc2=$(run --new-card "b" "${NEWARGS[@
 [ -z "$(cd "$TMP/repo" && git status --porcelain)" ] && ok "7 sổ được git-ignore" \
   || fail "7 cây bẩn: $(cd "$TMP/repo" && git status --porcelain)"
 
+# 8. --from-file --title có ## Risk 🔴 hoặc ## Blocked by trong file không bị gom (chưa có cờ CLI --risk/--blocked-by).
+cat > "$TMP/high.md" <<'MD'
+## Problem
+Lỗi rủi ro cao create_task.py.
+
+## Acceptance Criteria
+- [ ] A
+
+## Risk
+🔴 High — không gom
+MD
+cat > "$TMP/blocked.md" <<'MD'
+## Problem
+Lỗi bị chặn create_task.py.
+
+## Acceptance Criteria
+- [ ] A
+
+## Risk
+🟢 Low
+
+## Blocked by
+- #99 — đang chờ
+MD
+rc=$(run --dry-run --from-file "$TMP/high.md" --title "$BUGTITLE")
+[ "$rc" = "0" ] && ! grep -q "Sẽ gom" "$TMP/out" && ok "8a --from-file --title rủi ro 🔴 trong file không gom" || fail "8a rc=$rc: $(cat "$TMP/out")"
+rc=$(run --dry-run --from-file "$TMP/blocked.md" --title "$BUGTITLE")
+[ "$rc" = "0" ] && ! grep -q "Sẽ gom" "$TMP/out" && ok "8b --from-file --title có Blocked by trong file không gom" || fail "8b rc=$rc: $(cat "$TMP/out")"
+
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

@@ -810,7 +810,7 @@ def new_card_used(session_id, now=None):
         # Sổ hỏng thì không chặn (không làm kẹt việc tạo thẻ), nhưng nói ra.
         print(f"   ⚠️  Không đọc được sổ --new-card {path}: {e}", file=sys.stderr)
         return None
-    if not isinstance(entry, dict) or not isinstance(entry.get("ts"), (int, float)):
+    if not isinstance(entry, dict) or isinstance(entry.get("ts"), bool) or not isinstance(entry.get("ts"), (int, float)):
         return None
     return entry if (now or time.time()) - entry["ts"] < NEW_CARD_WINDOW_S else None
 
@@ -970,13 +970,16 @@ def main():
     # Không gom việc có --blocked-by hoặc rủi ro 🔴: blocker và rủi ro cao của một việc không tách được khỏi thẻ chứa nó.
     # 24/10: trước đây chỉ 🟢 mới gom, mà gần như mọi thẻ ghi 🟡 nên không bao giờ gom (người dùng: "gom … không hoạt động").
     # Only the risk LABEL counts, not the description after it: an emoji wins; without one, the first word (High / Cao).
-    low_risk = not is_high(args.risk)
+    # --from-file --title đọc body từ file (không truyền --risk/--blocked-by), nên kiểm luôn mục Risk / Blocked by của body.
+    risk_text = args.risk if args.risk is not None else "\n".join(section(body, "Risk")).strip()
+    low_risk = not is_high(risk_text)
+    has_blocker = bool(args.blocked_by) or [l.strip() for l in section(body, "Blocked by") if l.strip()] not in ([], ["- None."])
     # Nhãn ngoài bug/feature/qa (needs-device…) có tác dụng với runner; đường gom không áp nhãn lên thẻ cũ → thẻ riêng.
     plain_labels = set(auto_labels(title, args.labels)) <= KINDS
     batch_labels = []
     # #1333: chỉ backlog soạn sẵn (--from-file --ticket) bỏ gom; --from-file --title là đường agent dùng, vẫn gom.
     if (needs_you is None and args.new_card is None and not from_ticket
-            and not args.blocked_by and low_risk and plain_labels):
+            and not has_blocker and low_risk and plain_labels):
         repo = args.repo or detect_repo()
         items = cards = None
         try:
