@@ -3617,7 +3617,8 @@ BASH_CHAIN_RX = re.compile(r"&&|\|\||;|(?<!&)&(?!&)|\$\(|<\(|>\(|`|\n")
 # 19/11 (audit session held 4 times): a research turn chains reads (`cd x; echo ==; ls a 2>/dev/null | head; gh api … --jq`). `;` `&&`
 # `||` and newlines between reads are allowed; `$(`, backticks, `<(`/`>(` and a lone `&` still are not (they can hide any command).
 # `>/dev/null` / `2>&1` write no file. `gh` only reads with `api` minus a method/field flag, or `view|list|diff|checks|status`.
-_DEVNULL = re.compile(r"[0-9]*>>?\s*/dev/null|[0-9]*>&[0-9]")
+# #1342 R7: anchor at the END of the word: `>&1o`, `>/dev/nullx`, `>&1.log` name a real file bash creates.
+_DEVNULL = re.compile(r"[0-9]*>>?\s*/dev/null(?![^\s;&|)])|[0-9]*>&[0-9](?![^\s;&|)])")
 _HIDDEN_CMD = re.compile(r"\$\(|<\(|>\(|`|(?<![&|])&(?![&>])")
 _SEG_SPLIT = re.compile(r"&&|\|\||[;|\n]")
 _GIT_READ = {"log", "show", "diff", "status", "ls-files", "rev-parse", "rev-list", "branch", "merge-base", "blame", "grep", "worktree",
@@ -3705,6 +3706,8 @@ def _read_only_turn():
             if not isinstance(u.get("input"), dict):
                 return False
             bare = _DEVNULL.sub(" ", _bash_bare(str(u["input"].get("command", ""))))
+            if ">&" in bare:
+                return False   # R7: `>&word` writes file `word` (only `>&N` / `>/dev/null` were stripped above)
             if TEST_RUNNER_RX.search(bare) or BASH_WRITE_RX.search(bare) or _HIDDEN_CMD.search(bare) or ".xml" in bare.lower():
                 return False   # thay thế lệnh / chạy nền / đọc XML / ghi: check 2 xét lần chạy của ai
             if not _sed_reads_only(str(u["input"].get("command", ""))):

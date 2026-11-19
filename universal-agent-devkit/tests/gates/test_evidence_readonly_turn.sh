@@ -124,7 +124,8 @@ for cmd in 'gh api -XPOST repos/o/r/issues -fbody=x' 'gh api repos/o/r/issues -F
            'sort --compress-program=./evil f' 'sort --comp=./evil f' 'sort -uo o f' 'date -s 2020' "'rm' cat" "'sort' -o o f" "\\rm x" \
            'git diff HEAD HEAD "--output=o"' 'git diff "--output" o HEAD HEAD' 'git diff \--output=o HEAD HEAD' 'git diff {--output=o,} HEAD HEAD' \
            'git diff --${PWD:0:0}output=o HEAD HEAD' 'sort "-o" o a' 'sort a "--output=o"' 'uniq a "o"' 'gh api repos/o/r/issues/1 "-XDELETE"' \
-           'gh api repos/o/r "--method" DELETE' 'rg "--pre" ./evil x .' 'date "-s" 12:00' 'sort -o"o" a' 'cat *' 'git diff --output=~/o' ; do
+           'gh api repos/o/r "--method" DELETE' 'rg "--pre" ./evil x .' 'date "-s" 12:00' 'sort -o"o" a' 'cat *' 'git diff --output=~/o' \
+           'cat a >&1o' 'cat a 2>&1o' 'cat a >&1.log' 'cat a >/dev/nullx' 'cat a 2>/dev/null.log' 'cat a >&10' 'cat a >/dev/null/x' ; do
   i=$((i + 1))
   python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],"",False]]))' "$cmd" > "$TMP/s.json"
   transcript "$TMP/w$i.jsonl" "$(cat "$TMP/s.json")"
