@@ -2489,6 +2489,30 @@ review_concluded_bounce() {
   worker_ended_clean "$1" && worker_result_text "$1" | grep -qiE 'not approved|not merge-ready|không duyệt|chưa duyệt'
 }
 
+# #1350: a reviewer that ends its report with `blocked-by: -` ("hand to a person") for a CONCRETE code finding the builder can fix (#1350: audit major at
+# super-board-run.sh:459, the scope already answered by AC1) left the card in Review and the orchestrator then Blocked it ❓. $1 = issue, $2 = the newest
+# comment's text. Read-only: 0 when that `blocked-by: -` is NOT a real person-wait: the newest comment is a [reviewer] one ending in `blocked-by: -`, has a ❌
+# line AND a file:line token, names no closed-list reason (💳 🔐 🧑 🙋, payment, secret, migration, device, ...), the card is not needs-you / human-gated, the same
+# comment has not bounced yet and the card has bounced fewer than SB_REVIEW_BOUNCE_MAX (3) times. Sets REVIEW_BOUNCE_KEY for the caller to record after the move.
+# ponytail: the finding test is a heuristic (❌ + file:line); the 3-per-card ceiling bounds a wrong call to 3 extra build rounds.
+review_dash_is_bounceable() {
+  local issue="$1" body="$2" ck max cnt
+  REVIEW_BOUNCE_KEY=""
+  max="${SB_REVIEW_BOUNCE_MAX:-3}"; case "$max" in ''|*[!0-9]*|0) max=3 ;; esac
+  printf '%s\n' "$body" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{exit !(r && l ~ /^blocked-by:[[:space:]]*-[[:space:]]*$/)}' || return 1
+  printf '%s\n' "$body" | grep -qE '^[[:space:]]*(- )?❌' || return 1
+  printf '%s\n' "$body" | grep -qE '[A-Za-z0-9_./-]+\.(sh|py|js|ts|kt|java|md|json|yml|yaml|jq):[0-9]+' || return 1
+  ! printf '%s\n' "$body" | grep -qiE '💳|🔐|🧑|🙋|thanh toán|payment|billing|secret|credential|keystore|mật khẩu|password|drop table|destructive|live[- ]db|migration|thiết bị|máy thật|real device|adb' || return 1
+  ! printf '%s' "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" 'any(.items[]?; .content.number == $n and
+      ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase] | (index("needs-you") or index("human-gated"))))' >/dev/null 2>&1 || return 1
+  ck=$(printf '%s' "$body" | cksum | cut -d' ' -f1)
+  swept_seen "${issue}:rvbounce:${ck}" && return 1
+  cnt=$(grep -c "^${issue}:rvbounce:" "$(sweep_ledger)" 2>/dev/null || true)
+  [ "${cnt:-0}" -lt "$max" ] || return 1
+  REVIEW_BOUNCE_KEY="${issue}:rvbounce:${ck}"
+  return 0
+}
+
 # #1316: 0 when a Review card legitimately stays in Review: PR queued (merge-queue + approved-head) or the newest `[reviewer]` comment ends with `blocked-by:` (any value, `-` = a person).
 review_holds_in_review() { # $1 issue, $2 comment count
   { merge_queue_on && review_approved_head "$1" merge-queue >/dev/null; } && return 0
@@ -2755,13 +2779,28 @@ EOF
     # #1316: a review worker that ended clean concluding "not approved" but never moved the card is a bounce it forgot to route (also when it
     # commented): the builder only takes Ready/Building cards, so move it to Ready, not the review-stall ledger or Blocked ❓. A queued PR or a
     # `[reviewer] … blocked-by:` wait stays in Review; a clean exit with no such conclusion stays a no-op.
-    if [ "$lane" = review ] && [ "$col" = Review ] && [ "$col" = "$from" ] && review_concluded_bounce "$wlog" && ! review_holds_in_review "$issue" "$count"; then
+    # #1350: also a clean-ended review worker whose newest [reviewer] comment hands a CONCRETE code finding to "a person" (`blocked-by: -`, ❌ + file:line, no
+    # closed-list reason): the builder can fix it, so it is a bounce too (review_dash_is_bounceable; once per comment, 3 per card). The queued-PR guard stays.
+    REVIEW_BOUNCE_KEY=""
+    if [ "$lane" = review ] && [ "$col" = Review ] && [ "$col" = "$from" ] && worker_ended_clean "$wlog" \
+       && ! { merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; } \
+       && { review_dash_is_bounceable "$issue" "$(issue_last_comment "$issue" "$count")" \
+            || { REVIEW_BOUNCE_KEY=""; review_concluded_bounce "$wlog" && ! review_holds_in_review "$issue" "$count"; }; }; then
       item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
       if [ -n "$item_id" ] && set_card_status "$item_id" "Ready"; then
         NOOP_MOVED=1
         rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true
         [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
         gh_checkpoint
+        if [ -n "${REVIEW_BOUNCE_KEY:-}" ]; then
+          swept_add "$REVIEW_BOUNCE_KEY"
+          gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · the reviewer's finding is a code fix, not a person's decision
+Did: the newest [reviewer] report ended with \`blocked-by: -\` but names a concrete finding (❌ with file:line) and no closed-list reason (money, auth, destructive schema, device, secret, needs-you). The card's own AC answers the scope question.
+✅ Done: card moved Review → Ready (bounce $(( $(grep -c "^${issue}:rvbounce:" "$(sweep_ledger)" 2>/dev/null || true) ))/${SB_REVIEW_BOUNCE_MAX:-3} for this card)
+Next: builder fixes the reviewer's ❌ finding on the PR, QA, then Review
+blocked-by: agent" >/dev/null 2>&1 || true
+          REVIEW_BOUNCE_KEY=""
+        fi
         log "↩ #${issue} Review → Ready: review worker concluded not approved without moving the card (bounce routed by the runner)"
         continue
       fi

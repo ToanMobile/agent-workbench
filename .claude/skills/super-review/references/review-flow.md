@@ -116,3 +116,8 @@
    - Include findings grouped by severity.
    - Include verification commands and results.
    - Include which Super workflow should own each fix.
+
+7. **`blocked-by: -` is for the closed list only (#1350)**
+   - End a report with `blocked-by: -` (hand to a person) ONLY for a reason on the closed list: money or payment, auth or secrets, a destructive schema or live-DB migration, a public API break, a real device, or a card labelled `needs-you` / `human-gated` (the 🙋 💳 🔐 🧑 tags).
+   - A finding with a `file:line` that the builder can fix is a bounce, not a person's decision. A scope question the card's own AC already answers (for example "every required read") is a bounce too: move the card to Ready for the builder, write `blocked-by:  agent`.
+   - Backstop: if a report still ends `blocked-by: -` with a ❌ finding and a `file:line` and no closed-list reason, the runner routes the card to Ready itself (`review_dash_is_bounceable`, once per comment, at most `SB_REVIEW_BOUNCE_MAX` = 3 per card); anything on the closed list stays a person-wait.
