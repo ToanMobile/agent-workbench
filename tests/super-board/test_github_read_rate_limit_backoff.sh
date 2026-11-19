@@ -361,4 +361,26 @@ else
   fail "R9 real runner start-up quota-rl: alive=$RL_ALIVE STATE=$RL_STATE skips=$RL_SKIPS tail=$(tail -4 "$TMP/r3.out" "$TMP/r3.err" | tr '\n' ' ')"
 fi
 
+# R12: rate_limit_skip must not renew a latch that is still armed (68 from the latch itself); only a 68 from a real read re-arms it. After SB_RATE_SKIP_SECONDS the latch expires.
+r12=$(SB_LIB_ONLY=1 RUN_SRC="$RUN" bash -c '
+  set -euo pipefail
+  . "$RUN_SRC"
+  log() { :; }
+  SB_RATE_SKIP_SECONDS=300; RL_SKIP_UNTIL=0
+  rate_limit_skip 68; first=$RL_SKIP_UNTIL                       # real read: arms the latch
+  RL_SKIP_UNTIL=$(( $(date +%s) + 100 )); armed=$RL_SKIP_UNTIL
+  rate_limit_skip 68; [ "$RL_SKIP_UNTIL" = "$armed" ] && kept=y || kept=n   # from the latch: not renewed
+  echo "armed=$([ "$first" -gt 0 ] && echo y || echo n) kept=$kept"' 2>&1)
+[ "$r12" = "armed=y kept=y" ] && ok "R12 latch armed by a real 68, not renewed by a 68 from the latch" || fail "R12 got '$r12', want 'armed=y kept=y'"
+
+# R13: start-up with an unreadable board (placeholder items) must not count every Done card as landed: the first real signature becomes the baseline.
+r13=$(SB_LIB_ONLY=1 RUN_SRC="$RUN" bash -c '
+  set -euo pipefail
+  . "$RUN_SRC"
+  log() { :; }; dispatch_paused() { return 1; }; board_only_file_wait() { return 1; }
+  PREV_DONE_SIG="@unread"; LANDED_COUNT=0; NO_PROGRESS_CYCLE_COUNT=0; MQ_WAITING=0; ACTIVE_WORKERS=0; LOAD_HELD_TICK=0; RATE_LIMITED_TICK=0
+  record_cycle_progress "1,2,3" || true
+  echo "landed=$LANDED_COUNT base=$PREV_DONE_SIG"' 2>&1)
+[ "$r13" = "landed=0 base=1,2,3" ] && ok "R13 unread start-up board: first real signature is the baseline, not a landing" || fail "R13 got '$r13', want 'landed=0 base=1,2,3'"
+
 [ "$FAILS" -eq 0 ] && { echo "OK"; exit 0; } || { echo "$FAILS failed"; exit 1; }
