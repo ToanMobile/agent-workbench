@@ -26,7 +26,7 @@ exit "${MQ_RC:-0}"
 SH
 chmod +x "$TMP/bin/super-board-merge-queue.sh"
 echo '{"worker_backend":"claude-p"}' > "$TMP/cfg.json"
-export STUB_DIR="$TMP" SB_T_RUNNER="$RUNNER" SB_MERGE_QUEUE=1 SB_MQ_TICK_WAIT=0
+export SB_HALT_RECOVER_DELAY=0 STUB_DIR="$TMP" SB_T_RUNNER="$RUNNER" SB_MERGE_QUEUE=1 SB_MQ_TICK_WAIT=0
 
 # runner_tick: một runner mới (bash mới, source lại runner cùng RUNNER_DIR/slug) chạy đúng một tick merge_queue_due.
 runner_tick() {

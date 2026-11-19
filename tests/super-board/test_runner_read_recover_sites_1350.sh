@@ -86,6 +86,36 @@ reset; export MODE=read FAILS_LEFT=0
 ( printf 9 > "$TMP/mq.rc"; mq_collect_rc "$TMP/mq.rc" "$TMP/mq.pid" ) >/dev/null 2>&1; rc=$?
 [ "$rc" = 9 ] && ok "F3: mq_collect_rc 9 still halts" || fail "F3: rc=$rc"
 
+# H: suite_fuse_tick (đọc thẻ Blocked) gặp 79 tạm thời -> không exit; kéo dài -> exit 79.
+INFLIGHT_DIR="$TMP/inflight"; SB_FUSE_WINDOW_H=1; RUN_MANIFEST=/dev/null
+PROJECT_ITEMS_JSON='{"items":[{"status":"Blocked","content":{"number":5}}]}'
+fuse_card_info() { return 79; }
+reset; export MODE=read FAILS_LEFT=2; halt
+r=$( ( suite_fuse_tick; echo survived ) 2>/dev/null | tail -1 )
+[ "$r" = survived ] && ok "H1: suite_fuse_tick 79 on a transient read halt: runner keeps going" || fail "H1: got '$r'"
+reset; export MODE=read FAILS_LEFT=99; halt
+( suite_fuse_tick ) >/dev/null 2>&1; rc=$?
+[ "$rc" = 79 ] && ok "H2: suite_fuse_tick 79 with a persistent failure exits 79" || fail "H2: rc=$rc"
+
+# I: startup_reconcile: gh_rate_guard / fetch_project_items gặp 79 tạm thời -> không exit; kéo dài -> exit 79.
+reap_finished_locks() { :; }; adopt_live_locks() { :; }; reclaim_stranded_building() { :; }; sweep_merged_lanes() { :; }
+gh_rate_guard() { return 0; }; fetch_project_items() { return 79; }
+reset; export MODE=read FAILS_LEFT=2; halt
+r=$( ( startup_reconcile; echo survived ) 2>/dev/null | tail -1 )
+[ "$r" = survived ] && ok "I1: startup_reconcile fetch 79 on a transient read halt: runner keeps going" || fail "I1: got '$r'"
+gh_rate_guard() { return 79; }; fetch_project_items() { return 0; }
+reset; export MODE=read FAILS_LEFT=2; halt
+r=$( ( startup_reconcile; echo survived ) 2>/dev/null | tail -1 )
+[ "$r" = survived ] && ok "I2: startup_reconcile quota 79 on a transient read halt: runner keeps going" || fail "I2: got '$r'"
+reset; export MODE=read FAILS_LEFT=99; halt
+( startup_reconcile ) >/dev/null 2>&1; rc=$?
+[ "$rc" = 79 ] && ok "I3: startup_reconcile 79 with a persistent failure exits 79" || fail "I3: rc=$rc"
+
+# J: 79 mà không có file halt (issue_is_open ép lỗi lạ thành 79) -> không nhả, không --resume: caller thoát như cũ.
+reset; export MODE=read FAILS_LEFT=0
+( rate_limit_skip 79 ) >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && [ ! -e "$TMP/calls" ] && ok "J: 79 with no halt record is not swallowed (returns 1, no --resume)" || fail "J: rc=$rc"
+
 # G: watchdog — quá trần khởi động lại: giữ nguyên không khởi động, và gửi notify đúng một lần.
 if [ "$(uname -s)" = Darwin ]; then
   R="$TMP/repo"; BIN="$R/.claude/bin"; STUB="$TMP/stub"; mkdir -p "$BIN" "$R/.claude/super-board/runner" "$STUB" "$TMP/home"

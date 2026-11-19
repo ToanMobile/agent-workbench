@@ -735,7 +735,8 @@ project_node_id() {
 RL_SKIP_UNTIL=0
 rate_limit_skip() {  # #1311: $1 = exit code of a GitHub read. 68 = rate limit outlasted the backoff: skip this card, never exit (exit => STATE=crashed => watchdog crash loop, #256 / INSTINCT-058)
   # #1350: 79 = read halt: the one shared recovery (recover_read_halt, 3 tries); released -> skip this card; not released (persistent, or an uncertain write) -> 1, the caller exits 79 as before
-  if [ "$1" -eq 79 ]; then recover_read_halt && return 0; return 1; fi
+  # no halt record (issue_is_open turns any odd failure into 79): nothing to release, never swallowed -> 1
+  if [ "$1" -eq 79 ]; then python3 "$SB_GITHUB_READ" --check >/dev/null 2>&1 && return 1; recover_read_halt && return 0; return 1; fi
   [ "$1" -eq 68 ] || return 1
   # R12: a 68 that came from the latch itself (issue_is_open fails fast while it is still armed) must not renew it, or the latch never expires and the board stays silent
   if [ "$(date +%s)" -lt "${RL_SKIP_UNTIL:-0}" ]; then
@@ -3218,6 +3219,10 @@ EOF
   return 0
 }
 
+startup_read_ok() {  # #1350: start-up read rc 68 (rate limit) or 79 released by recover_read_halt -> 0 (go on, the ticks retry); else 1 (caller exits)
+  [ "$1" -eq 68 ] && return 0
+  [ "$1" -eq 79 ] && recover_read_halt
+}
 startup_reconcile() {
   # Lúc khởi động, theo thứ tự: dọn lock chết, nhận lại worker còn sống (lock PID tái dùng bị gỡ ở đây), rồi mới trả
   # thẻ Building bị bỏ rơi về Ready. Đảo lại thì reclaim thấy lock PID tái dùng còn "sống" và bỏ qua thẻ, rồi adopt
@@ -3228,10 +3233,10 @@ startup_reconcile() {
   REVIEW_PID=""; REVIEW_ISSUE=""; REVIEW_EXTRA=""
   adopt_live_locks
   # #1311: 68 = the quota read hit the rate limit past the backoff: log it and go on (the ticks guard again), never die on it (set -e => STATE=crashed)
-  gh_rate_guard || { rc=$?; [ "$rc" -eq 68 ] || exit "$rc"; RATE_LIMITED_TICK=1; log "⚠ GitHub rate limit at start-up (exit 68) — quota read skipped, the ticks retry"; }
+  gh_rate_guard || { rc=$?; startup_read_ok "$rc" || exit "$rc"; RATE_LIMITED_TICK=1; log "⚠ GitHub rate limit at start-up (exit 68) — quota read skipped, the ticks retry"; }
   # #1311: 68 = rate limit outlasted the backoff: skip the start-up reclaim (the ticks and the mid-run reclaim retry), never die on it
-  fetch_project_items || { rc=$?; [ "$rc" -eq 68 ] || exit "$rc"; RATE_LIMITED_TICK=1; [ -n "${PROJECT_ITEMS_JSON:-}" ] || { PROJECT_ITEMS_JSON='{"items":[],"totalCount":0}'; STARTUP_BOARD_UNREAD=1; }; log "⚠ GitHub rate limit at start-up (exit 68) — start-up reclaim skipped, the ticks retry"; return 0; }
-  reclaim_stranded_building; fetch_project_items || { rc=$?; [ "$rc" -eq 68 ] || exit "$rc"; RATE_LIMITED_TICK=1; return 0; }
+  fetch_project_items || { rc=$?; startup_read_ok "$rc" || exit "$rc"; RATE_LIMITED_TICK=1; [ -n "${PROJECT_ITEMS_JSON:-}" ] || { PROJECT_ITEMS_JSON='{"items":[],"totalCount":0}'; STARTUP_BOARD_UNREAD=1; }; log "⚠ GitHub rate limit at start-up (exit 68) — start-up reclaim skipped, the ticks retry"; return 0; }
+  reclaim_stranded_building; fetch_project_items || { rc=$?; startup_read_ok "$rc" || exit "$rc"; RATE_LIMITED_TICK=1; return 0; }
   # Sweep sau reap/adopt: lock của lane còn sống đã rõ.
   sweep_merged_lanes
   RECLAIM_BUILDING=""
@@ -3733,6 +3738,7 @@ suite_fuse_tick() {
     cut -f1 "$led" | grep -qx "$n" && continue
     rc=0; info=$(fuse_card_info "$n" 2>>"$RUN_MANIFEST") || rc=$?
     if [ "$rc" -ne 0 ]; then
+      if [ "$rc" -eq 79 ] && recover_read_halt; then log "⚠ suite fuse: read halt released; retry next tick"; return 1; fi   # #1350
       case "$RUNNER_HALT_CODES" in *" $rc "*) exit "$rc" ;; esac
       log "⚠ suite fuse: cannot read #${n} (exit ${rc}); retry next tick"; continue
     fi
