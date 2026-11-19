@@ -213,14 +213,15 @@ $S/super-collect-file.sh --config <cfg> --adopt <n> --type <t> [--yes]
   `posthog|<signal>|<key>` (fetchers emit it) or `gap|<workflow>`, github `github|<n>`, prs
   `prs|<boundary>|<cause>`, architecture `arch|<module>|<problem>`, custom `custom|<name>|<key>`.
 - **Dedupe** uses complete guarded paginated issue history, exact-fingerprint, repo-wide, any label: an open hit gets a "Seen again" comment; a
-  closed-only hit is a **recurrence**, filed again naming the closed issue.
+  closed-only hit is a **recurrence**, filed again naming the closed issue — unless the newest closed hit was closed as
+  `NOT_PLANNED`: the owner rejected it, so it is **out-of-scope** and nothing is filed.
 - **Column** is the board's holding column (`Backlog`, else `Todo`/`To do`/`Triage`/`Inbox`); none
   → refused (exit 65).
 - The same-host repository lock serializes collector calls; digest receipts skip identical repeat comments. See [state and recovery](references/scheduled-intake.md).
 - Labels: `source:collect`, `collect:<source>`, every `--label`, plus the filer's own.
 
 Dry-run (direct path): run each verified item without `--yes`, show one table (`would-file` / `duplicate` /
-`recurrence` / `would-adopt`, plus the verifier's drops), wait for confirm, rerun with `--yes`.
+`recurrence` / `out-of-scope` / `would-adopt`, plus the verifier's drops), wait for confirm, rerun with `--yes`.
 
 ## Report
 

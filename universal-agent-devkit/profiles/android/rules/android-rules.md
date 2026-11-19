@@ -192,7 +192,7 @@
 | Bitmap OOM | Giải mã theo kích thước hiển thị (§13); không có `OutOfMemoryError` trên fixture ảnh/PDF lớn | Android developers, "Loading large bitmaps efficiently"; nguồn kit: `council:07-performance-anr` (Agent 7.3) | Heap dump + fixture lớn/hỏng |
 | Binder transaction | Tổng dữ liệu một giao dịch Binder dưới 1 MB (bộ đệm chia sẻ cả tiến trình); payload trên 500 KB truyền bằng URI hoặc `SharedMemory` | 1 MB: Android developers, `TransactionTooLargeException`; 500 KB: nguồn kit `council:07-performance-anr` (Agent 7.4) | Không đẩy Bitmap/danh sách lớn qua Intent/Bundle/`savedInstanceState`; truyền URI/ID |
 | Pin / wakelock | Không giữ wakelock thủ công ngoài thời gian cần thiết; việc nền qua WorkManager; tuân thủ Doze/App Standby; huỷ đăng ký sensor/GPS chính xác cao khi vào nền | Android developers, "Doze and App Standby", "Excessive wake locks" (Android vitals); nguồn kit: `council:07-performance-anr` (Agent 7.5) | `adb shell dumpsys batterystats`, Battery Historian, `adb shell dumpsys deviceidle force-idle` |
-| Số method DEX | Cảnh báo khi một DEX vượt 60.000 method (trần 65.536) | Nguồn kit: `skill:android-real-device-qa` | `dexscan.py <apk>` |
+| Số method DEX | App còn một DEX: cảnh báo khi vượt 60.000 method (trần 65.536); multidex thì DEX gần đầy là bình thường | Nguồn kit: `skill:android-real-device-qa` | `dexscan.py <apk>` |
 | Độ sâu View hierarchy | Không quá 10 tầng lồng nhau | Nguồn kit: `skill:android-real-device-qa` | `dump-view-hierarchy.sh` |
 | Mạng — timeout | Connect ≤ 10 s, read ≤ 15 s, retry chỉ cho thao tác idempotent, có backoff + jitter | Luật DevKit essentials (`AGENTS.md`, mục Engineering musts) | Test với mạng chậm/ngắt (proxy giả lập, `adb shell cmd connectivity`) |
 

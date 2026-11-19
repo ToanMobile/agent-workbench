@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""agent_hooks.py — register the DevKit gates with OpenAI Codex, Gemini CLI and Cursor.
+"""agent_hooks.py — register the DevKit gates with OpenAI Codex, Gemini CLI, Cursor and Antigravity.
 
-Usage: agent_hooks.py install|uninstall <codex|gemini|cursor> <project_dir>
+Usage: agent_hooks.py install|uninstall <codex|gemini|cursor|antigravity> <project_dir>
 
 Each platform's hook config gets entries that run hooks/agent_bridge.sh from the
 project's .agents/hooks/ (placed there by the adapter), which translates the
 platform's hook protocol to the DevKit's Claude Code hooks:
 
-  codex   .codex/hooks.json      SessionStart, UserPromptSubmit, PreToolUse(Bash), Stop
-  gemini  .gemini/settings.json  SessionStart, BeforeAgent, BeforeTool(run_shell_command), AfterAgent
-  cursor  .cursor/hooks.json     sessionStart, beforeShellExecution, stop
+  codex        .codex/hooks.json      SessionStart, UserPromptSubmit, PreToolUse(Bash), Stop
+  gemini       .gemini/settings.json  SessionStart, BeforeAgent, BeforeTool(run_shell_command), AfterAgent
+  cursor       .cursor/hooks.json     sessionStart, beforeShellExecution, stop
+  antigravity  .agents/hooks.json     PreToolUse(run_command|send_command_input|shell_exec) — the two destructive-command guards only
 
 Only entries whose command runs agent_bridge.sh are DevKit-owned: install replaces
 exactly those (idempotent) and uninstall removes exactly those; the project's own
-hooks and every other setting stay. A file that does not parse as JSON (e.g. JSONC
+hooks and every other setting stay. Antigravity's file is keyed by hook NAME, so the
+DevKit owns one name there (AG_KEY). A file that does not parse as JSON (e.g. JSONC
 with comments) is never overwritten — exit 1 with a message. Writes are atomic.
 """
 
@@ -44,12 +46,20 @@ PLATFORMS = {
     "cursor": {"file": ".cursor/hooks.json",
                "events": [("sessionStart", None, [SESSION]), ("beforeShellExecution", None, [GIT, HW]),
                           ("stop", None, [STOP])]},
+    # Antigravity (docs in its language_server; real run 2026-11-18): {"<hook name>": {"PreToolUse": [{matcher, hooks}]}},
+    # timeout in seconds, the command runs from the folder holding hooks.json (.agents/). send_command_input (typing into a
+    # running terminal) and shell_exec also reach a shell (CORTEX_STEP_TYPE_* in its language_server).
+    "antigravity": {"file": ".agents/hooks.json",
+                    "events": [("PreToolUse", "run_command|send_command_input|shell_exec", [GIT, HW])]},
 }
+AG_KEY = "universal-agent-devkit"
 
 
 def command(platform, kind, hook):
     if platform == "cursor":  # Cursor runs project hooks from the project root
         return f"bash {BRIDGE} cursor {kind} {hook}"
+    if platform == "antigravity":  # runs from .agents/, beside hooks/
+        return f"bash hooks/agent_bridge.sh antigravity {kind} {hook}"
     return f"{ROOTED} {platform} {kind} {hook}"
 
 
@@ -59,6 +69,9 @@ def is_ours(entry):
 
 def strip(cfg, platform):
     """Remove every DevKit bridge entry; drop groups/events left empty."""
+    if platform == "antigravity":
+        cfg.pop(AG_KEY, None)
+        return cfg
     hooks = cfg.get("hooks")
     if not isinstance(hooks, dict):
         return cfg
@@ -82,6 +95,11 @@ def strip(cfg, platform):
 
 
 def add(cfg, platform):
+    if platform == "antigravity":
+        cfg[AG_KEY] = {event: [{"matcher": matcher, "hooks": [
+            {"type": "command", "command": command(platform, k, h), "timeout": t} for k, h, t in specs]}]
+            for event, matcher, specs in PLATFORMS[platform]["events"]}
+        return cfg
     hooks = cfg.setdefault("hooks", {})
     for event, matcher, specs in PLATFORMS[platform]["events"]:
         if platform == "cursor":
