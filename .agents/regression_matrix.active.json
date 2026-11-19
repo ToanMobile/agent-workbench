@@ -4755,13 +4755,21 @@
       "component": "install-edited-test-deleted-1323",
       "watch_files": [
         ".claude/bin/super-board-install-edited-test-approval.sh",
-        "tests/super-board/test_install_edited_test_deleted.sh"
+        "tests/super-board/test_install_edited_test_deleted.sh",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_edited_tests_deleted_json.sh"
       ],
       "mandatory_regression_tests": [
         {
           "id": "REG-1323-INSTALL-EDITED-TEST-DELETED-01",
           "name": "#1323: comment edited-tests mục sha256 \"deleted\" chỉ ghi vào approved_tests.json khi file vắng ở scratch, vắng ở head, có ở merge-base; --edited-unchanged cùng luật",
           "command": "bash tests/super-board/test_install_edited_test_deleted.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-1323-GATE-EDITED-TESTS-DELETED-JSON-01",
+          "name": "#1323: post-fix-gate nhận mục approved_tests.json sha256 \"deleted\" cho test đã xoá có biên bản audit; mục deleted cho file còn ở cây hay không có audit không duyệt",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_edited_tests_deleted_json.sh",
           "parallel_safe": true
         }
       ]

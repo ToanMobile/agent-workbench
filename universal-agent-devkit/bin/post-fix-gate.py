@@ -1228,7 +1228,7 @@ def audit_covers(top, prefix, project_root, f, head) -> tuple:
         return False, f"không kiểm được file ở nhánh đích / merge-base của auditedHead {h10} (lỗi git)"
     if at_tip != at_fork:
         return False, f"nhánh đích đã đổi file này kể từ audit (auditedHead {h10}): cần audit lại"
-    if not cur and not at_fork:   # #1323: test đã xoá phải có ở merge-base (thật sự là test đã có bị xoá)
+    if not cur and " blob " not in at_fork:   # #1323: test đã xoá phải là file (blob) ở merge-base (thật sự là test đã có bị xoá)
         return False, f"file đã xoá nhưng không có ở merge-base của auditedHead {h10}: không phải test đã có"
     return True, ""
 
@@ -1434,7 +1434,8 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
         except (OSError, ValueError, RecursionError) as e:   # RecursionError: JSON lồng quá sâu, không phải ValueError
             # fail-closed: file duyệt không đọc được thì không duyệt gì, và nói rõ cho agent
             saved = None
-            APPROVAL_REJECTS.extend((f, _cur_sha(f), f"approved_tests.json không đọc được ({type(e).__name__})") for f in mtimes)
+            APPROVAL_REJECTS.extend((f, _cur_sha(f), f"approved_tests.json không đọc được ({type(e).__name__})")
+                                    for f in [*mtimes, *sorted(deleted_open)])
         entries = saved.get("approvals") if isinstance(saved, dict) and isinstance(saved.get("approvals"), list) else None
         if entries is None and saved is not None:
             # #534 mục 3 / #576: dạng cũ (list, {path: sha256}) không có nguồn duyệt — agent tự ghi bằng script vẫn PASS

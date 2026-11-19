@@ -5,7 +5,7 @@
 #  H2: mục deleted cho file còn ở head (tests/t.sh) -> loại, không ghi.
 #  H3: mục deleted cho file không có ở merge-base (thêm rồi xoá trong PR, hoặc tên bịa) -> loại.
 #  H4: không truyền --base -> mục deleted bị loại (fail closed).
-#  H5: file vắng ở head nhưng có ở cây scratch -> loại.
+#  H5: file vắng ở head nhưng có ở cây scratch -> loại. H6: ở merge-base là thư mục, không phải file -> loại.
 #  E1: --edited-unchanged nhận mục deleted hợp lệ khi main không đổi file (exit 0); E2: main sửa file đó sau fork -> exit 1;
 #  E3: mục deleted cho file còn ở head -> exit 1; E4: file không có ở merge-base -> exit 1.
 set -u
@@ -34,11 +34,12 @@ g config user.email t@example.invalid; g config user.name t; g config commit.gpg
 mkdir -p "$IR/tests"
 printf '#!/bin/sh\ntrue\n' > "$IR/tests/t.sh"
 printf '#!/bin/sh\ntrue # old\n' > "$IR/tests/old.sh"
+mkdir -p "$IR/tests/dir.sh"; printf 'x\n' > "$IR/tests/dir.sh/inner.txt"   # H6: thư mục mang tên test
 g add tests && g commit -qm M0
 g switch -q -c feat
 printf '#!/bin/sh\ntrue # ghost\n' > "$IR/tests/ghost.sh"
 g add tests/ghost.sh && g commit -qm "thêm ghost"
-g rm -q tests/old.sh tests/ghost.sh && g commit -qm "xoá old + ghost"
+g rm -q -r tests/old.sh tests/ghost.sh tests/dir.sh && g commit -qm "xoá old + ghost + dir"
 HEAD_SHA=$(g rev-parse HEAD)
 g switch -q main
 g worktree add -q --detach "$TMP/scr" "$HEAD_SHA"
@@ -82,28 +83,32 @@ written tests/old.sh && ok "H1: mục deleted hợp lệ -> ghi sha256 deleted" 
 # H2
 meta "$TMP/h2.json" tests/t.sh deleted
 install "$TMP/h2.json" --base main
-[ ! -f "$DEST" ] && grep -q "edited-tests\[0\]" "$TMP/err" && ok "H2: deleted cho file còn ở head -> loại" || fail "H2: file còn ở head vẫn ghi / không báo"
+[ ! -f "$DEST" ] && grep -q "còn ở cây scratch" "$TMP/err" && ok "H2: deleted cho file còn ở head -> loại" || fail "H2: file còn ở head vẫn ghi / không báo"
 rm -f "$SCR/tests/t.sh"   # H2b: vắng ở cây scratch nhưng còn ở head -> vẫn loại (luật head, không chỉ luật scratch)
 install "$TMP/h2.json" --base main
-[ ! -f "$DEST" ] && ok "H2b: deleted cho file còn ở head dù scratch không có -> loại" || fail "H2b: file còn ở head vẫn ghi"
+[ ! -f "$DEST" ] && grep -q "file còn ở head" "$TMP/err" && ok "H2b: deleted cho file còn ở head dù scratch không có -> loại" || fail "H2b: file còn ở head vẫn ghi"
 git -C "$SCR" restore --source=HEAD --worktree tests/t.sh
 
 # H3
 meta "$TMP/h3.json" tests/ghost.sh deleted
 install "$TMP/h3.json" --base main
-[ ! -f "$DEST" ] && ok "H3a: deleted cho file không có ở merge-base -> loại" || fail "H3a: file thêm rồi xoá vẫn ghi"
+[ ! -f "$DEST" ] && grep -q "không có ở merge-base" "$TMP/err" && ok "H3a: deleted cho file không có ở merge-base -> loại" || fail "H3a: file thêm rồi xoá vẫn ghi"
 meta "$TMP/h3b.json" tests/bia.sh deleted
 install "$TMP/h3b.json" --base main
-[ ! -f "$DEST" ] && ok "H3b: deleted cho tên bịa -> loại" || fail "H3b: tên bịa vẫn ghi"
+[ ! -f "$DEST" ] && grep -q "không có ở merge-base" "$TMP/err" && ok "H3b: deleted cho tên bịa -> loại" || fail "H3b: tên bịa vẫn ghi"
+
+meta "$TMP/h6.json" tests/dir.sh deleted   # H6: ở merge-base là thư mục (tree), không phải test đã có
+install "$TMP/h6.json" --base main
+[ ! -f "$DEST" ] && grep -q "không có ở merge-base" "$TMP/err" && ok "H6: deleted cho thư mục ở merge-base -> loại" || fail "H6: thư mục vẫn ghi"
 
 # H4
 install "$TMP/h1.json"
-[ ! -f "$DEST" ] && ok "H4: thiếu --base -> mục deleted bị loại" || fail "H4: thiếu --base vẫn ghi"
+[ ! -f "$DEST" ] && grep -q "cần --top và --base" "$TMP/err" && ok "H4: thiếu --base -> mục deleted bị loại" || fail "H4: thiếu --base vẫn ghi"
 
 # H5
 printf '#!/bin/sh\ntrue # old\n' > "$SCR/tests/old.sh"
 install "$TMP/h1.json" --base main
-[ ! -f "$DEST" ] && ok "H5: file có ở cây scratch -> loại" || fail "H5: file có ở scratch vẫn ghi"
+[ ! -f "$DEST" ] && grep -q "còn ở cây scratch" "$TMP/err" && ok "H5: file có ở cây scratch -> loại" || fail "H5: file có ở scratch vẫn ghi"
 rm -f "$SCR/tests/old.sh"
 
 # E1-E3: --edited-unchanged

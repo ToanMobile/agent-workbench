@@ -98,7 +98,7 @@ for p, deleted in paths:
         sys.exit(1)
     rc_a, at_base = git("ls-tree", base, "--", p)
     rc_b, at_fork = git("ls-tree", mb, "--", p)
-    if rc_a != 0 or rc_b != 0 or at_base != at_fork or (deleted and not at_fork):
+    if rc_a != 0 or rc_b != 0 or at_base != at_fork or (deleted and " blob " not in at_fork):
         sys.exit(1)
 sys.exit(0)
 PY
@@ -208,7 +208,7 @@ def deleted_why(path):
     if mb.returncode != 0 or not mb.stdout.strip():
         return "deleted: lỗi git merge-base"
     ok_m, at_fork = git_tree(mb.stdout.strip(), path)
-    if not ok_m or not at_fork:
+    if not ok_m or " blob " not in at_fork:   # thư mục cùng tên (tree) không phải test đã có
         return "deleted nhưng file không có ở merge-base (không phải test đã có bị xoá)"
     return ""
 
