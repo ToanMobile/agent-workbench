@@ -216,6 +216,18 @@ if [ -x "$GH_SHIM" ]; then
   else
     fail "3d shims/gh cảnh báo nhầm khi đúng board: $(cat "$shim_ok_err")"
   fi
+  shim_off_err="$TMP/shim_off.err"
+  shim_off_out="$(cd "$OR" && env GH_SHIM=0 PATH="$OR/.agents/devkit/shims:$TMP/bin:$PATH" gh project item-list 1 --owner ToanMobile 2>"$shim_off_err")"; rc_3e=$?
+  if [ "$rc_3e" = 0 ] && [ ! -s "$shim_off_err" ] && printf '%s' "$shim_off_out" | grep -q '"totalCount"'; then
+    ok "3e shims/gh thoát nhanh sang gh thật khi GH_SHIM=0"
+  else
+    fail "3e shims/gh không bỏ qua khi GH_SHIM=0: rc=$rc_3e err=$(cat "$shim_off_err") out=$shim_off_out"
+  fi
+  if [ ! -d "$OR/.agents/devkit/scripts/governance/__pycache__" ]; then
+    ok "3f shims/gh (python3 -I) không tạo __pycache__ trong cây kit"
+  else
+    fail "3f shims/gh tạo __pycache__ trong cây kit: $(ls -A "$OR/.agents/devkit/scripts/governance/__pycache__")"
+  fi
 else
   fail "3c thiếu shims/gh"
 fi
@@ -247,6 +259,39 @@ if [ -s "$EF_SHIM" ] && [ "$rc_4c" = 0 ] && grep -q "#2" "$shim4c_err" && [ "$ad
   ok "4c session_context.sh giữ shims/gh khi ADB_SHIM=0 mà không bật shim adb"
 else
   fail "4c ADB_SHIM=0 làm tắt shims/gh hoặc vẫn bật adb: env=$(cat "$EF_SHIM") err=$(cat "$shim4c_err") adb=$adb_cmd"
+fi
+
+# 4d. R6: đặt GH_SHIM=0 khi ADB_SHIM=1 phải giữ shim adb nhưng KHÔNG đưa shims/gh lên PATH
+EF_GH0="$TMP/env_gh0"
+: > "$EF_GH0"
+(cd "$OR" && env TMPDIR="$TMP" CLAUDE_ENV_FILE="$EF_GH0" CLAUDE_PROJECT_DIR="$OR" WORKTREE_GC=0 ADB_SHIM=1 GH_SHIM=0 bash "$SESSION_HOOK" </dev/null >/dev/null 2>&1)
+shim4d_err="$TMP/shim4d.err"
+shim4d_out="$(cd "$OR/sub/dir" && env PATH="$TMP/bin:$PATH" bash -c ". '$EF_GH0'; gh project item-list 1 --owner ToanMobile" 2>"$shim4d_err")"; rc_4d=$?
+gh_cmd4d="$(env PATH="$TMP/bin:/usr/bin:/bin" bash -c ". '$EF_GH0'; command -v gh || true")"
+adb_cmd4d="$(env PATH="$TMP/bin:/usr/bin:/bin" bash -c ". '$EF_GH0'; command -v adb || true")"
+if [ -s "$EF_GH0" ] && [ "$rc_4d" = 0 ] && [ ! -s "$shim4d_err" ] && [ "$gh_cmd4d" = "$TMP/bin/gh" ] && [ -n "$adb_cmd4d" ] && printf '%s' "$shim4d_out" | grep -q '"totalCount"'; then
+  ok "4d session_context.sh giữ shim adb khi GH_SHIM=0 và ADB_SHIM=1 mà không đưa shims/gh lên PATH"
+else
+  fail "4d GH_SHIM=0 với ADB_SHIM=1 sai: rc=$rc_4d env=$(cat "$EF_GH0") err=$(cat "$shim4d_err") gh=$gh_cmd4d adb=$adb_cmd4d"
+fi
+
+# 4e. R7: session_context.sh (python3 -I) và enrich_context.py không tạo __pycache__ trong cây kit
+KIT_R7="$TMP/kit_r7"
+mkdir -p "$KIT_R7/hooks" "$KIT_R7/scripts/governance" "$KIT_R7/scripts/context"
+cp "$SESSION_HOOK" "$KIT_R7/hooks/session_context.sh"
+cp "$DEVKIT_DIR/scripts/governance/repo_board.py" "$KIT_R7/scripts/governance/repo_board.py"
+cp "$DEVKIT_DIR/scripts/context/enrich_context.py" "$KIT_R7/scripts/context/enrich_context.py"
+cat > "$KIT_R7/hooks/regression_gate.sh" <<'SH'
+#!/usr/bin/env bash
+echo '{"state":"none"}'
+SH
+chmod +x "$KIT_R7/hooks/session_context.sh" "$KIT_R7/hooks/regression_gate.sh"
+sess_r7="$(printf '{"session_id":"s_r7","hook_event_name":"SessionStart"}' | env -u PYTHONPYCACHEPREFIX CLAUDE_PROJECT_DIR="$OR" WORKTREE_GC=0 SESSION_FETCH=0 bash "$KIT_R7/hooks/session_context.sh" 2>/dev/null)"
+env -u PYTHONPYCACHEPREFIX CLAUDE_PROJECT_DIR="$OR" DEVKIT_ROOT="$KIT_R7" python3 "$KIT_R7/scripts/context/enrich_context.py" --compact "check board" >/dev/null 2>&1 || true
+if printf '%s' "$sess_r7" | grep -q "ToanMobile/projects/2 (OfficeReader)" && [ ! -d "$KIT_R7/scripts/governance/__pycache__" ]; then
+  ok "4e session_context.sh và enrich_context.py không tạo __pycache__ khi nạp repo_board"
+else
+  fail "4e tạo __pycache__ trong cây kit khi nạp repo_board: pycache=$(ls -A "$KIT_R7/scripts/governance/__pycache__" 2>/dev/null || echo none)"
 fi
 
 # 5. super-board-status.py chạy được từ thư mục con của repo app

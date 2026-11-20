@@ -40,6 +40,8 @@ for _sub in ("context", "governance", "git", "testing", "audits", "linters"):
     if os.path.isdir(_p):
         sys.path.insert(0, _p)
 sys.path.insert(0, os.path.join(DEVKIT, "scripts"))
+if sys.pycache_prefix is None:
+    sys.dont_write_bytecode = True
 import repo_board  # noqa: E402
 import rules_index  # noqa: E402
 

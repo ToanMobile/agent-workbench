@@ -22,6 +22,7 @@ for d in "${_dirs[@]}"; do
   if [ -x "$d/gh" ] && [ ! -d "$d/gh" ] && ! [ "$d/gh" -ef "$self" ]; then real="$d/gh"; break; fi
 done
 [ -n "$real" ] || { echo "gh-shim: không tìm thấy gh thật trong PATH" >&2; exit 127; }
+[ "${GH_SHIM:-1}" = "0" ] && exec "$real" "$@"
 
 # Đường nhanh: chỉ kiểm tra khi có mặt đủ `project` và `item-list` trong đối số.
 has_proj=0; has_list=0
@@ -46,6 +47,7 @@ if [ "$has_proj" = 1 ] && [ "$has_list" = 1 ] && command -v python3 >/dev/null 2
   if [ -n "$_rb" ]; then
     python3 -I - "$_rb" "$@" >&2 <<'PY' || true
 import importlib.util, os, sys
+sys.dont_write_bytecode = True   # python3 -I bỏ qua PYTHONDONTWRITEBYTECODE: không ghi __pycache__ vào cây kit (#813, #1392)
 
 rb_path, args = sys.argv[1], sys.argv[2:]
 i = 0

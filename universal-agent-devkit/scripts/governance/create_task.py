@@ -40,6 +40,8 @@ from pathlib import Path
 _GOV_DIR = str(Path(__file__).resolve().parent)
 if _GOV_DIR not in sys.path:
     sys.path.insert(0, _GOV_DIR)
+if sys.pycache_prefix is None:
+    sys.dont_write_bytecode = True
 import repo_board  # noqa: E402
 
 PROJECT_OWNER = "ToanMobile"

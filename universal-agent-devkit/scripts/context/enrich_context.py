@@ -1187,6 +1187,7 @@ def board_hint(prompt, project_dir):
         gov_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "governance")
         if gov_dir not in sys.path:
             sys.path.insert(0, gov_dir)
+        _no_kit_pycache()
         import repo_board  # noqa: PLC0415
         b = repo_board.resolve_board(project_dir)
     except Exception:
