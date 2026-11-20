@@ -11,6 +11,16 @@
 # Thoát: 2 = từ chối; còn lại = mã của adb thật.
 
 self="${BASH_SOURCE[0]}"
+_hops=0
+while [ -L "$self" ] && [ $_hops -lt 40 ]; do
+  _hops=$((_hops + 1))
+  _tgt="$(readlink "$self" 2>/dev/null)" || break
+  case "$_tgt" in
+    /*) self="$_tgt" ;;
+    *)  case "$self" in */*) self="${self%/*}/$_tgt" ;; *) self="$_tgt" ;; esac ;;
+  esac
+done
+[ -L "$self" ] && { echo "adb-shim: quá nhiều tầng symlink" >&2; exit 2; }
 case "$self" in */*) sdir="${self%/*}" ;; *) sdir="." ;; esac
 sdir="$(cd "$sdir" 2>/dev/null && pwd -L)" || { echo "adb-shim: không đọc được thư mục shim" >&2; exit 2; }
 

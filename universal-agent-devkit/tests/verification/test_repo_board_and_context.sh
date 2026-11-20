@@ -261,21 +261,33 @@ else
   fail "4c ADB_SHIM=0 làm tắt shims/gh hoặc vẫn bật adb: env=$(cat "$EF_SHIM") err=$(cat "$shim4c_err") adb=$adb_cmd"
 fi
 
-# 4d. R6: đặt GH_SHIM=0 khi ADB_SHIM=1 phải giữ shim adb nhưng KHÔNG đưa shims/gh lên PATH
+# 4d. R6: đặt GH_SHIM=0 khi ADB_SHIM=1 phải giữ shim adb (chặn đúng denylist của repo) nhưng KHÔNG đưa shims/gh lên PATH
 EF_GH0="$TMP/env_gh0"
 : > "$EF_GH0"
+printf 'FORBIDDEN_SERIAL\n' > "$OR/.adb-denylist"
+cat > "$TMP/bin/adb" <<'SH'
+#!/usr/bin/env bash
+echo "REAL_ADB_EXECUTED $*"
+exit 0
+SH
+chmod +x "$TMP/bin/adb"
 (cd "$OR" && env TMPDIR="$TMP" CLAUDE_ENV_FILE="$EF_GH0" CLAUDE_PROJECT_DIR="$OR" WORKTREE_GC=0 ADB_SHIM=1 GH_SHIM=0 bash "$SESSION_HOOK" </dev/null >/dev/null 2>&1)
 shim4d_err="$TMP/shim4d.err"
 shim4d_out="$(cd "$OR/sub/dir" && env PATH="$TMP/bin:$PATH" bash -c ". '$EF_GH0'; gh project item-list 1 --owner ToanMobile" 2>"$shim4d_err")"; rc_4d=$?
 gh_cmd4d="$(env PATH="$TMP/bin:/usr/bin:/bin" bash -c ". '$EF_GH0'; command -v gh || true")"
 adb_cmd4d="$(env PATH="$TMP/bin:/usr/bin:/bin" bash -c ". '$EF_GH0'; command -v adb || true")"
-if [ -s "$EF_GH0" ] && [ "$rc_4d" = 0 ] && [ ! -s "$shim4d_err" ] && [ "$gh_cmd4d" = "$TMP/bin/gh" ] && [ -n "$adb_cmd4d" ] && printf '%s' "$shim4d_out" | grep -q '"totalCount"'; then
-  ok "4d session_context.sh giữ shim adb khi GH_SHIM=0 và ADB_SHIM=1 mà không đưa shims/gh lên PATH"
+adb_deny_err="$TMP/adb4d_deny.err"
+adb_deny_out="$(cd "$OR/sub/dir" && env -u ADB_DENY_SERIALS -u ADB_ALLOW_SERIALS -u ANDROID_SERIAL PATH="$TMP/bin:/usr/bin:/bin" bash -c ". '$EF_GH0'; adb -s FORBIDDEN_SERIAL shell echo hi" 2>"$adb_deny_err")"; rc_adb_deny=$?
+adb_ok_out="$(cd "$OR/sub/dir" && env -u ADB_DENY_SERIALS -u ADB_ALLOW_SERIALS -u ANDROID_SERIAL PATH="$TMP/bin:/usr/bin:/bin" bash -c ". '$EF_GH0'; adb -s emulator-5554 shell echo hi" 2>/dev/null)"; rc_adb_ok=$?
+if [ -s "$EF_GH0" ] && [ "$rc_4d" = 0 ] && [ ! -s "$shim4d_err" ] && [ "$gh_cmd4d" = "$TMP/bin/gh" ] && [ -n "$adb_cmd4d" ] && printf '%s' "$shim4d_out" | grep -q '"totalCount"' \
+   && [ "$rc_adb_deny" = 2 ] && ! printf '%s' "$adb_deny_out" | grep -q 'REAL_ADB_EXECUTED' && grep -q 'denylist' "$adb_deny_err" \
+   && [ "$rc_adb_ok" = 0 ] && printf '%s' "$adb_ok_out" | grep -q 'REAL_ADB_EXECUTED'; then
+  ok "4d session_context.sh giữ shim adb khi GH_SHIM=0 và ADB_SHIM=1 (chặn đúng denylist repo) mà không đưa shims/gh lên PATH"
 else
-  fail "4d GH_SHIM=0 với ADB_SHIM=1 sai: rc=$rc_4d env=$(cat "$EF_GH0") err=$(cat "$shim4d_err") gh=$gh_cmd4d adb=$adb_cmd4d"
+  fail "4d GH_SHIM=0 với ADB_SHIM=1 sai: rc=$rc_4d rc_deny=$rc_adb_deny deny_out=$adb_deny_out deny_err=$(cat "$adb_deny_err") rc_ok=$rc_adb_ok ok_out=$adb_ok_out gh=$gh_cmd4d adb=$adb_cmd4d"
 fi
 
-# 4e. R7: session_context.sh (python3 -I) và enrich_context.py không tạo __pycache__ trong cây kit
+# 4e. R7: session_context.sh (python3 -I) và enrich_context.py (--hook -> board_hint) không tạo __pycache__ trong cây kit
 KIT_R7="$TMP/kit_r7"
 mkdir -p "$KIT_R7/hooks" "$KIT_R7/scripts/governance" "$KIT_R7/scripts/context"
 cp "$SESSION_HOOK" "$KIT_R7/hooks/session_context.sh"
@@ -287,11 +299,13 @@ echo '{"state":"none"}'
 SH
 chmod +x "$KIT_R7/hooks/session_context.sh" "$KIT_R7/hooks/regression_gate.sh"
 sess_r7="$(printf '{"session_id":"s_r7","hook_event_name":"SessionStart"}' | env -u PYTHONPYCACHEPREFIX CLAUDE_PROJECT_DIR="$OR" WORKTREE_GC=0 SESSION_FETCH=0 bash "$KIT_R7/hooks/session_context.sh" 2>/dev/null)"
-env -u PYTHONPYCACHEPREFIX CLAUDE_PROJECT_DIR="$OR" DEVKIT_ROOT="$KIT_R7" python3 "$KIT_R7/scripts/context/enrich_context.py" --compact "check board" >/dev/null 2>&1 || true
-if printf '%s' "$sess_r7" | grep -q "ToanMobile/projects/2 (OfficeReader)" && [ ! -d "$KIT_R7/scripts/governance/__pycache__" ]; then
-  ok "4e session_context.sh và enrich_context.py không tạo __pycache__ khi nạp repo_board"
+hook_r7="$(printf '{"prompt":"check board","session_id":"s_r7_hook"}' | env -u PYTHONPYCACHEPREFIX CLAUDE_PROJECT_DIR="$OR" DEVKIT_ROOT="$KIT_R7" python3 "$KIT_R7/scripts/context/enrich_context.py" --hook 2>/dev/null)"
+if printf '%s' "$sess_r7" | grep -q "ToanMobile/projects/2 (OfficeReader)" \
+   && printf '%s' "$hook_r7" | grep -q "ToanMobile/projects/2 (OfficeReader)" \
+   && [ ! -d "$KIT_R7/scripts/governance/__pycache__" ]; then
+  ok "4e session_context.sh và enrich_context.py (--hook) không tạo __pycache__ khi nạp repo_board"
 else
-  fail "4e tạo __pycache__ trong cây kit khi nạp repo_board: pycache=$(ls -A "$KIT_R7/scripts/governance/__pycache__" 2>/dev/null || echo none)"
+  fail "4e enrich_context/session_context sai hoặc tạo __pycache__: hook_r7=$hook_r7 pycache=$(ls -A "$KIT_R7/scripts/governance/__pycache__" 2>/dev/null || echo none)"
 fi
 
 # 4f. Bảo mật _shim_env_add (CWE-377/CWE-426): không rơi về /tmp dùng chung khi TMPDIR trống, tạo 0700 dưới HOME/.cache
