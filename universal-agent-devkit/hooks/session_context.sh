@@ -145,6 +145,18 @@ try:
 except (OSError, ValueError, AttributeError):
     pass
 out.append(f"[DevKit] Phiên mới — profile: {prof}. DevKit là core; bộ riêng của dự án ở .agents/local/.")
+try:
+    _gov = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(os.environ.get("GATE_HOOK") or "."))), "scripts", "governance")
+    if os.path.isdir(_gov):
+        sys.path.insert(0, _gov)
+        import repo_board as _rb
+        _b = _rb.resolve_board(root)
+        if _b:
+            _note = " (chỉ việc của kit)" if _b["is_kit"] else ""
+            out.append(f"Board của repo này: {_b['owner']}/projects/{_b['number']} ({_b['title']}){_note} — "
+                       f"kiểm tra bằng `python3 .claude/bin/super-board-status.py` hoặc `gh project item-list {_b['number']} --owner {_b['owner']}`.")
+except Exception:
+    pass
 
 # Failure memory map
 inst = os.path.join(root, ".agents", "instincts.md")

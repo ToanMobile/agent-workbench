@@ -1172,6 +1172,32 @@ LARGE_TASK_RE = _lazy(
 )
 
 
+BOARD_QUERY_RE = _lazy(
+    r"(?:^|\W)(?:check|xem|kiểm tra|đọc|list|status)\s+(?:task\s+(?:trên\s+)?)?(?:github\s+)?(?:project\s+)?board\b"
+    r"|\bsuper-board\s+status\b|\bgh\s+project\s+(?:item-list|list|view)\b",
+    re.I,
+)
+
+
+def board_hint(prompt, project_dir):
+    """Trả gợi ý đúng board của repo hiện tại khi prompt hỏi kiểm tra board / gh project."""
+    if not prompt or prompt.strip().startswith("/") or not BOARD_QUERY_RE.search(prompt):
+        return ""
+    try:
+        gov_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "governance")
+        if gov_dir not in sys.path:
+            sys.path.insert(0, gov_dir)
+        import repo_board  # noqa: PLC0415
+        b = repo_board.resolve_board(project_dir)
+    except Exception:
+        return ""
+    if not b:
+        return ""
+    return (f"- Board của repo này: {b['owner']}/projects/{b['number']} ({b['title']}) — "
+            f"dùng `python3 .claude/bin/super-board-status.py` hoặc `gh project item-list {b['number']} --owner {b['owner']}` "
+            f"(lấy thông tin board: `agent-kit board`).")
+
+
 def antigravity_collab_hint(prompt, dossier, project_root):
     """Claude ↔ Antigravity: Scope cross-review strictly to LARGE/RISKY tasks (≥2 modules,
     ≥3 files, >200 LOC, architecture, security, auth, migration). For simple tasks, whichever
@@ -1490,6 +1516,7 @@ if __name__ == "__main__":
             write_turn_class(project_dir, session_id, res)
             asked = res.get("lane_card", prompt_input)   # a super-board lane: the card's words, not the runner's text
             extra = [l for l in (antigravity_collab_hint(prompt_input, res, project_dir), parallel_hint(prompt_input),
+                                 board_hint(prompt_input, project_dir),
                                  capture_bug(prompt_input, res, project_dir, session_id, hook_payload),
                                  req_hint(asked, res, project_dir), watch_inbox(project_dir),
                                  command_words(asked, project_dir),

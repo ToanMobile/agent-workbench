@@ -1,0 +1,88 @@
+#!/bin/bash -p
+# shims/gh — lớp bọc nhẹ cho `gh` (#1392): cảnh báo 1 dòng lên stderr nếu agent chạy
+# `gh project item-list <số>` với số khác board trong `.claude/super-board/configs/*.json`
+# của repo hiện tại. Không thay đổi stdout hay mã thoát của `gh` thật.
+
+self="${BASH_SOURCE[0]}"
+case "$self" in */*) sdir="${self%/*}" ;; *) sdir="." ;; esac
+sdir="$(cd "$sdir" 2>/dev/null && pwd -L)" || { echo "gh-shim: không đọc được thư mục shim" >&2; exit 2; }
+
+real=""
+IFS=: read -r -a _dirs <<< "$PATH"
+for d in "${_dirs[@]}"; do
+  [ -n "$d" ] || d="."
+  [ "$d" -ef "$sdir" ] && continue
+  if [ -x "$d/gh" ] && [ ! -d "$d/gh" ] && ! [ "$d/gh" -ef "$self" ]; then real="$d/gh"; break; fi
+done
+[ -n "$real" ] || { echo "gh-shim: không tìm thấy gh thật trong PATH" >&2; exit 127; }
+
+# Đường nhanh: chỉ kiểm tra khi có mặt đủ `project` và `item-list` trong đối số.
+has_proj=0; has_list=0
+for a in "$@"; do
+  case "$a" in
+    project) has_proj=1 ;;
+    item-list) has_list=1 ;;
+  esac
+done
+
+if [ "$has_proj" = 1 ] && [ "$has_list" = 1 ] && command -v python3 >/dev/null 2>&1; then
+  case "$sdir" in
+    */.agents/devkit/shims) _kit="${sdir%/shims}" ;;
+    *) _kit="${sdir%/*}" ;;
+  esac
+  _rb=""
+  for _cand in "$_kit/scripts/governance/repo_board.py" \
+               "$PWD/.agents/devkit/scripts/governance/repo_board.py" \
+               "${DEVKIT_ROOT:-}/scripts/governance/repo_board.py"; do
+    if [ -n "$_cand" ] && [ -f "$_cand" ]; then _rb="$_cand"; break; fi
+  done
+  if [ -n "$_rb" ]; then
+    python3 -I - "$_rb" "$@" >&2 <<'PY' || true
+import importlib.util, os, sys
+
+rb_path, args = sys.argv[1], sys.argv[2:]
+i = 0
+while i < len(args) and args[i].startswith("-"):
+    i += 2 if args[i] in ("-R", "--repo", "-H", "--hostname") else 1
+if args[i:i + 2] != ["project", "item-list"]:
+    sys.exit(0)
+
+rest = args[i + 2:]
+num = None
+j = 0
+while j < len(rest):
+    a = rest[j]
+    if a == "--":
+        j += 1
+        if j < len(rest) and rest[j].isdigit():
+            num = int(rest[j])
+        break
+    if a.startswith("--"):
+        opt, eq, _ = a.partition("=")
+        j += 1 if (eq or opt in ("--web", "-w", "--help", "-h")) else 2
+        continue
+    if a.startswith("-") and len(a) > 1:
+        # -L 100 / -q . / --owner ...
+        j += 1 if (len(a) > 2 or a in ("-w", "-h")) else 2
+        continue
+    if a.isdigit():
+        num = int(a)
+        break
+    j += 1
+
+if num is None:
+    sys.exit(0)
+
+spec = importlib.util.spec_from_file_location("_repo_board", rb_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+b = mod.resolve_board(os.getcwd())
+if b and int(b["number"]) != num:
+    print(f"⚠️ Cảnh báo: đang chạy `gh project item-list {num}`, nhưng board của repo này là #{b['number']} "
+          f"({b['title']}, {b['owner']}/projects/{b['number']}). Dùng: gh project item-list {b['number']} --owner {b['owner']}",
+          file=sys.stderr)
+PY
+  fi
+fi
+
+exec "$real" "$@"

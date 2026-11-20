@@ -370,15 +370,47 @@ def valid_slug(slug: str) -> bool:
     return bool(_SLUG_RE.match(slug))
 
 
-def resolve_config_slug(argv: list[str]) -> str:
+def resolve_repo_root() -> Path:
+    """Tìm gốc repo chứa `.claude/super-board/configs` (hỗ trợ chạy từ thư mục con)."""
+    if Path(".claude/super-board/configs").is_dir() or Path(".claude/super-board/active").is_file():
+        return Path(".")
+    try:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            top = Path(r.stdout.strip())
+            if (top / ".claude/super-board/configs").is_dir():
+                return top
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return Path(".")
+
+
+def resolve_config_slug(argv: list[str], root: Path | None = None) -> str:
     if len(argv) > 1 and argv[1]:
         return argv[1]
-    active = Path(".claude/super-board/active")
+    base = root or Path(".")
+    active = base / ".claude/super-board/active"
     if active.is_file():
         return active.read_text().strip()
-    cfgs = sorted(Path(".claude/super-board/configs").glob("*.json"))
+    cfgs = sorted((base / ".claude/super-board/configs").glob("*.json"))
     if len(cfgs) == 1:
         return cfgs[0].stem
+    if len(cfgs) > 1:
+        try:
+            r = subprocess.run(["git", "-C", str(base), "remote", "get-url", "origin"],
+                               capture_output=True, text=True, timeout=5)
+            origin = re.sub(r"\.git$", "", re.sub(r"^.*github\.com[:/]", "", r.stdout.strip().rstrip("/"))).lower()
+        except (OSError, subprocess.SubprocessError):
+            origin = ""
+        if origin:
+            for c in cfgs:
+                try:
+                    remote = (json.loads(c.read_text()).get("repo") or {}).get("remote") or ""
+                    slug = re.sub(r"\.git$", "", re.sub(r"^.*github\.com[:/]", "", remote.rstrip("/"))).lower()
+                    if slug == origin:
+                        return c.stem
+                except (OSError, ValueError):
+                    continue
     print(f"usage: {argv[0]} <config-slug>  (or set .claude/super-board/active)", file=sys.stderr)
     sys.exit(64)
 
@@ -718,7 +750,10 @@ def render_kanban(
 
 
 def main() -> int:
-    config_slug = resolve_config_slug(sys.argv)
+    root = resolve_repo_root()
+    if root != Path("."):
+        os.chdir(root)
+    config_slug = resolve_config_slug(sys.argv, Path("."))
     if not valid_slug(config_slug):
         print(
             f"invalid config slug: {config_slug!r} "

@@ -40,6 +40,7 @@ for _sub in ("context", "governance", "git", "testing", "audits", "linters"):
     if os.path.isdir(_p):
         sys.path.insert(0, _p)
 sys.path.insert(0, os.path.join(DEVKIT, "scripts"))
+import repo_board  # noqa: E402
 import rules_index  # noqa: E402
 
 CONTEXT_DIR = os.path.join(".agents", "context")
@@ -145,7 +146,8 @@ def agents_md_wanted(project):
     head = text[:keep] if keep > i and text[keep - 1] == "\n" else text[:keep] + nl
     with open(os.path.join(DEVKIT, "rules", "essentials.md"), encoding="utf-8") as f:
         essentials = f.read().rstrip("\n") + "\n"
-    return path, text, head + essentials.replace("\n", nl) + text[j:]
+    banner = repo_board.board_banner(project)
+    return path, text, head + (banner + essentials).replace("\n", nl) + text[j:]
 
 
 def stale(project):
