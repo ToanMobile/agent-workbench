@@ -3392,6 +3392,7 @@ sweep_cap_progress() {
     set_card_status "$item_id" "Ready" || { log "⚠ cap-progress: could not move #${issue} to Ready"; continue; }
     swept_add "$key"
     gh_checkpoint
+    gh_write_once label create "loop:rebuild-$((cap - 1))" --color BFD4F2 --force >/dev/null 2>&1 || true   # #1382: a repo without the label would fail the edit below and the card re-matches forever
     gh_write_once issue edit "$issue" --add-label "loop:rebuild-$((cap - 1))" --remove-label "loop:rebuild-${cur}" >/dev/null 2>&1 || log "⚠ cap-progress: could not lower the label of #${issue}"
     gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · the findings changed since the last round
 Did: the last two refusals have different root-cause hashes (${hp} → ${hl}), so the card is progressing, not looping
@@ -3604,7 +3605,7 @@ sweep_dead_sessions() {
   printf '%s' "$PROJECT_ITEMS_JSON" > "$items"
   out=$(python3 "$(session_sweep_helper)" sweep --config "$CONFIG_PATH" --items "$items" 2>>"$RUN_MANIFEST") || rc=$?
   rm -f "$items"
-  if [ "$rc" -ne 0 ]; then log "⚠ session sweep failed (exit ${rc}) — retrying next tick"; fi
+  if [ "$rc" -ne 0 ]; then log "⚠ session sweep failed (exit ${rc}) — retrying next tick"; return 1; fi   # #1382: cadence not advanced, so the retry really is next tick
   SESSION_SWEEP_NEXT=$((now + ${SB_SESSION_SWEEP_EVERY:-300}))
   closed=$(printf '%s' "$out" | jq -r '[(.closed // [])[] | "#\(.)"] | join(" ")' 2>/dev/null) || closed=""
   [ -n "$closed" ] || return 1
