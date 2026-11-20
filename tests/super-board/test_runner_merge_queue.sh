@@ -215,7 +215,7 @@ NO_PROGRESS_CYCLE_COUNT=0; rc=0; for i in 1 2; do record_cycle_progress "8,9" ||
 [ "$rc" = 1 ] && ok "  … a later Review scan with no queued card counts again (RUNAWAY at no_progress_cycles)" || fail "RUNAWAY never trips once the queue is empty: count=$NO_PROGRESS_CYCLE_COUNT"
 
 # ── 7. merge_queue_due: tham số gọi bộ gom, exit 3/5 (runner chạy tiếp), 79/9 (halt), công tắc tắt, thiếu script
-# #1380: halt 79 would otherwise go through recover_read_halt (real tick_sleep 60·n + --resume); retry path is tested in test_runner_read_halt_recover_1322.sh
+# #1380: không đặt thì halt 79 đi qua recover_read_halt (tick_sleep 60·n thật + --resume) và test treo; đường thử lại có test riêng ở test_runner_read_halt_recover_1322.sh và test_runner_read_recover_sites_1350.sh (mq_collect_rc)
 export SB_HALT_RECOVER_MAX=0
 reset; export SB_MERGE_QUEUE=1
 ( mq_cycle ); r=$?

@@ -42,7 +42,7 @@ unset SB_GITHUB_READ_STRICT
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
 SB_GITHUB_READ="$ROOT/.claude/bin/super-board-github-read.py"
-export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_HALT_RECOVER_MAX=0   # #1380: no real recover_read_halt sleep
+export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_HALT_RECOVER_MAX=0   # #1380: không ngủ thật trong recover_read_halt
 CONFIG_PATH="$TMP/cfg.json"; echo '{"repo":{"remote":"https://github.com/ToanMobile/agent-workbench"}}' > "$CONFIG_PATH"
 INFLIGHT_DIR="$TMP/repo/.claude/super-board/inflight"; mkdir -p "$INFLIGHT_DIR"
 REPO_ROOT="$TMP/repo"; BOT_LOGIN="bot"; NO_DEVICE=false
