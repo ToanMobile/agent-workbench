@@ -214,6 +214,27 @@ else
 fi
 rm -f "$mcp_a" "$mcp_b" 2>/dev/null || true
 
+# C5: review_mcp_args nhánh fallback mktemp phải xoá $cfg_file khi jq hoặc mv lỗi
+reset_run
+export SB_ANTIGRAVITY_PM_MCP="$TMP/fake-pm-mcp.js"
+saved_inflight="$INFLIGHT_DIR"; saved_tmpdir="${TMPDIR:-}"
+mkdir -p "$TMP/r3_tmp"
+INFLIGHT_DIR=""; export TMPDIR="$TMP/r3_tmp"
+jq() { return 1; }
+review_mcp_args "$TMP/profile_no_mcp"
+unset -f jq
+mv() { return 1; }
+review_mcp_args "$TMP/profile_no_mcp"
+unset -f mv
+INFLIGHT_DIR="$saved_inflight"
+if [ -n "$saved_tmpdir" ]; then export TMPDIR="$saved_tmpdir"; else unset TMPDIR; fi
+leftover_c5=$(find "$TMP/r3_tmp" -maxdepth 1 -name 'sb-ag-mcp.*' 2>/dev/null)
+if [ "${#MCP_ARGS[@]}" -eq 0 ] && [ -z "$leftover_c5" ]; then
+  ok "C5: review_mcp_args fallback mktemp cleans up cfg_file when jq or mv fails"
+else
+  fail "C5: review_mcp_args leaked temp file on jq/mv failure ($leftover_c5)"
+fi
+
 # ── D: block_noop_workers — worker thoát 0 không comment vì thiếu antigravity-pm → 'thiếu antigravity-pm', KHÔNG 'waiting on a person'
 sleep 0 & DEAD=$!; wait "$DEAD"
 COUNT=3; LAST_COMMENT=""
@@ -288,6 +309,35 @@ if ! grep -q "move PVTI_1394" "$TMP/writes" && ! grep -q "thiếu antigravity-pm
   ok "D5: normal ToolSearch load + queued review is not misclassified as missing MCP"
 else
   fail "D5: normal ToolSearch/queued review was falsely blocked (writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# D6: block_noop_workers không truyền $last_body cũ vào review_antigravity_failure_reason khi $count <= $c0
+reset_run; set_card 1394 Review
+COUNT=3
+LAST_COMMENT=$'[orchestrator] [blocker] 🛑 blocked · ❓ Antigravity chưa mở\n<!-- sb-blocked-reason: antigravity-closed -->\nblocked-by:  agent'
+printf '=== dispatch lane=review issue=#1394 ===\n{"type":"result","subtype":"success","is_error":false,"result":"worker exited without doing anything"}\nworker_exit: exit=0 signal=none elapsed=15s\n' > "$WORKER_LOG_DIR/worker-review-1394.log"
+printf 'PID=%s\nLANE=review\nSTARTED=2026-11-20T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-1394.log" > "$INFLIGHT_DIR/1394"
+reap_finished_locks; block_noop_workers
+if ! grep -q "move PVTI_1394 Blocked" "$TMP/writes" && ! grep -q "Antigravity chưa mở" "$TMP/writes"; then
+  ok "D6: stale Antigravity blocker comment is not re-matched when worker posted no new comment (count <= c0)"
+else
+  fail "D6: stale last_body falsely triggered ag_fail when count <= c0 (writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# D7: review_antigravity_failure_reason khớp thứ tự tiếng Việt "ToolSearch không tìm thấy antigravity-pm" (và không bắt nhầm ca bình thường)
+reset_run; set_card 1394 Review
+COUNT=3; LAST_COMMENT=""
+printf '=== dispatch lane=review issue=#1394 ===\n{"type":"result","subtype":"success","is_error":false,"result":"ToolSearch không tìm thấy antigravity-pm trong phiên này."}\nworker_exit: exit=0 signal=none elapsed=20s\n' > "$WORKER_LOG_DIR/worker-review-1394.log"
+printf 'PID=%s\nLANE=review\nSTARTED=2026-11-20T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-1394.log" > "$INFLIGHT_DIR/1394"
+reap_finished_locks; block_noop_workers
+d7_ok_msg=$(review_antigravity_failure_reason "" "ToolSearch tìm thấy và nạp antigravity-pm thành công.")
+if grep -qx "move PVTI_1394 Blocked" "$TMP/writes" \
+   && grep -q "thiếu antigravity-pm" "$TMP/writes" \
+   && grep -q "blocked-by:  agent" "$TMP/writes" \
+   && [ -z "$d7_ok_msg" ]; then
+  ok "D7: matches Vietnamese order 'ToolSearch không tìm thấy antigravity-pm' without false positive"
+else
+  fail "D7: Vietnamese ToolSearch order missed or false positive (d7_ok_msg=$d7_ok_msg writes=$(tr '\n' ';' < "$TMP/writes"))"
 fi
 
 # ── E: sweep_antigravity_blocked — thẻ Blocked cũ và mới tự về Review khi Antigravity nối lại

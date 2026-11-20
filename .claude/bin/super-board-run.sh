@@ -2051,7 +2051,7 @@ antigravity_can_provide_mcp() {
 review_mcp_args() {
   # Đặt MCP_ARGS=(--mcp-config <file>) cho phiên review nếu profile thiếu antigravity-pm (hoặc test ghim SB_ANTIGRAVITY_PM_MCP).
   MCP_ARGS=()
-  local cfg_dir="${1:-}" mcp_js cfg_file
+  local cfg_dir="${1:-}" mcp_js cfg_file is_tmp=0
   mcp_js=$(antigravity_pm_mcp_script 2>/dev/null || true)
   [ -n "$mcp_js" ] || return 0
   if [ -z "${SB_ANTIGRAVITY_PM_MCP:-}" ] && profile_has_antigravity_pm "$cfg_dir"; then
@@ -2061,12 +2061,14 @@ review_mcp_args() {
     cfg_file="$INFLIGHT_DIR/antigravity-pm-mcp.json"
   else
     cfg_file=$(mktemp "${TMPDIR:-/tmp}/sb-ag-mcp.XXXXXX" 2>/dev/null) || return 0
+    is_tmp=1
   fi
   if jq -nc --arg js "$mcp_js" '{"mcpServers":{"antigravity-pm":{"type":"stdio","command":"node","args":[$js]}}}' > "$cfg_file.tmp" 2>/dev/null \
      && mv -f "$cfg_file.tmp" "$cfg_file" 2>/dev/null; then
     MCP_ARGS=(--mcp-config "$cfg_file")
   else
     rm -f "$cfg_file.tmp" 2>/dev/null || true
+    [ "$is_tmp" -eq 1 ] && rm -f "$cfg_file" 2>/dev/null || true
   fi
 }
 
@@ -3015,7 +3017,7 @@ print("\n".join(buf[-80:])[-8000:])' "$wlog" 2>/dev/null || true)
   fi
   local combined="${txt}
 ${comment}"
-  if printf '%s' "$combined" | grep -qiE 'thiếu (công cụ )?(MCP )?antigravity-pm|không có (công cụ )?(MCP )?antigravity-pm|công cụ MCP antigravity-pm không có|bật MCP antigravity-pm|khi antigravity-pm (khả dụng|có mặt|sẵn sàng)|antigravity-pm.*(not loaded|missing|unavailable|chưa nạp|chưa được nạp|không có)|ToolSearch.*antigravity-pm.*(not found|missing|không tìm thấy|không có|failed|error|unavailable)|antigravity-pm.*ToolSearch.*(not found|missing|không tìm thấy|không có)|pm_task_create.*(missing|not found|không có)'; then
+  if printf '%s' "$combined" | grep -qiE 'thiếu (công cụ )?(MCP )?antigravity-pm|không có (công cụ )?(MCP )?antigravity-pm|công cụ MCP antigravity-pm không có|bật MCP antigravity-pm|khi antigravity-pm (khả dụng|có mặt|sẵn sàng)|antigravity-pm.*(not loaded|missing|unavailable|chưa nạp|chưa được nạp|không có)|ToolSearch.*antigravity-pm.*(not found|missing|không tìm thấy|không có|failed|error|unavailable)|ToolSearch.*(not found|missing|không tìm thấy|không có|failed|error|unavailable).*antigravity-pm|antigravity-pm.*ToolSearch.*(not found|missing|không tìm thấy|không có)|pm_task_create.*(missing|not found|không có)'; then
     printf '%s\n' "missing-mcp"
     return 0
   fi
@@ -3031,7 +3033,7 @@ block_noop_workers() {
   local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
   local entry issue lane from c0 col count f now n item_id title wlog last tag human_line
   local whead wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait stall_why
-  local ag_fail last_body ag_ev
+  local ag_fail last_body new_body ag_ev
   NOOP_CHECK=""
   for entry in $pending; do
     wlog=""
@@ -3042,17 +3044,19 @@ EOF
     issue_locked "$issue" && continue
     f="$INFLIGHT_DIR/noops/$issue"
     [ -n "$wlog" ] || wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
-    eff_max="$max"; over_wait=""; human_wait=""; ag_fail=""; last_body=""
+    eff_max="$max"; over_wait=""; human_wait=""; ag_fail=""; last_body=""; new_body=""
     col=$(issue_status "$issue")
     [ -n "$col" ] || continue
     count=$(issue_comment_count "$issue")
     [ -n "$count" ] || continue   # GitHub cannot say: conclude nothing
     if [ "$lane" = review ] && [ "$col" = Review ]; then
       last_body=$(issue_last_comment "$issue" "$count" 2>/dev/null || true)
+      # Chỉ kiểm tra comment mới phát sinh trong lượt này; tránh khớp nhầm comment blocker Antigravity cũ khi count <= c0.
+      [ "$count" -gt "$c0" ] && new_body="$last_body"
       # Không đánh dấu ag_fail nếu PR đã được duyệt vào merge-queue hoặc reviewer vừa báo ✅.
       if ! { merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; } \
          && ! { [ "$count" -gt "$c0" ] && printf '%s' "$last_body" | grep -qE '^\[reviewer\] \[report\] ✅'; }; then
-        ag_fail=$(review_antigravity_failure_reason "$wlog" "$last_body")
+        ag_fail=$(review_antigravity_failure_reason "$wlog" "$new_body")
       fi
     fi
     stall_why=""
