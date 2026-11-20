@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 create_task.py — Tự động tạo issue và đẩy lên cột Backlog của GitHub Project Board
-Hỗ trợ cả 5 repositories:
+Hỗ trợ cả 6 repositories:
   1. ToanMobile/agent-workbench             ➔ Project #1: Agent Workbench
   2. ToanMobile/OfficeReader                ➔ Project #2: OfficeReader
   3. ToanMobile/Goods-Triple-Shelf-Match-3D ➔ Project #3: Goods Triple Shelf Match 3D
   4. ToanMobile/GeelyEx2                    ➔ Project #4: GeelyEx2
   5. ToanMobile/Idle-Plaza-3D               ➔ Project #5: Idle Plaza 3D
+  6. ToanMobile/Humans-vs.-UFOs             ➔ Project #6: Humans vs. UFOs
 
 Sử dụng:
   1. Tạo nhanh từ câu tóm tắt (auto-format):
@@ -43,7 +44,7 @@ import repo_board  # noqa: E402
 
 PROJECT_OWNER = "ToanMobile"
 
-# Cấu hình 5 repositories tương ứng 5 Project Boards trên ToanMobile
+# Cấu hình 6 repositories tương ứng 6 Project Boards trên ToanMobile
 PROJECT_REGISTRY = {
     "ToanMobile/agent-workbench": {
         "number": 1,
@@ -224,7 +225,7 @@ def detect_repo():
                 return _normalize_repo_slug(m.group(1))
     except Exception:
         pass
-    board = repo_board.resolve_board()
+    board = repo_board.resolve_board(str(_repo_root_path()))
     if board and board.get("repo"):
         return _normalize_repo_slug(board["repo"])
     return DEFAULT_REPO
@@ -607,7 +608,7 @@ def _repo_root_path():
 
 
 def resolve_project_config(repo: str):
-    board = repo_board.resolve_board()
+    board = repo_board.resolve_board(str(_repo_root_path()))
     if board and ((board.get("repo") and board["repo"].lower() == repo.lower())
                   or (not board.get("repo") and repo == DEFAULT_REPO)):
         reg = PROJECT_REGISTRY.get(repo, {})

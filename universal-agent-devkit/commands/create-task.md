@@ -1,6 +1,6 @@
 ---
 name: create-task
-description: "Alias cho /createTask: Tạo task chuẩn Super-Board và đẩy lên cột Backlog của GitHub Project #1"
+description: "Alias cho /createTask: Tạo task chuẩn Super-Board và đẩy lên cột Backlog của GitHub Project board repo hiện tại (agent-kit board)"
 ---
 
 # /create-task → /createTask

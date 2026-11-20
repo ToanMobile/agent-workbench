@@ -2,6 +2,7 @@
 # Test hồi quy (#1392): đánh dấu board từng repo trong AGENTS.md, `agent-kit board`,
 # `create_task.py`, `super-board-status.py`, `prompt_context.sh` và cảnh báo `gh project item-list` sai board.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
+unset CLAUDE_PROJECT_DIR
 set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -137,11 +138,44 @@ else
   fail "2a create_task.py: rc=$rc log=$(cat "$FAKE_LOG") out=$out"
 fi
 
-# 2b. Skill createTask và create-task/SKILL.md không ghi cứng projects/1/views/2
-if ! grep -q "projects/1/views/2" "$DEVKIT_DIR/commands/createTask.md" "$DEVKIT_DIR/skills/create-task/SKILL.md"; then
-  ok "2b createTask.md và create-task/SKILL.md không ghi cứng projects/1/views/2"
+# 2b. Skill createTask, create-task.md và create-task/SKILL.md không ghi cứng #1; docstring create_task.py đủ 6 repo
+if ! grep -q "projects/1/views/2" "$DEVKIT_DIR/commands/createTask.md" "$DEVKIT_DIR/skills/create-task/SKILL.md" \
+   && ! grep -q "Project #1" "$DEVKIT_DIR/commands/create-task.md" \
+   && grep -q "Humans-vs.-UFOs" <(head -n 15 "$CT_PY"); then
+  ok "2b createTask.md, create-task.md, create-task/SKILL.md và docstring create_task.py đủ 6 repo, không ghi cứng #1"
 else
-  fail "2b createTask.md hoặc create-task/SKILL.md vẫn ghi cứng projects/1/views/2"
+  fail "2b còn ghi cứng #1 hoặc thiếu #6 trong commands/skills/docstring create_task.py"
+fi
+
+# 2c. R2: đặt tường minh CLAUDE_PROJECT_DIR=<agent-workbench> không được đè CWD ở agent-kit board và create_task.py
+AW="$TMP/agent-workbench"
+OR="$TMP/OfficeReader"
+out_cwd="$(cd "$OR/sub/dir" && CLAUDE_PROJECT_DIR="$AW" bash "$KIT_CLI" board --json 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["number"]==2, d' "$out_cwd" 2>/dev/null; then
+  ok "2c agent-kit board ưu tiên repo ở CWD (#2) thay vì CLAUDE_PROJECT_DIR (#1)"
+else
+  fail "2c agent-kit board bị CLAUDE_PROJECT_DIR đè: rc=$rc out=$out_cwd"
+fi
+
+out_fb="$(cd "$TMP" && CLAUDE_PROJECT_DIR="$AW" bash "$KIT_CLI" board --json 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["number"]==1, d' "$out_fb" 2>/dev/null; then
+  ok "2d agent-kit board ở thư mục ngoài repo rơi về CLAUDE_PROJECT_DIR (#1)"
+else
+  fail "2d agent-kit board không rơi về CLAUDE_PROJECT_DIR khi CWD ngoài repo: rc=$rc out=$out_fb"
+fi
+
+: > "$FAKE_LOG"
+out_ct="$(cd "$NO_REMOTE/sub/dir" && CLAUDE_PROJECT_DIR="$AW" PATH="$TMP/bin:$PATH" python3 "$CT_PY" --title "🐛 [bug] pdf: crash2" --problem "p" --ac "- [ ] ok" 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && grep -q '"project", "item-add", "2"' "$FAKE_LOG" && ! grep -q '"project", "item-add", "1"' "$FAKE_LOG"; then
+  ok "2e create_task.py với CLAUDE_PROJECT_DIR=<agent-workbench> từ OfficeNoRemote vẫn đẩy vào #2"
+else
+  fail "2e create_task.py bị CLAUDE_PROJECT_DIR kéo về #1: rc=$rc log=$(cat "$FAKE_LOG") out=$out_ct"
+fi
+
+if ! grep -qE '^[[:space:]]*import glob\b' "$DEVKIT_DIR/scripts/governance/repo_board.py"; then
+  ok "2f repo_board.py không còn import glob thừa"
+else
+  fail "2f repo_board.py vẫn còn import glob thừa"
 fi
 
 # 3. Hook block-dangerous-git.sh & shim gh cảnh báo 1 dòng khi `gh project item-list` sai board
@@ -199,6 +233,20 @@ if printf '%s' "$prompt_out" | grep -q "ToanMobile/projects/2 (OfficeReader)" &&
   ok "4b prompt_context.sh khi hỏi 'check board' chỉ đúng board #2 và lệnh kiểm tra"
 else
   fail "4b prompt_context.sh thiếu board #2: $prompt_out"
+fi
+
+# 4c. R4: đặt ADB_SHIM=0 không được tắt shims/gh trong session_context.sh, đồng thời không bật shim adb
+EF_SHIM="$TMP/env_shim"
+: > "$EF_SHIM"
+cp "$DEVKIT_DIR/shims/adb" "$OR/.agents/devkit/shims/adb" && chmod +x "$OR/.agents/devkit/shims/adb"
+(cd "$OR" && env TMPDIR="$TMP" CLAUDE_ENV_FILE="$EF_SHIM" CLAUDE_PROJECT_DIR="$OR" WORKTREE_GC=0 ADB_SHIM=0 bash "$SESSION_HOOK" </dev/null >/dev/null 2>&1)
+shim4c_err="$TMP/shim4c.err"
+shim4c_out="$(cd "$OR/sub/dir" && env PATH="$TMP/bin:$PATH" bash -c ". '$EF_SHIM'; gh project item-list 1 --owner ToanMobile" 2>"$shim4c_err")"; rc_4c=$?
+adb_cmd="$(env PATH="$TMP/bin:/usr/bin:/bin" bash -c ". '$EF_SHIM'; command -v adb || true")"
+if [ -s "$EF_SHIM" ] && [ "$rc_4c" = 0 ] && grep -q "#2" "$shim4c_err" && [ "$adb_cmd" != "$OR/.agents/devkit/shims/adb" ]; then
+  ok "4c session_context.sh giữ shims/gh khi ADB_SHIM=0 mà không bật shim adb"
+else
+  fail "4c ADB_SHIM=0 làm tắt shims/gh hoặc vẫn bật adb: env=$(cat "$EF_SHIM") err=$(cat "$shim4c_err") adb=$adb_cmd"
 fi
 
 # 5. super-board-status.py chạy được từ thư mục con của repo app

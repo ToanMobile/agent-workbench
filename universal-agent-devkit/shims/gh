@@ -4,6 +4,13 @@
 # của repo hiện tại. Không thay đổi stdout hay mã thoát của `gh` thật.
 
 self="${BASH_SOURCE[0]}"
+while [ -L "$self" ]; do
+  _tgt="$(readlink "$self" 2>/dev/null)" || break
+  case "$_tgt" in
+    /*) self="$_tgt" ;;
+    *)  self="${self%/*}/$_tgt" ;;
+  esac
+done
 case "$self" in */*) sdir="${self%/*}" ;; *) sdir="." ;; esac
 sdir="$(cd "$sdir" 2>/dev/null && pwd -L)" || { echo "gh-shim: không đọc được thư mục shim" >&2; exit 2; }
 

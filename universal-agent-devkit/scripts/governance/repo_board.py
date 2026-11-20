@@ -8,7 +8,6 @@ Chỉ dùng thư viện chuẩn Python.
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
 import re
@@ -50,8 +49,7 @@ def _origin_slug(root: str) -> str:
     return ""
 
 
-def _repo_root(project_dir: str | None = None) -> str:
-    cand = project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+def _resolve_candidate_root(cand: str) -> str:
     if not os.path.isdir(cand):
         cand = os.path.dirname(cand) or os.getcwd()
     # Nếu thư mục truyền vào đã có cấu hình super-board thì dùng ngay, tránh thoát ra repo cha nếu lồng nhau.
@@ -59,6 +57,19 @@ def _repo_root(project_dir: str | None = None) -> str:
         return os.path.realpath(cand)
     top = _git_toplevel(cand)
     return top or os.path.realpath(cand)
+
+
+def _repo_root(project_dir: str | None = None) -> str:
+    if project_dir:
+        return _resolve_candidate_root(project_dir)
+    # Ưu tiên CWD nếu đang đứng trong repo có cấu hình super-board; chỉ rơi về CLAUDE_PROJECT_DIR khi CWD không có.
+    cwd_root = _resolve_candidate_root(os.getcwd())
+    if os.path.isdir(os.path.join(cwd_root, ".claude", "super-board", "configs")):
+        return cwd_root
+    env_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    if env_dir:
+        return _resolve_candidate_root(env_dir)
+    return cwd_root
 
 
 def _read_config(cfg_path: Path, root: str, origin: str) -> dict | None:
