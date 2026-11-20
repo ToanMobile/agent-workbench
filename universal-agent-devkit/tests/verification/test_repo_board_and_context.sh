@@ -255,7 +255,7 @@ cp "$DEVKIT_DIR/shims/adb" "$OR/.agents/devkit/shims/adb" && chmod +x "$OR/.agen
 shim4c_err="$TMP/shim4c.err"
 shim4c_out="$(cd "$OR/sub/dir" && env PATH="$TMP/bin:$PATH" bash -c ". '$EF_SHIM'; gh project item-list 1 --owner ToanMobile" 2>"$shim4c_err")"; rc_4c=$?
 adb_cmd="$(env PATH="$TMP/bin:/usr/bin:/bin" bash -c ". '$EF_SHIM'; command -v adb || true")"
-if [ -s "$EF_SHIM" ] && [ "$rc_4c" = 0 ] && grep -q "#2" "$shim4c_err" && [ "$adb_cmd" != "$OR/.agents/devkit/shims/adb" ]; then
+if [ -s "$EF_SHIM" ] && [ "$rc_4c" = 0 ] && grep -q "#2" "$shim4c_err" && [ -z "$adb_cmd" ] && ! grep -q "devkit-adb-shim" "$EF_SHIM"; then
   ok "4c session_context.sh giữ shims/gh khi ADB_SHIM=0 mà không bật shim adb"
 else
   fail "4c ADB_SHIM=0 làm tắt shims/gh hoặc vẫn bật adb: env=$(cat "$EF_SHIM") err=$(cat "$shim4c_err") adb=$adb_cmd"
@@ -366,6 +366,59 @@ PY
   else
     fail "5 super-board-status.py từ subdir: rc=$rc out=$st_out"
   fi
+else
+  fail "5 thiếu $SB_STATUS"
+fi
+
+# 4h. Symlinked .agents/devkit dir với GH_SHIM=0 ADB_SHIM=1 vẫn giữ root repo cho .adb-denylist
+SYMLINK_APP="$TMP/SymlinkApp"
+mkdir -p "$SYMLINK_APP/.agents" "$SYMLINK_APP/sub"
+(cd "$SYMLINK_APP" && git init -q -b main && git config user.email t@t && git config user.name t)
+ln -s "$DEVKIT_DIR" "$SYMLINK_APP/.agents/devkit"
+printf 'FORBIDDEN_SYMLINK\n' > "$SYMLINK_APP/.adb-denylist"
+EF_4H="$TMP/env_4h"; : > "$EF_4H"
+(cd "$SYMLINK_APP" && env TMPDIR="$TMP" CLAUDE_ENV_FILE="$EF_4H" CLAUDE_PROJECT_DIR="$SYMLINK_APP" WORKTREE_GC=0 SESSION_FETCH=0 ADB_SHIM=1 GH_SHIM=0 bash "$SESSION_HOOK" </dev/null >/dev/null 2>&1)
+err_4h="$TMP/adb4h.err"
+out_4h="$(cd "$SYMLINK_APP/sub" && env -u ADB_DENY_SERIALS -u ADB_ALLOW_SERIALS -u ANDROID_SERIAL PATH="$TMP/bin:/usr/bin:/bin" bash -c ". '$EF_4H'; adb -s FORBIDDEN_SYMLINK shell echo hi" 2>"$err_4h")"; rc_4h=$?
+if [ -s "$EF_4H" ] && [ "$rc_4h" = 2 ] && ! printf '%s' "$out_4h" | grep -q 'REAL_ADB_EXECUTED' && grep -q 'denylist' "$err_4h"; then
+  ok "4h shims/adb qua symlink .agents/devkit khi GH_SHIM=0 vẫn chặn đúng denylist repo"
+else
+  fail "4h symlink .agents/devkit không chặn denylist: rc=$rc_4h out=$out_4h err=$(cat "$err_4h")"
+fi
+
+# 5b. Multi-config repo: origin matching và .claude/super-board/active ở repo_board.py & super-board-status.py
+MULTI_REPO="$TMP/MultiCfgRepo"
+mkdir -p "$MULTI_REPO/.claude/super-board/configs" "$MULTI_REPO/sub"
+(cd "$MULTI_REPO" && git init -q -b main && git config user.email t@t && git config user.name t && git remote add origin https://github.com/ToanMobile/BetaApp.git)
+cat > "$MULTI_REPO/.claude/super-board/configs/alpha.json" <<'JSON'
+{"version": 1, "project": {"owner": "ToanMobile", "title": "Alpha", "number": 11}, "repo": {"remote": "https://github.com/ToanMobile/AlphaApp"}, "base_branch": "main"}
+JSON
+cat > "$MULTI_REPO/.claude/super-board/configs/beta.json" <<'JSON'
+{"version": 1, "project": {"owner": "ToanMobile", "title": "Beta", "number": 22}, "repo": {"remote": "https://github.com/ToanMobile/BetaApp"}, "base_branch": "main"}
+JSON
+multi_rb="$(cd "$MULTI_REPO/sub" && bash "$KIT_CLI" board --json 2>&1)"; rc_mrb=$?
+cat > "$TMP/fake_status_bin/gh" <<'PY'
+#!/usr/bin/env python3
+import json, sys
+a = sys.argv[1:]
+if a[:2] == ["api", "graphql"]:
+    assert "number=22" in a, f"wrong number in graphql: {a}"
+    print(json.dumps({"data": {"repositoryOwner": {"projectV2": {"items": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [
+        {"id": "I22", "content": {"number": 99, "title": "Multi Card", "repository": {"nameWithOwner": "ToanMobile/BetaApp"}, "labels": {"nodes": []}}, "fieldValues": {"nodes": [{"field": {"name": "Status"}, "name": "Ready"}]}}
+    ]}}}}}))
+    sys.exit(0)
+sys.exit(0)
+PY
+chmod +x "$TMP/fake_status_bin/gh"
+multi_st="$(cd "$MULTI_REPO/sub" && PATH="$TMP/fake_status_bin:$PATH" python3 "$SB_STATUS" 2>&1)"; rc_mst=$?
+printf 'alpha\n' > "$MULTI_REPO/.claude/super-board/active"
+multi_act="$(cd "$MULTI_REPO/sub" && bash "$KIT_CLI" board --json 2>&1)"; rc_mact=$?
+if [ "$rc_mrb" = 0 ] && python3 -c 'import json,sys; assert json.loads(sys.argv[1])["number"]==22' "$multi_rb" 2>/dev/null \
+   && [ "$rc_mst" = 0 ] && printf '%s' "$multi_st" | grep -q "Beta (#22)" && printf '%s' "$multi_st" | grep -q "#99" \
+   && [ "$rc_mact" = 0 ] && python3 -c 'import json,sys; assert json.loads(sys.argv[1])["number"]==11' "$multi_act" 2>/dev/null; then
+  ok "5b multi-config origin matching (#22) và file active (#11) hoạt động đúng ở repo_board.py & super-board-status.py"
+else
+  fail "5b multi-config sai: mrb=$rc_mrb($multi_rb) mst=$rc_mst($multi_st) mact=$rc_mact($multi_act)"
 fi
 
 if [ "$FAILS" -ne 0 ]; then
