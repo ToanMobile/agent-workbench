@@ -64,6 +64,7 @@ IGNORE = re.compile("|".join([
     r"stop marker", r"stopping dispatcher loop", r"refusing to start", r"start overruled",
     r": holding\b", r"\btick —",
     r"auto-resumed", r"replayed OK",            # halt mạng đã tự hồi phục
+    r"self-reload: main stays \w+, behind origin/\S+ \w+: uncommitted edits in the way",   # #1388: file sửa dở của chủ repo chặn ff, đã báo chủ repo; không phải lỗi kit
 ]))
 RULES = [
     # self-reload: khoá = phần trước dấu ":" đầu tiên (chi tiết sau đó là tên worktree/phiên, đổi mỗi lần)
