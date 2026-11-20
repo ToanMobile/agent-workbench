@@ -197,6 +197,23 @@ else
   fail "C3: unexpected --mcp-config for profile with antigravity-pm (args=$(cat "$TMP/claude-args"))"
 fi
 
+# C4: review_mcp_args khi không có INFLIGHT_DIR tạo hai file tạm riêng biệt, không dính chuỗi literal XXXXXX trên macOS
+reset_run
+export SB_ANTIGRAVITY_PM_MCP="$TMP/fake-pm-mcp.js"
+saved_inflight="$INFLIGHT_DIR"
+INFLIGHT_DIR=""
+review_mcp_args "$TMP/profile_no_mcp"; mcp_a="${MCP_ARGS[1]:-}"
+review_mcp_args "$TMP/profile_no_mcp"; mcp_b="${MCP_ARGS[1]:-}"
+INFLIGHT_DIR="$saved_inflight"
+if [ -n "$mcp_a" ] && [ -n "$mcp_b" ] && [ "$mcp_a" != "$mcp_b" ] \
+   && [ -f "$mcp_a" ] && [ -f "$mcp_b" ] \
+   && ! printf '%s\n%s\n' "$mcp_a" "$mcp_b" | grep -q 'XXXXXX'; then
+  ok "C4: review_mcp_args fallback mktemp creates distinct randomized files"
+else
+  fail "C4: review_mcp_args mktemp failed or reused literal template (a=$mcp_a b=$mcp_b)"
+fi
+rm -f "$mcp_a" "$mcp_b" 2>/dev/null || true
+
 # ── D: block_noop_workers — worker thoát 0 không comment vì thiếu antigravity-pm → 'thiếu antigravity-pm', KHÔNG 'waiting on a person'
 sleep 0 & DEAD=$!; wait "$DEAD"
 COUNT=3; LAST_COMMENT=""
@@ -257,6 +274,20 @@ if grep -qx "move PVTI_1394 Blocked" "$TMP/writes" \
   ok "D4: worker exit 0 no comment because language_server down -> Blocked 'Antigravity chưa mở'"
 else
   fail "D4: wrong block handling for language_server down (writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# D5: phiên review gọi ToolSearch nạp antigravity-pm bình thường và duyệt vào merge-queue → KHÔNG bị đẩy sang Blocked
+reset_run; set_card 1394 Review
+COUNT=4; LAST_COMMENT=$'[reviewer] [report] ✅ merge-ready · queued PR #94 @ deadbeef'
+printf '=== dispatch lane=review issue=#1394 ===\n{"type":"assistant","message":{"content":[{"type":"text","text":"Đang gọi ToolSearch để nạp antigravity-pm."}]}}\n{"type":"result","subtype":"success","is_error":false,"result":"Đã duyệt và gắn nhãn merge-queue."}\nworker_exit: exit=0 signal=none elapsed=25s\n' > "$WORKER_LOG_DIR/worker-review-1394.log"
+printf 'PID=%s\nLANE=review\nSTARTED=2026-11-20T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-1394.log" > "$INFLIGHT_DIR/1394"
+review_approved_head() { [ "$1" = "1394" ] && return 0; return 1; }
+reap_finished_locks; block_noop_workers
+unset -f review_approved_head
+if ! grep -q "move PVTI_1394" "$TMP/writes" && ! grep -q "thiếu antigravity-pm" "$TMP/writes"; then
+  ok "D5: normal ToolSearch load + queued review is not misclassified as missing MCP"
+else
+  fail "D5: normal ToolSearch/queued review was falsely blocked (writes=$(tr '\n' ';' < "$TMP/writes"))"
 fi
 
 # ── E: sweep_antigravity_blocked — thẻ Blocked cũ và mới tự về Review khi Antigravity nối lại
@@ -329,6 +360,38 @@ if [ "$rc_e3" -ne 0 ] && ! grep -q "PVTI_1400" "$TMP/writes"; then
   ok "E3: sweep does not re-move a card already followed by '↩️ back to Review'"
 else
   fail "E3: sweep re-moved already-swept #1400 (rc=$rc_e3 writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# E4: AG_NON_AG_CARDS phải tự hết hiệu lực khi thẻ rời cột Blocked rồi về Blocked lại vì Antigravity
+reset_run
+export SB_ANTIGRAVITY_PM_MCP="$TMP/fake-pm-mcp.js"
+export SB_ANTIGRAVITY_PROBE="$TMP/probe-ok.sh"
+export SB_ANTIGRAVITY_SWEEP_EVERY=0
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_1401","status":"Blocked","labels":[],"content":{"type":"Issue","number":1401,"title":"re-blocked later","assignees":[]}}]}'
+cat > "$TMP/issue-1401.json" <<'JSON'
+{"comments":[
+  {"body":"[builder] [blocker] 🛑 blocked · 🔐 missing KEY\nReason tag:  🔐\nMove back:   drag this card to Ready\nblocked-by:  -"}
+]}
+JSON
+sweep_antigravity_blocked || true
+# Thẻ rời Blocked (sang Review) ở tick tiếp theo
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_1401","status":"Review","labels":[],"content":{"type":"Issue","number":1401,"title":"re-blocked later","assignees":[]}}]}'
+sweep_antigravity_blocked || true
+# Sau đó bị Blocked lại vì Antigravity đóng
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_1401","status":"Blocked","labels":[],"content":{"type":"Issue","number":1401,"title":"re-blocked later","assignees":[]}}]}'
+cat > "$TMP/issue-1401.json" <<'JSON'
+{"comments":[
+  {"body":"[builder] [blocker] 🛑 blocked · 🔐 missing KEY\nReason tag:  🔐\nMove back:   drag this card to Ready\nblocked-by:  -"},
+  {"body":"[orchestrator] [blocker] 🛑 blocked · ❓ Antigravity chưa mở\n<!-- sb-blocked-reason: antigravity-closed -->\nblocked-by:  agent"}
+]}
+JSON
+: > "$TMP/writes"
+sweep_antigravity_blocked
+rc_e4=$?
+if [ "$rc_e4" -eq 0 ] && grep -qx "move PVTI_1401 Review" "$TMP/writes"; then
+  ok "E4: AG_NON_AG_CARDS is invalidated after card leaves Blocked so later Antigravity block still sweeps"
+else
+  fail "E4: stale AG_NON_AG_CARDS prevented sweep of re-blocked #1401 (rc=$rc_e4 writes=$(tr '\n' ';' < "$TMP/writes"))"
 fi
 
 [ "$FAILS" -eq 0 ] && { echo "PASS"; exit 0; } || { echo "FAIL ($FAILS)"; exit 1; }
