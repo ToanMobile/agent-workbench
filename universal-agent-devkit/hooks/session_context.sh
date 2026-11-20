@@ -29,11 +29,18 @@ set -u
 # Lớp bổ sung cho hardware_safety_gate (`adb`) và cảnh báo sai board (`gh`). Tắt riêng: ADB_SHIM=0 hoặc GH_SHIM=0.
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
   _shim_env_add() {
-    local _dir="$1" _name="$2" _sum _iso
+    local _dir="$1" _name="$2" _base _sum _iso _ok
+    _base="${TMPDIR:-${XDG_CACHE_HOME:-${HOME:+${HOME%/}/.cache}}}"
+    _base="${_base%/}"
+    case "$_base" in /*) ;; *) return 1 ;; esac
+    [ -d "$_base" ] || mkdir -m 700 "$_base" 2>/dev/null || true
     _sum="$(printf '%s' "$_dir" | cksum | awk '{print $1}')"
-    _iso="${TMPDIR:-/tmp}/devkit-${_name}-shim-$(id -u)-${_sum}"
-    mkdir -p "$_iso" 2>/dev/null && ln -sf "$_dir/$_name" "$_iso/$_name" 2>/dev/null && {
-      grep -qsF "$_iso" "$CLAUDE_ENV_FILE" 2>/dev/null || printf 'export PATH="%s:$PATH"\n' "$_iso" >> "$CLAUDE_ENV_FILE"
+    _iso="${_base}/devkit-${_name}-shim-$(id -u)-${_sum}"
+    [ -d "$_iso" ] || mkdir -m 700 "$_iso" 2>/dev/null || true
+    _ok="$(find "$_iso" -prune -type d -user "$(id -u)" ! -perm -020 ! -perm -002 -print 2>/dev/null)"
+    [ -n "$_ok" ] || return 1
+    ln -sf "$_dir/$_name" "$_iso/$_name" 2>/dev/null && {
+      grep -qsF -- "$_iso" "$CLAUDE_ENV_FILE" 2>/dev/null || printf 'export PATH="%s:$PATH"\n' "$_iso" >> "$CLAUDE_ENV_FILE"
     }
   }
   _sr="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"

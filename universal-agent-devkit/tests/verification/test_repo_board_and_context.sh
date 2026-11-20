@@ -294,6 +294,41 @@ else
   fail "4e tạo __pycache__ trong cây kit khi nạp repo_board: pycache=$(ls -A "$KIT_R7/scripts/governance/__pycache__" 2>/dev/null || echo none)"
 fi
 
+# 4f. Bảo mật _shim_env_add (CWE-377/CWE-426): không rơi về /tmp dùng chung khi TMPDIR trống, tạo 0700 dưới HOME/.cache
+HOME_4F="$TMP/home_4f"
+EF_4F="$TMP/env_4f"
+mkdir -p "$HOME_4F"
+: > "$EF_4F"
+(cd "$OR" && env -u TMPDIR -u XDG_CACHE_HOME HOME="$HOME_4F" CLAUDE_ENV_FILE="$EF_4F" CLAUDE_PROJECT_DIR="$OR" WORKTREE_GC=0 SESSION_FETCH=0 ADB_SHIM=0 GH_SHIM=1 bash "$SESSION_HOOK" </dev/null >/dev/null 2>&1)
+iso_4f="$(find "$HOME_4F/.cache" -maxdepth 1 -type d -name 'devkit-gh-shim-*' -user "$(id -u)" ! -perm -020 ! -perm -002 -print 2>/dev/null | head -n 1)"
+if [ -n "$iso_4f" ] && grep -qF "$iso_4f" "$EF_4F"; then
+  ok "4f _shim_env_add dùng HOME/.cache với quyền 0700 khi TMPDIR trống"
+else
+  fail "4f _shim_env_add không tạo 0700 dưới HOME/.cache khi TMPDIR trống: env=$(cat "$EF_4F") iso=$iso_4f"
+fi
+
+# 4g. Bảo mật _shim_env_add: từ chối thư mục 0777, symlink và env rỗng (không rơi về /tmp)
+sum_or="$(printf '%s' "$OR/.agents/devkit/shims" | cksum | awk '{print $1}')"
+uid_now="$(id -u)"
+BAD_777="$TMP/bad_777"; mkdir -p "$BAD_777"
+mkdir -m 777 "$BAD_777/devkit-gh-shim-${uid_now}-${sum_or}"
+EF_4G1="$TMP/env_4g1"; : > "$EF_4G1"
+(cd "$OR" && env TMPDIR="$BAD_777" CLAUDE_ENV_FILE="$EF_4G1" CLAUDE_PROJECT_DIR="$OR" WORKTREE_GC=0 SESSION_FETCH=0 ADB_SHIM=0 GH_SHIM=1 bash "$SESSION_HOOK" </dev/null >/dev/null 2>&1)
+
+BAD_LNK="$TMP/bad_lnk"; mkdir -p "$BAD_LNK/target"
+ln -s "$BAD_LNK/target" "$BAD_LNK/devkit-gh-shim-${uid_now}-${sum_or}"
+EF_4G2="$TMP/env_4g2"; : > "$EF_4G2"
+(cd "$OR" && env TMPDIR="$BAD_LNK" CLAUDE_ENV_FILE="$EF_4G2" CLAUDE_PROJECT_DIR="$OR" WORKTREE_GC=0 SESSION_FETCH=0 ADB_SHIM=0 GH_SHIM=1 bash "$SESSION_HOOK" </dev/null >/dev/null 2>&1)
+
+EF_4G3="$TMP/env_4g3"; : > "$EF_4G3"
+(cd "$OR" && env -u TMPDIR -u XDG_CACHE_HOME -u HOME CLAUDE_ENV_FILE="$EF_4G3" CLAUDE_PROJECT_DIR="$OR" WORKTREE_GC=0 SESSION_FETCH=0 ADB_SHIM=0 GH_SHIM=1 bash "$SESSION_HOOK" </dev/null >/dev/null 2>&1)
+
+if [ ! -s "$EF_4G1" ] && [ ! -s "$EF_4G2" ] && [ ! -e "$BAD_LNK/target/gh" ] && [ ! -s "$EF_4G3" ]; then
+  ok "4g _shim_env_add từ chối thư mục 0777, symlink và không fallback /tmp khi thiếu env"
+else
+  fail "4g _shim_env_add chấp nhận đường dẫn không an toàn: 777=$(cat "$EF_4G1") lnk=$(cat "$EF_4G2") noenv=$(cat "$EF_4G3")"
+fi
+
 # 5. super-board-status.py chạy được từ thư mục con của repo app
 if [ -f "$SB_STATUS" ]; then
   mkdir -p "$TMP/fake_status_bin"
