@@ -372,6 +372,54 @@ clean_wt() {
   fi
   rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"
 }
+# qa_evidence_only <tip> <merged-head>: 0 when every NON-merge commit on top of the merged head that origin/$BASE lacks (the QA lane's own
+# commits; merges of main and main's own commits are skipped) touches only QA evidence (docs/super-board/runs/, reports/). A committed repro,
+# test or code change (an unpushed Tester commit) is real work: 1, the worktree stays. Unreadable ref/log: 1 (fail safe).
+# ponytail: hand edits inside a merge commit are not inspected, upgrade when a lane starts committing them.
+qa_evidence_only() {
+  local cs c f
+  cs=$(git -C "$REPO_PATH" rev-list --no-merges "$2..$1" --not "refs/remotes/origin/$BASE" 2>/dev/null) || return 1
+  for c in $cs; do
+    f=$(git -C "$REPO_PATH" diff-tree --no-commit-id --name-only -r -m --root "$c" 2>/dev/null) || return 1
+    printf '%s\n' "$f" | grep -qvE '^(docs/super-board/runs/|reports/)' && return 1
+  done
+  return 0
+}
+# clean_qa_tip <wt>: #1378 - a closed card's detached `issue-<N>-qa` worktree whose HEAD DESCENDS from the merged PR head (only QA-lane
+# evidence commits on top, never pushed). clean_wt cannot take it (HEAD is not the merged head or behind it). Same order as clean_wt
+# (holder, tidy = real edits keep it, kit removal) but: a hold ref (refs/remotes/super-board-hold/..., dropped on exit) makes the kit count
+# the tip as held, the tip is archived under refs/devkit/discarded/worktrees/ (dated name: the kit's gc prunes it after 30 days), and
+# `remove` gets --merged=<the tip itself> (proves nothing alone; it adds the kit's last holder re-check). No bare `git worktree remove`, no --force.
+clean_qa_tip() {
+  local wt="$1" h why hr ar stamp
+  h=$(git -C "$wt" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || { echo "kept $wt: HEAD cannot be read" >&2; return 0; }
+  if why=$(kit_held "$wt" "$h"); then echo "kept $wt: $why; not touched" >&2; return 0; fi
+  TIDY_NAME=""; TIDY_DL=""; TIDY_SDEL=""; TIDY_DROPZ=""
+  if ! tidy "$wt"; then
+    [ -z "$TIDY_NAME" ] || untidy "$wt"
+    rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"; return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then
+    echo "would archive QA tip $h under refs/devkit/discarded/worktrees/ and remove $wt (descends from the merged head)" >&2
+    DRY_GONE="$DRY_GONE$wt"$'\n'; rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"; return 0
+  fi
+  stamp=$(date +%Y%m%d-%H%M%S)
+  hr="refs/remotes/super-board-hold/qa-${wt##*/}-${h:0:12}"; ar="refs/devkit/discarded/worktrees/${wt##*/}-${h:0:12}-$stamp"
+  if git -C "$REPO_PATH" update-ref "$hr" "$h" "" 2>/dev/null; then HOLDS+=("$hr $h")
+  else echo "kept $wt: cannot hold QA tip $h with $hr" >&2; [ -z "$TIDY_NAME" ] || untidy "$wt"; rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"; return 0; fi
+  if ! git -C "$REPO_PATH" update-ref "$ar" "$h" "" 2>/dev/null; then
+    echo "kept $wt: cannot archive QA tip $h under $ar" >&2; [ -z "$TIDY_NAME" ] || untidy "$wt"; rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"; return 0
+  fi
+  remove_wt "$wt" "$h"
+  if [ -d "$wt" ]; then
+    git -C "$REPO_PATH" update-ref -d "$ar" "$h" 2>/dev/null || true   # kit refused: the worktree stays, no archive of a tip it still holds
+    [ -z "$TIDY_NAME" ] || untidy "$wt"
+  else
+    echo "archived QA tip $h as $ar (kept 30 days)" >&2
+    [ -z "$TIDY_NAME" ] || rm -rf "$TIDY_NAME.dropped"
+  fi
+  rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"
+}
 DRY_GONE=""   # --dry-run: worktree "would remove" (nhánh chúng checkout được tính như đã thả)
 # Bản cất quá 30 ngày được bỏ, như refs/devkit/discarded của kit: thư mục salvage không thành chỗ đầy đĩa mới (OCR). Cả hai chế độ.
 prune_salvage() {
@@ -717,19 +765,24 @@ for n in $NS; do
     case "$HERE_PWD/" in "$(cd "$wt" && pwd -P)"/*) echo "kept $wt: it holds this sweep's working directory" >&2; continue ;; esac
     br=$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null) || br=""
     h=$(git -C "$wt" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || h=""
-    pr=""; oid=""
+    pr=""; oid=""; qa=0
     while IFS=$'\t' read -r _n rpr rref roid _age; do
       # Worktree trên nhánh: đúng nhánh của PR đó. Mọi worktree, có nhánh hay detached: HEAD là head đã merge hay tổ tiên của nó —
       # nhánh có commit mới sau lần merge (việc tiếp sau merge) thì giữ worktree, không gỡ chỉ vì khớp tên nhánh (OCR batch lượt 2).
       [ -z "$br" ] || [ "$br" = "$rref" ] || continue
       [ -n "$h" ] || continue
-      [ "$h" = "$roid" ] || git -C "$REPO_PATH" merge-base --is-ancestor "$h" "$roid" 2>/dev/null || continue
+      if [ "$h" != "$roid" ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$h" "$roid" 2>/dev/null; then
+        # #1378: a detached issue-<N>-qa worktree whose tip sits ON TOP of the merged head (QA evidence commits, never pushed)
+        { [ -z "$br" ] && [ "${wt##*/}" = "issue-$n-qa" ] && git -C "$REPO_PATH" merge-base --is-ancestor "$roid" "$h" 2>/dev/null \
+          && qa_evidence_only "$h" "$roid"; } || continue
+        qa=1
+      fi
       pr="$rpr"; oid="$roid"; break
     done <<<"$rows"
     if [ -z "$pr" ]; then
       echo "kept $wt: ${br:+on branch $br, }HEAD ${h:-<unknown>} is not the head of a merged PR of card $n" >&2; continue
     fi
-    clean_wt "$wt" "$pr" "$oid"
+    if [ "$qa" = 1 ]; then clean_qa_tip "$wt"; else clean_wt "$wt" "$pr" "$oid"; fi
   done < <(printf '%s' "$list" | wt_order)
   # Nhánh của PR đã merge: kit `prune-branch` (xoá chỉ khi PR MERGED đúng tip, không worktree nào checkout; commit chỉ reflog còn
   # giữ được cất vào refs/devkit/discarded 30 ngày). Không DevKit: giữ.
