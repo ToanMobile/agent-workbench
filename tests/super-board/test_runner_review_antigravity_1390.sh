@@ -173,7 +173,7 @@ printf '[{"number":98,"headRefName":"issue-1398-src-only","headRefOid":"%s","lab
 export SB_ANTIGRAVITY_PM_MCP="$TMP/fake-pm-mcp.js"
 export SB_ANTIGRAVITY_PROBE="$TMP/probe-fail.sh"
 dispatch_lane review 1398
-for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TMP/claude-args" ] && break; sleep 0.2; done
+for _ in $(seq 1 50); do [ -s "$TMP/claude-args" ] && break; sleep 0.1; done
 if [ -e wl/worker-review-1398.log ] && grep -q -- "--mcp-config " "$TMP/claude-args"; then
   mcp_file=$(sed -n 's/.*--mcp-config \([^ ]*\).*/\1/p' "$TMP/claude-args" | head -1)
   if [ -f "$mcp_file" ] && grep -q "fake-pm-mcp.js" "$mcp_file"; then
@@ -190,7 +190,7 @@ reset_run; set_card 1398 Review
 resolve_worker_account() { POOL_ENGINE="claude"; POOL_ACCT="finos"; POOL_CFG="$TMP/profile_with_mcp"; return 0; }
 printf '[{"number":98,"headRefName":"issue-1398-src-only","headRefOid":"%s","labels":[],"isDraft":false}]' "$SHA_SRC" > "$TMP/prs.json"
 dispatch_lane review 1398
-for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TMP/claude-args" ] && break; sleep 0.2; done
+for _ in $(seq 1 50); do [ -s "$TMP/claude-args" ] && break; sleep 0.1; done
 if [ -s "$TMP/claude-args" ] && ! grep -q -- "--mcp-config " "$TMP/claude-args"; then
   ok "C3: profile already having antigravity-pm does not get redundant --mcp-config"
 else
@@ -309,6 +309,26 @@ if [ "$rc_up" -eq 0 ] \
   ok "E2: sweep returns old (#1395) and new (#1396) Antigravity-blocked cards to Review once connected; leaves #1397 Blocked"
 else
   fail "E2: sweep failed (rc=$rc_up writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# E3: Thẻ đã có '↩️ back to Review' sau blocker Antigravity gần nhất (chưa có blocker mới) → không sweep lại lần 2
+reset_run
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_1400","status":"Blocked","labels":[],"content":{"type":"Issue","number":1400,"title":"already swept","assignees":[]}}]}'
+cat > "$TMP/issue-1400.json" <<'JSON'
+{"comments":[
+  {"body":"[orchestrator] [blocker] 🛑 blocked · ❓ Antigravity chưa mở\n<!-- sb-blocked-reason: antigravity-closed -->\nblocked-by:  agent"},
+  {"body":"[orchestrator] [report] ↩️ back to Review · Antigravity đã nối lại"}
+]}
+JSON
+export SB_ANTIGRAVITY_PM_MCP="$TMP/fake-pm-mcp.js"
+export SB_ANTIGRAVITY_PROBE="$TMP/probe-ok.sh"
+export SB_ANTIGRAVITY_SWEEP_EVERY=0
+sweep_antigravity_blocked
+rc_e3=$?
+if [ "$rc_e3" -ne 0 ] && ! grep -q "PVTI_1400" "$TMP/writes"; then
+  ok "E3: sweep does not re-move a card already followed by '↩️ back to Review'"
+else
+  fail "E3: sweep re-moved already-swept #1400 (rc=$rc_e3 writes=$(tr '\n' ';' < "$TMP/writes"))"
 fi
 
 [ "$FAILS" -eq 0 ] && { echo "PASS"; exit 0; } || { echo "FAIL ($FAILS)"; exit 1; }

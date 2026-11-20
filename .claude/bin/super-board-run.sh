@@ -1993,22 +1993,31 @@ dependency_gate() {
   return 1
 }
 
+antigravity_pm_mcp_runnable() {
+  # Chỉ nhận script có sẵn @modelcontextprotocol/sdk cạnh file hoặc ở package root (../node_modules).
+  local js="${1:-}" d
+  [ -n "$js" ] && [ -f "$js" ] || return 1
+  d=$(dirname "$js")
+  [ -d "$d/node_modules/@modelcontextprotocol/sdk" ] || [ -d "$d/../node_modules/@modelcontextprotocol/sdk" ]
+}
+
 antigravity_pm_mcp_script() {
-  # Tìm file entrypoint antigravity-pm-mcp.js trên máy (ưu tiên env test, repo hiện tại, các profile ~/.claude*, rồi workbench).
+  # Tìm file entrypoint antigravity-pm-mcp.js chạy được trên máy (ưu tiên env test, repo hiện tại, các profile ~/.claude*, rồi workbench).
   if [ -n "${SB_ANTIGRAVITY_PM_MCP:-}" ]; then
     [ -f "$SB_ANTIGRAVITY_PM_MCP" ] && { printf '%s\n' "$SB_ANTIGRAVITY_PM_MCP"; return 0; }
     return 1
   fi
-  local cand cfg p
+  local cand cfg p repo_abs
   cand="${REPO_ROOT:-.}/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
-  [ -f "$cand" ] && { printf '%s\n' "$cand"; return 0; }
+  antigravity_pm_mcp_runnable "$cand" && { printf '%s\n' "$cand"; return 0; }
+  repo_abs=$(cd "${REPO_ROOT:-.}" 2>/dev/null && pwd -P || printf '%s' "${REPO_ROOT:-.}")
   for cfg in "${POOL_CFG:-}/.claude.json" "$HOME/.claude/.claude.json" "$HOME/.claude-finos/.claude.json" "$HOME/.claude-finos_team/.claude.json" "$HOME/.claude.json"; do
     [ -f "$cfg" ] || continue
-    p=$(jq -r '(.mcpServers["antigravity-pm"].args[0] // empty)' "$cfg" 2>/dev/null || true)
-    [ -n "$p" ] && [ -f "$p" ] && { printf '%s\n' "$p"; return 0; }
+    p=$(jq -r --arg r "$repo_abs" '(.mcpServers["antigravity-pm"].args[0] // .projects[$r].mcpServers["antigravity-pm"].args[0] // empty)' "$cfg" 2>/dev/null || true)
+    antigravity_pm_mcp_runnable "$p" && { printf '%s\n' "$p"; return 0; }
   done
   cand="/Volumes/Data/Toan/agent-workbench/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
-  [ -f "$cand" ] && { printf '%s\n' "$cand"; return 0; }
+  antigravity_pm_mcp_runnable "$cand" && { printf '%s\n' "$cand"; return 0; }
   return 1
 }
 
@@ -3641,7 +3650,7 @@ EOF
 # khi comment của reviewer/orchestrator hoặc log review nhắc antigravity-pm / language_server) tự về Review khi Antigravity nối lại.
 # Trả 0 khi có ít nhất một thẻ được chuyển (caller đọc lại board), 1 khi không.
 sweep_antigravity_blocked() {
-  local now cands issue item_id cj recent kind ev_log moved=1 probe_checked=0 probe_ok=0
+  local now cands issue item_id cj ctx_json blocker prev_rev legacy_ctx kind ev_log moved=1 probe_checked=0 probe_ok=0
   now=$(date +%s)
   [ "$now" -lt "${AG_SWEEP_NEXT:-0}" ] && return 1
   cands=$(printf '%s' "${PROJECT_ITEMS_JSON:-}" | jq -r --arg bot "${BOT_LOGIN:-}" '
@@ -3657,20 +3666,35 @@ sweep_antigravity_blocked() {
     issue_locked "$issue" && continue
     case " ${AG_NON_AG_CARDS:-} " in *" ${issue} "*) continue ;; esac
     cj=$(cap_progress_comments "$issue" 2>/dev/null) || continue
-    recent=$(printf '%s' "$cj" | jq -r '.[-5:][]?.body // ""' 2>/dev/null) || continue
+    # Chỉ xét comment blocker mới nhất (và tối đa 1 comment [reviewer] lỗi liền trước nếu là thẻ cũ trước bản vá),
+    # tránh dính marker/từ khóa Antigravity cũ khi thẻ đã bị chặn lại vì lý do khác (🔐/🛡).
+    ctx_json=$(printf '%s' "$cj" | jq -c '
+      ([to_entries[] | select((.value.body // "") | test("^\\[(orchestrator|builder|qa|reviewer|merge-queue)\\] \\[blocker\\]|🛑 blocked|(^|\n)Move back:"))] | last) as $b
+      | if $b == null then {blocker: "", prev_rev: ""}
+        elif ([to_entries[] | select(.key > $b.key and ((.value.body // "") | test("^\\[orchestrator\\] \\[report\\] ↩️ back to Review")))] | length) > 0 then {blocker: "", prev_rev: ""}
+        else {
+          blocker: ($b.value.body // ""),
+          prev_rev: (if $b.key > 0 then (.[$b.key - 1].body // "" | if test("^\\[reviewer\\]") and (test("^\\[reviewer\\] \\[report\\] ✅") | not) then . else "" end) else "" end)
+        } end' 2>/dev/null) || continue
+    blocker=$(printf '%s' "$ctx_json" | jq -r '.blocker // ""' 2>/dev/null) || continue
+    prev_rev=$(printf '%s' "$ctx_json" | jq -r '.prev_rev // ""' 2>/dev/null) || continue
     kind=""
-    if printf '%s' "$recent" | grep -q 'sb-blocked-reason: antigravity-missing-mcp'; then
-      kind="missing-mcp"
-    elif printf '%s' "$recent" | grep -q 'sb-blocked-reason: antigravity-closed'; then
-      kind="closed"
-    elif printf '%s' "$recent" | grep -qE 'Move back:[[:space:]]*drag this card to Review|still in Review|the reviewer for #'; then
-      if ! printf '%s' "$recent" | grep -qiE 'Reason tag:[[:space:]]*(💳|🔐|🧑|🙋|📱)|thanh toán|payment|billing|drop table|destructive|live[- ]db|migration|máy thật|real device'; then
-        if printf '%s' "$recent" | grep -qiE 'antigravity-pm|Antigravity chưa mở|language_server|AntigravityUnavailable|pm_task_create|pm_dispatch|khi antigravity-pm'; then
-          kind="antigravity"
-        else
-          ev_log=$(printf '%s\n' "$recent" | sed -nE 's/.*Evidence:[[:space:]]*([^;[:space:]]+worker-review-[^;[:space:]]+\.log).*/\1/p' | tail -1)
-          if [ -n "$ev_log" ] && [ -f "$ev_log" ] && [ -n "$(review_antigravity_failure_reason "$ev_log" "")" ]; then
+    if [ -n "$blocker" ]; then
+      if printf '%s' "$blocker" | grep -q 'sb-blocked-reason: antigravity-missing-mcp'; then
+        kind="missing-mcp"
+      elif printf '%s' "$blocker" | grep -q 'sb-blocked-reason: antigravity-closed'; then
+        kind="closed"
+      elif printf '%s' "$blocker" | grep -qE 'Move back:[[:space:]]*drag this card to Review|still in Review|the reviewer for #'; then
+        if ! printf '%s' "$blocker" | grep -qiE 'Reason tag:[[:space:]]*(💳|🔐|🧑|🙋|📱|🛡)|thanh toán|payment|billing|drop table|destructive|live[- ]db|migration|máy thật|real device|rebuild cap'; then
+          legacy_ctx="${blocker}
+${prev_rev}"
+          if printf '%s' "$legacy_ctx" | grep -qiE 'antigravity-pm|Antigravity chưa mở|language_server|AntigravityUnavailable|pm_task_create|pm_dispatch|khi antigravity-pm'; then
             kind="antigravity"
+          else
+            ev_log=$(printf '%s\n' "$legacy_ctx" | sed -nE 's/.*Evidence:[[:space:]]*([^;[:space:]]+worker-review-[^;[:space:]]+\.log).*/\1/p' | tail -1)
+            if [ -n "$ev_log" ] && [ -f "$ev_log" ] && [ -n "$(review_antigravity_failure_reason "$ev_log" "")" ]; then
+              kind="antigravity"
+            fi
           fi
         fi
       fi
