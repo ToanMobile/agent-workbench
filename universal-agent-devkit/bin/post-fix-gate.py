@@ -4208,6 +4208,10 @@ def active_profile_name() -> str:
 # Not .txt or images: requirements.txt, app assets and drawables are read by the program.
 DOC_EXT = (".md", ".rst", ".adoc")
 DOC_NAMES = {"LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS"}
+# #1386: static media under plan/ or docs/ (screenshots, PDFs) is read by no program. Same files elsewhere (res/, assets/) and
+# .html/.js/.json under docs/ (can run code) are NOT covered.
+DOC_MEDIA_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf")
+DOC_MEDIA_DIRS = ("plan/", "docs/")
 # What the agent's own tooling writes: proof screenshots, the Antigravity PM config, the device
 # denylist, agent memory. No program reads them, so they need no regression test either
 # (OfficeReader 2026-09-27: a roadmap edit next to them stayed UNVERIFIED for 12 Stops).
@@ -4222,6 +4226,7 @@ def needs_no_test(rel_file: str) -> bool:
     """Documentation or agent state: nothing a regression test could catch."""
     clean = rel_file.replace("\\", "/")
     return (clean.lower().endswith(DOC_EXT) or Path(clean).name in DOC_NAMES
+            or (clean.startswith(DOC_MEDIA_DIRS) and clean.lower().endswith(DOC_MEDIA_EXT))
             # Chỉ git đọc `.gitignore` (17/10: PR K7 của 4 repo kẹt ở merge gate vì "không có test khớp"); rule nào theo dõi nó vẫn giữ test.
             or Path(clean).name == ".gitignore"
             # Bản chép script super-board của agent-workbench (test ở đó, tests/super-board/); 17/10: PR đưa merge gate vào 4 repo kẹt như trên.
