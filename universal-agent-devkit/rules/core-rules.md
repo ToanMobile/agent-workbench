@@ -287,3 +287,35 @@ The essentials keep the obligation; this section keeps how the tools carry it ou
 - **Scratch**: the session hooks remove the session's temp dir at SessionEnd and prune dead sessions' dirs (idle 7 days) at
   SessionStart (`.agents/devkit/scripts/governance/scratch_cleanup.py`); a stage awaiting the user or a handoff lives outside
   `/tmp/claude-<uid>`, e.g. in the repo's ignored `.agents/local/`.
+
+## 20. Lỗi ở repo con do DevKit gây ra: tạo task cho DevKit, KHÔNG sửa ở repo con (lệnh chủ repo 21/11/2026)
+Áp dụng khi repo con (GeelyEx2, OfficeReader, Goods-…, …) gặp lỗi, và nguyên nhân gốc nằm ở DevKit hoặc DevKit có thể sửa được.
+1. **Phân loại nguyên nhân gốc trước khi sửa.** Lỗi thuộc DevKit khi dấu vết dẫn tới một trong:
+   - `.agents/devkit/**`, `.agents/skills/**` do kit cấp, `hooks/*`, gate (`post-fix-gate.py`, `proof_gate.sh`, `agent-kit`);
+   - `.claude/bin/super-board-*`, `.claude/skills/super-*`, watchdog, runner, merge gate (bản sao đồng bộ từ repo nguồn của kit,
+     `agent-workbench`);
+   - file có dòng "đồng bộ từ agent-workbench" trong lịch sử commit.
+   Lỗi vẫn thuộc DevKit khi chính kit làm repo con hỏng, dù mã repo con không sai: halt kẹt không tự gỡ, gate đỏ giả, hook chặn
+   nhầm, sync ghi đè dữ liệu.
+2. **Cấm sửa mã của kit ngay tại repo con.** Bản sao ở repo con sẽ bị lần đồng bộ sau ghi đè, và các repo con khác vẫn mắc lỗi.
+   Sửa một lần ở nguồn, rồi đồng bộ xuống.
+3. **Tạo task cho DevKit** (skill `createTask`, hoặc issue ở repo nguồn của kit), gồm đủ:
+   - Tiêu đề: `[devkit] <triệu chứng ngắn>`.
+   - Triệu chứng: repo nào, lúc nào, hệ quả (board dừng, gate chặn, …).
+   - Bằng chứng: đường dẫn log, trích dòng log có giờ, nội dung file trạng thái (vd `github-halt.json`), mã thoát. Chỉ ghi điều
+     đã đo, nhãn rõ "tự chạy" hay "suy đoán".
+   - Nguyên nhân gốc: tên file và hàm của kit (file:dòng) và cơ chế gây lỗi. Chưa chắc thì ghi "giả thuyết".
+   - Hướng sửa đề xuất, bản tối thiểu trước (nguyên tắc lazy senior, §4).
+   - Oracle: test RED trước, GREEN sau, đặt ở repo nguồn, tái hiện được không cần repo con.
+   - Nghiệm thu ở repo con: lệnh chạy lại và kết quả mong đợi sau khi đồng bộ.
+   Gom lỗi cùng nguyên nhân vào một task, không đẻ trùng. Tra task đang mở trước khi tạo.
+4. **Ở repo con chỉ được làm hai việc**, cả hai không đụng mã của kit:
+   a. Gỡ tắc tạm thời bằng dữ liệu runtime, và chỉ khi đã kiểm chứng trạng thái thật (vd đọc lại GitHub rồi mới
+      `--resume --reconciled "<lý do>"`). Ghi lý do vào task.
+   b. Tiếp tục việc của repo con không phụ thuộc phần lỗi.
+   Không bypass gate, không `--no-verify`, không xoá file halt hay khoá khi chưa kiểm chứng.
+5. **Không chắc nguyên nhân thuộc kit hay repo con**: tìm cho ra bằng log, đừng đoán. Chưa chốt được thì sửa phần chắc chắn thuộc
+   repo con, và ghi giả thuyết về kit vào task DevKit.
+6. **Báo người dùng một dòng**: số task, tiêu đề, nơi tạo, tình trạng repo con (đã gỡ tạm / vẫn chờ kit sửa).
+   Không hỏi xin phép tạo task.
+Ngoại lệ duy nhất sửa trực tiếp ở repo con: lỗi thuộc cấu hình riêng của repo (`.agents/local/**`, luật dự án).

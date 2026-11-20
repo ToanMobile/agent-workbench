@@ -156,6 +156,6 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
   are Vietnamese; replies match the user's language; identifiers, commands and paths stay English (core-rules §2.3).
-- Long session or big refactor: checkpoint and compact. Read code
-  by range (Read offset/limit, codebase-memory); never `cat` a big file.
-- Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.
+- Long session: checkpoint, compact; read code by range (codebase-memory), never `cat` big files.
+- DevKit defect in a host repo: file a `[devkit]` task at its source, never patch there (core-rules §20).
+- Read the trap named with each request (`.agents/instincts.md`).
