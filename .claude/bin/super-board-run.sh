@@ -2002,50 +2002,114 @@ antigravity_pm_mcp_runnable() {
 }
 
 antigravity_pm_mcp_script() {
-  # Tìm file entrypoint antigravity-pm-mcp.js chạy được trên máy (ưu tiên env test, repo hiện tại, các profile ~/.claude*, rồi workbench).
+  # Tìm file entrypoint antigravity-pm-mcp.js chạy được trên máy (ưu tiên env test, repo hiện tại, các profile ~/.claude*, ~/.gemini, rồi git common/script root).
   if [ -n "${SB_ANTIGRAVITY_PM_MCP:-}" ]; then
     [ -f "$SB_ANTIGRAVITY_PM_MCP" ] && { printf '%s\n' "$SB_ANTIGRAVITY_PM_MCP"; return 0; }
     return 1
   fi
-  local cand cfg p repo_abs
+  local cand cfg p repo_abs common_dir common_root script_root
   cand="${REPO_ROOT:-.}/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
   antigravity_pm_mcp_runnable "$cand" && { printf '%s\n' "$cand"; return 0; }
   repo_abs=$(cd "${REPO_ROOT:-.}" 2>/dev/null && pwd -P || printf '%s' "${REPO_ROOT:-.}")
-  for cfg in "${POOL_CFG:-}/.claude.json" "$HOME/.claude/.claude.json" "$HOME/.claude-finos/.claude.json" "$HOME/.claude-finos_team/.claude.json" "$HOME/.claude.json"; do
+  for cfg in "${POOL_CFG:-}/.claude.json" "$HOME/.claude/.claude.json" "$HOME/.claude-finos/.claude.json" "$HOME/.claude-finos_team/.claude.json" "$HOME/.claude.json" "$HOME/.gemini/config/mcp_config.json" "$HOME/.gemini/settings.json"; do
     [ -f "$cfg" ] || continue
     p=$(jq -r --arg r "$repo_abs" '(.mcpServers["antigravity-pm"].args[0] // .projects[$r].mcpServers["antigravity-pm"].args[0] // empty)' "$cfg" 2>/dev/null || true)
     antigravity_pm_mcp_runnable "$p" && { printf '%s\n' "$p"; return 0; }
   done
-  cand="/Volumes/Data/Toan/agent-workbench/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
-  antigravity_pm_mcp_runnable "$cand" && { printf '%s\n' "$cand"; return 0; }
+  common_dir=$(git -C "${REPO_ROOT:-.}" rev-parse --git-common-dir 2>/dev/null || true)
+  if [ -n "$common_dir" ]; then
+    [ "${common_dir#/}" != "$common_dir" ] || common_dir="${REPO_ROOT:-.}/$common_dir"
+    common_root=$(cd "$common_dir/.." 2>/dev/null && pwd -P || true)
+    if [ -n "$common_root" ]; then
+      cand="${common_root}/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
+      antigravity_pm_mcp_runnable "$cand" && { printf '%s\n' "$cand"; return 0; }
+    fi
+  fi
+  script_root=$(python3 -c 'import os,sys; print(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(sys.argv[1])))))' "${BASH_SOURCE[0]}" 2>/dev/null || true)
+  if [ -n "$script_root" ]; then
+    cand="${script_root}/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
+    antigravity_pm_mcp_runnable "$cand" && { printf '%s\n' "$cand"; return 0; }
+  fi
   return 1
 }
 
+mcp_file_has_antigravity_pm() {
+  # 0 khi file JSON $1 khai báo mcpServers["antigravity-pm"] (hoặc .projects[$2].mcpServers["antigravity-pm"]) đang bật và chạy được.
+  local f="${1:-}" repo_abs="${2:-}" row cmd arg0
+  [ -f "$f" ] || return 1
+  row=$(jq -r --arg r "$repo_abs" '
+    (.mcpServers["antigravity-pm"] // (if $r != "" then .projects[$r].mcpServers["antigravity-pm"] else null end)) as $e
+    | select($e != null and (($e.disabled // false) != true))
+    | [($e.command // ""), ($e.args[0] // "")] | @tsv
+  ' "$f" 2>/dev/null || true)
+  [ -n "$row" ] || return 1
+  IFS=$'\t' read -r cmd arg0 <<EOF
+$row
+EOF
+  case "$cmd" in
+    node|*/node)
+      case "$arg0" in
+        *.js)
+          antigravity_pm_mcp_runnable "$arg0" && return 0
+          if [ "${arg0#/}" = "$arg0" ] && [ -n "${REPO_ROOT:-}" ]; then
+            antigravity_pm_mcp_runnable "${REPO_ROOT}/$arg0" && return 0
+          fi
+          return 1 ;;
+        *) return 0 ;;
+      esac ;;
+    *) return 0 ;;
+  esac
+}
+
 profile_has_antigravity_pm() {
-  # 0 khi profile Claude ($1 = POOL_CFG, rỗng = mặc định) hoặc .mcp.json của repo đã khai báo antigravity-pm.
+  # 0 khi profile Claude ($1 = POOL_CFG, rỗng = mặc định) hoặc .mcp.json của repo đã khai báo antigravity-pm chạy được.
   local cfg_dir="${1:-}" f repo_abs
   repo_abs=$(cd "${REPO_ROOT:-.}" 2>/dev/null && pwd -P || printf '%s' "${REPO_ROOT:-.}")
-  if [ -f "${REPO_ROOT:-.}/.mcp.json" ] && jq -e '.mcpServers["antigravity-pm"] != null' "${REPO_ROOT:-.}/.mcp.json" >/dev/null 2>&1; then
+  if mcp_file_has_antigravity_pm "${REPO_ROOT:-.}/.mcp.json" ""; then
     return 0
   fi
   if [ -n "$cfg_dir" ]; then
-    f="$cfg_dir/.claude.json"
-    [ -f "$f" ] && jq -e --arg r "$repo_abs" '(.mcpServers["antigravity-pm"] // .projects[$r].mcpServers["antigravity-pm"]) != null' "$f" >/dev/null 2>&1 && return 0
+    mcp_file_has_antigravity_pm "$cfg_dir/.claude.json" "$repo_abs" && return 0
   else
     for f in "$HOME/.claude.json" "$HOME/.claude/.claude.json"; do
-      [ -f "$f" ] && jq -e --arg r "$repo_abs" '(.mcpServers["antigravity-pm"] // .projects[$r].mcpServers["antigravity-pm"]) != null' "$f" >/dev/null 2>&1 && return 0
+      mcp_file_has_antigravity_pm "$f" "$repo_abs" && return 0
     done
   fi
   return 1
 }
 
+agy_has_antigravity_pm() {
+  # 0 khi cấu hình MCP của agy (POOL_CFG, ~/.gemini/config/mcp_config.json, ~/.gemini/settings.json, ~/.gemini/antigravity*/mcp_config.json hoặc .mcp.json) đã nạp antigravity-pm chạy được.
+  local cfg_dir="${1:-}" repo_abs f
+  repo_abs=$(cd "${REPO_ROOT:-.}" 2>/dev/null && pwd -P || printf '%s' "${REPO_ROOT:-.}")
+  if mcp_file_has_antigravity_pm "${REPO_ROOT:-.}/.mcp.json" ""; then
+    return 0
+  fi
+  for f in \
+    "${cfg_dir:+$cfg_dir/mcp_config.json}" \
+    "${cfg_dir:+$cfg_dir/settings.json}" \
+    "$HOME/.gemini/config/mcp_config.json" \
+    "$HOME/.gemini/settings.json" \
+    "$HOME"/.gemini/antigravity*/mcp_config.json; do
+    [ -n "$f" ] || continue
+    mcp_file_has_antigravity_pm "$f" "$repo_abs" && return 0
+  done
+  return 1
+}
+
 antigravity_can_provide_mcp() {
-  # 0 khi phiên review có thể nạp antigravity-pm (từ profile hoặc qua --mcp-config).
+  # 0 khi phiên review có thể nạp antigravity-pm ($1 = POOL_CFG, $2 = POOL_ENGINE).
+  # Engine antigravity (agy) không dùng --mcp-config nên bắt buộc cấu hình sẵn trong MCP config của agy.
+  local cfg_dir="${1:-}" engine="${2:-${POOL_ENGINE:-claude}}"
+  if [ "$engine" = "antigravity" ]; then
+    agy_has_antigravity_pm "$cfg_dir"
+    return $?
+  fi
   if [ -n "${SB_ANTIGRAVITY_PM_MCP:-}" ]; then
     [ -f "$SB_ANTIGRAVITY_PM_MCP" ]
     return $?
   fi
-  profile_has_antigravity_pm "${1:-}" || antigravity_pm_mcp_script >/dev/null 2>&1
+  profile_has_antigravity_pm "$cfg_dir" || antigravity_pm_mcp_script >/dev/null 2>&1
 }
 
 review_mcp_args() {
@@ -2107,7 +2171,7 @@ review_needs_antigravity() {
   local issue="$1" pr="" head="" branch="" prs base_ref issue_n=-1
   [ "${SB_REVIEW_ANTIGRAVITY:-0}" = "1" ] && return 0
   if [ -n "${CONFIG_PATH:-}" ] && [ -f "$CONFIG_PATH" ] \
-     && jq -e '(.worker_backend == "workflow") or (([.review_tiers[]?[]?] | index("antigravity")) != null)' "$CONFIG_PATH" >/dev/null 2>&1; then
+     && jq -e '((.worker_backend // "workflow") == "workflow") or (([.review_tiers[]?[]?] | index("antigravity")) != null)' "$CONFIG_PATH" >/dev/null 2>&1; then
     return 0
   fi
   if ! merge_queue_on && [ "${SB_SLOT_LIB_MODE:-0}" != "1" ]; then
@@ -2140,14 +2204,19 @@ antigravity_block_card() {
   local issue="$1" item_id="$2" title="$3" kind="$4" evidence="$5" checked="$6"
   local hdr why what_blocks why_bot to_unblock marker mcp_hint
   [ -n "$item_id" ] || return 1
-  mcp_hint=$(antigravity_pm_mcp_script 2>/dev/null || printf '%s' '/Volumes/Data/Toan/agent-workbench/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js')
+  mcp_hint=$(antigravity_pm_mcp_script 2>/dev/null || printf '%s' "${REPO_ROOT:-.}/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js")
   if [ "$kind" = "missing-mcp" ]; then
     hdr="[orchestrator] [blocker] 🛑 blocked · ❓ thiếu antigravity-pm cho phiên review"
     why="phiên review cho #${issue} thiếu antigravity-pm (MCP antigravity-pm chưa được nạp hoặc không có tool audit)"
     what_blocks="thiếu antigravity-pm nên phiên review không thể gọi pm_task_create / pm_dispatch kind=audit"
     why_bot="chỉ có thể tự nạp MCP khi tìm thấy antigravity-pm-mcp.js hoặc profile đã khai báo MCP"
-    to_unblock="             [ ] Cài MCP: claude mcp add antigravity-pm --scope user -- node ${mcp_hint}
+    if [ "${POOL_ENGINE:-claude}" = "antigravity" ]; then
+      to_unblock="             [ ] Cài MCP cho agy: agy mcp add antigravity-pm node ${mcp_hint} (hoặc claude mcp add antigravity-pm --scope user -- node ${mcp_hint})
              [ ] Đưa #${issue} về Review (hoặc đợi runner tự trả về Review khi antigravity-pm sẵn sàng)"
+    else
+      to_unblock="             [ ] Cài MCP: claude mcp add antigravity-pm --scope user -- node ${mcp_hint}
+             [ ] Đưa #${issue} về Review (hoặc đợi runner tự trả về Review khi antigravity-pm sẵn sàng)"
+    fi
     marker="<!-- sb-blocked-reason: antigravity-missing-mcp -->"
   else
     hdr="[orchestrator] [blocker] 🛑 blocked · ❓ Antigravity chưa mở"
@@ -2185,11 +2254,17 @@ review_antigravity_preflight() {
   local issue="$1" item_id title probe_err
   item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
   title=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .content.title][0] // empty' 2>/dev/null || true)
-  if [ "${POOL_ENGINE:-claude}" != "antigravity" ] && ! antigravity_can_provide_mcp "${POOL_CFG:-}"; then
+  if ! antigravity_can_provide_mcp "${POOL_CFG:-}" "${POOL_ENGINE:-claude}"; then
+    local mcp_ev
+    if [ "${POOL_ENGINE:-claude}" = "antigravity" ]; then
+      mcp_ev="engine=antigravity; thiếu antigravity-pm chạy được trong ~/.gemini/config/mcp_config.json, ~/.gemini/settings.json và .mcp.json"
+    else
+      mcp_ev="profile=${POOL_CFG:-$HOME/.claude}; thiếu antigravity-pm trong .claude.json/.mcp.json và không thấy antigravity-pm-mcp.js"
+    fi
     if antigravity_block_card "$issue" "$item_id" "$title" "missing-mcp" \
-         "profile=${POOL_CFG:-$HOME/.claude}; thiếu antigravity-pm trong .claude.json/.mcp.json và không thấy antigravity-pm-mcp.js" \
+         "$mcp_ev" \
          "kiểm tra cấu hình MCP trước khi giao lane review"; then
-      log "🛑 #${issue} Review → Blocked: thiếu antigravity-pm trước khi dispatch"
+      log "🛑 #${issue} Review → Blocked: thiếu antigravity-pm trước khi dispatch (${POOL_ENGINE:-claude})"
     else
       log "⚠ #${issue} thiếu antigravity-pm và không chuyển được sang Blocked — bỏ qua tick này"
     fi
@@ -2261,11 +2336,15 @@ dispatch_lane() {
   if [ "$lane" = "build" ]; then
     { dependency_gate "$issue" && preflight_gate "$issue"; } || { [ "${SB_READY_TICK:-0}" != 1 ] || PREFLIGHT_SKIP="${PREFLIGHT_SKIP:-} ${issue}"; return 0; }
   fi
-  local mo_cached=""
+  local mo_cached="" run_ag_preflight=1
+  if [ "${SB_SLOT_LIB_MODE:-0}" = "1" ] && [ "${SB_REVIEW_ANTIGRAVITY:-0}" != "1" ] \
+     && [ -z "${SB_ANTIGRAVITY_PROBE:-}" ] && [ -z "${SB_ANTIGRAVITY_PM_MCP:-}" ]; then
+    run_ag_preflight=0
+  fi
   if [ "$lane" = "review" ] && [ -z "${TRAIN_BATCH:-}" ]; then
     if ! merge_queue_on && mo_cached=$(review_approved_head "$issue"); then
       :
-    elif review_needs_antigravity "$issue"; then
+    elif [ "$run_ag_preflight" -eq 1 ] && review_needs_antigravity "$issue"; then
       review_antigravity_preflight "$issue" || return 0
     fi
   fi
@@ -2992,15 +3071,18 @@ note_worker_end() {
 review_antigravity_failure_reason() {
   # Phát hiện phiên review thất bại do thiếu MCP antigravity-pm hoặc Antigravity đóng (language_server không chạy).
   # Bỏ qua các dòng metadata/prompt (`prompt:`, `=== dispatch`, ...) để không khớp nhầm chữ trong prompt.
+  # Với stream-json có bản ghi `result`, chỉ lấy `result` cuối cùng để tránh bắt nhầm các block `assistant` lúc đang đọc/phân tích PR.
   # $1 = đường log worker, $2 = comment cuối (tuỳ chọn). In "missing-mcp" hoặc "closed"; không khớp thì rỗng.
   local wlog="${1:-}" comment="${2:-}" txt=""
   if [ -n "$wlog" ] && [ -f "$wlog" ]; then
     txt=$(python3 -c 'import json, sys
 buf = []
+results = []
 with open(sys.argv[1], errors="replace") as fh:
     for line in fh:
         if line.startswith("=== dispatch "):
             buf = []
+            results = []
             continue
         if line.startswith(("prompt: ", "account_pool: ", "agent_office: ", "worker: ", "worker_exit: ")):
             continue
@@ -3011,7 +3093,7 @@ with open(sys.argv[1], errors="replace") as fh:
                 buf.append(line)
                 continue
             if obj.get("type") == "result" and isinstance(obj.get("result"), str):
-                buf.append(obj["result"])
+                results.append(obj["result"])
             elif obj.get("type") == "assistant":
                 msg = obj.get("message") or {}
                 for block in (msg.get("content") or []):
@@ -3019,15 +3101,22 @@ with open(sys.argv[1], errors="replace") as fh:
                         buf.append(block["text"])
         else:
             buf.append(line)
-print("\n".join(buf[-80:])[-8000:])' "$wlog" 2>/dev/null || true)
+if results:
+    print(results[-1][-8000:])
+else:
+    print("\n".join(buf[-80:])[-8000:])' "$wlog" 2>/dev/null || true)
   fi
   local combined="${txt}
 ${comment}"
-  if printf '%s' "$combined" | grep -qiE 'thiếu (công cụ )?(MCP )?antigravity-pm|không có (công cụ )?(MCP )?antigravity-pm|công cụ MCP antigravity-pm không có|bật MCP antigravity-pm|khi antigravity-pm (khả dụng|có mặt|sẵn sàng)|antigravity-pm.*(not loaded|missing|unavailable|chưa nạp|chưa được nạp|không có)|ToolSearch.*antigravity-pm.*(not found|missing|không tìm thấy|không có|failed|error|unavailable)|ToolSearch.*(not found|missing|không tìm thấy|không có|failed|error|unavailable).*antigravity-pm|antigravity-pm.*ToolSearch.*(not found|missing|không tìm thấy|không có)|pm_task_create.*(missing|not found|không có)'; then
+  local pm_tok='[`"'\'']?antigravity-pm[`"'\'']?'
+  local pm_tool='[`"'\'']?pm_task_create[`"'\'']?'
+  local ls_tok='[`"'\'']?language_server[`"'\'']?'
+  local mcp_prefix='((công cụ|cong cu)[[:space:]]+)?(MCP[[:space:]]+)?(server[[:space:]]+)?'
+  if grep -qiE "(thiếu|không có|chưa nạp|chưa cấu hình|chưa cài)[[:space:]]+${mcp_prefix}${pm_tok}|${mcp_prefix}${pm_tok}[[:space:]]+(không có|thiếu|chưa nạp|chưa sẵn sàng|không khả dụng|unavailable|missing|not found|not loaded)|bật[[:space:]]+MCP[[:space:]]+(server[[:space:]]+)?${pm_tok}|khi[[:space:]]+${pm_tok}[[:space:]]+(khả dụng|có mặt|sẵn sàng)|${pm_tok}[^.;,]{0,40}(not loaded|missing|unavailable|chưa nạp|chưa được nạp|không có|không khả dụng)|ToolSearch[^.;]{0,60}${pm_tok}[^.;]{0,40}(not found|missing|không tìm thấy|không có|failed|error|unavailable)|ToolSearch[^.;]{0,60}(not found|missing|không tìm thấy|không có|failed|error|unavailable)[^.;]{0,40}${pm_tok}|${pm_tok}[^.;]{0,40}ToolSearch[^.;]{0,40}(not found|missing|không tìm thấy|không có)|${pm_tool}[^.;,]{0,40}(missing|not found|không có)" <<<"$combined"; then
     printf '%s\n' "missing-mcp"
     return 0
   fi
-  if printf '%s' "$combined" | grep -qiE 'Antigravity chưa mở|Khong thay tien trinh Antigravity language_server|language_server.*(khong|không|chua|chưa|unavailable|not running)|AntigravityUnavailable|KHONG NOI DUOC'; then
+  if grep -qiE "Antigravity chưa mở|Khong thay tien trinh Antigravity language_server|${ls_tok}[^.;,]{0,40}(khong|không|chua|chưa|unavailable|not running)|AntigravityUnavailable|KHONG NOI DUOC" <<<"$combined"; then
     printf '%s\n' "closed"
     return 0
   fi
@@ -3039,7 +3128,7 @@ block_noop_workers() {
   local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
   local entry issue lane from c0 col count f now n item_id title wlog last tag human_line
   local whead wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait stall_why
-  local ag_fail last_body new_body ag_ev
+  local ag_fail last_body new_body ag_ev new_hdr new_blocked_by
   NOOP_CHECK=""
   for entry in $pending; do
     wlog=""
@@ -3051,6 +3140,7 @@ EOF
     f="$INFLIGHT_DIR/noops/$issue"
     [ -n "$wlog" ] || wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
     eff_max="$max"; over_wait=""; human_wait=""; ag_fail=""; last_body=""; new_body=""
+    new_hdr=""; new_blocked_by=""
     col=$(issue_status "$issue")
     [ -n "$col" ] || continue
     count=$(issue_comment_count "$issue")
@@ -3058,10 +3148,15 @@ EOF
     if [ "$lane" = review ] && [ "$col" = Review ]; then
       last_body=$(issue_last_comment "$issue" "$count" 2>/dev/null || true)
       # Chỉ kiểm tra comment mới phát sinh trong lượt này; tránh khớp nhầm comment blocker Antigravity cũ khi count <= c0.
-      [ "$count" -gt "$c0" ] && new_body="$last_body"
-      # Không đánh dấu ag_fail nếu PR đã được duyệt vào merge-queue hoặc reviewer vừa báo ✅.
+      if [ "$count" -gt "$c0" ]; then
+        new_body="$last_body"
+        new_hdr=$(printf '%s\n' "$last_body" | tr -d '\r' | awk '!h && NF && $0 !~ /^<!--/ {h=1; print}')
+        new_blocked_by=$(printf '%s\n' "$last_body" | tr -d '\r' | awk 'NF{l=$0} END{if (l ~ /^blocked-by:/) print l}' | sed 's/^blocked-by:[[:space:]]*//; s/[[:space:]]*$//')
+      fi
+      # Không đánh dấu ag_fail nếu PR đã vào merge-queue, hoặc reviewer vừa báo ✅, hoặc vừa báo ❌ bounce hợp lệ (không phải blocked-by: agent).
       if ! { merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; } \
-         && ! { [ "$count" -gt "$c0" ] && printf '%s' "$last_body" | grep -qE '^\[reviewer\] \[report\] ✅'; }; then
+         && ! { [ "$count" -gt "$c0" ] && grep -qE '^\[reviewer\] \[report\] ✅' <<<"$new_hdr"; } \
+         && ! { [ "$count" -gt "$c0" ] && grep -qE '^\[reviewer\] \[report\] ❌' <<<"$new_hdr" && [ "$new_blocked_by" != "agent" ]; }; then
         ag_fail=$(review_antigravity_failure_reason "$wlog" "$new_body")
       fi
     fi
@@ -3706,15 +3801,20 @@ sweep_antigravity_blocked() {
     prev_rev=$(printf '%s' "$ctx_json" | jq -r '.prev_rev // ""' 2>/dev/null) || continue
     kind=""
     if [ -n "$blocker" ]; then
-      if printf '%s' "$blocker" | grep -q 'sb-blocked-reason: antigravity-missing-mcp'; then
+      if grep -q 'sb-blocked-reason: antigravity-missing-mcp' <<<"$blocker"; then
         kind="missing-mcp"
-      elif printf '%s' "$blocker" | grep -q 'sb-blocked-reason: antigravity-closed'; then
+      elif grep -q 'sb-blocked-reason: antigravity-closed' <<<"$blocker"; then
         kind="closed"
-      elif printf '%s' "$blocker" | grep -qE 'Move back:[[:space:]]*drag this card to Review|still in Review|the reviewer for #'; then
-        if ! printf '%s' "$blocker" | grep -qiE 'Reason tag:[[:space:]]*(💳|🔐|🧑|🙋|📱|🛡)|thanh toán|payment|billing|drop table|destructive|live[- ]db|migration|máy thật|real device|rebuild cap'; then
+      elif grep -qE 'Move back:[[:space:]]*drag this card to Review|still in Review|the reviewer for #' <<<"$blocker"; then
+        local struct_lines
+        struct_lines=$(printf '%s\n' "$blocker" | tr -d '\r' | awk '
+          NF && !h && $0 !~ /^<!--/ { h=1; print; next }
+          /^[[:space:]]*(Reason tag|Why blocked|What blocks):/ { print }
+        ')
+        if ! grep -qiE 'Reason tag:[[:space:]]*(💳|🔐|🧑|🙋|📱|🛡)|thanh toán|payment|billing|drop table|destructive|live[- ]db|migration|máy thật|real device|rebuild cap' <<<"$struct_lines"; then
           legacy_ctx="${blocker}
 ${prev_rev}"
-          if printf '%s' "$legacy_ctx" | grep -qiE 'antigravity-pm|Antigravity chưa mở|language_server|AntigravityUnavailable|pm_task_create|pm_dispatch|khi antigravity-pm'; then
+          if grep -qiE 'antigravity-pm|Antigravity chưa mở|language_server|AntigravityUnavailable|pm_task_create|pm_dispatch|khi antigravity-pm' <<<"$legacy_ctx"; then
             kind="antigravity"
           else
             ev_log=$(printf '%s\n' "$legacy_ctx" | sed -nE 's/.*Evidence:[[:space:]]*([^;[:space:]]+worker-review-[^;[:space:]]+\.log).*/\1/p' | tail -1)
@@ -3731,7 +3831,9 @@ ${prev_rev}"
     fi
     if [ "$probe_checked" -eq 0 ]; then
       probe_checked=1
-      if antigravity_can_provide_mcp "${POOL_CFG:-}" && antigravity_probe >/dev/null 2>&1; then
+      if ( POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
+           resolve_worker_account >/dev/null 2>&1 || { POOL_ENGINE="claude"; POOL_CFG=""; }
+           antigravity_can_provide_mcp "${POOL_CFG:-}" "${POOL_ENGINE:-claude}" && antigravity_probe >/dev/null 2>&1 ); then
         probe_ok=1
       else
         probe_ok=0

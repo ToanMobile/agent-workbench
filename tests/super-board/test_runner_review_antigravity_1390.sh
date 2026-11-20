@@ -21,10 +21,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$TMP/bin" "$TMP/path" "$TMP/repo/docs/super-board" "$TMP/repo/wl" "$TMP/profile_no_mcp" "$TMP/profile_with_mcp"
+mkdir -p "$TMP/bin" "$TMP/path" "$TMP/home/.gemini/config" "$TMP/home/.local/bin" "$TMP/repo/docs/super-board" "$TMP/repo/wl" "$TMP/profile_no_mcp" "$TMP/profile_with_mcp" "$TMP/profile_broken_mcp" "$TMP/broken_mcp/sub" "$TMP/node_modules/@modelcontextprotocol/sdk"
 echo '{}' > "$TMP/profile_no_mcp/.claude.json"
 printf '{"mcpServers":{"antigravity-pm":{"type":"stdio","command":"node","args":["%s/fake-pm-mcp.js"]}}}\n' "$TMP" > "$TMP/profile_with_mcp/.claude.json"
+printf '{"mcpServers":{"antigravity-pm":{"type":"stdio","command":"node","args":["%s/broken_mcp/sub/antigravity-pm-mcp.js"]}}}\n' "$TMP" > "$TMP/profile_broken_mcp/.claude.json"
 printf '// fake mcp\n' > "$TMP/fake-pm-mcp.js"
+printf '// broken mcp without node_modules\n' > "$TMP/broken_mcp/sub/antigravity-pm-mcp.js"
+echo '{"mcpServers":{}}' > "$TMP/home/.gemini/config/mcp_config.json"
+
+cat > "$TMP/home/.local/bin/agy" <<'SH'
+#!/usr/bin/env bash
+echo $$ >> "$STUB_DIR/stub-pids"
+printf '%s\n' "$*" >> "$STUB_DIR/agy-args"
+exec sleep 300
+SH
+chmod +x "$TMP/home/.local/bin/agy"
 
 cat > "$TMP/bin/super-board-github-read.py" <<'PY'
 import os, sys
@@ -64,7 +75,7 @@ exit 0
 SH
 chmod +x "$TMP/probe-fail.sh" "$TMP/probe-ok.sh"
 
-export STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_DISK_WARN_GIB=0
+export HOME="$TMP/home" STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_DISK_WARN_GIB=0
 unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX SB_REVIEW_TRAIN SB_MERGE_QUEUE SB_NOOP_MAX SB_NOOP_WINDOW_S SB_REVIEW_ANTIGRAVITY SB_ANTIGRAVITY_PROBE SB_ANTIGRAVITY_PM_MCP SB_ANTIGRAVITY_SWEEP_EVERY
 
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
@@ -115,7 +126,9 @@ reset_run() {
   : > "$TMP/stub-pids"
   REVIEW_PID=""; REVIEW_ISSUE=""; REVIEW_EXTRA=""; ACTIVE_WORKERS=0; TRAIN_BATCH=""
   rm -rf "$INFLIGHT_DIR"/[0-9]* "$INFLIGHT_DIR"/noops "$INFLIGHT_DIR"/review-stall "$INFLIGHT_DIR"/review-wait "$TMP/prs.json" "$TMP/issue-"*.json wl/*
-  : > "$TMP/log"; : > "$TMP/writes"; : > "$TMP/claude-args"
+  : > "$TMP/log"; : > "$TMP/writes"; : > "$TMP/claude-args"; : > "$TMP/agy-args"
+  echo '{"mcpServers":{}}' > "$TMP/home/.gemini/config/mcp_config.json"
+  rm -f "$TMP/home/.gemini/settings.json" "$TMP/home/.claude.json"
   echo '{"worker_backend":"claude-p","merge_queue":{"enabled":true}}' > "$CONFIG_PATH"
   unset SB_REVIEW_ANTIGRAVITY SB_ANTIGRAVITY_PROBE SB_ANTIGRAVITY_PM_MCP SB_ANTIGRAVITY_SWEEP_EVERY
   AG_NON_AG_CARDS=""; AG_SWEEP_NEXT=0
@@ -496,6 +509,181 @@ if [ "$rc_e4" -eq 0 ] && grep -qx "move PVTI_1401 Review" "$TMP/writes"; then
   ok "E4: AG_NON_AG_CARDS is invalidated after card leaves Blocked so later Antigravity block still sweeps"
 else
   fail "E4: stale AG_NON_AG_CARDS prevented sweep of re-blocked #1401 (rc=$rc_e4 writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# ── B2/B3 (R11): POOL_ENGINE=antigravity (agy) kiểm tra cấu hình MCP của agy trước khi dispatch
+reset_run; set_card 1392 Review
+resolve_worker_account() { POOL_ENGINE="antigravity"; POOL_ACCT="antigravity"; POOL_CFG="$TMP/home/.gemini/antigravity"; return 0; }
+export SB_REVIEW_ANTIGRAVITY=1
+export SB_ANTIGRAVITY_PM_MCP="$TMP/fake-pm-mcp.js"
+export SB_ANTIGRAVITY_PROBE="$TMP/probe-ok.sh"
+dispatch_lane review 1392
+if [ ! -e wl/worker-review-1392.log ] && [ ! -e "$INFLIGHT_DIR/1392" ] \
+   && grep -qx "move PVTI_1392 Blocked" "$TMP/writes" \
+   && grep -q "thiếu antigravity-pm" "$TMP/writes" \
+   && grep -q "sb-blocked-reason: antigravity-missing-mcp" "$TMP/writes" \
+   && grep -q "blocked-by:  agent" "$TMP/writes"; then
+  ok "B2 (R11): POOL_ENGINE=antigravity without antigravity-pm in agy MCP config blocks before spawning agy"
+else
+  fail "B2 (R11): POOL_ENGINE=antigravity was not blocked when agy lacks antigravity-pm (wlog=$([ -e wl/worker-review-1392.log ] && echo y || echo n) writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+reset_run; set_card 1398 Review
+resolve_worker_account() { POOL_ENGINE="antigravity"; POOL_ACCT="antigravity"; POOL_CFG="$TMP/home/.gemini/antigravity"; return 0; }
+printf '{"mcpServers":{"antigravity-pm":{"command":"node","args":["%s/fake-pm-mcp.js"]}}}\n' "$TMP" > "$TMP/home/.gemini/config/mcp_config.json"
+export SB_REVIEW_ANTIGRAVITY=1
+export SB_ANTIGRAVITY_PROBE="$TMP/probe-ok.sh"
+printf '[{"number":98,"headRefName":"issue-1398-src-only","headRefOid":"%s","labels":[],"isDraft":false}]' "$SHA_SRC" > "$TMP/prs.json"
+dispatch_lane review 1398
+for _ in $(seq 1 50); do [ -s "$TMP/agy-args" ] && break; sleep 0.1; done
+if [ -s "$TMP/agy-args" ] && ! grep -q "move PVTI_1398 Blocked" "$TMP/writes"; then
+  ok "B3 (R11): POOL_ENGINE=antigravity with runnable antigravity-pm in ~/.gemini/config/mcp_config.json dispatches agy"
+else
+  fail "B3 (R11): POOL_ENGINE=antigravity with valid MCP config failed to dispatch (agy=$(cat "$TMP/agy-args") writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+reset_run; set_card 1392 Review
+resolve_worker_account() { POOL_ENGINE="antigravity"; POOL_ACCT="antigravity"; POOL_CFG="$TMP/home/.gemini/antigravity"; return 0; }
+printf '{"mcpServers":{"antigravity-pm":{"command":"node","args":["%s/broken_mcp/sub/antigravity-pm-mcp.js"]}}}\n' "$TMP" > "$TMP/home/.gemini/config/mcp_config.json"
+export SB_REVIEW_ANTIGRAVITY=1
+export SB_ANTIGRAVITY_PROBE="$TMP/probe-ok.sh"
+dispatch_lane review 1392
+if [ ! -e wl/worker-review-1392.log ] && grep -qx "move PVTI_1392 Blocked" "$TMP/writes" && grep -q "thiếu antigravity-pm" "$TMP/writes"; then
+  ok "B4 (R11+R9): POOL_ENGINE=antigravity with broken node_modules path in mcp_config.json blocks before spawning agy"
+else
+  fail "B4 (R11+R9): POOL_ENGINE=antigravity accepted broken MCP path (wlog=$([ -e wl/worker-review-1392.log ] && echo y || echo n) writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# ── C9 (R9): profile_has_antigravity_pm kiểm tra antigravity_pm_mcp_runnable cho args[0]
+reset_run; set_card 1398 Review
+resolve_worker_account() { POOL_ENGINE="claude"; POOL_ACCT="finos"; POOL_CFG="$TMP/profile_broken_mcp"; return 0; }
+printf '{"mcpServers":{"antigravity-pm":{"type":"stdio","command":"node","args":["%s/fake-pm-mcp.js"]}}}\n' "$TMP" > "$TMP/home/.claude.json"
+printf '[{"number":98,"headRefName":"issue-1398-src-only","headRefOid":"%s","labels":[],"isDraft":false}]' "$SHA_SRC" > "$TMP/prs.json"
+if ! profile_has_antigravity_pm "$TMP/profile_broken_mcp"; then
+  dispatch_lane review 1398
+  for _ in $(seq 1 50); do [ -s "$TMP/claude-args" ] && break; sleep 0.1; done
+  c9_mcp=$(sed -n 's/.*--mcp-config \([^ ]*\).*/\1/p' "$TMP/claude-args" | head -1)
+  if [ -n "$c9_mcp" ] && [ -f "$c9_mcp" ] && grep -q "fake-pm-mcp.js" "$c9_mcp"; then
+    ok "C9 (R9): broken args[0] in profile fails profile_has_antigravity_pm and injects working --mcp-config"
+  else
+    fail "C9 (R9): review_mcp_args did not inject working --mcp-config for broken profile (args=$(cat "$TMP/claude-args"))"
+  fi
+else
+  fail "C9 (R9): profile_has_antigravity_pm accepted broken path lacking node_modules"
+fi
+
+# ── C10 (R7): review_needs_antigravity coi config thiếu worker_backend là workflow
+reset_run
+echo '{"merge_queue":{"enabled":true}}' > "$CONFIG_PATH"
+printf '[{"number":98,"headRefName":"issue-1398-src-only","headRefOid":"%s","labels":[],"isDraft":false}]' "$SHA_SRC" > "$TMP/prs.json"
+if review_needs_antigravity 1398; then
+  ok "C10 (R7): review_needs_antigravity treats omitted worker_backend as workflow"
+else
+  fail "C10 (R7): review_needs_antigravity ignored omitted worker_backend default"
+fi
+
+# ── D8 (R12.1): khớp chuỗi bọc backtick `antigravity-pm` và 'MCP server `antigravity-pm`'
+reset_run; set_card 1394 Review
+COUNT=3; LAST_COMMENT=""
+printf '=== dispatch lane=review issue=#1394 ===\naccount_pool: engine=antigravity account=antigravity\nCHƯA XONG — PR #1393 chưa thể vào hàng đợi merge vì phiên review hiện tại thiếu MCP `antigravity-pm`.\nworker_exit: exit=0 signal=none elapsed=20s\n' > "$WORKER_LOG_DIR/worker-review-1394.log"
+printf 'PID=%s\nLANE=review\nSTARTED=2026-11-20T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-1394.log" > "$INFLIGHT_DIR/1394"
+reap_finished_locks; block_noop_workers
+d8_c=$(review_antigravity_failure_reason "" $'Phiên này không có MCP server `antigravity-pm` nên chưa gọi được pm_task_create.')
+if grep -qx "move PVTI_1394 Blocked" "$TMP/writes" \
+   && grep -q "thiếu antigravity-pm" "$TMP/writes" \
+   && grep -q "blocked-by:  agent" "$TMP/writes" \
+   && [ "$d8_c" = "missing-mcp" ]; then
+  ok "D8 (R12.1): matches backtick-wrapped \`antigravity-pm\` and 'MCP server \`antigravity-pm\`'"
+else
+  fail "D8 (R12.1): missed backtick/MCP-server form (d8_c=$d8_c writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# ── D9 (R12.2): miễn ag_fail khi có báo cáo bounce [reviewer] [report] ❌ hợp lệ và không bắt nhầm block assistant
+reset_run; set_card 1394 Review
+COUNT=4
+LAST_COMMENT=$'<!-- super-review:report -->\n[reviewer] [report] ❌ bounced · round 6 @ deadbeef\n❌ Not done: R11 (`.claude/bin/super-board-run.sh:2188` thiếu MCP `antigravity-pm`)\nNext: builder'
+printf '=== dispatch lane=review issue=#1394 ===\n{"type":"assistant","message":{"content":[{"type":"text","text":"Đang phân tích PR: `antigravity-pm` không có trong config."}]}}\n{"type":"result","subtype":"success","is_error":false,"result":"không duyệt — trả về builder sửa R11."}\nworker_exit: exit=0 signal=none elapsed=25s\n' > "$WORKER_LOG_DIR/worker-review-1394.log"
+printf 'PID=%s\nLANE=review\nSTARTED=2026-11-20T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-1394.log" > "$INFLIGHT_DIR/1394"
+reap_finished_locks; block_noop_workers
+d9_moves=$(cat "$TMP/writes")
+reset_run; set_card 1394 Review
+COUNT=3; LAST_COMMENT=""
+printf '=== dispatch lane=review issue=#1394 ===\n{"type":"assistant","message":{"content":[{"type":"text","text":"Đang đọc code PR #1393: antigravity-pm không có trong profile cũ."}]}}\n{"type":"result","subtype":"success","is_error":false,"result":"Chưa duyệt: còn bug ở .claude/bin/super-board-run.sh:2188"}\nworker_exit: exit=0 signal=none elapsed=25s\n' > "$WORKER_LOG_DIR/worker-review-1394.log"
+printf 'PID=%s\nLANE=review\nSTARTED=2026-11-20T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-1394.log" > "$INFLIGHT_DIR/1394"
+reap_finished_locks; block_noop_workers
+if printf '%s\n' "$d9_moves" | grep -qx "move PVTI_1394 Ready" \
+   && ! printf '%s\n' "$d9_moves" | grep -q "move PVTI_1394 Blocked" \
+   && grep -qx "move PVTI_1394 Ready" "$TMP/writes" \
+   && ! grep -q "move PVTI_1394 Blocked" "$TMP/writes"; then
+  ok "D9 (R12.2): valid ❌ bounce mentioning antigravity-pm and intermediate assistant analysis are not misclassified as missing-mcp"
+else
+  fail "D9 (R12.2): valid bounce falsely blocked (d9_moves=$(printf '%s' "$d9_moves" | tr '\n' ';') writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# ── E5 (R13.1): sweep_antigravity_blocked không loại trừ nhầm khi payment/migration chỉ nằm ở Card title hoặc Evidence
+reset_run
+PROJECT_ITEMS_JSON='{"items":[
+  {"id":"PVTI_1402","status":"Blocked","labels":[],"content":{"type":"Issue","number":1402,"title":"fix payment migration","assignees":[]}},
+  {"id":"PVTI_1403","status":"Blocked","labels":[],"content":{"type":"Issue","number":1403,"title":"legacy billing card","assignees":[]}}
+]}'
+cat > "$TMP/issue-1402.json" <<'JSON'
+{"comments":[
+  {"body":"[reviewer] [report] chưa duyệt\nPhiên này thiếu MCP antigravity-pm.\nblocked-by: -"},
+  {"body":"[orchestrator] [blocker] 🛑 blocked · ❓ review worker exited 2 times\nCard:        #1402 fix payment migration\nReason tag:  ❓\nWhy blocked: the reviewer for #1402 ended its turn waiting on a person (blocked-by: -)\nEvidence:    docs/super-board/runs/worker-review-1402.log; last log line: migration test\nMove back:   drag this card to Review after the steps above are done\nblocked-by:  -"}
+]}
+JSON
+cat > "$TMP/issue-1403.json" <<'JSON'
+{"comments":[
+  {"body":"[reviewer] [report] chưa duyệt\nAntigravity language_server chưa chạy.\nblocked-by: -"},
+  {"body":"[orchestrator] [blocker] 🛑 blocked · ❓ review worker exited 2 times\nCard:        #1403 legacy billing card\nReason tag:  ❓\nWhy blocked: the reviewer for #1403 ended its turn waiting on a person\nEvidence:    docs/super-board/runs/worker-review-1403.log; payment webhook timeout\nMove back:   drag this card to Review after the steps above are done\nblocked-by:  -"}
+]}
+JSON
+export SB_ANTIGRAVITY_PM_MCP="$TMP/fake-pm-mcp.js"
+export SB_ANTIGRAVITY_PROBE="$TMP/probe-ok.sh"
+export SB_ANTIGRAVITY_SWEEP_EVERY=0
+sweep_antigravity_blocked
+rc_e5=$?
+if [ "$rc_e5" -eq 0 ] && grep -qx "move PVTI_1402 Review" "$TMP/writes" && grep -qx "move PVTI_1403 Review" "$TMP/writes"; then
+  ok "E5 (R13.1): sweep ignores exclusion keywords inside Card title and Evidence lines"
+else
+  fail "E5 (R13.1): sweep falsely excluded card by title/Evidence (rc=$rc_e5 writes=$(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# ── E6 (R13.2): sweep_antigravity_blocked không phụ thuộc POOL_CFG/POOL_ENGINE toàn cục còn sót lại
+reset_run
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_1404","status":"Blocked","labels":[],"content":{"type":"Issue","number":1404,"title":"stale pool cfg","assignees":[]}}]}'
+cat > "$TMP/issue-1404.json" <<'JSON'
+{"comments":[
+  {"body":"[orchestrator] [blocker] 🛑 blocked · ❓ thiếu antigravity-pm cho phiên review\nMove back:   drag this card to Review\n<!-- sb-blocked-reason: antigravity-missing-mcp -->\nblocked-by:  agent"}
+]}
+JSON
+POOL_CFG="$TMP/nonexistent_stale_profile"
+POOL_ENGINE="antigravity"
+resolve_worker_account() { POOL_ENGINE="claude"; POOL_ACCT="finos"; POOL_CFG="$TMP/profile_with_mcp"; return 0; }
+export SB_ANTIGRAVITY_PROBE="$TMP/probe-ok.sh"
+export SB_ANTIGRAVITY_SWEEP_EVERY=0
+sweep_antigravity_blocked
+rc_e6a=$?
+e6a_writes=$(cat "$TMP/writes")
+reset_run
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_1404","status":"Blocked","labels":[],"content":{"type":"Issue","number":1404,"title":"agy missing mcp","assignees":[]}}]}'
+cat > "$TMP/issue-1404.json" <<'JSON'
+{"comments":[
+  {"body":"[orchestrator] [blocker] 🛑 blocked · ❓ thiếu antigravity-pm cho phiên review\nMove back:   drag this card to Review\n<!-- sb-blocked-reason: antigravity-missing-mcp -->\nblocked-by:  agent"}
+]}
+JSON
+POOL_CFG="$TMP/profile_with_mcp"
+POOL_ENGINE="claude"
+resolve_worker_account() { POOL_ENGINE="antigravity"; POOL_ACCT="antigravity"; POOL_CFG="$TMP/home/.gemini/antigravity"; return 0; }
+export SB_ANTIGRAVITY_PROBE="$TMP/probe-ok.sh"
+export SB_ANTIGRAVITY_SWEEP_EVERY=0
+sweep_antigravity_blocked
+rc_e6b=$?
+if [ "$rc_e6a" -eq 0 ] && printf '%s\n' "$e6a_writes" | grep -qx "move PVTI_1404 Review" \
+   && [ "$rc_e6b" -ne 0 ] && ! grep -q "PVTI_1404" "$TMP/writes"; then
+  ok "E6 (R13.2): sweep probes MCP independently of stale global POOL_CFG/POOL_ENGINE"
+else
+  fail "E6 (R13.2): sweep depended on stale POOL_CFG/POOL_ENGINE (rc_e6a=$rc_e6a e6a=$(printf '%s' "$e6a_writes" | tr '\n' ';') rc_e6b=$rc_e6b writes=$(tr '\n' ';' < "$TMP/writes"))"
 fi
 
 [ "$FAILS" -eq 0 ] && { echo "PASS"; exit 0; } || { echo "FAIL ($FAILS)"; exit 1; }
