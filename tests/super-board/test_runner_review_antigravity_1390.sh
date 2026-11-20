@@ -235,6 +235,57 @@ else
   fail "C5: review_mcp_args leaked temp file on jq/mv failure ($leftover_c5)"
 fi
 
+# C6 (R4): antigravity_probe fallback dưới set -euo pipefail không bị SIGPIPE (rc=141) khi ps khớp sớm và xuất nhiều dòng
+reset_run
+mkdir -p "$TMP/ps_stub"
+cat > "$TMP/ps_stub/ps" <<'SH'
+#!/usr/bin/env bash
+printf '/Applications/Antigravity.app/Contents/Resources/app/bin/language_server_macos_arm --standalone\n'
+i=0
+while [ "$i" -lt 2500 ]; do
+  printf '/usr/libexec/dummy-process --arg=0123456789abcdef0123456789abcdef0123456789abcdef\n'
+  i=$((i + 1))
+done
+SH
+chmod +x "$TMP/ps_stub/ps"
+export SB_ANTIGRAVITY_PM_MCP="$TMP/does-not-exist.js"
+c6_rc=0
+(
+  set -euo pipefail
+  PATH="$TMP/ps_stub:$PATH"
+  antigravity_probe >/dev/null 2>&1
+) || c6_rc=$?
+if [ "$c6_rc" -eq 0 ]; then
+  ok "C6: antigravity_probe fallback succeeds without SIGPIPE under set -euo pipefail"
+else
+  fail "C6: antigravity_probe fallback failed under set -euo pipefail (rc=$c6_rc)"
+fi
+
+# C7 (R5.1): review_needs_antigravity trả 0 khi worker_backend == "workflow" ngay cả khi PR chỉ sửa src
+reset_run
+echo '{"worker_backend":"workflow","merge_queue":{"enabled":true}}' > "$CONFIG_PATH"
+printf '[{"number":98,"headRefName":"issue-1398-src-only","headRefOid":"%s","closingIssuesReferences":[{"number":1398}],"labels":[],"isDraft":false}]' "$SHA_SRC" > "$TMP/prs.json"
+if review_needs_antigravity 1398; then
+  ok "C7: review_needs_antigravity returns 0 when worker_backend is workflow"
+else
+  fail "C7: review_needs_antigravity ignored worker_backend=workflow"
+fi
+
+# C8 (R5.2): review_needs_antigravity nhận diện PR không mang tiền tố nhánh issue-<N>- qua closingIssuesReferences
+reset_run
+git checkout -q main
+git checkout -q -b fix-custom-test-edit
+printf '#!/usr/bin/env bash\necho custom\n' > tests/test_demo.sh
+git commit -aq -m "custom branch edit test"
+SHA_CUSTOM=$(git rev-parse HEAD)
+git checkout -q main
+printf '[{"number":199,"headRefName":"fix-custom-test-edit","headRefOid":"%s","closingIssuesReferences":[{"number":1499}],"labels":[],"isDraft":false}]' "$SHA_CUSTOM" > "$TMP/prs.json"
+if review_needs_antigravity 1499; then
+  ok "C8: review_needs_antigravity finds PR via closingIssuesReferences when branch lacks issue-<N>- prefix"
+else
+  fail "C8: review_needs_antigravity missed PR linked via closingIssuesReferences"
+fi
+
 # ── D: block_noop_workers — worker thoát 0 không comment vì thiếu antigravity-pm → 'thiếu antigravity-pm', KHÔNG 'waiting on a person'
 sleep 0 & DEAD=$!; wait "$DEAD"
 COUNT=3; LAST_COMMENT=""
@@ -302,9 +353,10 @@ reset_run; set_card 1394 Review
 COUNT=4; LAST_COMMENT=$'[reviewer] [report] ✅ merge-ready · queued PR #94 @ deadbeef'
 printf '=== dispatch lane=review issue=#1394 ===\n{"type":"assistant","message":{"content":[{"type":"text","text":"Đang gọi ToolSearch để nạp antigravity-pm."}]}}\n{"type":"result","subtype":"success","is_error":false,"result":"Đã duyệt và gắn nhãn merge-queue."}\nworker_exit: exit=0 signal=none elapsed=25s\n' > "$WORKER_LOG_DIR/worker-review-1394.log"
 printf 'PID=%s\nLANE=review\nSTARTED=2026-11-20T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-1394.log" > "$INFLIGHT_DIR/1394"
-review_approved_head() { [ "$1" = "1394" ] && return 0; return 1; }
-reap_finished_locks; block_noop_workers
-unset -f review_approved_head
+(
+  review_approved_head() { [ "$1" = "1394" ] && return 0; return 1; }
+  reap_finished_locks; block_noop_workers
+)
 if ! grep -q "move PVTI_1394" "$TMP/writes" && ! grep -q "thiếu antigravity-pm" "$TMP/writes"; then
   ok "D5: normal ToolSearch load + queued review is not misclassified as missing MCP"
 else
@@ -317,11 +369,12 @@ COUNT=3
 LAST_COMMENT=$'[orchestrator] [blocker] 🛑 blocked · ❓ Antigravity chưa mở\n<!-- sb-blocked-reason: antigravity-closed -->\nblocked-by:  agent'
 printf '=== dispatch lane=review issue=#1394 ===\n{"type":"result","subtype":"success","is_error":false,"result":"worker exited without doing anything"}\nworker_exit: exit=0 signal=none elapsed=15s\n' > "$WORKER_LOG_DIR/worker-review-1394.log"
 printf 'PID=%s\nLANE=review\nSTARTED=2026-11-20T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-1394.log" > "$INFLIGHT_DIR/1394"
-reap_finished_locks; block_noop_workers
-if ! grep -q "move PVTI_1394 Blocked" "$TMP/writes" && ! grep -q "Antigravity chưa mở" "$TMP/writes"; then
+reap_finished_locks 2>"$TMP/d6.err"; block_noop_workers 2>>"$TMP/d6.err"
+if ! grep -q "move PVTI_1394 Blocked" "$TMP/writes" && ! grep -q "Antigravity chưa mở" "$TMP/writes" \
+   && ! grep -q "command not found" "$TMP/d6.err"; then
   ok "D6: stale Antigravity blocker comment is not re-matched when worker posted no new comment (count <= c0)"
 else
-  fail "D6: stale last_body falsely triggered ag_fail when count <= c0 (writes=$(tr '\n' ';' < "$TMP/writes"))"
+  fail "D6: stale last_body falsely triggered ag_fail when count <= c0 (err=$(tr '\n' ';' < "$TMP/d6.err") writes=$(tr '\n' ';' < "$TMP/writes"))"
 fi
 
 # D7: review_antigravity_failure_reason khớp thứ tự tiếng Việt "ToolSearch không tìm thấy antigravity-pm" (và không bắt nhầm ca bình thường)
@@ -329,15 +382,16 @@ reset_run; set_card 1394 Review
 COUNT=3; LAST_COMMENT=""
 printf '=== dispatch lane=review issue=#1394 ===\n{"type":"result","subtype":"success","is_error":false,"result":"ToolSearch không tìm thấy antigravity-pm trong phiên này."}\nworker_exit: exit=0 signal=none elapsed=20s\n' > "$WORKER_LOG_DIR/worker-review-1394.log"
 printf 'PID=%s\nLANE=review\nSTARTED=2026-11-20T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-1394.log" > "$INFLIGHT_DIR/1394"
-reap_finished_locks; block_noop_workers
+reap_finished_locks 2>"$TMP/d7.err"; block_noop_workers 2>>"$TMP/d7.err"
 d7_ok_msg=$(review_antigravity_failure_reason "" "ToolSearch tìm thấy và nạp antigravity-pm thành công.")
 if grep -qx "move PVTI_1394 Blocked" "$TMP/writes" \
    && grep -q "thiếu antigravity-pm" "$TMP/writes" \
    && grep -q "blocked-by:  agent" "$TMP/writes" \
-   && [ -z "$d7_ok_msg" ]; then
+   && [ -z "$d7_ok_msg" ] \
+   && ! grep -q "command not found" "$TMP/d7.err"; then
   ok "D7: matches Vietnamese order 'ToolSearch không tìm thấy antigravity-pm' without false positive"
 else
-  fail "D7: Vietnamese ToolSearch order missed or false positive (d7_ok_msg=$d7_ok_msg writes=$(tr '\n' ';' < "$TMP/writes"))"
+  fail "D7: Vietnamese ToolSearch order missed or false positive (d7_ok_msg=$d7_ok_msg err=$(tr '\n' ';' < "$TMP/d7.err") writes=$(tr '\n' ';' < "$TMP/writes"))"
 fi
 
 # ── E: sweep_antigravity_blocked — thẻ Blocked cũ và mới tự về Review khi Antigravity nối lại

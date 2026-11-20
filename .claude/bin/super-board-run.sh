@@ -2086,13 +2086,16 @@ antigravity_probe() {
     # Bỏ qua env cũ kế thừa từ terminal để probe tiến trình language_server thật đang chạy.
     out=$(env -u ANTIGRAVITY_LS_ADDRESS -u ANTIGRAVITY_CSRF_TOKEN node "$mcp_js" --doctor "${REPO_ROOT:-.}" 2>&1) || rc=$?
     if [ "$rc" -ne 0 ] || printf '%s\n' "$out" | grep -qE 'KHONG NOI DUOC|agentapi: KHONG TIM THAY|CHUA DANG KY'; then
-      printf '%s\n' "$out" | grep -E 'KHONG NOI DUOC|Goi y:|agentapi: KHONG TIM THAY|CHUA DANG KY' | head -n 3
+      printf '%s\n' "$out" | grep -E 'KHONG NOI DUOC|Goi y:|agentapi: KHONG TIM THAY|CHUA DANG KY' | head -n 3 || printf '%s\n' "$out" | tail -n 3
       return 1
     fi
     return 0
   fi
   # Fallback khi chỉ profile khai báo mà không đọc được path script: kiểm tiến trình language_server.
-  if ps -ww -A -o command= 2>/dev/null | grep -qE 'language_server.*--standalone'; then
+  # Đọc ra biến trước để tránh SIGPIPE (rc=141) lên `ps` dưới `set -euo pipefail` khi `grep -qE` đóng stdin sớm.
+  local ps_out
+  ps_out=$(ps -ww -A -o command= 2>/dev/null || true)
+  if grep -qE 'language_server.*--standalone' <<<"$ps_out"; then
     return 0
   fi
   printf '%s\n' "Khong thay tien trinh Antigravity language_server nao dang chay."
@@ -2101,20 +2104,23 @@ antigravity_probe() {
 
 review_needs_antigravity() {
   # 0 khi thẻ Review #$1 cần audit qua Antigravity (không chạy nhánh claude-verify thuần).
-  local issue="$1" pr="" head="" branch="" prs base_ref
+  local issue="$1" pr="" head="" branch="" prs base_ref issue_n=-1
   [ "${SB_REVIEW_ANTIGRAVITY:-0}" = "1" ] && return 0
   if [ -n "${CONFIG_PATH:-}" ] && [ -f "$CONFIG_PATH" ] \
-     && jq -e '[.review_tiers[]?[]?] | index("antigravity") != null' "$CONFIG_PATH" >/dev/null 2>&1; then
+     && jq -e '(.worker_backend == "workflow") or (([.review_tiers[]?[]?] | index("antigravity")) != null)' "$CONFIG_PATH" >/dev/null 2>&1; then
     return 0
   fi
   if ! merge_queue_on && [ "${SB_SLOT_LIB_MODE:-0}" != "1" ]; then
     return 0
   fi
   if [ -n "${SB_AUDIT_CHECK:-}" ] && [ -f "$SB_AUDIT_CHECK" ]; then
-    prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid" 2>/dev/null || true)
+    case "$issue" in ''|*[!0-9]*) ;; *) issue_n="$issue" ;; esac
+    prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid,closingIssuesReferences" 2>/dev/null || true)
     if [ -n "$prs" ]; then
-      read -r pr head branch <<EOF
-$(printf '%s' "$prs" | jq -r --arg p "issue-${issue}-" '[.[] | select(.headRefName | startswith($p))][0] | select(. != null) | "\(.number // "") \(.headRefOid // "") \(.headRefName // "")"' 2>/dev/null)
+      read -r pr head branch <<EOF || true
+$(printf '%s' "$prs" | jq -r --arg p "issue-${issue}-" --argjson n "$issue_n" '([.[] | select((.headRefName // "") | startswith($p))][0]
+    // ([.[] | select(any((.closingIssuesReferences // [])[]; .number == $n))] | if length == 1 then .[0] else null end))
+  | select(. != null) | "\(.number // "") \(.headRefOid // "") \(.headRefName // "")"' 2>/dev/null)
 EOF
     fi
     if [ -n "${head:-}" ]; then
