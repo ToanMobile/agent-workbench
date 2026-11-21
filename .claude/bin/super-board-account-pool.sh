@@ -2,10 +2,11 @@
 # super-board-account-pool.sh (also invoked via `ccswitch`)
 # Claude-only account pool (#1412, lệnh chủ repo 21/11): mỗi repo chỉ chạy bằng tài khoản Claude đã ghim; tài khoản ghim
 # chạm ngưỡng thì `resolve` trả state=pause kèm resets_at, KHÔNG đổi sang tài khoản Claude khác, Antigravity hay hãng khác.
-#   1. finos            -> ~/.claude-finos         | FinOS Org (toan.huynh@finos.asia)
-#   2. finos_team       -> ~/.claude-finos_team    | FinOS Team (linhnt@finos.asia)
-#   3. max              -> ~/.claude-max           | Personal 5x Max (toan.huynh@finos.asia)
-#   7. finos_lua        -> ~/.claude-finos_lua     | FinOS Lua (ngoclua892@gmail.com)
+#   1. finos            -> ~/.claude-finos
+#   2. finos_team       -> ~/.claude-finos_team
+#   3. max              -> ~/.claude-max
+#   7. finos_lua        -> ~/.claude-finos_lua
+# Script được chép sang mọi repo board: email, mã Keychain và danh sách repo đều suy ra trên máy đang chạy, không chép cứng.
 # Antigravity (antigravity, antigravity_pro) chỉ còn là đích chọn tay của `switch`; trong vai reviewer nó đi qua antigravity-pm.
 
 set -euo pipefail
@@ -22,33 +23,35 @@ mkdir -p "$SB_DIR"
 usage_file_for() { echo "$SB_DIR/usage-${1}.json"; }
 
 keychain_service_for() {
+  # Claude Code lưu đăng nhập của CLAUDE_CONFIG_DIR khác mặc định dưới "Claude Code-credentials-<8 hex đầu sha256(đường dẫn)>".
   case "$1" in
-    finos)      echo "Claude Code-credentials-08fc04bc" ;;
-    finos_team) echo "Claude Code-credentials-25aa58cc" ;;
-    max)        echo "Claude Code-credentials-0f12add9" ;;
-    finos_lua)  echo "Claude Code-credentials-5a4c5915" ;;
-    *)          echo "" ;;
+    finos|finos_team|max|finos_lua)
+      local h
+      h="$(printf '%s' "$HOME/.claude-$1" | { shasum -a 256 2>/dev/null || sha256sum; } | cut -c1-8)"
+      [ -n "$h" ] && echo "Claude Code-credentials-$h" || echo "" ;;
+    *) echo "" ;;
   esac
 }
 
 account_label() {
   case "$1" in
-    finos)            echo "toan.huynh@finos.asia [FinOS]" ;;
-    finos_team)       echo "linhnt@finos.asia [FinOS Team]" ;;
-    max)              echo "toan.huynh@finos.asia [5x Max]" ;;
-    finos_lua)        echo "ngoclua892@gmail.com [FinOS Lua]" ;;
-    antigravity)      echo "phathuy.vetgo@gmail.com [Ultra]" ;;
-    antigravity_pro)  echo "alex.1993.dev@gmail.com [Pro]" ;;
-    *)                echo "$1" ;;
+    finos|finos_team|max|finos_lua) echo "$(account_email "$1") [$1]" ;;
+    antigravity)                    echo "$(account_email "$1") [Ultra]" ;;
+    antigravity_pro)                echo "$(account_email "$1") [Pro]" ;;
+    *) echo "$1" ;;
   esac
 }
 
 set_antigravity_google_account() {
-  local acct="$1" active_email="phathuy.vetgo@gmail.com" old_email="alex.1993.dev@gmail.com"
-  if [ "$acct" = "antigravity_pro" ]; then
-    active_email="alex.1993.dev@gmail.com"
-    old_email="phathuy.vetgo@gmail.com"
+  local acct="$1" other="antigravity_pro" active_email old_email
+  [ "$acct" = "antigravity_pro" ] && other="antigravity"
+  active_email="$(account_email "$acct")"
+  old_email="$(account_email "$other")"
+  if [ "$active_email" = "unknown" ]; then
+    echo "⚠ no Google email for '$acct' in ~/.cc-switch/cc-switch.db; Antigravity account left unchanged" >&2
+    return 0
   fi
+  [ "$old_email" = "unknown" ] && old_email=""
   mkdir -p "$HOME/.gemini/antigravity-cli"
   printf '{\n  "active": "%s",\n  "old": [\n    "%s"\n  ]\n}\n' "$active_email" "$old_email" > "$HOME/.gemini/google_accounts.json"
   printf '{\n  "model": "gemini-4-argon-high",\n  "effort": "xhigh",\n  "activeAccount": "%s"\n}\n' "$active_email" > "$HOME/.gemini/antigravity-cli/settings.json"
@@ -124,8 +127,15 @@ alt_account() {
 account_email() {
   local acct="$1"
   case "$acct" in
-    antigravity)     echo "phathuy.vetgo@gmail.com"; return 0 ;;
-    antigravity_pro) echo "alex.1993.dev@gmail.com"; return 0 ;;
+    antigravity|antigravity_pro)
+      # Email Google nằm trong tên provider Gemini của CC Switch ("Antigravity Pro — <email> (…)"); id đã qua whitelist ở case.
+      local name="" db="$HOME/.cc-switch/cc-switch.db"
+      if [ -f "$db" ] && command -v sqlite3 >/dev/null 2>&1; then
+        name="$(sqlite3 "$db" "SELECT name FROM providers WHERE app_type = 'gemini' AND id = '$acct';" 2>/dev/null || true)"
+      fi
+      name="$(printf '%s\n' "$name" | grep -Eo '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]+' | head -n 1 || true)"
+      echo "${name:-unknown}"
+      return 0 ;;
   esac
   local cfg="$HOME/.claude-${acct}/.claude.json"
   if [ -f "$cfg" ] && command -v jq >/dev/null 2>&1; then
@@ -178,11 +188,16 @@ check_account_quota() {
           u_reset_ms="$(echo "$out" | jq -r 'if (.resets_at // 0) > 0 then ((.resets_at | tonumber) * 1000) else 0 end' 2>/dev/null || echo 0)"
           if [ "${u_reset_ms:-0}" -gt 0 ]; then
             # Chép mốc dưới id mới của cc-switcher; khoá id cũ do bản trước ghi bị gỡ (cc-switcher gộp hai khoá theo mốc lớn hơn).
-            stmp="$state_file.tmp.$$"
-            jq --arg a "$alt" --arg old "$acct" --argjson r "$u_reset_ms" \
-              '(if ((.frozenUntil[$a] // 0) < $r) then .frozenUntil[$a] = $r else . end)
-               | if $old != $a then del(.frozenUntil[$old]) else . end' \
-              "$state_file" > "$stmp" 2>/dev/null && mv "$stmp" "$state_file" 2>/dev/null || rm -f "$stmp"
+            # Chỉ ghi khi mốc thật sự đổi: cc-switcher-mcp ghi file này mỗi 30 s, mỗi lần ghi thừa ở đây là một lượt đua.
+            if jq -e --arg a "$alt" --arg old "$acct" --argjson r "$u_reset_ms" \
+                 '((.frozenUntil[$a] // 0) < $r) or ($old != $a and ((.frozenUntil // {}) | has($old)))' \
+                 "$state_file" >/dev/null 2>&1; then
+              stmp="$state_file.tmp.$$"
+              jq --arg a "$alt" --arg old "$acct" --argjson r "$u_reset_ms" \
+                '(if ((.frozenUntil[$a] // 0) < $r) then .frozenUntil[$a] = $r else . end)
+                 | if $old != $a then del(.frozenUntil[$old]) else . end' \
+                "$state_file" > "$stmp" 2>/dev/null && mv "$stmp" "$state_file" 2>/dev/null || rm -f "$stmp"
+            fi
           fi
         fi
         echo "$out"
@@ -281,7 +296,12 @@ cmd_resolve() {
   fi
   local earliest_reset="" pause_window="" acct qjson qstate qreset
   while IFS= read -r acct; do
-    [ -d "$HOME/.claude-${acct}" ] || continue
+    # Thiếu thư mục của chính tài khoản ghim là lỗi cấu hình, không phải chạm ngưỡng: báo đúng lý do, không nhảy tài khoản khác.
+    if [ ! -d "$HOME/.claude-${acct}" ]; then
+      jq -n --arg preferred "$preferred" --arg account "$acct" \
+        '{state:"misconfigured", engine:"claude", account:null, preferred:$preferred, resets_at:null, reason:"missing ~/.claude-\($account): the pinned Claude account has no config directory on this machine"}'
+      return 12
+    fi
     set +e; qjson="$(check_account_quota "$acct" "$threshold")"; set -e
     qstate="$(echo "$qjson" | jq -r '.state // "ok"')"
     if [ "$qstate" != "pause" ]; then
@@ -307,31 +327,45 @@ cmd_resolve() {
   return 10
 }
 
+board_repos() {
+  # Repo board trên máy này: SB_POOL_REPOS (phân cách ':') nếu đặt; không thì các project Claude Code đã mở (~/.claude.json và
+  # ~/.claude-<acct>/.claude.json) có .claude/super-board/configs, bỏ worktree của thẻ.
+  if [ -n "${SB_POOL_REPOS:-}" ]; then
+    printf '%s\n' "$SB_POOL_REPOS" | tr ':' '\n'
+    return 0
+  fi
+  command -v jq >/dev/null 2>&1 || return 0
+  local f d
+  for f in "$HOME/.claude.json" "$HOME"/.claude-*/.claude.json; do
+    [ -f "$f" ] && jq -r '(.projects // {}) | keys[]' "$f" 2>/dev/null || true
+  done | sort -u | while IFS= read -r d; do
+    case "$d" in */.claude/worktrees/*) continue ;; esac
+    if [ -d "$d/.claude/super-board/configs" ]; then printf '%s\n' "$d"; fi
+  done || true
+  return 0
+}
+
 cmd_status() {
   local threshold="${1:-95}" current
   current="$(detect_current_account "$PWD")"
   echo "╭─────────────────┬──────────────────────────────────┬──────────┬──────────┬──────────────────────────────────────╮"
   echo "│ ACCOUNT         │ EMAIL / PLAN / ENGINE            │ QUOTA    │ STATUS   │ CONFIG & REPO ASSIGNMENT             │"
   echo "├─────────────────┼──────────────────────────────────┼──────────┼──────────┼──────────────────────────────────────┤"
-  local acct qjson used state label shared_ok marker rcount d r_acct
+  local acct qjson used state label shared_ok marker rcount d r_acct repos
+  repos="$(board_repos)"
   for acct in "${POOL_ACCOUNTS[@]}"; do
     label="$(account_label "$acct")"
     set +e; qjson="$(check_account_quota "$acct" "$threshold")"; set -e
     used="$(echo "$qjson" | jq -r 'if .used != null then "\(.used)%" else "0%" end')"
     state="$(echo "$qjson" | jq -r '.state // "ok"' | tr '[:lower:]' '[:upper:]')"
     rcount=0
-    for d in \
-      /Volumes/Data/Toan/agent-workbench \
-      /Volumes/Data/Toan/OfficeReader/OfficeReader \
-      /Volumes/Data/Toan/Game/Neighbours-From-Hell \
-      /Volumes/Data/Toan/GeelyEx2 \
-      /Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D \
-      /Volumes/Data/Toan/Game/Humans-vs.-UFOs; do
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
       if [ -f "$d/.claude/settings.local.json" ] && command -v jq >/dev/null 2>&1; then
         r_acct="$(jq -r '.account // empty' "$d/.claude/settings.local.json" 2>/dev/null || true)"
         [ "$(normalize_account "$r_acct")" = "$acct" ] && rcount=$((rcount + 1))
       fi
-    done
+    done <<<"$repos"
     if [ "$rcount" -gt 0 ]; then
       shared_ok="~/.claude-${acct} (${rcount} repos · isolated ✔)"
       [ "$state" = "OK" ] && state="ACTIVE"
@@ -370,7 +404,11 @@ sync_global_claude_credentials() {
     local cred=""
     cred="$(security find-generic-password -s "$svc" -w 2>/dev/null || true)"
     if [ -n "$cred" ]; then
-      security add-generic-password -U -s "Claude Code-credentials" -a "$(id -un)" -w "$cred" >/dev/null 2>&1 || true
+      # Token không đi qua argv (ps thấy được): lệnh và mật khẩu dạng hex (-X) vào `security -i` qua stdin; printf là builtin.
+      local hex
+      hex="$(printf '%s' "$cred" | od -An -v -tx1 | tr -d ' \n')"
+      printf 'add-generic-password -U -s "Claude Code-credentials" -a "%s" -X %s\n' "$(id -un)" "$hex" \
+        | security -i >/dev/null 2>&1 || true
     fi
   fi
   if [ -f "$HOME/.cc-switch/cc-switch.db" ] && command -v sqlite3 >/dev/null 2>&1; then
@@ -400,20 +438,19 @@ cmd_switch() {
       max)         target="finos_lua" ;;
       *)           target="finos" ;;
     esac
-  elif [ $# -eq 1 ]; then
-    case "$1" in
+  else
+    # Một whitelist cho cả `switch <acct>` lẫn `switch <repo> <acct>`, trước mọi lần ghi (target còn đi vào câu SQL bên dưới).
+    local want="$1"
+    [ $# -ge 2 ] && { repo="$1"; want="$2"; }
+    case "$want" in
       finos|1)                          target="finos" ;;
       finos_team|2)                     target="finos_team" ;;
       max|3)                            target="max" ;;
       finos_lua|7)                      target="finos_lua" ;;
       antigravity|agy|agy_ultra|4)      target="antigravity" ;;
       antigravity_pro|agy_pro|5)        target="antigravity_pro" ;;
-      *) echo "error: invalid account '$1'" >&2; return 64 ;;
+      *) echo "error: invalid account '$want'" >&2; return 64 ;;
     esac
-  else
-    repo="$1"; target="$2"
-    [ "$target" = "agy" ] || [ "$target" = "agy_ultra" ] && target="antigravity"
-    [ "$target" = "agy_pro" ] && target="antigravity_pro"
   fi
   sync_global_claude_credentials "$target"
   echo "✔ Switched -> '$target' ($(account_label "$target"), 100% sessions preserved)"

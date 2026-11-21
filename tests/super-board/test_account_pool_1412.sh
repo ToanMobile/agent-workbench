@@ -146,4 +146,110 @@ n=0; for a in finos finos_team max finos_lua; do printf '%s\n' "$ST" | grep -q "
 [ "$n" -eq 4 ] && ok "4c: status lists the 4 Claude accounts" || fail "4c: status lists $n/4 Claude accounts"
 printf '%s\n' "$ST" | grep -q 'AUTO #' && fail "4d: status còn dòng dự phòng tự động (AUTO #)" || ok "4d: status shows no automatic cross-vendor fallback"
 
+# ── 5. Review đợt gộp #1416 (P2/P3 của #1412). Mọi lệnh ngoài (security, sqlite3) là bản giả đầu PATH: không chạm Keychain,
+# không chạm ~/.cc-switch thật.
+FAKE="$TMP/fakebin"; mkdir -p "$FAKE"
+cat > "$FAKE/security" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_LOG/security-argv"
+case "${1:-}" in
+  find-generic-password) printf '%s\n' "tok-SECRET-1412" ;;
+  -i) cat >> "$FAKE_LOG/security-stdin" ;;
+esac
+exit 0
+SH
+cat > "$FAKE/sqlite3" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_LOG/sqlite-argv"
+case "$*" in
+  *"SELECT name FROM providers"*"'antigravity'"*) echo "Antigravity Ultra — ultra@example.invalid (x)" ;;
+  *"SELECT name FROM providers"*"'antigravity_pro'"*) echo "Antigravity Pro — pro@example.invalid (x)" ;;
+esac
+exit 0
+SH
+chmod +x "$FAKE/security" "$FAKE/sqlite3"
+export FAKE_LOG="$TMP"
+fpath() { PATH="$FAKE:$PATH" "$@"; }
+
+# 5a. P2: có thư mục ~/.claude-<khác> nhưng thiếu thư mục của tài khoản GHIM ⇒ không phải "chạm ngưỡng": state=misconfigured,
+# lý do nêu đúng thư mục thiếu, không có resets_at giả; exec không chạy lệnh.
+H2="$TMP/home-missing"; mkdir -p "$H2/.claude-max" "$TMP/repo-lua/.claude"
+echo '{"account":"finos_lua"}' > "$TMP/repo-lua/.claude/settings.local.json"
+OUT=$(HOME="$H2" bash "$POOL" resolve "$TMP/repo-lua" 2>/dev/null); RC=$?
+[ "$RC" -ne 0 ] && [ "$(field .state)" = "misconfigured" ] && printf '%s' "$(field .reason)" | grep -q 'missing ~/.claude-finos_lua' \
+  && [ "$(field '.resets_at // "none"')" = "none" ] \
+  && ok "5a: pinned account directory missing: state=misconfigured naming ~/.claude-finos_lua, not a limit pause" \
+  || fail "5a: rc=$RC out=$OUT"
+got=$(HOME="$H2" bash "$POOL" exec "$TMP/repo-lua" -- sh -c 'echo ran' 2>/dev/null); rc=$?
+[ "$rc" -ne 0 ] && [ "$got" != "ran" ] && ok "5a: exec refuses to run on a misconfigured pool" || fail "5a: exec rc=$rc printed '$got'"
+
+# 5b. P3: `switch <repo> <target>` đi qua cùng whitelist với dạng một đối số: đích lạ bị từ chối TRƯỚC mọi lần ghi (không gọi
+# sqlite3, không ghi active-account); đích hợp lệ vẫn chạy.
+: > "$HOME/.cc-switch/cc-switch.db"; rm -f "$TMP/sqlite-argv" "$SB_STATE_DIR/active-account"
+fpath bash "$POOL" switch "$TMP/repo" "x' OR 1=1; --" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 64 ] && [ ! -e "$TMP/sqlite-argv" ] && [ ! -e "$SB_STATE_DIR/active-account" ] \
+  && ok "5b: two-argument switch rejects a target outside the whitelist before any write" \
+  || fail "5b: rc=$rc sqlite='$(cat "$TMP/sqlite-argv" 2>/dev/null)' active='$(cat "$SB_STATE_DIR/active-account" 2>/dev/null)'"
+fpath bash "$POOL" switch "$TMP/repo" 2 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "id = 'finos_team'" "$TMP/sqlite-argv" 2>/dev/null && [ "$(cat "$SB_STATE_DIR/active-account" 2>/dev/null)" = "finos_team" ] \
+  && ok "5b: two-argument switch with a whitelisted alias still switches (2 -> finos_team)" \
+  || fail "5b: valid two-arg switch rc=$rc sqlite='$(cat "$TMP/sqlite-argv" 2>/dev/null)'"
+rm -f "$HOME/.cc-switch/cc-switch.db"
+
+# 5c. P3: lượt kiểm tra paused không ghi lại switcher-state.json khi frozenUntil không đổi (cc-switcher-mcp ghi file mỗi 30 s).
+reset_fixture
+state_file 65 $((NOW + 2640)) 71 $((NOW + 25920)) '{}'
+usage_file finos_team five_hour $((NOW - 60)) $((NOW + 7200))
+resolve
+ino1=$(ls -i "$STATE" | awk '{print $1}')
+resolve
+ino2=$(ls -i "$STATE" | awk '{print $1}')
+[ "$RC" -eq 10 ] && [ -n "$ino1" ] && [ "$ino1" = "$ino2" ] \
+  && ok "5c: a second paused check leaves switcher-state.json untouched (same inode)" \
+  || fail "5c: rc=$RC inode $ino1 -> $ino2 (file rewritten with no change)"
+
+# 5d. P3: token OAuth không nằm trong argv của `security` (ps thấy được); vẫn tới Keychain qua stdin (`security -i`, dạng hex).
+# Tên dịch vụ Keychain lấy từ sha256 của thư mục tài khoản (cách Claude Code đặt tên), không chép cứng.
+rm -f "$TMP/security-argv" "$TMP/security-stdin"
+fpath bash "$POOL" switch finos >/dev/null 2>&1; rc=$?
+hex=$(printf '%s' "tok-SECRET-1412" | od -An -v -tx1 | tr -d ' \n')
+svc="Claude Code-credentials-$(printf '%s' "$HOME/.claude-finos" | shasum -a 256 | cut -c1-8)"
+[ "$rc" -eq 0 ] && [ -s "$TMP/security-argv" ] && ! grep -q "tok-SECRET-1412" "$TMP/security-argv" && ! grep -qi "$hex" "$TMP/security-argv" \
+  && ok "5d: the credential never appears in security's argv" \
+  || fail "5d: rc=$rc argv='$(cat "$TMP/security-argv" 2>/dev/null)'"
+grep -q "add-generic-password" "$TMP/security-stdin" 2>/dev/null && grep -qi "$hex" "$TMP/security-stdin" \
+  && ok "5d: the credential reaches security through stdin" \
+  || fail "5d: stdin='$(cat "$TMP/security-stdin" 2>/dev/null)'"
+grep -qF "find-generic-password -s $svc -w" "$TMP/security-argv" \
+  && ok "5d: Keychain service derived from sha256(~/.claude-finos)" || fail "5d: no lookup of '$svc' in '$(cat "$TMP/security-argv" 2>/dev/null)'"
+
+# 5e. P3: script được chép sang mọi repo board: không còn email cá nhân, mã Keychain chép cứng hay đường dẫn tuyệt đối của chủ máy.
+if grep -nE '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z.]+|credentials-[0-9a-f]{8}|/Volumes/' "$POOL" >/dev/null; then
+  fail "5e: personal data left in the pool script: $(grep -nE '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z.]+|credentials-[0-9a-f]{8}|/Volumes/' "$POOL" | cut -c1-80 | head -3 | tr '\n' ';')"
+else
+  ok "5e: no personal email, hardcoded Keychain id or absolute owner path in the pool script"
+fi
+
+# 5f. Nhãn tài khoản lấy từ ~/.claude-<acct>/.claude.json; danh sách repo lấy từ các project Claude có board config.
+jq -n '{oauthAccount:{emailAddress:"team@example.invalid"}}' > "$HOME/.claude-finos_team/.claude.json"
+mkdir -p "$TMP/repo/.claude/super-board/configs" "$TMP/repo/.claude/worktrees/issue-1-build/.claude/super-board/configs"
+echo '{"account":"finos_linh"}' > "$TMP/repo/.claude/worktrees/issue-1-build/.claude/settings.local.json"
+jq -n --arg a "$TMP/repo" --arg b "$TMP/repo/.claude/worktrees/issue-1-build" --arg c "$TMP/repo-agy" \
+  '{projects:{($a):{}, ($b):{}, ($c):{}}}' > "$HOME/.claude.json"
+reset_fixture
+ST=$(cd "$TMP/repo" && bash "$POOL" status 2>&1)
+row=$(printf '%s\n' "$ST" | grep '[★ ] finos_team ')
+printf '%s' "$row" | grep -q 'team@example.invalid' && printf '%s' "$row" | grep -q '(1 repos' \
+  && ok "5f: status label comes from the account's .claude.json; repo count from board repos in the Claude project list (worktrees skipped)" \
+  || fail "5f: row='$row'"
+
+# 5g. Email Google của Antigravity lấy từ tên provider trong cc-switch.db, không chép cứng.
+: > "$HOME/.cc-switch/cc-switch.db"
+fpath bash "$POOL" switch antigravity_pro >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(jq -r .active "$HOME/.gemini/google_accounts.json" 2>/dev/null)" = "pro@example.invalid" ] \
+  && [ "$(jq -r '.old[0]' "$HOME/.gemini/google_accounts.json" 2>/dev/null)" = "ultra@example.invalid" ] \
+  && ok "5g: Antigravity Google account emails come from the cc-switch provider names" \
+  || fail "5g: rc=$rc google_accounts=$(cat "$HOME/.gemini/google_accounts.json" 2>/dev/null)"
+rm -f "$HOME/.cc-switch/cc-switch.db"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_account_pool_1412: all passed" || { echo "❌ test_account_pool_1412: $FAILS failed"; exit 1; }

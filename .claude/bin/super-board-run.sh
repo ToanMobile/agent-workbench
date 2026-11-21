@@ -1053,7 +1053,7 @@ if [ -z "${SB_ACCOUNT_POOL:-}" ]; then
   [ -x "$SB_ACCOUNT_POOL" ] || SB_ACCOUNT_POOL="$HOME/.claude/bin/super-board-account-pool.sh"
 fi
 SB_ACCOUNT_STATE_DIR="${SB_STATE_DIR:-$HOME/.claude/super-board}"
-POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
+POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""; POOL_BLOCK=""
 
 note_worker_limit() {
   # $1 = log của worker vừa chết. Hết limit (thông báo ở 3 dòng cuối của lần giao CUỐI) thì ghi account trong dòng
@@ -1113,20 +1113,28 @@ PY
 resolve_worker_account() {
   # Đặt POOL_ENGINE/POOL_ACCT/POOL_CFG cho worker kế tiếp. #1412 (lệnh chủ repo 21/11): chỉ tài khoản Claude đã ghim cho
   # repo; không nhảy sang tài khoản Claude khác, không dự phòng Antigravity hay hãng khác. Trả 1 (POOL_RESETS = giờ reset nếu
-  # pool biết) khi tài khoản ghim chạm ngưỡng: không giao tới giờ reset.
-  POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
+  # pool biết) khi tài khoản ghim chạm ngưỡng: không giao tới giờ reset. Trả 1 kèm POOL_BLOCK = lý do khi pool không chạy được
+  # worker vì lý do khác hạn mức (pool báo misconfigured: thiếu ~/.claude-<acct> của tài khoản ghim; engine khác claude).
+  POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""; POOL_BLOCK=""
   [ -x "$SB_ACCOUNT_POOL" ] || return 0
-  local json engine
+  local json engine state
   json=$("$SB_ACCOUNT_POOL" resolve "$PWD" 2>/dev/null) || true
   [ -n "$json" ] || { log "⚠ account pool printed nothing; worker uses the default claude account"; return 0; }
-  if [ "$(printf '%s' "$json" | jq -r '.state // "ok"' 2>/dev/null)" = "pause" ]; then
+  state=$(printf '%s' "$json" | jq -r '.state // "ok"' 2>/dev/null || echo ok)
+  if [ "$state" = "pause" ]; then
     POOL_RESETS=$(printf '%s' "$json" | jq -r '.resets_at // empty | tonumber | strftime("%H:%M UTC")' 2>/dev/null || true)
+    return 1
+  fi
+  if [ "$state" = "misconfigured" ]; then
+    POOL_BLOCK=$(printf '%s' "$json" | jq -r '.reason // empty' 2>/dev/null || true)
+    POOL_BLOCK="account pool misconfigured: ${POOL_BLOCK:-no reason given}"
     return 1
   fi
   # Bản pool cũ ngoài kit còn có thể trả engine=antigravity: không giao (đọc vào biến cục bộ trước, POOL_* giữ mặc định).
   engine=$(printf '%s' "$json" | jq -r '.engine // "claude"' 2>/dev/null || echo claude)
   if [ "$engine" != "claude" ]; then
     log "⚠ account pool answered engine=${engine}; workers run on Claude accounts only (#1412) — not dispatching"
+    POOL_BLOCK="account pool answered engine=${engine}; workers run on Claude accounts only"
     return 1
   fi
   POOL_ACCT=$(printf '%s' "$json" | jq -r '.account // empty' 2>/dev/null || true)
@@ -2407,6 +2415,12 @@ dispatch_lane() {
   # Chọn account TRƯỚC khi nhận thẻ: hết cả 6 account thì không nhận, không giao (trước đây rơi về `claude` mặc định
   # trên account đã hết, worker chết sau ~30 s và runner giao lại mãi).
   if ! resolve_worker_account; then
+    if [ -n "$POOL_BLOCK" ]; then
+      # Không phải hạn mức (#1412 review): nói đúng lý do, không đổi tài khoản, không dự phòng.
+      log "skip dispatch lane=${lane} issue=#${issue} — ${POOL_BLOCK}"
+      board_notify accounts-limited --card "${CONFIG_SLUG:-board}" --accounts "pool-blocked" --reason "$POOL_BLOCK" --state-dir "${SB_NOTIFY_STATE_DIR:-$HOME/.claude/super-board}"
+      return 0
+    fi
     log "skip dispatch lane=${lane} issue=#${issue} — every worker account is at its limit${POOL_RESETS:+ (earliest reset ${POOL_RESETS})}"
     board_notify accounts-limited --card "${CONFIG_SLUG:-board}" --accounts "${POOL_RESETS:-all}" --state-dir "${SB_NOTIFY_STATE_DIR:-$HOME/.claude/super-board}"
     return 0

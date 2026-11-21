@@ -142,4 +142,37 @@ review_mcp_args "$POOL_CFG"
   && ok "6: the review lane on a Claude account still loads antigravity-pm for the audit" \
   || fail "6: can=$can MCP_ARGS='${MCP_ARGS[*]:-}'"
 
+# ── 7. Review đợt gộp #1416 (P2): pool báo misconfigured (thiếu thư mục ~/.claude-<acct> của tài khoản ghim) ⇒ không giao, log và
+# thông báo nêu đúng lý do cấu hình, KHÔNG nói "every worker account is at its limit" / accounts-limited "all".
+board_notify() { echo "notify $*" >> "$TMP/notify"; }
+claim_calls=0; BUILD_PID=""; BUILD_ISSUE=""; : > "$TMP/launched"; : > "$TMP/log"; : > "$TMP/notify"
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_61","status":"Ready","labels":["bug"],"content":{"type":"Issue","number":61,"assignees":[]}}]}'
+STUB_POOL_JSON='{"state":"misconfigured","engine":"claude","account":null,"preferred":"finos_lua","resets_at":null,"reason":"missing ~/.claude-finos_lua: the pinned Claude account has no config directory on this machine"}'; STUB_POOL_RC=12
+( dispatch_lane build 61; echo "claims=$claim_calls" > "$TMP/claims" ) >/dev/null 2>&1
+sleep 1
+[ ! -s "$TMP/launched" ] && [ ! -e "$INFLIGHT_DIR/61" ] && grep -qx "claims=0" "$TMP/claims" \
+  && ok "7: misconfigured pool: no worker launched, card not claimed" \
+  || fail "7: launched='$(cat "$TMP/launched")' $(cat "$TMP/claims" 2>/dev/null)"
+grep -q "skip dispatch lane=build issue=#61 .*missing ~/.claude-finos_lua" "$TMP/log" && ! grep -q "at its limit" "$TMP/log" \
+  && ok "7: the skip log names the missing account directory, not a limit" \
+  || fail "7: log='$(cat "$TMP/log")'"
+grep -q "missing ~/.claude-finos_lua" "$TMP/notify" && ! grep -q -- "--accounts all" "$TMP/notify" \
+  && ok "7: the notice carries the misconfiguration reason, not 'accounts all'" \
+  || fail "7: notify='$(cat "$TMP/notify")'"
+
+# 7b. Tin Telegram của accounts-limited --reason nêu lý do, không còn câu "at its limit" (deliver giả, không mạng).
+printf 'TELEGRAM_BOT_TOKEN=t\nTELEGRAM_CHAT_ID=c\n' > "$TMP/telegram.env"
+msg=$(SB_TELEGRAM_ENV="$TMP/telegram.env" python3 - "$ROOT/.claude/bin/super-board-notify.py" "$TMP/nstate" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sb_notify_1412", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+sent = []
+m.deliver = lambda token, method, body: sent.append(body["text"])
+m.main(["accounts-limited", "--card", "board", "--accounts", "pool-blocked", "--state-dir", sys.argv[2],
+        "--reason", "account pool misconfigured: missing ~/.claude-finos_lua"])
+print(" | ".join(sent))
+PY
+)
+printf '%s' "$msg" | grep -q "no worker dispatch: account pool misconfigured: missing ~/.claude-finos_lua" && ! printf '%s' "$msg" | grep -q "at its limit" \
+  && ok "7b: the Telegram notice states the misconfiguration" || fail "7b: notice='$msg'"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_account_claude_only_1412: all passed" || { echo "❌ test_account_claude_only_1412: $FAILS failed"; exit 1; }
