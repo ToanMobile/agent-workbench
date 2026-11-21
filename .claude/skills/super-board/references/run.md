@@ -4,6 +4,25 @@
 
 **Where the legacy runner runs:** headless. Spawned as a `nohup`-backgrounded process; the current Claude session exits immediately after dispatch. The runner script (`.claude/bin/super-board-run.sh`) is a pure shell while-loop that dispatches one `claude -p` worker per lane and never holds Claude session state. Each `claude -p` worker is its own short-lived headless context — load this file at the start of every lane.
 
+## Lane read map
+
+A lane worker reads only its sections, once each: find their lines with
+`grep -n '^#' .claude/skills/super-board/references/run.md`, then Read each range. Each name below is the exact start of its heading line.
+
+- **Every lane:** `## Required GitHub reads can pause a run` · `### Running the gate and the merge gate (every lane)` ·
+  `## Universal Agent DevKit Mandatory Pipeline & Real-Time 7-Column UI Sync (Zero Duplication)` (the step for your
+  column) · `## PR description template` · `## PR review-comment threads — prefix + resolution protocol` ·
+  `## Commenting cadence (issue + PR, every lane)` · `## Worker contract (every lane on claim)` with
+  `### Anti-zombie addendum` · `## Worker rate-limit etiquette` · `## Worker self-check (mandatory on exit, every lane)` ·
+  `### Root-cause hash` (failure handoff) · `### Owner's standing decision`.
+- **Builder:** `### Builder pre-flight` · `### Builder (first pass)` · `### Builder (rebuild)`.
+- **Tester:** `### Tester (first pass — repo-backed)` with `#### Screenshot embed format` · `### Tester (rebuild`. A
+  `qa`-labelled card also: `## Lanes and label routing` (the **`qa` cards** paragraph) · `## Branch + PR model`.
+- **Reviewer:** `### Reviewer` · `### Merge protocol` · `### The rebase pass` (gate exit 2/5/14).
+- **Orchestrator only** (a lane worker skips these): `## Orchestrator delegation contract`, `## Halt gates`,
+  `### The wave-start sweep`, and [run-orchestrator.md](run-orchestrator.md) (Preconditions, dispatch allocation,
+  per-tick logic, done conditions, run manifest, notification cadence).
+
 ## Required GitHub reads can pause a run
 
 Use `.claude/bin/super-board-github-read.py` for required API evidence. It retries
@@ -21,7 +40,7 @@ checkpoint limitations: [run-workflow.md](run-workflow.md#required-github-eviden
 
 **Super-board is an autonomous trader. The interactive Claude session that invokes `super-board run` is an orchestrator, NOT a worker.** Its only jobs are:
 
-1. Verify preconditions (see table below), then apply "Owner's standing decision" (after the wave-start sweep) to the
+1. Verify preconditions (table: [run-orchestrator.md](run-orchestrator.md) → Preconditions), then apply "Owner's standing decision" (after the wave-start sweep) to the
    🙋/❓ cards: the headless runner has no decision step, so this is the only place it runs on this backend.
 2. Spawn the headless `nohup .claude/bin/super-board-run.sh <slug> &` runner. An explicit start clears the stop marker
    and installs the repo's launchd watchdog (`.claude/bin/super-board-watchdog.sh`): every 60 s it restarts a runner
@@ -60,23 +79,11 @@ An unsupervised legacy runner cannot invoke a skill merely because it exits 0:
 it reports calibration skipped/unavailable. A supervising host may prepare the
 bounded receipt and delegate the external skill after normal final reconciliation.
 
-## Preconditions (verified before any worker dispatches)
+## Orchestrator-only sections
 
-| Check | Action on fail |
-|---|---|
-| Usable verification commands | Run `python3 .claude/bin/super-board-verification-ready.py --config <config>`. Exit 9 halts setup before dispatch: configure the owning project's checks, then restart explicitly. |
-| Active config exists | Halt: "Run `super-board onboard` first." |
-| Project + required columns exist | Halt: "Project / columns missing. Run `super-board onboard` to repair." |
-| `gh auth` valid with required scopes | Halt: "Re-auth: `gh auth refresh -s project,read:project,repo`." |
-| `pre-flight.md` all items `[✓]` | Halt: "Pre-flight incomplete — fix these: [list]." |
-| No issues missing ACs in active columns | Halt: "N issues need clarification. Run `super-board lint`." |
-| Clean git working tree on base branch | Halt: "Working tree dirty. Stash or commit before running." |
-| Legacy worktrees | If `.worktrees/issue-*` exists, halt before dispatch. Stop its worker, inspect/preserve edits, then `git worktree move` it to the matching `.claude/worktrees/` path. Never delete it as part of an upgrade. |
-| Stale worktree scan | Scan only `.claude/worktrees/issue-<N>` and `issue-<N>-build/qa/review`. If its named branch is gone, use `agent-kit worktree remove` (never `--force`; a plain `git worktree remove` refuses the DevKit set-up every lane worktree carries). Keep detached, dirty, locked, unregistered, or unrelated folders; log failures for inspection. A missing board label alone is not permission to delete work. |
-| Production-merge guard | If `base_branch == "main"` AND `human_approves_merge == false` AND `merge_policy.default != "human"` AND `merge_policy.allow_auto_on_production != true` AND production-detection signals fire (see onboard → base branch), halt with: `🛡 Refusing to start: would auto-merge to production main. Set merge_policy.default: "human", switch base_branch to staging, or re-run super-board onboard to opt in explicitly.` |
-| Orphan-worker scan (added 2026-05-22 after #381 worker storm) | `pgrep -f 'claude -p .*super-board run'` must return zero. If any super-board worker is already alive from a prior crashed run, halt with: `🛑 ${N} super-board workers already running. Stop them first: pkill -f 'claude -p .*super-board run'`. The dispatcher must never run while orphan workers exist — they will collide on assignee claims and produce duplicate PRs. |
-| Database reach | Run every `migrations.checks[env]` for an env in `allowed_envs` (read-only, e.g. `supabase migration list --db-url …`). On failure halt with its error: "Migrate URL for <env> does not connect — fix it before a wave builds work the gate cannot land." |
-| GraphQL rate-limit guard | Before each tick, `sb_gh_guard_check` (super-board-gh-guard.sh — it reads GraphQL's own `rateLimit`, because `gh api rate_limit` misreports the GraphQL bucket). If GraphQL remaining < 200, sleep until reset. Prevents the runner from dying mid-loop when the user has burned quota in another tool. |
+Moved to [run-orchestrator.md](run-orchestrator.md): Preconditions (verified before any worker dispatches), Dispatch
+allocation model, Per-tick logic, Done conditions, Run manifest, Notification cadence. Open it when you are the
+orchestrator or the legacy runner, or when you debug dispatch; a lane worker does not need it.
 
 ## Lanes and label routing
 
@@ -119,18 +126,6 @@ handoff — the `qa` card still moves on to Review with the findings. The Review
 report and any test diff.
 
 A live site with no repo is not a board. `/super-qa <url>` tests it on its own.
-
-## Dispatch allocation model — one worker per lane, not per backlog
-
-`super-board run` allocates headless Claude capacity by **lane**, not by how many cards are stacked in one column.
-
-- **Max concurrency:** 3 workers total — at most one Builder, one Tester, and one Reviewer at the same time.
-- **Never dispatch multiple workers from the same column just because that column has a backlog.** If all cards are in `Ready`, the runner dispatches exactly one worker for the top card — a Builder, or a Tester when the card is labelled `qa` — until it exits.
-- **Mixed-column example:** if `Ready`, `QA`, and `Review` each contain cards and all lanes are idle, the runner dispatches three workers: one Builder from `Ready`, one Tester from `QA`, and one Reviewer from `Review`.
-- **Downstream-first priority:** when multiple lanes are available, dispatch Review before QA before Ready/Build, so finished work gets closed before new build work starts.
-- **Lane idle gate:** a lane is eligible only when its prior worker process has exited. The runner must track lane PIDs or an equivalent lane lease; GitHub issue assignees are per-card mutexes, not lane-capacity controls.
-
-This means a board with 30 cards in `Ready` and zero elsewhere does **not** start 3 Builder sessions. It starts one Builder. As that Builder moves its card to `QA` and exits, the next tick can start one new Builder for the next `Ready` card and one Tester for the first `QA` card, because those are different lanes.
 
 ## Branch + PR model — one branch, one PR per issue
 
@@ -716,27 +711,6 @@ the same step: `super-board-needs-you.py mark` (block-template.md → "A person 
 and moved to Done with a `[<role>] [report] 🤷 dropped · <reason>` comment — there is no Skipped
 column.
 
-## Per-tick logic (~30s cadence)
-
-```
-1. Refresh project items + column counts via gh api
-2. Re-validate preconditions (auth, pre-flight, columns)
-3. Downstream-first dispatch by lane capacity:
-   ├─ Review has cards + Reviewer idle → dispatch top of Review
-   ├─ QA has cards + Tester idle       → dispatch top of QA
-   └─ Ready has cards → top card labelled `qa` + Tester idle → Tester;
-                         otherwise Builder idle → Builder
-
-   Allocation rule: at most ONE worker per lane at a time.
-   Max concurrency = 3 total workers (Builder + Tester + Reviewer),
-   but never 3 Builders from a Ready backlog. GitHub issue assignees prevent two workers claiming the same card;
-   the runner still must track lane idleness separately to prevent multiple
-   same-lane workers.
-4. Wait for any lane to finish OR 30s timeout
-5. Re-read project state (lane may have moved a card)
-6. Loop until done conditions met
-```
-
 ## Worker contract (every lane on claim)
 
 Claim uses a **GitHub Issue assignee mutex** — atomic compare-and-set via `gh issue edit --add-assignee`. Labels are descriptive only; the assignee is the lock.
@@ -902,30 +876,6 @@ Two consecutive failures on the same card with **identical hash** AND **same lan
 
 Different hash on the same card resets the counter — the bot recognizes that progress has been made even if the card hasn't reached Review yet.
 
-## Done conditions
-
-The loop exits cleanly when:
-- All active-pipeline columns are empty; OR
-- Only Blocked/Done cards remain, or cards waiting for a person or a real device (Backlog is not part of a run); OR
-- A halt gate fires.
-
-## Run manifest
-
-```
-docs/super-board/runs/<YYYY-MM-DD>-<slug>.md
-```
-
-Records: config used, columns, target, per-card history (claim → completion → next column with evidence links), halt gates, final counts, per-lane wall-clock, resume command.
-
-## Notification cadence
-
-- **Start** — project, initial column counts, link to live status: `super-board status`.
-- **Per card completion** — `✅ Tester → #41 passed all checks → Review`.
-- **Per Block** — short headline + reason tag (`⛔ #19 blocked → 🔐 missing OPENAI_API_KEY`) + link to the full §4 template comment on the issue.
-- **Every 10 dispatches** — brief column-count snapshot.
-- **Block-rate alert** — when Blocked count exceeds `config.block_rate_alert_pct` of initial Ready: ping with breakdown ("11/30 Ready cards blocked: 🔐×6, 💳×3, ❓×2 — see project board"). One-shot per run (does not re-fire).
-- **Final** — end column counts, total moved to Done, blockers (with reason-tag breakdown), total wall-clock.
-
 ## Worker rate-limit etiquette (read before any burst of gh calls)
 
 Workers share the dispatcher's gh-auth token bucket. The dispatcher's `gh_rate_guard` does NOT protect worker traffic. Every worker MUST follow `rate-limit-etiquette.md` (in this directory):
@@ -948,37 +898,10 @@ Before releasing the claim assignee and exiting, every worker MUST verify:
 - [ ] On failure handoff: `root-cause-hash:` line is present in the PR handoff comment (per "Root-cause hash" above).
 - [ ] On Block/Skip exit: the full template from `block-template.md` is populated on BOTH the issue and the PR (if a PR exists); the reason emoji is one of the nine in the vocabulary table (🔐 💳 🔑 ❓ 🛡 🧑 🤷 📦 🎨).
 - [ ] `gh-quota-on-exit:` line appended to PR handoff comment.
+- [ ] Column move: check the shared halt record before a column move, attempt the mutation once, and preserve `move-mutation-result: ok|unknown|skipped` in the handoff. An uncertain outcome pauses the run for read-only reconciliation; it must never trigger blind replay.
 
 A worker that cannot satisfy this checklist must NOT release its claim. It either fixes the gap and re-checks, or — if the gap itself is structural (e.g., GitHub API refusing to move the card) — it leaves the assignee in place and writes a halt comment so the runner's "no progress for 3 ticks" gate can fire deterministically.
 
-### Known issue — multi-attempt card moves (added 2026-05-22)
-
-During the 2026-05-21 production run, several workers exited cleanly (process terminated, in-flight lock reaped) but **had not moved their card to the next column**. The dispatcher correctly re-dispatched (lane idle + card still in source column = re-fire) — but each retry burned a full lane cycle (~10 min) before the next worker tried again. The #382 Reviewer took **5 attempts × ~10 min = ~50 min** to move a card that the first attempt should have moved.
-
-Suspected causes:
-- Worker lost the response to a column move and exited "cleanly" without confirming its outcome. Preserve the unknown outcome and pause; do not claim success or blindly repeat the mutation.
-- Worker's super-build/super-qa/super-review skill silently caught the move error and proceeded to assignee-release without surfacing the failure.
-
-**Mitigation for now:** the dispatcher's `reap_finished_locks` + assignee sweep + re-dispatch keep the pipeline rolling, so this is a wall-clock issue, not a correctness issue. A worker that doesn't move the card will eventually have another worker do it.
-
-**Required behavior:** check the shared halt record before a column move, attempt the mutation once, and preserve `move-mutation-result: ok|unknown|skipped` in the handoff. An uncertain outcome pauses the run for read-only reconciliation; it must never trigger blind replay.
-
-### Known issue — lane-zombie workers (added 2026-05-24, auto-remediated)
-
-**Symptom seen on fitbox-v4 first run:** a Tester worker successfully moved #81 QA → Review and the Reviewer subsequently merged it to Done — but the original Tester's `claude -p` process kept running for 30+ minutes afterward. The dispatcher's `lane_idle()` check uses `kill -0` on the lane PID and saw the zombie as "still busy," so the QA lane never re-dispatched. By the time it was noticed, the QA column had grown 1 → 2 → 3 cards with no Tester picking them up.
-
-Different from the multi-attempt-move issue above: there the worker exited without moving the card; here the worker moved the card but didn't exit.
-
-**Auto-remediation (now implemented in `super-board-run.sh` as anti-zombie control #7):**
-
-Every tick — both cheap and expensive — `sweep_lane_zombies` runs `check_lane_zombie` for each lane. For each lane whose PID is alive AND whose claimed issue's current column is NOT in the lane's expected source set:
-
-| Lane    | Expected source columns | Anything else means → |
-|---------|-------------------------|-----------------------|
-| build   | Ready, Building         | zombie                |
-| qa      | QA                      | zombie                |
-| review  | Review                  | zombie                |
-
-On zombie detection: wait a grace period (`SB_ZOMBIE_GRACE`, default 60 s from first sighting) so the worker can print its final report and exit; after that `SIGTERM` + 1s + `SIGKILL` the PID, remove the inflight lock, idempotently sweep the assignee, clear the lane PID/issue vars, log `💀 zombie <lane> worker on #<N> (pid=<P>) — card moved to '<col>'; killing`. Uses the cached project items only — zero extra API calls per tick.
-
-Trade-off: if someone (human or external tool) manually moves a card out of its source column while a worker is legitimately mid-work, the watchdog will kill that worker. Acceptable — manual board edits during an active run are an anti-pattern, and the worker would fail on its own column-move anyway.
+The incidents behind these checks (a card move that did not land, a lane worker that outlived its card, the
+runner's zombie sweep) are in [run-known-issues.md](run-known-issues.md). Open it when a move did not land or a lane
+looks stuck.
