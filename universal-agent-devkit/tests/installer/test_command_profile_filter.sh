@@ -33,6 +33,10 @@ devkit_command_allowed "$DK/commands/gen-prompt.md" && ok "2 backend keeps comma
 DEVKIT_SKILLS_ALLOWED="$(python3 "$DK/scripts/governance/profile_skills.py" game | tr '\n' ' ')"
 devkit_command_allowed "$DK/commands/unity-test.md" && ok "2 game allows commands/unity-test.md" || fail "2 game filters commands/unity-test.md"
 unset DEVKIT_SKILLS_ALLOWED
+# the Python side (relink_check / health) resolves the same way: a link to another command is not a skill
+got="$(cd "$DK/scripts/governance" && python3 -c 'import sys, relink_check as r; print([r.command_skill(sys.argv[1] + "/" + n) for n in ("postfix-gate.md", "unity-test.md", "fix.md")])' "$DK/commands")"
+[ "$got" = "[None, 'unity-gc-audit', 'fixbugs']" ] && ok "2 command_skill: postfix-gate.md->None, unity-test.md->unity-gc-audit, fix.md->fixbugs" \
+  || fail "2 command_skill gave $got"
 
 # 3. a real install: backend lacks the three commands and health does not ask for them; game keeps unity-test
 for prof in backend game; do

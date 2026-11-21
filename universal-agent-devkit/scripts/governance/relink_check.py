@@ -105,10 +105,11 @@ def command_skill(src):
     """The skill a kit command follows in the profile filter: a link's skill folder, or the `skill:` line in a hand-written
     command's frontmatter (commands/unity-test.md -> unity-gc-audit, game only). None = every profile. Same rule as
     devkit_command_skill (scripts/git/backup_conflict.sh) and agent-health."""
-    if os.path.islink(src):
-        return os.path.basename(os.path.dirname(os.path.realpath(src)))
+    real = os.path.realpath(src)
+    if os.path.basename(real) == "SKILL.md":
+        return os.path.basename(os.path.dirname(real))
     try:
-        with open(src, encoding="utf-8") as f:
+        with open(real, encoding="utf-8") as f:
             if f.readline().strip() != "---":
                 return None
             for line in f:
