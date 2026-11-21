@@ -306,6 +306,7 @@ REASON_TABLE: list[tuple[str, str]] = [
     ("🔐", "missing creds"),
     ("💳", "quota / billing"),
     ("❓", "ambiguous AC"),
+    ("🔧", "devkit / tooling"),
     ("⚙",  "infra / tooling"),
 ]
 
@@ -319,7 +320,9 @@ def reason_for(body: str) -> tuple[str, str]:
 
 
 _BLOCKED_BY_LINE = re.compile(r"^[ \t]*blocked-by:(.*)$", re.I | re.M)
-_BLOCKED_BY_OK = re.compile(r"^(-|agent|[0-9]+(,[0-9]+)*)?$")  # `agent` (#529): parked by the runner, same rule as deps.sh
+_BLOCKED_BY_OK = re.compile(
+    r"^(-|agent|(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#)?[0-9]+(?:,(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#)?[0-9]+)*)?$"
+)  # `agent` (#529) và `owner/repo#N` chéo repo (#1402), cùng luật với deps.sh
 
 
 def split_unreadable_blocked_by(
@@ -370,15 +373,54 @@ def valid_slug(slug: str) -> bool:
     return bool(_SLUG_RE.match(slug))
 
 
-def resolve_config_slug(argv: list[str]) -> str:
+def resolve_repo_root() -> Path:
+    """Tìm gốc repo chứa `.claude/super-board/configs` (hỗ trợ chạy từ thư mục con)."""
+    if Path(".claude/super-board/configs").is_dir() or Path(".claude/super-board/active").is_file():
+        return Path(".")
+    try:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            top = Path(r.stdout.strip())
+            if (top / ".claude/super-board/configs").is_dir():
+                return top
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return Path(".")
+
+
+def resolve_config_slug(argv: list[str], root: Path | None = None) -> str:
     if len(argv) > 1 and argv[1]:
         return argv[1]
-    active = Path(".claude/super-board/active")
+    base = root or Path(".")
+    active = base / ".claude/super-board/active"
     if active.is_file():
-        return active.read_text().strip()
-    cfgs = sorted(Path(".claude/super-board/configs").glob("*.json"))
+        slug = active.read_text().strip()
+        # Slug là tên file config, không phải đường dẫn: có `/`, `\` hoặc là `.`/`..` thì bỏ qua (cùng luật repo_board.py, #1402).
+        if slug and "/" not in slug and "\\" not in slug and slug not in (".", ".."):
+            return slug
+    cfgs = sorted((base / ".claude/super-board/configs").glob("*.json"))
     if len(cfgs) == 1:
         return cfgs[0].stem
+    if len(cfgs) > 1:
+        try:
+            r = subprocess.run(["git", "-C", str(base), "remote", "get-url", "origin"],
+                               capture_output=True, text=True, timeout=5)
+            origin = re.sub(r"\.git$", "", re.sub(r"^.*github\.com[:/]", "", r.stdout.strip().rstrip("/"))).lower()
+        except (OSError, subprocess.SubprocessError):
+            origin = ""
+        if origin:
+            for c in cfgs:
+                try:
+                    data = json.loads(c.read_text())
+                    repo = data.get("repo") if isinstance(data, dict) else None
+                    remote = repo.get("remote") if isinstance(repo, dict) else ""
+                    if not isinstance(remote, str):
+                        continue
+                    slug = re.sub(r"\.git$", "", re.sub(r"^.*github\.com[:/]", "", remote.rstrip("/"))).lower()
+                    if slug == origin:
+                        return c.stem
+                except (OSError, ValueError):
+                    continue
     print(f"usage: {argv[0]} <config-slug>  (or set .claude/super-board/active)", file=sys.stderr)
     sys.exit(64)
 
@@ -655,6 +697,91 @@ def train_line(train: dict[str, Any]) -> str:
     return f"🚂 Merge train: {cards} · {step} · {train['elapsed_s'] // 60}m"
 
 
+def _tz_info(tz_name: str) -> datetime.tzinfo:
+    if tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(tz_name)
+        except (ImportError, KeyError, ValueError, OSError):
+            pass
+    return datetime.timezone.utc
+
+
+# Số PR merged đọc cho mục Health (#1406 R2): không thấp hơn ngưỡng max(200, …) của super-board-audit-sweep.py.
+UNGATED_PR_LIMIT = 300
+
+
+def summarize_ungated_merges(
+    prs: list[dict[str, Any]],
+    common_dir: Path | None,
+    now_epoch: int | None = None,
+    tz_name: str = "UTC",
+    ok: bool = True,
+) -> dict[str, Any]:
+    """Đếm PR merge vào base trong 7 ngày qua không có biên nhận merge gate (`merge_receipts/`), nhóm theo ngày (#1406)."""
+    if not ok:
+        return {"total_7d": 0, "by_date": {}, "ok": False}
+    receipts: list[dict[str, Any]] = []
+    if common_dir is not None:
+        rdir = common_dir / "postfix-gate" / "merge_receipts"
+        if rdir.is_dir():
+            for p in sorted(rdir.glob("*.json")):
+                if p.name.startswith("."):
+                    continue
+                try:
+                    rec = json.loads(p.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if isinstance(rec, dict) and isinstance(rec.get("pr"), int):
+                    receipts.append(rec)
+
+    now_ep = int(time.time()) if now_epoch is None else int(now_epoch)
+    cutoff_ep = now_ep - 7 * 86400
+    tz = _tz_info(tz_name)
+    by_date: dict[str, int] = {}
+    total = 0
+
+    for pr in prs or []:
+        if not isinstance(pr, dict) or not isinstance(pr.get("number"), int):
+            continue
+        raw_ts = pr.get("mergedAt") or ""
+        try:
+            m_dt = datetime.datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if m_dt.tzinfo is None:
+            m_dt = m_dt.replace(tzinfo=datetime.timezone.utc)
+        if int(m_dt.timestamp()) < cutoff_ep:
+            continue
+        num = pr["number"]
+        head = pr.get("headRefOid") or ""
+        squash = ((pr.get("mergeCommit") or {}).get("oid")) or ""
+        matched = any(
+            rec.get("pr") == num and ((head and rec.get("head") == head) or (squash and rec.get("squash") == squash))
+            for rec in receipts
+        )
+        if matched:
+            continue
+        day_key = m_dt.astimezone(tz).strftime("%Y-%m-%d")
+        by_date[day_key] = by_date.get(day_key, 0) + 1
+        total += 1
+
+    return {"total_7d": total, "by_date": dict(sorted(by_date.items())), "ok": True}
+
+
+def ungated_merges_line(summary: dict[str, Any]) -> str:
+    """Dòng báo cáo số PR merge ngoài gate trong 7 ngày cho mục Health."""
+    if not summary.get("ok"):
+        return "   ungated merges (7d): ?"
+    total = int(summary.get("total_7d") or 0)
+    by_date = summary.get("by_date") or {}
+    more = "+" if summary.get("capped") else ""   # danh sách PR chạm trần --limit: số đếm chỉ là cận dưới
+    if total == 0 or not by_date:
+        return f"   ungated merges (7d): {total}{more}"
+    parts = [f"{d}: {c}" for d, c in sorted(by_date.items(), reverse=True)]
+    return truncate_to(f"   ungated merges (7d): {total}{more}  ({', '.join(parts)})", 79)
+
+
 def render_collapsed(label: str, lane_items: list[dict[str, Any]]) -> str:
     """One line of issue numbers, newest first, `… +N more` past 76 cols."""
     out = [box_top(label, len(lane_items))]
@@ -718,7 +845,10 @@ def render_kanban(
 
 
 def main() -> int:
-    config_slug = resolve_config_slug(sys.argv)
+    root = resolve_repo_root()
+    if root != Path("."):
+        os.chdir(root)
+    config_slug = resolve_config_slug(sys.argv, Path("."))
     if not valid_slug(config_slug):
         print(
             f"invalid config slug: {config_slug!r} "
@@ -991,6 +1121,31 @@ def main() -> int:
                 )
 
     # ── health ──
+    base_branch = cfg.get("base_branch") or "main"
+    tz_name = cfg.get("timezone") or "UTC"
+    # `gh pr list` xếp theo ngày TẠO (#1416 review): một PR merge trước mốc trong danh sách không chứng minh danh sách phủ hết cửa sổ,
+    # nên hỏi đúng cửa sổ merge (ngày UTC của mốc 7 ngày; summarize_ungated_merges lọc chính xác tới giây).
+    since = datetime.datetime.fromtimestamp(now_epoch - 7 * 86400, datetime.timezone.utc).strftime("%Y-%m-%d")
+    pr_out = gh(
+        "pr", "list", "--state", "merged", "--base", base_branch, "--search", f"merged:>={since}",
+        "--limit", str(UNGATED_PR_LIMIT), "--json", "number,headRefOid,mergeCommit,mergedAt", check=False,
+    )
+    ungated_ok = False
+    merged_prs_list: list[dict[str, Any]] = []
+    if pr_out.strip():
+        try:
+            parsed_prs = json.loads(pr_out)
+            if isinstance(parsed_prs, list):
+                merged_prs_list = parsed_prs
+                ungated_ok = True
+        except ValueError:
+            pass
+    ungated_summary = summarize_ungated_merges(
+        merged_prs_list, common_dir, now_epoch=now_epoch, tz_name=tz_name, ok=ungated_ok
+    )
+    # Mọi PR trả về đều merge trong cửa sổ: chạm trần --limit ⇒ có thể còn PR chưa đọc, báo `N+`, không đếm thiếu âm thầm.
+    ungated_summary["capped"] = len(merged_prs_list) >= UNGATED_PR_LIMIT
+
     print()
     print("▎Health")
     if run_active:
@@ -1005,6 +1160,7 @@ def main() -> int:
         )
     else:
         print(f"   no run today    workers: 0/{max_workers} idle")
+    print(ungated_merges_line(ungated_summary))
 
     return 0
 

@@ -171,7 +171,10 @@ def run(args: argparse.Namespace) -> int:
         state = Path(args.state_dir) if args.state_dir else Path.home() / ".claude" / "super-board"
         if not limited_should_send(state, args.accounts or "all", now_s()):
             return 0
-        if send_text(token, chat, "%s\nevery worker account is at its limit: %s" % (card or "super-board", accounts_key(args.accounts or "all"))):
+        reason = " ".join((args.reason or "").split())
+        text = ("%s\nno worker dispatch: %s" % (card or "super-board", reason)) if reason else \
+            ("%s\nevery worker account is at its limit: %s" % (card or "super-board", accounts_key(args.accounts or "all")))
+        if send_text(token, chat, text):
             mark_limited_sent(state, args.accounts or "all", now_s())
         return 0
     if args.cmd == "approve-button":
@@ -204,6 +207,7 @@ def main(argv=None) -> int:
     limited.add_argument("--accounts", default="all")
     limited.add_argument("--state-dir", default="")
     limited.add_argument("--card", default="")
+    limited.add_argument("--reason", default="")   # lý do không phải hạn mức (pool misconfigured): thay câu "at its limit"
     approve = sub.add_parser("approve-button")
     approve.add_argument("--repo", default="")
     approve.add_argument("--pr", type=int, default=0)

@@ -381,6 +381,7 @@ def file_wait: [((.labels // []) + (.content.labels // []))[] | (if type == "obj
 # #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
 session_sweep_helper() { printf '%s' "${SB_SESSION_SWEEP:-$(dirname "$SB_GITHUB_READ")/super-board-session-sweep.py}"; }
 waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
+audit_sweep_helper() { printf '%s' "${SB_AUDIT_SWEEP:-$(dirname "$SB_GITHUB_READ")/super-board-audit-sweep.py}"; }
 # P3: cờ dependency_unblock_v1 (#1320: mặc định BẬT, không cần flags.json ở từng repo). Env SB_DEPENDENCY_UNBLOCK_V1=0|1 thắng; không thì
 # `dependency_unblock_v1: false` trong <checkout chính>/.agents/local/flags.json tắt nó (git common dir, như guard_v2 của
 # super-board-needs-you.py). Thiếu file, thiếu khoá hay file hỏng = bật.
@@ -1042,19 +1043,26 @@ issue_locked() {
   return 1
 }
 
-# ── Xoay account của worker (pool: $HOME/.claude/bin/super-board-account-pool.sh, lệnh `ccswitch`).
+# ── Account của worker (pool: super-board-account-pool.sh nằm cạnh runner trong kit từ #1412, lệnh `ccswitch`).
 # Pool chỉ biết account hết limit qua usage-<acct>.json, file mà status line của phiên tương tác ghi; worker
 # `claude -p` không có status line. Nên runner tự ghi khi worker chết vì hết limit (16/10: cả 5 runner giao mãi cho
-# finos đã hết session limit trong khi còn 5 account khác).
-SB_ACCOUNT_POOL="${SB_ACCOUNT_POOL:-$HOME/.claude/bin/super-board-account-pool.sh}"
+# finos đã hết session limit).
+# #1412: bản pool trong kit thắng bản cũ ở ~/.claude/bin (bản đó nằm ngoài repo, không test, còn dự phòng khác hãng).
+if [ -z "${SB_ACCOUNT_POOL:-}" ]; then
+  SB_ACCOUNT_POOL="$SCRIPT_DIR/super-board-account-pool.sh"
+  [ -x "$SB_ACCOUNT_POOL" ] || SB_ACCOUNT_POOL="$HOME/.claude/bin/super-board-account-pool.sh"
+fi
 SB_ACCOUNT_STATE_DIR="${SB_STATE_DIR:-$HOME/.claude/super-board}"
-POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
+POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""; POOL_BLOCK=""
 
 note_worker_limit() {
   # $1 = log của worker vừa chết. Hết limit (thông báo ở 3 dòng cuối của lần giao CUỐI) thì ghi account trong dòng
   # `account_pool:` của lần giao đó là 100 % tới giờ reset (không đọc được giờ thì 1 giờ), đúng dạng usage-<acct>.json
   # mà pool đọc. Chỉ ghi file của account đó, không ghi usage.json chung (file chung kéo theo `switch` credential
   # toàn cục của người dùng). Lỗi ở đây không bao giờ chặn runner.
+  # #1412: ghi đúng loại cửa sổ. "weekly limit" là seven_day, còn lại là five_hour (19/11 một giới hạn tuần "resets Nov 22
+  # at 12am" bị ghi thành five_hour 100 % tới 22/11, pool giữ PAUSE 432 phút dù cửa sổ 5 giờ thật còn 35 %). Pool chặn trần
+  # bản ghi five_hour ở 5 giờ kể từ recorded_at.
   LIMIT_PAUSED=0   # #1121: 1 when this call paused the account; the reaper then skips the early-death ledger (the limit is the cause, the pause the cure)
   [ -f "$1" ] || return 0
   worker_ended_clean "$1" && return 0   # a finished turn's report may quote a limit message; only a death pauses an account
@@ -1087,43 +1095,48 @@ if m:
         resets = int(t.timestamp())
     except (ValueError, KeyError, ImportError) as error:
         print(f'reset time unreadable ({error}); pausing 1h', file=sys.stderr)
+window = 'seven_day' if re.search(r'hit your (?:weekly|7-day|seven-day) limit', tail, re.I) else 'five_hour'
 os.makedirs(state, exist_ok=True)
 path = os.path.join(state, f'usage-{acct[1]}.json')
 tmp = f'{path}.{os.getpid()}'
 with open(tmp, 'w') as f:
     json.dump({'recorded_at': now, 'source': 'super-board-run worker log',
-               'rate_limits': {'five_hour': {'used_percentage': 100, 'resets_at': resets}}}, f)
+               'rate_limits': {window: {'used_percentage': 100, 'resets_at': resets}}}, f)
 os.replace(tmp, path)
 print(acct[1], time.strftime('%H:%M', time.localtime(resets)))
 PY
 ) || { log "⚠ could not read worker log $1 for an account limit"; return 0; }
-  [ -z "$out" ] || { LIMIT_PAUSED=1; log "account ${out% *} hit its limit — paused until ${out#* }; next dispatch takes the pool's next account"; }
+  [ -z "$out" ] || { LIMIT_PAUSED=1; log "account ${out% *} hit its limit — paused until ${out#* }; no dispatch on that account until then"; }
   return 0
 }
 
-account_paused() {
-  # 0 khi usage-<acct>.json có cửa sổ ≥ 95 % (ngưỡng mặc định của pool) chưa tới giờ reset.
-  local f="$SB_ACCOUNT_STATE_DIR/usage-$1.json"
-  [ -f "$f" ] || return 1
-  jq -e --argjson now "$(date +%s)" \
-    '[.rate_limits[]? | select((.used_percentage // 0) >= 95 and (.resets_at // 0) > $now)] | length > 0' "$f" >/dev/null 2>&1
-}
-
 resolve_worker_account() {
-  # Đặt POOL_ENGINE/POOL_ACCT/POOL_CFG cho worker kế tiếp. Pool tự xoay finos -> finos_team -> max theo usage; hết cả 3
-  # thì theo lựa chọn của người dùng (16/10): Antigravity Ultra -> Antigravity Pro (13/11 chủ repo bỏ Grok: không còn dự phòng Grok), bỏ account đang bị ghi là
-  # hết. Trả 1 (POOL_RESETS = giờ reset sớm nhất nếu pool biết) khi mọi account đều hết: không giao.
-  POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
+  # Đặt POOL_ENGINE/POOL_ACCT/POOL_CFG cho worker kế tiếp. #1412 (lệnh chủ repo 21/11): chỉ tài khoản Claude đã ghim cho
+  # repo; không nhảy sang tài khoản Claude khác, không dự phòng Antigravity hay hãng khác. Trả 1 (POOL_RESETS = giờ reset nếu
+  # pool biết) khi tài khoản ghim chạm ngưỡng: không giao tới giờ reset. Trả 1 kèm POOL_BLOCK = lý do khi pool không chạy được
+  # worker vì lý do khác hạn mức (pool báo misconfigured: thiếu ~/.claude-<acct> của tài khoản ghim; engine khác claude).
+  POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""; POOL_BLOCK=""
   [ -x "$SB_ACCOUNT_POOL" ] || return 0
-  local ag="" json
-  if ! account_paused antigravity; then ag=1; elif ! account_paused antigravity_pro; then ag=pro; fi
-  json=$(SB_FALLBACK_ANTIGRAVITY="$ag" SB_FALLBACK_GROK="" "$SB_ACCOUNT_POOL" resolve "$PWD" 2>/dev/null) || true
+  local json engine state
+  json=$("$SB_ACCOUNT_POOL" resolve "$PWD" 2>/dev/null) || true
   [ -n "$json" ] || { log "⚠ account pool printed nothing; worker uses the default claude account"; return 0; }
-  if [ "$(printf '%s' "$json" | jq -r '.state // "ok"' 2>/dev/null)" = "pause" ]; then
+  state=$(printf '%s' "$json" | jq -r '.state // "ok"' 2>/dev/null || echo ok)
+  if [ "$state" = "pause" ]; then
     POOL_RESETS=$(printf '%s' "$json" | jq -r '.resets_at // empty | tonumber | strftime("%H:%M UTC")' 2>/dev/null || true)
     return 1
   fi
-  POOL_ENGINE=$(printf '%s' "$json" | jq -r '.engine // "claude"' 2>/dev/null || echo claude)
+  if [ "$state" = "misconfigured" ]; then
+    POOL_BLOCK=$(printf '%s' "$json" | jq -r '.reason // empty' 2>/dev/null || true)
+    POOL_BLOCK="account pool misconfigured: ${POOL_BLOCK:-no reason given}"
+    return 1
+  fi
+  # Bản pool cũ ngoài kit còn có thể trả engine=antigravity: không giao (đọc vào biến cục bộ trước, POOL_* giữ mặc định).
+  engine=$(printf '%s' "$json" | jq -r '.engine // "claude"' 2>/dev/null || echo claude)
+  if [ "$engine" != "claude" ]; then
+    log "⚠ account pool answered engine=${engine}; workers run on Claude accounts only (#1412) — not dispatching"
+    POOL_BLOCK="account pool answered engine=${engine}; workers run on Claude accounts only"
+    return 1
+  fi
   POOL_ACCT=$(printf '%s' "$json" | jq -r '.account // empty' 2>/dev/null || true)
   POOL_CFG=$(printf '%s' "$json" | jq -r '.config_dir // empty' 2>/dev/null || true)
   return 0
@@ -2189,6 +2202,65 @@ antigravity_probe() {
   return 1
 }
 
+antigravity_ls_running() {
+  # 0 khi máy có ít nhất một tiến trình language_server --standalone của Antigravity (app đang mở).
+  local ps_out
+  ps_out=$(ps -ww -A -o command= 2>/dev/null || true)
+  grep -qE 'language_server.*--standalone' <<<"$ps_out"
+}
+
+antigravity_probe_or_open() {
+  # #1405 (chủ repo 21/11: "tự mở lên đi chứ"): probe; trượt mà KHÔNG có tiến trình language_server nào thì runner tự mở app
+  # (`open -a Antigravity`, test tiêm lệnh khác qua SB_ANTIGRAVITY_OPEN_CMD), probe lại mỗi SB_ANTIGRAVITY_OPEN_POLL_S giây (5) tới khi
+  # nối được hoặc hết SB_ANTIGRAVITY_OPEN_WAIT_S giây (90). In chẩn đoán của lần probe cuối, trả 0 khi nối được.
+  # Mở trượt thì nghỉ SB_ANTIGRAVITY_OPEN_COOLDOWN_S giây (600) mới mở lại, để mỗi tick không đứng chờ thêm một lượt.
+  local out rc=0 waited=0 now last=0 stamp=""
+  local wait_s="${SB_ANTIGRAVITY_OPEN_WAIT_S:-90}" poll_s="${SB_ANTIGRAVITY_OPEN_POLL_S:-5}" cooldown_s="${SB_ANTIGRAVITY_OPEN_COOLDOWN_S:-600}"
+  out=$(antigravity_probe) && return 0
+  # Test (runner nạp kiểu SB_LIB_ONLY, hoặc probe giả SB_ANTIGRAVITY_PROBE) chỉ mở bằng lệnh giả: thiếu SB_ANTIGRAVITY_OPEN_CMD thì
+  # không gọi `open` của máy.
+  if [ "${SB_ANTIGRAVITY_AUTO_OPEN:-1}" = "0" ] || antigravity_ls_running \
+     || { [ -z "${SB_ANTIGRAVITY_OPEN_CMD:-}" ] && [ "${SB_SLOT_LIB_MODE:-0}" = "1" ]; } \
+     || { [ -z "${SB_ANTIGRAVITY_OPEN_CMD:-}" ] && [ -n "${SB_ANTIGRAVITY_PROBE:-}" ]; }; then
+    printf '%s\n' "$out"
+    return 1
+  fi
+  now=$(date +%s)
+  [ -n "${INFLIGHT_DIR:-}" ] && stamp="$INFLIGHT_DIR/antigravity-open-at"
+  [ -n "$stamp" ] && [ -f "$stamp" ] && last=$(cat "$stamp" 2>/dev/null || true)
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  if [ $((now - last)) -lt "$cooldown_s" ]; then
+    printf '%s\n' "runner đã tự mở Antigravity $((now - last))s trước mà chưa nối được; chưa mở lại (nghỉ ${cooldown_s}s)" "$out"
+    return 1
+  fi
+  log "🚀 Antigravity chưa mở (không có tiến trình language_server) — runner tự mở app, chờ tối đa ${wait_s}s" >&2
+  if [ -n "${SB_ANTIGRAVITY_OPEN_CMD:-}" ]; then
+    bash -c "$SB_ANTIGRAVITY_OPEN_CMD" >/dev/null 2>&1 || rc=$?
+  else
+    open -a Antigravity >/dev/null 2>&1 || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    # Hạn theo đồng hồ thật (#1416 review): mỗi lượt probe tự tốn thời gian (node --doctor, ps có timeout), cộng poll_s là đếm thiếu.
+    local opened_at deadline
+    # +1: date +%s cắt phần lẻ giây, không cộng thì có lượt chỉ chờ được wait_s - 1 giây.
+    opened_at=$(date +%s); deadline=$((opened_at + wait_s + 1))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      sleep "$poll_s"
+      if out=$(antigravity_probe); then
+        waited=$(( $(date +%s) - opened_at ))
+        [ -n "$stamp" ] && rm -f "$stamp" 2>/dev/null || true
+        log "✅ Antigravity đã mở và nối được sau ${waited}s" >&2
+        return 0
+      fi
+      [ "$poll_s" -gt 0 ] || break
+    done
+    waited=$(( $(date +%s) - opened_at ))
+  fi
+  [ -n "$stamp" ] && { mkdir -p "$INFLIGHT_DIR" 2>/dev/null && printf '%s\n' "$now" >"$stamp"; } 2>/dev/null || true
+  printf '%s\n' "runner đã tự mở Antigravity (lệnh mở exit ${rc}), chờ ${waited}s vẫn chưa nối được" "$out"
+  return 1
+}
+
 review_needs_antigravity() {
   # 0 khi thẻ Review #$1 cần audit qua Antigravity (không chạy nhánh claude-verify thuần).
   local issue="$1" pr="" head="" branch="" prs base_ref issue_n=-1
@@ -2293,7 +2365,7 @@ review_antigravity_preflight() {
     fi
     return 1
   fi
-  if ! probe_err=$(antigravity_probe); then
+  if ! probe_err=$(antigravity_probe_or_open); then
     probe_err=$(printf '%s' "$probe_err" | tr '\n' ' ' | cut -c1-240)
     if antigravity_block_card "$issue" "$item_id" "$title" "closed" \
          "${probe_err:-pm_doctor: Khong thay tien trinh Antigravity language_server nao dang chay.}" \
@@ -2348,6 +2420,12 @@ dispatch_lane() {
   # Chọn account TRƯỚC khi nhận thẻ: hết cả 6 account thì không nhận, không giao (trước đây rơi về `claude` mặc định
   # trên account đã hết, worker chết sau ~30 s và runner giao lại mãi).
   if ! resolve_worker_account; then
+    if [ -n "$POOL_BLOCK" ]; then
+      # Không phải hạn mức (#1412 review): nói đúng lý do, không đổi tài khoản, không dự phòng.
+      log "skip dispatch lane=${lane} issue=#${issue} — ${POOL_BLOCK}"
+      board_notify accounts-limited --card "${CONFIG_SLUG:-board}" --accounts "pool-blocked" --reason "$POOL_BLOCK" --state-dir "${SB_NOTIFY_STATE_DIR:-$HOME/.claude/super-board}"
+      return 0
+    fi
     log "skip dispatch lane=${lane} issue=#${issue} — every worker account is at its limit${POOL_RESETS:+ (earliest reset ${POOL_RESETS})}"
     board_notify accounts-limited --card "${CONFIG_SLUG:-board}" --accounts "${POOL_RESETS:-all}" --state-dir "${SB_NOTIFY_STATE_DIR:-$HOME/.claude/super-board}"
     return 0
@@ -3986,7 +4064,7 @@ ${prev_rev}"
       probe_checked=1
       if ( POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
            resolve_worker_account >/dev/null 2>&1 || { POOL_ENGINE="claude"; POOL_CFG=""; }
-           antigravity_can_provide_mcp "${POOL_CFG:-}" "${POOL_ENGINE:-claude}" && antigravity_probe >/dev/null 2>&1 ); then
+           antigravity_can_provide_mcp "${POOL_CFG:-}" "${POOL_ENGINE:-claude}" && antigravity_probe_or_open >/dev/null 2>&1 ); then
         probe_ok=1
       else
         probe_ok=0
@@ -4096,6 +4174,148 @@ print(f"marker_n={marker_n} bounce_n={bounce_n} capped={capped}")
     total="$cur"
   fi
   printf '%s %s\n' "$total" "$capped"
+}
+
+devkit_issue_status() {
+  # Đọc trạng thái issue $2 ở repo $1 qua halt file riêng (không làm halt board hiện tại).
+  # In "<STATE> <stateReason>"; không đọc được thì trả 1.
+  local repo="$1" issue="$2" haltf out rc=0
+  haltf=$(mktemp -u "${TMPDIR:-/tmp}/sb-dk-halt.XXXXXX") || return 1
+  out=$(SB_GITHUB_HALT_FILE="$haltf" python3 "$SB_GITHUB_READ" --kind json -- issue view "$issue" --repo "$repo" --json state,stateReason 2>/dev/null) || rc=$?
+  rm -f "$haltf"
+  [ "$rc" -eq 0 ] || return 1
+  printf '%s' "$out" | jq -r '((.state // "") + " " + (.stateReason // ""))' 2>/dev/null
+}
+
+devkit_is_synced() {
+  # Kiểm tra repo hiện tại đã đồng bộ với DevKit chưa (trả 0 = đã sync, 1 = còn lệch).
+  if [ -n "${SB_DEVKIT_SYNC_CHECK:-}" ]; then
+    "$SB_DEVKIT_SYNC_CHECK" "${REPO_ROOT:-.}" >/dev/null 2>&1
+    return $?
+  fi
+  local root="${REPO_ROOT:-.}" parity="" dk_link kit_root head orig
+  if [ -f "$root/.agents/devkit/bin/parity_check.py" ]; then
+    parity="$root/.agents/devkit/bin/parity_check.py"
+  elif [ -f "$root/universal-agent-devkit/bin/parity_check.py" ]; then
+    parity="$root/universal-agent-devkit/bin/parity_check.py"
+  fi
+  if [ -n "$parity" ]; then
+    python3 "$parity" "$root" >/dev/null 2>&1 || return 1
+  fi
+  dk_link="$root/.agents/devkit"
+  if [ -L "$dk_link" ]; then
+    kit_root=$(python3 -c 'import os,sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$dk_link" 2>/dev/null || true)
+    if [ -n "$kit_root" ] && git -C "$kit_root" rev-parse -q --verify origin/main >/dev/null 2>&1; then
+      head=$(git -C "$kit_root" rev-parse -q --verify HEAD 2>/dev/null || true)
+      orig=$(git -C "$kit_root" rev-parse -q --verify origin/main 2>/dev/null || true)
+      if [ -n "$head" ] && [ -n "$orig" ] && [ "$head" != "$orig" ] \
+         && git -C "$kit_root" merge-base --is-ancestor "$head" "$orig" >/dev/null 2>&1; then
+        return 1
+      fi
+    fi
+  fi
+  return 0
+}
+
+# #1402: Thẻ Blocked vì lỗi DevKit (marker `sb-blocked-reason: devkit-incident ...`) tự trở về lane cũ (Building → Ready)
+# khi task [devkit] ở repo nguồn đã CLOSED (không phải NOT_PLANNED) VÀ repo này đã đồng bộ DevKit.
+# Trả 0 khi có ít nhất một thẻ được chuyển (caller đọc lại board), 1 khi không.
+sweep_devkit_blocked() {
+  local now cands cand_nums kept_non_dk n_old issue item_id cj blocker marker kit_repo kit_issue from_col to_col st state reason moved=1 sync_checked=0 sync_ok=0
+  now=$(date +%s)
+  [ "$now" -lt "${DEVKIT_SWEEP_NEXT:-0}" ] && return 1
+  cands=$(printf '%s' "${PROJECT_ITEMS_JSON:-}" | jq -r --arg bot "${BOT_LOGIN:-}" '
+    .items[]?
+    | select(.status == "Blocked" and (.content.type // "Issue") == "Issue")
+    | select(((.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
+    | ((.labels // []) + (.content.labels // []) | map(if type == "object" then .name else . end | ascii_downcase)) as $l
+    | select(($l | index("needs-you") | not) and ($l | index("human-gated") | not))
+    | [(.content.number | tostring), (.id // "")] | @tsv' 2>/dev/null) || return 1
+  if [ -z "$cands" ]; then
+    DEVKIT_NON_DK_CARDS=""
+    return 1
+  fi
+  cand_nums=$(printf '%s\n' "$cands" | cut -f1)
+  kept_non_dk=""
+  for n_old in ${DEVKIT_NON_DK_CARDS:-}; do
+    if printf '%s\n' "$cand_nums" | grep -qx "$n_old"; then
+      kept_non_dk="${kept_non_dk} ${n_old}"
+    fi
+  done
+  DEVKIT_NON_DK_CARDS="$kept_non_dk"
+  while IFS=$'\t' read -r issue item_id; do
+    [ -n "$issue" ] && [ -n "$item_id" ] || continue
+    issue_locked "$issue" && continue
+    case " ${DEVKIT_NON_DK_CARDS:-} " in *" ${issue} "*) continue ;; esac
+    cj=$(cap_progress_comments "$issue" 2>/dev/null) || continue
+    # Chỉ xét comment blocker mới nhất; nếu sau đó đã có comment ↩️ back to hoặc blocker mới khác không phải devkit-incident thì bỏ qua.
+    blocker=$(printf '%s' "$cj" | jq -r '
+      ([to_entries[] | select((.value.body // "") | test("^\\[(orchestrator|builder|qa|reviewer|merge-queue)\\] \\[blocker\\]|🛑 blocked|(^|\n)Move back:"))] | last) as $b
+      | if $b == null then ""
+        elif ([to_entries[] | select(.key > $b.key and ((.value.body // "") | test("^\\[orchestrator\\] \\[report\\] ↩️ back to ")))] | length) > 0 then ""
+        else ($b.value.body // "") end' 2>/dev/null) || continue
+    marker=$(printf '%s\n' "$blocker" | grep -oE '<!-- *sb-blocked-reason: *devkit-incident[^>]*-->' | tail -1 || true)
+    if [ -z "$marker" ]; then
+      DEVKIT_NON_DK_CARDS="${DEVKIT_NON_DK_CARDS:-} ${issue}"
+      continue
+    fi
+    kit_repo=$(printf '%s' "$marker" | sed -nE 's/.*repo=([^ >]+).*/\1/p')
+    kit_issue=$(printf '%s' "$marker" | sed -nE 's/.*issue=([0-9]+).*/\1/p')
+    if [ -z "$kit_repo" ] || [ -z "$kit_issue" ]; then
+      # Hỗ trợ dạng rút gọn `ToanMobile/agent-workbench#500` trong marker hoặc dòng blocked-by:
+      kit_repo=$(printf '%s\n' "$marker" "$blocker" | sed -nE 's/.*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([0-9]+).*/\1/p' | head -1)
+      kit_issue=$(printf '%s\n' "$marker" "$blocker" | sed -nE 's/.*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([0-9]+).*/\2/p' | head -1)
+    fi
+    [ -n "$kit_repo" ] && [ -n "$kit_issue" ] && [ "$kit_issue" != "0" ] || {
+      DEVKIT_NON_DK_CARDS="${DEVKIT_NON_DK_CARDS:-} ${issue}"
+      continue
+    }
+    from_col=$(printf '%s' "$marker" | sed -nE 's/.*from=([A-Za-z]+).*/\1/p')
+    if [ -z "$from_col" ]; then
+      from_col=$(printf '%s\n' "$blocker" | sed -nE 's/.*Move back:[[:space:]]*drag this card to (Ready|Building|QA|Review).*/\1/p' | tail -1)
+    fi
+    case "$from_col" in
+      Ready|QA|Review) to_col="$from_col" ;;
+      *) to_col="Ready" ;;
+    esac
+    if ! st=$(devkit_issue_status "$kit_repo" "$kit_issue"); then
+      DEVKIT_SWEEP_NEXT=$((now + ${SB_DEVKIT_SWEEP_EVERY:-120}))
+      continue
+    fi
+    state="${st%% *}"
+    reason="${st#* }"
+    [ "$reason" != "$st" ] || reason=""
+    if [ "$state" != "CLOSED" ] || [ "$reason" = "NOT_PLANNED" ]; then
+      DEVKIT_SWEEP_NEXT=$((now + ${SB_DEVKIT_SWEEP_EVERY:-120}))
+      continue
+    fi
+    if [ "$sync_checked" -eq 0 ]; then
+      sync_checked=1
+      if devkit_is_synced; then
+        sync_ok=1
+      else
+        sync_ok=0
+        DEVKIT_SWEEP_NEXT=$((now + ${SB_DEVKIT_SWEEP_EVERY:-120}))
+      fi
+    fi
+    [ "$sync_ok" -eq 1 ] || return 1
+    if ! set_card_status "$item_id" "$to_col"; then
+      gh_checkpoint
+      log "⚠ devkit sweep: could not move #${issue} from Blocked to ${to_col} — retrying next tick"
+      continue
+    fi
+    rm -f "$INFLIGHT_DIR/noops/$issue" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" "$INFLIGHT_DIR/early-deaths/$issue" 2>/dev/null || true
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to ${to_col} · lỗi DevKit đã sửa và đồng bộ
+Did: ${kit_repo}#${kit_issue} đã đóng và kit của repo đã đồng bộ
+✅ Done: chuyển #${issue} từ Blocked về ${to_col}
+Next: lane tiếp tục xử lý thẻ" >/dev/null 2>&1 || true
+    log "↩ devkit sweep: #${issue} Blocked → ${to_col} (${kit_repo}#${kit_issue} closed + synced)"
+    moved=0
+  done <<EOF
+$cands
+EOF
+  return "$moved"
 }
 
 cap_progress_comments() {
@@ -4373,6 +4593,33 @@ sweep_dead_sessions() {
   [ -n "$closed" ] || return 1
   log "session sweep: ended session card(s) closed ${closed} — closed-card sweep follows"
   SWEEP_CLOSED_NEXT=0
+  return 0
+}
+
+# #1406: hậu kiểm định kỳ: (1) mở lại thẻ đóng COMPLETED còn AC `- [ ]` chưa tick và không có PR merged liên kết (gắn ac-open,
+# chuyển Done -> Ready); (2) ghi cảnh báo một lần và tổng hợp theo ngày với PR merge vào trunk không có biên nhận merge gate.
+sweep_audit() {
+  local now items out rc=0 reopened moved ungated by_day
+  now=$(date +%s)
+  [ "$now" -lt "${AUDIT_SWEEP_NEXT:-0}" ] && return 1
+  items=$(mktemp "${TMPDIR:-/tmp}/sb-audit-items.XXXXXX") || { log "⚠ audit sweep: mktemp failed — retrying next tick"; return 1; }
+  printf '%s' "$PROJECT_ITEMS_JSON" > "$items"
+  out=$(python3 "$(audit_sweep_helper)" sweep --config "$CONFIG_PATH" --items "$items" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -f "$items"
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 69 ]; then
+    log "⚠ audit sweep failed (exit ${rc}) — retrying next tick"
+    return 1
+  fi
+  [ "$rc" -ne 0 ] && log "⚠ audit sweep had partial write error (exit ${rc}) — retrying next tick" || AUDIT_SWEEP_NEXT=$((now + ${SB_AUDIT_SWEEP_EVERY:-300}))
+  reopened=$(printf '%s' "$out" | jq -r '[(.reopened // [])[] | "#\(.)"] | join(" ")' 2>/dev/null) || reopened=""
+  moved=$(printf '%s' "$out" | jq -r '[(.moved_ready // [])[] | "#\(.)"] | join(" ")' 2>/dev/null) || moved=""
+  ungated=$(printf '%s' "$out" | jq -r '.ungated_total_7d // 0' 2>/dev/null) || ungated=0
+  if [ "${ungated:-0}" -gt 0 ]; then
+    by_day=$(printf '%s' "$out" | jq -r '[(.ungated_by_date // {}) | to_entries[] | "\(.key)=\(.value)"] | join(" ")' 2>/dev/null) || by_day=""
+    log "⚠ audit sweep: ungated merges (7d)=${ungated}${by_day:+ (${by_day})}"
+  fi
+  [ -n "$reopened" ] || [ -n "$moved" ] || return 1
+  log "audit sweep: reopened=${reopened:-none} moved_ready=${moved:-none}"
   return 0
 }
 
@@ -5217,10 +5464,12 @@ while true; do
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
   sweep_dead_sessions || true                              # #1193 (đặt lại nhịp của sweep_closed_cards ngay dưới)
   if sweep_closed_cards; then tick_fetch || continue; fi   # #558
+  if sweep_audit; then tick_fetch || continue; fi          # #1406
   if sweep_waiting_on; then tick_fetch || continue; fi     # #601
   if sweep_file_wait; then tick_fetch || continue; fi      # #556
   if maybe_sweep_blocked; then tick_fetch || continue; fi
   if sweep_antigravity_blocked; then tick_fetch || continue; fi
+  if sweep_devkit_blocked; then tick_fetch || continue; fi
   # #363: ≥2 thẻ Blocked cùng suite id trong N giờ → một thẻ + ngưng giao Builder (suite_fuse_tick).
   if suite_fuse_tick; then tick_fetch || continue; fi
 
