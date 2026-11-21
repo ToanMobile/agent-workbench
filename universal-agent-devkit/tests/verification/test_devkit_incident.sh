@@ -510,5 +510,54 @@ calls = [json.loads(l)["gh"] for l in open(sys.argv[1])]
 assert not any(c[:2] == ["issue", "edit"] for c in calls), "gom vào thẻ khác"
 PY
 
+# 32. (#1402) devkit_incident.py report: phát hiện dấu vết kit (core-rules §20), tạo 1 task [devkit], chống trùng, bỏ qua lỗi app.
+n=$(creates)
+app_out="$(python3 "$DI" report --trace "app/src/main/java/MainActivity.kt:42: NullPointerException" --symptom "crash man hinh" --json 2>&1)"; app_rc=$?
+if [ "$app_rc" = 1 ] && [ "$(creates)" = "$n" ] && python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["is_devkit"] is False and d["created"] is False' "$app_out" 2>/dev/null; then
+  ok "report: lỗi app không thuộc kit → exit 1, không tạo task [devkit]"
+else
+  fail "report lỗi app sai: rc=$app_rc creates=$(creates) (trước $n) out=$app_out"
+fi
+
+dry_out="$(python3 "$DI" report --trace ".agents/devkit/bin/post-fix-gate.py:88: KeyError" --symptom "gate KeyError" --repo-name OfficeReader --lane qa --from-col QA --dry-run --json 2>/dev/null)"; dry_rc=$?
+if [ "$dry_rc" = 0 ] && [ "$(creates)" = "$n" ] && python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["is_devkit"] is True and d["dry_run"] is True and "[devkit]" in d["title"]' "$dry_out" 2>/dev/null; then
+  ok "report --dry-run: nhận dấu vết .agents/devkit/**, tiêu đề [devkit], không ghi GitHub"
+else
+  fail "report --dry-run sai: rc=$dry_rc creates=$(creates) (trước $n) out=$dry_out"
+fi
+
+rep1="$(python3 "$DI" report --trace ".agents/devkit/bin/post-fix-gate.py:88: KeyError" --symptom "gate KeyError" --repo-name OfficeReader --lane qa --from-col QA --json 2>/dev/null)"; rc1=$?
+if [ "$rc1" = 0 ] && [ "$(creates)" = $((n + 1)) ] && python3 - "$rep1" <<'PY' 2>/dev/null
+import json, sys
+d = json.loads(sys.argv[1])
+assert d["is_devkit"] is True and d["created"] is True and d["duplicate"] is False
+assert isinstance(d["issue"], int) and d["issue"] > 0
+assert d["title"].startswith("[devkit]")
+assert "sb-blocked-reason: devkit-incident" in d["marker"]
+assert "repo=ToanMobile/agent-workbench" in d["marker"] and f"issue={d['issue']}" in d["marker"]
+assert "from=QA" in d["marker"]
+assert d["ref"] == f"ToanMobile/agent-workbench#{d['issue']}"
+assert f"blocked-by:  ToanMobile/agent-workbench#{d['issue']}" in d["block_comment"]
+assert "🙋" not in d["block_comment"] and "needs-you" not in d["block_comment"]
+PY
+then
+  ok "report: tạo 1 task [devkit] kèm marker sb-blocked-reason + blocked-by chéo repo (không 🙋)"
+else
+  fail "report lần 1 sai: rc=$rc1 creates=$(creates) (trước $n) out=$rep1"
+fi
+
+rep2="$(python3 "$DI" report --trace ".agents/devkit/bin/post-fix-gate.py:88: KeyError" --symptom "gate KeyError" --repo-name GeelyEx2 --lane qa --from-col QA --json 2>/dev/null)"; rc2=$?
+if [ "$rc2" = 0 ] && [ "$(creates)" = $((n + 1)) ] && python3 - "$rep1" "$rep2" <<'PY' 2>/dev/null
+import json, sys
+d1, d2 = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+assert d2["is_devkit"] is True and d2["created"] is False and d2["duplicate"] is True
+assert d2["issue"] == d1["issue"]
+PY
+then
+  ok "report lần 2 cùng dấu vết kit → dùng lại task cũ, không tạo trùng"
+else
+  fail "report lần 2 tạo trùng hoặc lỗi: rc=$rc2 creates=$(creates) (kỳ vọng $((n + 1))) out=$rep2"
+fi
+
 [ "$FAILS" = 0 ] && { echo "PASS test_devkit_incident"; exit 0; }
 echo "FAIL test_devkit_incident ($FAILS)"; exit 1

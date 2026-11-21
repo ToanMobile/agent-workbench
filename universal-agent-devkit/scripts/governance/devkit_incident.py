@@ -16,12 +16,14 @@ repo: cùng lỗi ở nhiều repo là một thẻ). Sự cố nằm trong spool
 thì chỉ đếm thêm. Không bao giờ làm hỏng caller: lỗi gh / create_task chỉ để lại spool, luôn exit 0.
 
   devkit_incident.py scan [--quiet]       gom + đẩy (SessionStart của kit gọi nền; mọi phiên worker board đều chạy nó)
+  devkit_incident.py report [tuỳ chọn]    lane báo lỗi nghi do DevKit: tạo 1 task [devkit] (chống trùng) + trả marker chặn thẻ app
   devkit_incident.py status               in ledger tóm tắt
 Biến môi trường: DEVKIT_INCIDENT=0 tắt · DEVKIT_INCIDENT_REPOS (os.pathsep) · DEVKIT_INCIDENT_HOME ·
 DEVKIT_INCIDENT_MIN_INTERVAL_S (mặc định 300).
 """
 from __future__ import annotations
 
+import argparse
 import fcntl
 import hashlib
 import json
@@ -403,16 +405,199 @@ def card_args(fp: str, inc: dict) -> list[str]:
             "--risk", "🟡 **Medium** · lỗi kit dùng chung, chạm mọi repo đang cài DevKit"]
 
 
-def create_card(fp: str, inc: dict):
-    # #1333: hạn mức --new-card theo phiên là cho agent gõ tay; quét tự động mở tới 3 thẻ mỗi lần nên không mang id phiên.
+def _run_create_task(args: list[str], *, dry_run: bool = False):
+    """Gọi create_task.py với tập tham số chuẩn (bỏ CLAUDE_CODE_SESSION_ID để không đụng hạn mức phiên người)."""
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
-    res = subprocess.run([sys.executable, str(CREATE_TASK), *card_args(fp, inc)], capture_output=True, text=True,
-                         timeout=GH_TIMEOUT_S * 4, env=env)
+    cmd = [sys.executable, str(CREATE_TASK), *args]
+    if dry_run:
+        cmd.append("--dry-run")
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=GH_TIMEOUT_S * 4, env=env)
     out = res.stdout + res.stderr
+    if dry_run:
+        if res.returncode != 0:
+            raise RuntimeError(f"create_task --dry-run exit {res.returncode}: {out.strip()[-300:]}")
+        return None, out
     m = re.search(r"/issues/(\d+)", out) or re.search(r"vào thẻ Backlog #(\d+)", out)
     if res.returncode not in (0, 3) or not m:
         raise RuntimeError(f"create_task exit {res.returncode}: {out.strip()[-300:]}")
-    return int(m.group(1))
+    return int(m.group(1)), out
+
+
+def create_card(fp: str, inc: dict):
+    issue_no, _ = _run_create_task(card_args(fp, inc))
+    return issue_no
+
+
+KIT_TRACE_PATTERNS = (
+    re.compile(r"(?:^|[\s\"'/`(])(?:\.agents/devkit|universal-agent-devkit)/[\w./-]+"),
+    re.compile(r"(?:^|[\s\"'/`(])\.agents/skills/[\w./-]+"),
+    re.compile(r"(?:^|[\s\"'/`(])(?:\.claude|\.agents)/hooks/[\w./-]+"),
+    re.compile(r"(?:^|[\s\"'/`(])hooks/[\w./-]+\.(?:sh|py)\b"),
+    re.compile(r"(?:^|[\s\"'/`(])\.claude/bin/super-board-[\w.-]+"),
+    re.compile(r"(?:^|[\s\"'/`(])\.claude/skills/super-[\w./-]+"),
+    re.compile(r"(?:^|[\s\"'/`(])\.claude/workflows/super-board-[\w.-]+"),
+    re.compile(r"\b(?:post-fix-gate\.py|proof_gate\.(?:sh|py)|review_gate\.(?:sh|py)|"
+               r"hardware_safety_gate(?:_main)?\.(?:sh|py)|block-dangerous-git\.sh|"
+               r"block_dangerous_git_main\.py|agent-kit|super-board-[\w-]+\.(?:sh|py|js))\b"),
+    re.compile(r"đồng bộ từ agent-workbench"),
+)
+
+
+def extract_kit_paths(text: str) -> list[str]:
+    """Trích các dấu vết thuộc DevKit (core-rules §20 mục 1); rỗng nếu lỗi không dẫn tới kit."""
+    if not text:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    for rx in KIT_TRACE_PATTERNS:
+        for m in rx.finditer(text):
+            token = m.group(0).strip().lstrip("\"'`(").rstrip("\"'`),.:;")
+            # Chuẩn hoá đường dẫn tuyệt đối về phần từ mốc kit trở đi để chữ ký không phụ thuộc máy/worktree
+            for anchor in (".agents/devkit/", "universal-agent-devkit/", ".agents/skills/",
+                           ".claude/bin/", ".claude/skills/", ".claude/workflows/", ".claude/hooks/", ".agents/hooks/"):
+                idx = token.find(anchor)
+                if idx >= 0:
+                    token = token[idx:]
+                    break
+            if token and token not in seen:
+                seen.add(token)
+                found.append(token)
+    return found
+
+
+def normalize_return_col(from_col: str | None) -> str:
+    """Cột trả về sau khi kit sửa và đồng bộ: Building phải về Ready để runner/wave chọn lại."""
+    col = (from_col or "").strip()
+    if col in ("Ready", "QA", "Review"):
+        return col
+    return "Ready"
+
+
+def format_app_block_comment(kit_issue: int | None, from_col: str | None, lane: str = "orchestrator",
+                             symptom: str = "", evidence: str = "") -> tuple[str, str, str]:
+    """Tạo marker phân loại, cột đích và nội dung block comment chuẩn cho thẻ app bị lỗi kit (không gắn needs-you/🙋)."""
+    target_col = normalize_return_col(from_col)
+    lane_role = lane if lane in ("builder", "qa", "reviewer", "collect", "orchestrator") else "orchestrator"
+    issue_ref = f"{DEVKIT_REPO}#{kit_issue}" if kit_issue else f"{DEVKIT_REPO}#TBD"
+    marker = f"<!-- sb-blocked-reason: devkit-incident repo={DEVKIT_REPO} issue={kit_issue or 0} from={target_col} -->"
+    why_txt = mask(symptom or "lỗi phát sinh từ thành phần dùng chung của DevKit")
+    ev_txt = mask(evidence or "xem chi tiết tại task [devkit]")[:240]
+    body = "\n".join([
+        f"[{lane_role}] [blocker] 🛑 blocked · ⚙ lỗi DevKit ({issue_ref})",
+        f"Reason tag:  ⚙",
+        f"Why blocked: {why_txt} (đã gắn task {issue_ref})",
+        f"Evidence:    {ev_txt}",
+        f"Checked:     đối chiếu dấu vết theo core-rules §20 mục 1 và kiểm tra trùng trên {DEVKIT_REPO}",
+        f"What blocks: chờ {issue_ref} đóng và repo này đồng bộ bản sửa của DevKit",
+        f"Why I (bot) cannot decide:",
+        f"             mã nguồn DevKit nằm ở {DEVKIT_REPO}; sửa trực tiếp ở repo con sẽ bị ghi đè khi đồng bộ",
+        f"To unblock:  [ ] Đợi {issue_ref} đóng và chạy `agent-kit parity --fix` / `agent-kit init` để đồng bộ",
+        f"Move back:   drag this card to {target_col} after the steps above are done",
+        marker,
+        f"blocked-by:  {issue_ref}",
+    ])
+    return marker, target_col, body
+
+
+def report_incident(trace: str, symptom: str = "", repo_name: str = "", root_cause: str = "",
+                    fix: str = "", oracle: str = "", lane: str = "orchestrator",
+                    from_col: str = "Ready", dry_run: bool = False) -> dict:
+    """Phân loại lỗi từ lane; nếu thuộc DevKit thì chống trùng và tạo 1 task `[devkit]` ở repo nguồn."""
+    combined = "\n".join(part for part in (trace, root_cause) if part)
+    kit_paths = extract_kit_paths(combined)
+    if not kit_paths:
+        return {"is_devkit": False, "created": False, "duplicate": False, "issue": None, "kit_paths": []}
+    if REDACT_ERROR and not dry_run:
+        raise RuntimeError(f"fail-closed: {REDACT_ERROR}")
+
+    first_err = next((ln.strip() for ln in trace.splitlines() if ln.strip()), "")
+    short_sym = mask(symptom.strip() or first_err or f"lỗi tại {kit_paths[0]}")
+    short_sym = re.sub(r"\s+", " ", short_sym).strip()[:58]
+    title = f"[devkit] {short_sym}"[:70]
+    sig_key = "|".join(sorted(kit_paths)[:4]) + "|" + normalize(symptom or first_err or kit_paths[0])
+    fp = signature("devkit-lane", sig_key)
+    marker_tag = f"kitbug{fp}"
+
+    home = env_home()
+    home.mkdir(parents=True, exist_ok=True)
+    data = load_ledger(home)
+    inc = data["incidents"].get(fp)
+    existing_issue = None
+    if isinstance(inc, dict) and inc.get("issue") is not None:
+        closed_at = issue_closed_at(int(inc["issue"]))
+        if closed_at is None:
+            existing_issue = int(inc["issue"])
+        else:
+            inc["issue"] = None
+
+    if existing_issue is None:
+        existing_issue = find_open_issue(fp)
+
+    duplicate = existing_issue is not None
+    created = False
+    issue_no = existing_issue
+    dry_preview = ""
+
+    if existing_issue is None:
+        masked_trace = mask(trace.strip())[-1200:]
+        masked_rc = mask(root_cause.strip()) if root_cause.strip() else f"Giả thuyết: lỗi tại {', '.join(kit_paths[:3])}"
+        masked_fix = mask(fix.strip()) if fix.strip() else "Sửa nguyên nhân gốc một lần tại repo nguồn DevKit (agent-workbench) rồi đồng bộ sang repo con."
+        masked_oracle = mask(oracle.strip()) if oracle.strip() else f"Test RED→GREEN cho dấu vết `{kit_paths[0]}` ở repo nguồn."
+        src_label = mask(repo_name.strip()) if repo_name.strip() else "repo con"
+        problem = (
+            f"Triệu chứng ({src_label}, mã `{marker_tag}`): {mask(symptom or short_sym)}\n\n"
+            f"Bằng chứng (đã che bí mật/đường dẫn riêng):\n```\n{masked_trace}\n```\n\n"
+            f"Nguyên nhân gốc: {masked_rc}"
+        )
+        args = [
+            "--repo", DEVKIT_REPO,
+            "--labels", "bug",
+            "--new-card", "devkit-incident từ lane: một lỗi kit một thẻ",
+            "--title", title,
+            "--problem", problem,
+            "--fix", masked_fix,
+            "--ac", f"- [ ] {masked_oracle}\n- [ ] Lỗi `{marker_tag}` không còn tái hiện sau khi đồng bộ kit sang repo con",
+            "--risk", "🟡 **Medium** · lỗi kit dùng chung, chạm mọi repo đang cài DevKit",
+        ]
+        issue_no, dry_preview = _run_create_task(args, dry_run=dry_run)
+        created = not dry_run and issue_no is not None
+
+    if not dry_run and issue_no is not None:
+        now = int(time.time())
+        data["incidents"][fp] = {
+            "rule": "devkit-lane",
+            "title": title,
+            "min_count": 1,
+            "count": (inc.get("count", 0) + 1) if isinstance(inc, dict) else 1,
+            "repos": sorted({*((inc.get("repos") or []) if isinstance(inc, dict) else []), *([repo_name] if repo_name else [])}),
+            "first": inc.get("first", now) if isinstance(inc, dict) else now,
+            "last": now,
+            "evidence": [{"repo": repo_name or "lane", "file": kit_paths[0], "text": mask(trace)[-400:]}],
+            "issue": issue_no,
+            "reported_count": 1,
+            "last_comment": now,
+            "state_checked": now,
+        }
+        save_ledger(home, data)
+
+    blk_marker, target_col, blk_comment = format_app_block_comment(
+        issue_no, from_col, lane=lane, symptom=short_sym, evidence=first_err or kit_paths[0]
+    )
+    return {
+        "is_devkit": True,
+        "created": created,
+        "duplicate": duplicate,
+        "dry_run": dry_run,
+        "fingerprint": marker_tag,
+        "issue": issue_no,
+        "ref": f"{DEVKIT_REPO}#{issue_no}" if issue_no else None,
+        "title": title,
+        "kit_paths": kit_paths,
+        "target_col": target_col,
+        "marker": blk_marker,
+        "block_comment": blk_comment,
+        "dry_preview": dry_preview if dry_run else "",
+    }
 
 
 def flush(home: Path, data: dict, quiet: bool) -> None:
@@ -517,9 +702,70 @@ def status() -> int:
     return 0
 
 
+def report_cmd(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="devkit_incident.py report")
+    ap.add_argument("--trace", default="", help="Đoạn log / stack trace / đường dẫn lỗi")
+    ap.add_argument("--trace-file", default="", help="File log cần đọc (tối đa 64 KB cuối)")
+    ap.add_argument("--symptom", default="", help="Triệu chứng ngắn cho tiêu đề [devkit]")
+    ap.add_argument("--repo-name", default="", help="Tên repo con gặp lỗi")
+    ap.add_argument("--root-cause", default="", help="Nguyên nhân gốc hoặc file:dòng dự kiến")
+    ap.add_argument("--fix", default="", help="Hướng sửa đề xuất")
+    ap.add_argument("--oracle", default="", help="Test RED→GREEN kỳ vọng ở repo nguồn")
+    ap.add_argument("--lane", default="orchestrator", help="Lane phát hiện lỗi (builder|qa|reviewer|orchestrator)")
+    ap.add_argument("--from-col", default="Ready", help="Cột trước khi bị chặn (Ready|Building|QA|Review)")
+    ap.add_argument("--dry-run", action="store_true", help="Chạy thử không tạo issue thật")
+    ap.add_argument("--json", action="store_true", help="In JSON kết quả")
+    args = ap.parse_args(argv)
+
+    trace = args.trace
+    if args.trace_file:
+        try:
+            with open(args.trace_file, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                fh.seek(max(0, size - 65536))
+                file_txt = fh.read().decode("utf-8", "replace")
+            trace = f"{trace}\n{file_txt}".strip()
+        except OSError as e:
+            print(f"devkit_incident report: cannot read --trace-file: {e}", file=sys.stderr)
+            return 64
+
+    if not trace.strip() and not args.root_cause.strip():
+        print("devkit_incident report: cần --trace, --trace-file hoặc --root-cause", file=sys.stderr)
+        return 64
+
+    res = report_incident(
+        trace,
+        symptom=args.symptom,
+        repo_name=args.repo_name,
+        root_cause=args.root_cause,
+        fix=args.fix,
+        oracle=args.oracle,
+        lane=args.lane,
+        from_col=args.from_col,
+        dry_run=args.dry_run,
+    )
+    if args.json:
+        print(json.dumps(res, ensure_ascii=False))
+    elif res["is_devkit"]:
+        status_word = "DRY-RUN" if res["dry_run"] else ("TRÙNG" if res["duplicate"] else "ĐÃ TẠO")
+        print(f"🔧 [{status_word}] {res['ref'] or res['title']} ({res['fingerprint']}) · về {res['target_col']}")
+    else:
+        print("ℹ️ Dấu vết không thuộc DevKit — đi luồng xử lý thường.")
+    return 0 if res["is_devkit"] else 1
+
+
 def main() -> int:
     args = sys.argv[1:]
     cmd = args[0] if args and not args[0].startswith("-") else "scan"
+    if cmd == "report":
+        try:
+            return report_cmd(args[1:])
+        except SystemExit as e:
+            return 64 if e.code else 0
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as e:
+            print(f"devkit_incident report: {e}", file=sys.stderr)
+            return 69
     if cmd == "scan" and "--quiet" in args:   # chạy nền từ hook: tách khỏi nhóm tiến trình của hook, không bị giết theo nó
         try:
             os.setsid()

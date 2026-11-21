@@ -189,6 +189,10 @@ echo "$ISSUES" | python3 "$HERE/super-board-decision.py" annotate ${CONFIG:+--co
                 { parseable: true, blockers: [], human_gated: ($i | person_done | not), why: "" }
               elif ($v | test("^[0-9]+(,[0-9]+)*$")) then
                 { parseable: true, blockers: ($v / "," | map(tonumber)), human_gated: false, why: "" }
+              elif ($v | test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+(,[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+)*$")) then
+                # #1402: blocker chéo repo (vd lỗi DevKit ở ToanMobile/agent-workbench#N): hợp lệ, không phải chờ người,
+                # và không tự mở theo $open của repo hiện tại (sweep_devkit_blocked kiểm tra repo nguồn + kit đã sync).
+                { parseable: true, blockers: [], external_blockers: ($v / ","), human_gated: false, agent_parked: true, why: "" }
               else
                 { parseable: false, blockers: [], human_gated: false,
                   why: ("the `blocked-by:` line reads \"" + $v + "\" — it must be issue numbers alone, or `-`") }
@@ -213,10 +217,11 @@ echo "$ISSUES" | python3 "$HERE/super-board-decision.py" annotate ${CONFIG:+--co
       | ( [ $p.blockers[] | select(. as $b | $open | index($b)) ] ) as $stillOpen
       | { number: $i.number, title: $i.title, state: $i.state,
           blockers: $p.blockers, openBlockers: $stillOpen,
+          externalBlockers: ($p.external_blockers // []),
           parseable: $p.parseable,
           humanGated: $p.human_gated,
           agentParked: ($p.agent_parked // false),
-          runnable: ($p.parseable and ($p.human_gated | not) and (($stillOpen | length) == 0)),
+          runnable: ($p.parseable and ($p.human_gated | not) and (($stillOpen | length) == 0) and ((($p.external_blockers // []) | length) == 0)),
           why: $p.why,
           needsYou: ($i | needs_you),
           needsYouDone: false }
