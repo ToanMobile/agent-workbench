@@ -182,7 +182,7 @@
                         ".agents/regression_matrix.active.json",
                         ".agents/local/memory/**", ".agents/local/rules/**"],
     // true only when the user explicitly chose auto-merge onto a
-    // production-detected base in onboard. run.md's production-merge guard
+    // production-detected base in onboard. run-orchestrator.md's production-merge guard
     // refuses to start otherwise.
     "allow_auto_on_production": false
   },
