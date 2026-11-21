@@ -2240,16 +2240,21 @@ antigravity_probe_or_open() {
     open -a Antigravity >/dev/null 2>&1 || rc=$?
   fi
   if [ "$rc" -eq 0 ]; then
-    while [ "$waited" -lt "$wait_s" ]; do
+    # Hạn theo đồng hồ thật (#1416 review): mỗi lượt probe tự tốn thời gian (node --doctor, ps có timeout), cộng poll_s là đếm thiếu.
+    local opened_at deadline
+    # +1: date +%s cắt phần lẻ giây, không cộng thì có lượt chỉ chờ được wait_s - 1 giây.
+    opened_at=$(date +%s); deadline=$((opened_at + wait_s + 1))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
       sleep "$poll_s"
-      waited=$((waited + poll_s))
       if out=$(antigravity_probe); then
+        waited=$(( $(date +%s) - opened_at ))
         [ -n "$stamp" ] && rm -f "$stamp" 2>/dev/null || true
         log "✅ Antigravity đã mở và nối được sau ${waited}s" >&2
         return 0
       fi
       [ "$poll_s" -gt 0 ] || break
     done
+    waited=$(( $(date +%s) - opened_at ))
   fi
   [ -n "$stamp" ] && { mkdir -p "$INFLIGHT_DIR" 2>/dev/null && printf '%s\n' "$now" >"$stamp"; } 2>/dev/null || true
   printf '%s\n' "runner đã tự mở Antigravity (lệnh mở exit ${rc}), chờ ${waited}s vẫn chưa nối được" "$out"

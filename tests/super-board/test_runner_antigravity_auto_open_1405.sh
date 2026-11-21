@@ -192,4 +192,25 @@ else
   fail "H: sweep did not self-open (rc=$rc $(dump))"
 fi
 
+# ── I (review #1416): mỗi lượt probe tốn thời gian thật (node --doctor, ps có timeout) ⇒ vòng chờ theo đồng hồ thật: tổng thời gian
+# chờ sau lệnh mở không vượt SB_ANTIGRAVITY_OPEN_WAIT_S quá một lượt probe + một nhịp poll (trước sửa: mỗi vòng chỉ cộng poll_s).
+cat > "$TMP/slow-probe.sh" <<'SH'
+#!/usr/bin/env bash
+echo x >> "$STUB_DIR/probe-calls"
+sleep 3
+echo "Antigravity language server: KHONG NOI DUOC — probe chậm"
+exit 1
+SH
+chmod +x "$TMP/slow-probe.sh"
+reset_run; set_card 1405
+export SB_ANTIGRAVITY_PROBE="$TMP/slow-probe.sh" SB_ANTIGRAVITY_OPEN_WAIT_S=3 SB_ANTIGRAVITY_OPEN_POLL_S=1
+t0=$(date +%s); rc=0; antigravity_probe_or_open >/dev/null 2>&1 || rc=$?; t1=$(date +%s)
+# Ngân sách: probe đầu (3 s) + chờ ≤ 4 s (3 s + phần lẻ giây) + một lượt poll+probe vượt mốc (4 s) = 11 s (+2 s cho máy tải nặng); đo thường ~8 s.
+# Trước sửa: 3 + 3 × (1 + 3) = 15 s.
+if [ "$rc" -ne 0 ] && [ "$(opens)" = "1" ] && [ $((t1 - t0)) -le 13 ]; then
+  ok "I: slow probes: the wait after opening is bounded by wall clock ($((t1 - t0))s, $(grep -c . "$TMP/probe-calls") probes)"
+else
+  fail "I: wait not bounded by wall clock (rc=$rc elapsed=$((t1 - t0))s $(dump))"
+fi
+
 [ "$FAILS" -eq 0 ] && { echo "PASS"; exit 0; } || { echo "FAIL ($FAILS)"; exit 1; }
