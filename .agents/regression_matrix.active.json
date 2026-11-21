@@ -4852,23 +4852,6 @@
       ]
     },
     {
-      "component": "super-board-scratch-antigravity-hooks-1404",
-      "watch_files": [
-        ".claude/bin/super-board-verify-flags.sh",
-        ".claude/bin/super-board-merge-gate.sh",
-        ".claude/bin/super-board-merge-train.sh",
-        "tests/super-board/test_merge_scratch_antigravity_hooks_1404.sh"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-SB-SCRATCH-AG-HOOKS-1404-01",
-          "name": "#1404: scratch của merge gate và merge train dựng đủ .agents/hooks/ theo tập agent của checkout chính / PR",
-          "command": "bash tests/super-board/test_merge_scratch_antigravity_hooks_1404.sh",
-          "parallel_safe": true
-        }
-      ]
-    },
-    {
       "component": "super-board-review-wait-agent-1399",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
@@ -4895,6 +4878,23 @@
           "id": "REG-SB-REBUILD-TOTAL-CAP-1400-01",
           "name": "#1400: trần tổng số vòng rebuild mỗi thẻ ở cả merge-queue lẫn sweep_cap_progress; rebase thuần không tốn trần",
           "command": "bash tests/super-board/test_merge_queue_rebuild_total_cap_1400.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-scratch-antigravity-hooks-1404",
+      "watch_files": [
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_merge_scratch_antigravity_hooks_1404.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SCRATCH-AG-HOOKS-1404-01",
+          "name": "#1404: scratch của merge gate và merge train dựng đủ .agents/hooks/ theo tập agent của checkout chính / PR",
+          "command": "bash tests/super-board/test_merge_scratch_antigravity_hooks_1404.sh",
           "parallel_safe": true
         }
       ]

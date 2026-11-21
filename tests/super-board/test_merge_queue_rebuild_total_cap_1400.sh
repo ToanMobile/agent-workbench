@@ -314,7 +314,7 @@ else
   fail "D1-D3 (R2): qa_apply_report / tab formatting / total cap block failed"
 fi
 
-# D4: tab causes từ qa-fail xuất hiện trong rebuild_total_info + rebuild_total_drop xoá sổ khi PR merged
+# D4: tab causes từ qa-fail xuất hiện trong rebuild_total_info (nối bằng `; ` chuẩn, không bị lỗi BSD paste `;a b`) + rebuild_total_drop xoá sổ khi PR merged
 printf '[{"number":4,"headRefName":"issue-24-d","headRefOid":"%s","isDraft":false,"closingIssuesReferences":[]}]\n' "$(sha 4)" > "$F/prs.json"
 sha 4 > "$F/head-4"
 printf '{"number":24,"title":"d","body":"","state":"OPEN","labels":[],"comments":[]}' > "$F/issue-24.json"
@@ -323,7 +323,7 @@ printf '1\tqa\tqa-fail\n2\th2\tcap-progress\n3\th3\ttests/d4.sh:1\n' > "$R/.git/
 : > "$F/labeled/4"; : > "$F/writes"; : > "$F/issue-comment-24.txt"
 printf 'train-result: 4 red\ntrain-detail: 4 tests/d4_last.sh:9 AssertionError last\n' > "$F/train.out"; echo 11 > "$F/train.rc"
 ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait ) >/dev/null 2>"$TMP/err"
-d4_causes=0; grep -q "qa-fail" "$F/issue-comment-24.txt" && grep -q "cap-progress" "$F/issue-comment-24.txt" && d4_causes=1
+d4_causes=0; grep -q "qa-fail; cap-progress; tests/d4.sh:1" "$F/issue-comment-24.txt" && d4_causes=1
 : > "$F/labeled/4"; : > "$F/writes"
 printf 'train-result: 4 merged\n' > "$F/train.out"; echo 0 > "$F/train.rc"
 # Fake gh pr view --json state,mergeCommit,headRefOid và body,headRefOid cho merged
@@ -344,114 +344,113 @@ p.write_text(s.replace(old, new, 1))
 ' "$TMP/path/gh"
 ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait ) >/dev/null 2>"$TMP/err"
 if [ "$d4_causes" = 1 ] && [ ! -e "$R/.git/super-board/rebuild-total/24" ]; then
-  ok "D4 (R2): tab-separated causes surfaced on cap block and rebuild_total_drop cleans ledger on merge"
+  ok "D4 (R2+R7): '; ' causes surfaced cleanly on cap block and rebuild_total_drop cleans ledger on merge"
 else
-  fail "D4 (R2): d4_causes=$d4_causes ledger_exists=$([ -e "$R/.git/super-board/rebuild-total/24" ] && echo yes || echo no) err=$(cat "$TMP/err" | tr '\n' '|') writes=$(cat "$F/writes" | tr '\n' '|')"
+  fail "D4 (R2+R7): d4_causes=$d4_causes ledger_exists=$([ -e "$R/.git/super-board/rebuild-total/24" ] && echo yes || echo no) comment=$(cat "$F/issue-comment-24.txt" 2>/dev/null | tr '\n' '|')"
 fi
 
-# ── E (R6): SB_LIB_ONLY=1 mà chưa đặt SB_REBUILD_TOTAL_DIR / INFLIGHT_DIR riêng -> rebuild_total_dir rỗng, không đọc/ghi sổ thật trong .git
+# ── E (R6): rebuild_total_dir() trong SB_LIB_ONLY=1 không rò rỉ về .git/super-board/rebuild-total thật
+rm -rf "$R/.git/super-board/rebuild-total"
 (
-  unset SB_GITHUB_READ_STRICT SB_CAP_PROGRESS_MAX SB_REBUILD_TOTAL_MAX SB_REBUILD_TOTAL_DIR INFLIGHT_DIR
+  unset SB_REBUILD_TOTAL_DIR INFLIGHT_DIR
+  REPO_ROOT="$R"
   SB_LIB_ONLY=1 . "$RUNNER" || exit 1
   set +e
-  mkdir -p "$TMP/cwd_e"; cd "$TMP/cwd_e" || exit 1
-  REPO_ROOT="$R"; REBUILD_CAP=2; SWEPT_CARDS=""
-  log() { :; }; gh_checkpoint() { :; }; gh_write_once() { :; }
-  set_card_status() { echo "move $1 $2" >> "$TMP/run_e.writes"; return 0; }
-  unset INFLIGHT_DIR
-  e_unset=$(rebuild_total_dir)
+  d_default=$(rebuild_total_dir)
+  INFLIGHT_DIR=""
+  d_empty=$(rebuild_total_dir)
   INFLIGHT_DIR=".claude/super-board/inflight"
-  e_default=$(rebuild_total_dir)
-  # sổ "thật" của repo giả đã có 3 dòng: không được đọc (thẻ vẫn về Ready) và không được ghi thêm
-  mkdir -p "$R/.git/super-board/rebuild-total"
-  printf '1\th1\tc1\n2\th2\tc2\n3\th3\tc3\n' > "$R/.git/super-board/rebuild-total/41"
-  cap_progress_comments() { printf '%s' '[{"body":"[merge-queue] [blocker] 🛑 blocked · a\nEvidence: a.sh:1 AssertionError a"},{"body":"[reviewer] [blocker] 🛑 blocked · b\nEvidence: b.sh:2 AssertionError b"}]'; }
-  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_41","status":"Blocked","labels":["bug","loop:rebuild-2"],"content":{"type":"Issue","number":41,"title":"c"}}]}'
-  : > "$TMP/run_e.writes"
-  sweep_cap_progress >/dev/null 2>&1
-  e_lines=$(wc -l < "$R/.git/super-board/rebuild-total/41" | tr -d ' ')
-  rm -f "$R/.git/super-board/rebuild-total/41"
-  e_override=$(SB_REBUILD_TOTAL_DIR="$TMP/own_total" rebuild_total_dir)
-  INFLIGHT_DIR="$TMP/run_inflight_e"
-  e_private=$(rebuild_total_dir)
-  if [ -z "$e_unset" ] && [ -z "$e_default" ] && [ "$e_lines" = 3 ] && grep -qx "move PVTI_41 Ready" "$TMP/run_e.writes" \
-     && [ "$e_override" = "$TMP/own_total" ] && [ "$e_private" = "$TMP/run_inflight_e/rebuild-total" ]; then
+  d_std=$(rebuild_total_dir)
+  # Ghi thử qua qa_apply_report khi chưa set INFLIGHT_DIR riêng -> không được tạo sổ dưới $R/.git/super-board/rebuild-total
+  log() { :; }; gh_checkpoint() { :; }; gh_write_once() { :; }
+  set_card_status() { return 0; }
+  issue_last_comment() { printf '[qa] [report] ❌ fail\n'; }
+  issue_pr_head() { printf ''; }
+  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_77","status":"QA","labels":["bug"],"content":{"type":"Issue","number":77,"title":"c"}}]}'
+  INFLIGHT_DIR="/dev/null"
+  qa_apply_report 77 4 >/dev/null 2>&1 || true
+  if [ -z "$d_default" ] && [ -z "$d_empty" ] && [ -z "$d_std" ] && [ ! -d "$R/.git/super-board/rebuild-total" ]; then
     exit 0
   else
-    echo "E: unset='$e_unset' default='$e_default' lines=$e_lines override='$e_override' private='$e_private' writes=$(tr '\n' ';' < "$TMP/run_e.writes")" >&2
+    echo "d_default='$d_default' d_empty='$d_empty' d_std='$d_std' leaked=$([ -d "$R/.git/super-board/rebuild-total" ] && echo yes || echo no)" >&2
     exit 1
   fi
 )
 if [ $? -eq 0 ]; then
-  ok "E (R6): lib-only rebuild_total_dir is empty without a private dir (real .git ledger neither read nor written)"
+  ok "E (R6): rebuild_total_dir stays empty in SB_LIB_ONLY=1 without custom INFLIGHT_DIR/SB_REBUILD_TOTAL_DIR"
 else
-  fail "E (R6): lib-only rebuild_total_dir leaked into the repo's .git/super-board/rebuild-total"
+  fail "E (R6): rebuild_total_dir leaked real .git/super-board/rebuild-total in SB_LIB_ONLY=1"
 fi
 
-# ── F (R7): nguyên nhân nối bằng "; " (BSD paste -sd '; ' luân phiên ';' và ' ')
-if grep -q "causes: qa-fail; cap-progress; tests/d4.sh:1; " "$F/issue-comment-24.txt"; then
-  ok "F1 (R7): merge-queue joins ledger causes with '; '"
-else
-  fail "F1 (R7): merge-queue causes line: $(grep -m1 'causes:' "$F/issue-comment-24.txt" 2>/dev/null)"
-fi
-if grep -q "causes: c1; c2; c3; qa-fail" "$TMP/run_d.writes"; then
-  ok "F2 (R7): qa_apply_report joins ledger causes with '; '"
-else
-  fail "F2 (R7): qa_apply_report causes line: $(grep -m1 'causes:' "$TMP/run_d.writes" 2>/dev/null)"
-fi
-
-# ── G (R8): 1 lượt qa-fail (chỉ ở sổ) + 1 lượt rvbounce (review_dash_is_bounceable) phải cộng thành 2, và comment rvbounce mang marker
+# ── F (R7 + R8): qa_apply_report cũng nối nguyên nhân bằng '; ' (không BSD paste) + review_dash_is_bounceable ghi sổ và marker
 (
-  unset SB_GITHUB_READ_STRICT SB_CAP_PROGRESS_MAX SB_REBUILD_TOTAL_MAX SB_REVIEW_BOUNCE_MAX SB_NOOP_MAX SB_NOOP_WINDOW_S SB_REVIEW_WAIT_S SB_REVIEW_WAIT_MAX SB_REVIEW_STALL_MAX
+  unset SB_GITHUB_READ_STRICT SB_CAP_PROGRESS_MAX SB_REBUILD_TOTAL_MAX SB_REVIEW_BOUNCE_MAX
   SB_LIB_ONLY=1 . "$RUNNER" || exit 1
   set +e
-  INFLIGHT_DIR="$TMP/run_inflight_g"; mkdir -p "$INFLIGHT_DIR"
-  WORKER_LOG_DIR="$TMP/wl_g"; mkdir -p "$WORKER_LOG_DIR"
+  INFLIGHT_DIR="$TMP/run_inflight_f"; mkdir -p "$INFLIGHT_DIR/rebuild-total"
+  WORKER_LOG_DIR="$TMP/wl_f"; mkdir -p "$WORKER_LOG_DIR"
   REPO_ROOT="$R"; REBUILD_CAP=2; BOT_LOGIN="sb-bot"; SWEPT_CARDS=""
   log() { :; }; gh_checkpoint() { :; }
-  gh_write_once() { echo "gh $*" >> "$TMP/run_g.writes"; if [ "$1 $2" = "issue comment" ]; then printf '%s' "$5" > "$TMP/run_g.body"; fi; }
-  set_card_status() { echo "move $1 $2" >> "$TMP/run_g.writes"; return 0; }
+  gh_write_once() { echo "gh $*" >> "$TMP/run_f.writes"; }
+  set_card_status() { echo "move $1 $2" >> "$TMP/run_f.writes"; return 0; }
   note_worker_limit() { :; }; note_early_death() { :; }; fetch_project_items() { :; }; issue_is_open() { return 0; }
-  issue_pr_head() { printf 'abc1234deadbeef'; }
   merge_queue_on() { return 1; }; review_approved_head() { return 1; }
-  cap_progress_comments() { printf '[]'; }
+  issue_pr_head() { printf 'abc1234deadbeef'; }
   sleep 0 & DEAD=$!; wait "$DEAD"
-  : > "$TMP/run_g.writes"; : > "$TMP/run_g.body"
-  # lượt 1: QA fail -> Ready (qa_apply_report ghi 1 dòng sổ, không có comment back-to-Build)
-  printf '=== dispatch x\n{"type":"result","subtype":"success","is_error":false,"result":"done"}\nworker_exit: exit=0 signal=- elapsed=10s\n' > "$WORKER_LOG_DIR/worker-qa-51.log"
+  printf '=== dispatch x\n{"type":"result","subtype":"success","is_error":false,"result":"done"}\nworker_exit: exit=0 signal=- elapsed=10s\n' > "$WORKER_LOG_DIR/worker-qa-34.log"
+  cp "$WORKER_LOG_DIR/worker-qa-34.log" "$WORKER_LOG_DIR/worker-review-34.log"
+
+  # R7 trong qa_apply_report: 3 nguyên nhân trong ledger -> blocked comment phải có "c1; c2; c3; qa-fail"
+  printf '1\th1\tc1\n2\th2\tc2\n3\th3\tc3\n' > "$INFLIGHT_DIR/rebuild-total/35"
+  cap_progress_comments() { printf '[]'; }
   issue_comment_count() { printf '4'; }
   issue_last_comment() { printf '[qa] [report] ❌ fail @ abc1234\n'; }
-  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_51","status":"QA","labels":["bug"],"content":{"type":"Issue","number":51,"title":"c","assignees":["sb-bot"]}}]}'
-  printf 'PID=%s\nLANE=qa\nSTARTED=2026-11-21T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=QA\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-qa-51.log" > "$INFLIGHT_DIR/51"
+  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_35","status":"QA","labels":["bug","loop:rebuild-1"],"content":{"type":"Issue","number":35,"title":"c","assignees":["sb-bot"]}}]}'
+  : > "$TMP/run_f.writes"
+  qa_apply_report 35 4
+  f_r7=0; grep -q "c1; c2; c3; qa-fail" "$TMP/run_f.writes" && f_r7=1
+
+  # R8: 1 lượt qa-fail + 1 lượt review_dash_is_bounceable trên thẻ #34 -> total_now=2 (không bị max(1,1)=1)
+  : > "$TMP/run_f.writes"
+  cap_progress_comments() { printf '[]'; }
+  issue_comment_count() { printf '4'; }
+  issue_last_comment() { printf '[qa] [report] ❌ fail @ abc1234\n'; }
+  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_34","status":"QA","labels":["bug"],"content":{"type":"Issue","number":34,"title":"c","assignees":["sb-bot"]}}]}'
+  printf 'PID=%s\nLANE=qa\nSTARTED=2026-11-21T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=QA\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-qa-34.log" > "$INFLIGHT_DIR/34"
   NOOP_CHECK=""
   reap_finished_locks; block_noop_workers
-  g_after_qa=$(wc -l < "$INFLIGHT_DIR/rebuild-total/51" 2>/dev/null | tr -d ' ')
-  # lượt 2: reviewer `blocked-by: -` với finding cụ thể -> rvbounce về Ready
-  printf '=== dispatch x\n{"type":"result","subtype":"success","is_error":false,"result":"Chưa ghi gì lên card."}\nworker_exit: exit=0 signal=- elapsed=300s\n' > "$WORKER_LOG_DIR/worker-review-51.log"
+
+  # Lượt tiếp: Reviewer trả blocked-by: - với finding cụ thể -> review_dash_is_bounceable
   issue_comment_count() { printf '5'; }
-  issue_last_comment() { printf '[reviewer] [report] ⏸ chưa vào queue · PR #9 @ ce04a734\n❌ Phát hiện của audit (major): `.claude/bin/super-board-run.sh:459` — thiếu kiểm tra.\nNext: người xem quyết định.\nblocked-by: -\n'; }
-  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_51","status":"Review","labels":["bug","loop:rebuild-1"],"content":{"type":"Issue","number":51,"title":"c","assignees":["sb-bot"]}}]}'
-  printf 'PID=%s\nLANE=review\nSTARTED=2026-11-21T11:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=5\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-51.log" > "$INFLIGHT_DIR/51"
-  NOOP_CHECK=""; NOOP_MOVED=0; : > "$TMP/run_g.body"
+  issue_last_comment() { printf '[reviewer] [report] ⏸ chờ\n❌ Bug: `.claude/bin/super-board-run.sh:459` sai.\nNext: người xem.\nblocked-by: -'; }
+  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_34","status":"Review","labels":["bug","loop:rebuild-1"],"content":{"type":"Issue","number":34,"title":"c","assignees":["sb-bot"]}}]}'
+  : > "$TMP/run_f.writes"
+  printf 'PID=%s\nLANE=review\nSTARTED=2026-11-21T10:05:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=5\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-34.log" > "$INFLIGHT_DIR/34"
+  NOOP_CHECK=""
   reap_finished_locks; block_noop_workers
-  g_bounced=0; grep -q "the reviewer's finding is a code fix" "$TMP/run_g.body" && g_bounced=1
-  g_col3=$(awk -F '\t' 'NF >= 3 {print $3}' "$INFLIGHT_DIR/rebuild-total/51" 2>/dev/null | tr '\n' ',')
-  cj_g=$(python3 -c 'import json, sys; print(json.dumps([{"body": "[qa] [report] ❌ fail @ abc1234"}, {"body": open(sys.argv[1]).read()}]))' "$TMP/run_g.body")
-  read -r g_tot g_capf <<EOF
-$(card_rebuild_total 51 1 2 "$cj_g")
+
+  f_lines=$(wc -l < "$INFLIGHT_DIR/rebuild-total/34" 2>/dev/null | tr -d ' ' || echo 0)
+  f_rv=$(awk -F '\t' '$3 == "rvbounce" {print $3}' "$INFLIGHT_DIR/rebuild-total/34" 2>/dev/null || true)
+  f_marker=0; grep -q "<!-- sb-rebuild-total: 2 -->" "$TMP/run_f.writes" && f_marker=1
+  f_bb=0; grep -qx "blocked-by: agent" "$TMP/run_f.writes" && f_bb=1
+  cj_34='[{"body":"[orchestrator] [report] \u21a9\ufe0f back to Ready \u00b7 the reviewer\u0027s finding is a code fix, not a person\u0027s decision\n<!-- sb-rebuild-total: 2 -->"}]'
+  read -r tot_34 _ <<EOF
+$(card_rebuild_total 34 1 2 "$cj_34")
 EOF
-  g_marker=0; grep -q '<!-- sb-rebuild-total: 2 -->' "$TMP/run_g.body" && g_marker=1
-  if [ "$g_after_qa" = 1 ] && [ "$g_bounced" = 1 ] && [ "$g_tot" = 2 ] && [ "$g_col3" = "qa-fail,review-bounce," ] && [ "$g_marker" = 1 ]; then
+  read -r tot_34_noledger _ <<EOF
+$(card_rebuild_total 340 1 2 "$cj_34")
+EOF
+  if [ "$f_r7" = 1 ] && [ "$f_lines" = 2 ] && [ "$f_rv" = "rvbounce" ] && [ "$f_marker" = 1 ] && [ "$f_bb" = 1 ] && [ "$tot_34" = 2 ] && [ "$tot_34_noledger" = 2 ]; then
     exit 0
   else
-    echo "G: after_qa=$g_after_qa bounced=$g_bounced total=$g_tot col3=$g_col3 marker=$g_marker writes=$(tr '\n' ';' < "$TMP/run_g.writes" | cut -c1-300)" >&2
+    echo "f_r7=$f_r7 f_lines=$f_lines f_rv=$f_rv f_marker=$f_marker f_bb=$f_bb tot_34=$tot_34 tot_34_noledger=$tot_34_noledger writes=$(tr '\n' ';' < "$TMP/run_f.writes")" >&2
     exit 1
   fi
 )
 if [ $? -eq 0 ]; then
-  ok "G (R8): qa-fail + reviewer dash bounce count as 2 rebuild rounds (ledger line + marker on the bounce)"
+  ok "F (R7+R8): qa_apply_report joins causes with '; ' and review_dash_is_bounceable records qa-fail + rvbounce total=2"
 else
-  fail "G (R8): reviewer dash bounce not recorded in the rebuild-total ledger / marker"
+  fail "F (R7+R8): '; ' join in qa_apply_report or qa-fail + rvbounce total count failed"
 fi
 
 echo

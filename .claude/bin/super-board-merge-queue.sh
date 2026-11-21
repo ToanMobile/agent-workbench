@@ -323,7 +323,8 @@ print("bounce_n=" + str(bounce_n))
 print("comment_causes=" + shlex.quote("; ".join(dict.fromkeys(causes))[:300]))
 ' 2>/dev/null || echo "marker_n=0 bounce_n=0 comment_causes=''")"
   if [ -f "$lf" ]; then
-    causes=$(awk -F '\t' 'NF >= 3 {print $3}' "$lf" 2>/dev/null | awk '!seen[$0]++ {out = (out == "" ? $0 : out "; " $0)} END {print out}' | cut -c1-300)   # awk nối bằng "; ": BSD `paste -sd '; '` cho ra `a;b c` (đo trên macOS 21/11)
+    # Dùng awk nối `; ` thay cho `paste -sd '; '` (BSD paste trên macOS xen kẽ `;` và dấu cách).
+    causes=$(awk -F '\t' 'NF >= 3 && !seen[$3]++ {out = (out == "" ? $3 : out "; " $3)} END {print substr(out, 1, 300)}' "$lf" 2>/dev/null)
   fi
   [ -n "$causes" ] || causes="${comment_causes:-}"
   total=$ledger_n
