@@ -88,6 +88,8 @@ run_discover() {
 # Case 1: argv moi (--read_host_bridge_token_from_stdin, khong --csrf_token) + hub_63286.json khop pid -> ca discover va probe deu PASS
 cat > "$TMP/bin/ps" <<'SH'
 #!/usr/bin/env sh
+# Hoi gio bat dau (-o lstart= -p <pid>): tien trinh gia bat dau tu 1970, cu hon file hub_*.json cua test.
+case "$*" in *lstart=*) echo 'Thu Jan  1 00:00:01 1970'; exit 0 ;; esac
 printf '%s\n' '78760 /Applications/Antigravity.app/Contents/Resources/bin/language_server --standalone --app_data_dir antigravity --host_bridge_url=http://127.0.0.1:63281 --read_host_bridge_token_from_stdin'
 SH
 chmod +x "$TMP/bin/ps"

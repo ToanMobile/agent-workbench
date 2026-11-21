@@ -2184,6 +2184,60 @@ antigravity_probe() {
   return 1
 }
 
+antigravity_ls_running() {
+  # 0 khi máy có ít nhất một tiến trình language_server --standalone của Antigravity (app đang mở).
+  local ps_out
+  ps_out=$(ps -ww -A -o command= 2>/dev/null || true)
+  grep -qE 'language_server.*--standalone' <<<"$ps_out"
+}
+
+antigravity_probe_or_open() {
+  # #1405 (chủ repo 21/11: "tự mở lên đi chứ"): probe; trượt mà KHÔNG có tiến trình language_server nào thì runner tự mở app
+  # (`open -a Antigravity`, test tiêm lệnh khác qua SB_ANTIGRAVITY_OPEN_CMD), probe lại mỗi SB_ANTIGRAVITY_OPEN_POLL_S giây (5) tới khi
+  # nối được hoặc hết SB_ANTIGRAVITY_OPEN_WAIT_S giây (90). In chẩn đoán của lần probe cuối, trả 0 khi nối được.
+  # Mở trượt thì nghỉ SB_ANTIGRAVITY_OPEN_COOLDOWN_S giây (600) mới mở lại, để mỗi tick không đứng chờ thêm một lượt.
+  local out rc=0 waited=0 now last=0 stamp=""
+  local wait_s="${SB_ANTIGRAVITY_OPEN_WAIT_S:-90}" poll_s="${SB_ANTIGRAVITY_OPEN_POLL_S:-5}" cooldown_s="${SB_ANTIGRAVITY_OPEN_COOLDOWN_S:-600}"
+  out=$(antigravity_probe) && return 0
+  # Test (runner nạp kiểu SB_LIB_ONLY, hoặc probe giả SB_ANTIGRAVITY_PROBE) chỉ mở bằng lệnh giả: thiếu SB_ANTIGRAVITY_OPEN_CMD thì
+  # không gọi `open` của máy.
+  if [ "${SB_ANTIGRAVITY_AUTO_OPEN:-1}" = "0" ] || antigravity_ls_running \
+     || { [ -z "${SB_ANTIGRAVITY_OPEN_CMD:-}" ] && [ "${SB_SLOT_LIB_MODE:-0}" = "1" ]; } \
+     || { [ -z "${SB_ANTIGRAVITY_OPEN_CMD:-}" ] && [ -n "${SB_ANTIGRAVITY_PROBE:-}" ]; }; then
+    printf '%s\n' "$out"
+    return 1
+  fi
+  now=$(date +%s)
+  [ -n "${INFLIGHT_DIR:-}" ] && stamp="$INFLIGHT_DIR/antigravity-open-at"
+  [ -n "$stamp" ] && [ -f "$stamp" ] && last=$(cat "$stamp" 2>/dev/null || true)
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  if [ $((now - last)) -lt "$cooldown_s" ]; then
+    printf '%s\n' "runner đã tự mở Antigravity $((now - last))s trước mà chưa nối được; chưa mở lại (nghỉ ${cooldown_s}s)" "$out"
+    return 1
+  fi
+  log "🚀 Antigravity chưa mở (không có tiến trình language_server) — runner tự mở app, chờ tối đa ${wait_s}s" >&2
+  if [ -n "${SB_ANTIGRAVITY_OPEN_CMD:-}" ]; then
+    bash -c "$SB_ANTIGRAVITY_OPEN_CMD" >/dev/null 2>&1 || rc=$?
+  else
+    open -a Antigravity >/dev/null 2>&1 || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    while [ "$waited" -lt "$wait_s" ]; do
+      sleep "$poll_s"
+      waited=$((waited + poll_s))
+      if out=$(antigravity_probe); then
+        [ -n "$stamp" ] && rm -f "$stamp" 2>/dev/null || true
+        log "✅ Antigravity đã mở và nối được sau ${waited}s" >&2
+        return 0
+      fi
+      [ "$poll_s" -gt 0 ] || break
+    done
+  fi
+  [ -n "$stamp" ] && { mkdir -p "$INFLIGHT_DIR" 2>/dev/null && printf '%s\n' "$now" >"$stamp"; } 2>/dev/null || true
+  printf '%s\n' "runner đã tự mở Antigravity (lệnh mở exit ${rc}), chờ ${waited}s vẫn chưa nối được" "$out"
+  return 1
+}
+
 review_needs_antigravity() {
   # 0 khi thẻ Review #$1 cần audit qua Antigravity (không chạy nhánh claude-verify thuần).
   local issue="$1" pr="" head="" branch="" prs base_ref issue_n=-1
@@ -2288,7 +2342,7 @@ review_antigravity_preflight() {
     fi
     return 1
   fi
-  if ! probe_err=$(antigravity_probe); then
+  if ! probe_err=$(antigravity_probe_or_open); then
     probe_err=$(printf '%s' "$probe_err" | tr '\n' ' ' | cut -c1-240)
     if antigravity_block_card "$issue" "$item_id" "$title" "closed" \
          "${probe_err:-pm_doctor: Khong thay tien trinh Antigravity language_server nao dang chay.}" \
@@ -3859,7 +3913,7 @@ ${prev_rev}"
       probe_checked=1
       if ( POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
            resolve_worker_account >/dev/null 2>&1 || { POOL_ENGINE="claude"; POOL_CFG=""; }
-           antigravity_can_provide_mcp "${POOL_CFG:-}" "${POOL_ENGINE:-claude}" && antigravity_probe >/dev/null 2>&1 ); then
+           antigravity_can_provide_mcp "${POOL_CFG:-}" "${POOL_ENGINE:-claude}" && antigravity_probe_or_open >/dev/null 2>&1 ); then
         probe_ok=1
       else
         probe_ok=0
