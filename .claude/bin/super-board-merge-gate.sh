@@ -1226,33 +1226,11 @@ fi
 # --no-githooks: cài vào scratch không ghi đè hook git dùng chung của repo.
 DK_MAIN=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p') || true
 DK_INSTALL=""
-for c in "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "${DK_MAIN:-$REPO_PATH}/universal-agent-devkit" \
-         "${DK_MAIN:-$REPO_PATH}/.agents/devkit"; do
-  if [ -f "$c/bin/install.sh" ]; then DK_INSTALL="$c/bin/install.sh"; break; fi
-done
-if [ -n "$DK_INSTALL" ]; then
-  DK_RC=0
-  # Idle #18: install.sh ghi .mcp.json / mcp_config.json; ở repo không track cũng không ignore chúng, file đó thành "thay đổi" của PR và
-  # verify exit 2. Chụp file chưa track (không ignore) trước và sau khi cài, xoá phần install.sh thêm. File của PR đã track nên không nằm
-  # trong danh sách; file bị ignore mà verify cần (.agents/devkit) cũng không.
-  DK_UNTRACKED_BEFORE=$(git -C "$SCRATCH" ls-files -z --others --exclude-standard | tr '\0' '\n' | LC_ALL=C sort) || true
-  bash "$DK_INSTALL" -t "$SCRATCH" -a claude -y --no-githooks >"$VERIFY_LOG" 2>&1 || DK_RC=$?
+if sb_install_scratch_devkit "$REPO_PATH" "${DK_MAIN:-$REPO_PATH}" "$SCRATCH" "$VERIFY_LOG"; then
+  DK_INSTALL="$SB_DK_INSTALL"
+  DK_RC="$SB_DK_RC"
   [ "$DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed (exit ${DK_RC}): $(tail -3 "$VERIFY_LOG" | clip 300)"
-  git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
-  # Nhiều lượt: repo không track .gitignore thì install.sh tạo một .gitignore chưa track che .agents/context/*; xoá nó ở lượt 1 làm các file
-  # đó lộ ra ở lượt 2. .agents/devkit không bao giờ xoá (verify cần nó; repo không ignore nó thì như trước khi có bước này).
-  for _dk_pass in 1 2 3; do
-    DK_NEW=$(git -C "$SCRATCH" ls-files -z --others --exclude-standard | LC_ALL=C tr '\0' '\n' | LC_ALL=C sort \
-      | LC_ALL=C comm -13 <(printf '%s\n' "$DK_UNTRACKED_BEFORE") -) \
-      || { say "could not list the files the DevKit install left untracked in the scratch tree; verify may count them"; break; }
-    DK_NEW=$(printf '%s\n' "$DK_NEW" | grep -v '^\.agents/devkit\(/\|$\)' || true)
-    [ -n "$DK_NEW" ] || break
-    while IFS= read -r f; do
-      [ -z "$f" ] || rm -f -- "$SCRATCH/$f" || true
-    done <<<"$DK_NEW"
-  done
 else
-  : >"$VERIFY_LOG"
   say "no DevKit install.sh in ${REPO_PATH} or ${DK_MAIN:-the main checkout}: the scratch tree has no .agents/devkit"
 fi
 # Config cục bộ bị git ignore (google-services.json, local.properties…) để build trong SCRATCH không đỏ vì môi trường.
@@ -2091,6 +2069,11 @@ while :; do
     old_base=$BASE_SHA
     BASE_SHA=$BASE_NOW
     merge_scratch_onto "$BASE_SHA"
+    # Nếu base vừa dời thêm cầu nối agent (.agents/hooks.json…) mà main/PR trước đó chưa có, cài bổ sung .agents/hooks/ trước khi verify lại.
+    if sb_ensure_scratch_bridge_hooks "$REPO_PATH" "${DK_MAIN:-$REPO_PATH}" "$SCRATCH" "$VERIFY_LOG"; then
+      DK_INSTALL="$SB_DK_INSTALL"
+      [ "$SB_DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed (exit ${SB_DK_RC}): $(tail -3 "$VERIFY_LOG" | clip 300)"
+    fi
     prove_tree
     if [ "$TREE_PROVED" -eq 1 ] || [ "$TRAIN_PROVED" -eq 1 ]; then
       say "base moved ${old_base:0:12} -> ${BASE_SHA:0:12} during verify; merge(BASE_NOW, head) already has a receipt: not verifying again"
