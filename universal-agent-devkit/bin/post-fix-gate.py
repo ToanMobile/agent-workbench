@@ -5787,10 +5787,17 @@ def infra_failure(output) -> bool:
 # thành REG-CAR-01 FAIL). Chỉ thông báo của bộ lọc include của Gradle, không phải mọi kiểu "0 test".
 NARROW_NO_TESTS_RE = re.compile(r"No tests found for given includes")
 _GRADLE_CMD_RE = re.compile(r"(?:^|[\s;|&(])(?:\S*/)?gradlew?(?=$|\s)")
-_GRADLE_TASK_LINE_RE = re.compile(r"^(?:> Task )?([\w:.-]*:[\w.-]+)(?:[^\S\n]+([A-Z-]+))?[^\S\n]*$", re.M)
+# Dòng task: `> Task :app:x [OUTCOME]` hoặc (--dry-run / -q) `:app:x [OUTCOME]` bắt đầu bằng dấu `:`.
+# Không có `> Task ` thì BẮT BUỘC dấu `:` đầu: dòng log thường (`10:30`, `INFO:ready`) không phải dòng task (review #1403 R2).
+_GRADLE_TASK_LINE_RE = re.compile(r"^(?:> Task (?=\S)|(?=:))([\w:.-]*:[\w.-]+)(?:[^\S\n]+([A-Z-]+))?[^\S\n]*$", re.M)
 _GRADLE_NON_TEST_TASK_RE = re.compile(
     r"^(?:compile|process|merge|package|generate|transform|bundle|strip|extract|create\w*Coverage|"
     r"lint|ktlint|detekt|assemble|testClasses|testFixtures)", re.I)
+# Chỉ task THỰC SỰ chạy test: `test`, `test<Variant>UnitTest`, `connected…AndroidTest`, `<target>Test(s)` (KMP jvmTest, integrationTest), `allTests`.
+# Task chuẩn bị/report mang chữ Test (preDebugUnitTestBuild, javaPreCompileDebugUnitTest, ksp/kaptDebugUnitTestKotlin,
+# mapDebugUnitTestSourceSetPaths, checkDebugAndroidTestAarMetadata, jacocoTestReport) KHÔNG khớp (review #1403 R1).
+_GRADLE_RUN_TEST_TASK_RE = re.compile(
+    r"^(?:test(?!Classes$|Fixtures)\w*|connected\w*AndroidTest|(?:(?!Unit|AndroidTest)\w)*Tests?|allTests)$")
 _GRADLE_ZERO_TESTS_RE = re.compile(
     r"No tests found for given includes|(?<!\d)0 tests? completed\b|Ran 0 tests\b|\bno tests ran\b|"
     r"0 tests? executed\b|\bNo tests found\b", re.I)
@@ -5802,7 +5809,7 @@ def _is_gradle_test_task_token(tok: str) -> bool:
     leaf = (tok or "").rsplit(":", 1)[-1]
     if not leaf or _GRADLE_NON_TEST_TASK_RE.search(leaf):
         return False
-    return "test" in leaf.lower()
+    return bool(_GRADLE_RUN_TEST_TASK_RE.match(leaf))
 
 
 def _gradle_test_segment(cmd: str) -> tuple:
@@ -7331,7 +7338,7 @@ def merge_gate_slots_floor() -> int:
 
 def _detect_flaky_suites(regression_tests, really_ran, git_dir, fp):
     """Trả danh sách id suite chập chờn (flaky): vừa từ flaky_retry trong cùng lượt vừa từ đỏ-rồi-xanh hai lượt cùng fp.
-    Loại lượt trước có infra / env_blocked / killed_from_outside hoặc exit_reason khác fail."""
+    Loại lượt trước có infra / env_blocked hoặc exit_reason khác fail (lượt bị kill từ ngoài ghi exit_reason khác fail)."""
     found = []
     seen = set()
     for t in regression_tests:
@@ -7352,7 +7359,7 @@ def _detect_flaky_suites(regression_tests, really_ran, git_dir, fp):
     for rec in recs:
         if (rec.get("fp") != fp or rec.get("exit") != 1 or rec.get("verdict") != "FAIL"
                 or rec.get("exit_reason") != "fail"
-                or rec.get("infra") or rec.get("env_blocked") or rec.get("killed_from_outside")):
+                or rec.get("infra") or rec.get("env_blocked")):
             continue
         for s in rec.get("suites") or ():
             if isinstance(s, (list, tuple)) and len(s) >= 2 and s[1] == "FAIL":
@@ -8878,8 +8885,6 @@ def main():
         exists = os.path.lexists(rerun_path)
         if getattr(args, "force", False):
             return "force"
-        if getattr(args, "force_full", False):
-            return "force_full"
         if not (hygiene_ok and anti_laziness_ok and deps_ok and settings_ok):
             return "static_fail"
         if edited_early or tests_touched:
@@ -9162,7 +9167,7 @@ def main():
                 run_suite(t, t["command"], t.get("mode") or "full", suite_env())
             return
         for k in ("status", "exit_code", "output_tail", "log", "flaky", "infra", "infra_retry",
-                  "env_blocked", "vacuity", "fail_lines"):
+                  "env_blocked", "vacuity", "fail_lines", "no_tests_ran"):
             if k in prev:
                 t[k] = prev[k]
         t["duration"] = prev.get("duration") or "0s"   # its real cost, for pre-commit's light-suite pick
@@ -10036,10 +10041,10 @@ def main():
     # named; it is not the verdict of this change (only a failure of it is). Chỉ UNTESTED do chính suite báo "không chạy được ở
     # máy này" (untested_exit) mới đứng ngoài kết luận; nhãn SLOT / BUSY / BUDGET / STALE vào tests_untested (exit 4). P1 20/10: slot
     # theo từng suite khiến một suite STALE có thể bị SLOT trong khi suite khác PASS (tests/gates/test_gate_slot_classes.sh ca 8).
-    _not_here = ("SLOT", "BUSY", "BUDGET", "STALE", "NO_TESTS")
+    _not_here = ("SLOT", "BUSY", "BUDGET", "STALE", "NO_TESTS")   # suite dùng chung lệnh NO_TESTS mang nhãn "NO_TESTS (cùng lệnh…)": nhận biết qua t["no_tests_ran"]
     # suite cached-full (keyed_full) cùng luật: STALE (recheck thấy FAIL mới trên khoá của nó) phải vào kết luận (Antigravity 20/10)
     stale_skipped = [t for t in regression_tests if t["status"] == "UNTESTED"
-                     and (t.get("stale_rerun") or t.get("keyed_full") or t.get("known_red")) and t.get("label") not in _not_here]
+                     and (t.get("stale_rerun") or t.get("keyed_full") or t.get("known_red")) and t.get("label") not in _not_here and not t.get("no_tests_ran")]
     tests_untested = [t for t in regression_tests if t["status"] == "UNTESTED" and t not in stale_skipped]
     if stale_skipped:
         log_warn(tr("Suite STALE không chạy được trên máy này (vẫn STALE, không tính vào kết luận): ",
@@ -10181,7 +10186,7 @@ def main():
         receipt_untested = sorted({t["id"] or "?" for t in regression_tests if t["status"] == "UNTESTED"}) if lock_held else None
         names = ", ".join(t["id"] or "?" for t in tests_untested)
         stale_names = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "STALE")
-        no_tests_names = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "NO_TESTS")
+        no_tests_names = ", ".join(t["id"] or "?" for t in tests_untested if t.get("no_tests_ran"))
         if stale_names:
             verdict_text = tr(
                 f"UNTESTED — PASS dùng lại của {stale_names} không còn đứng vững (file đã xác nhận nó đã đổi/biến mất trong lúc gate chạy): chạy lại gate; KHÔNG phải PASS",
