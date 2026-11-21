@@ -44,6 +44,17 @@ _ASSERT = re.compile(
     # Kotlin's assert(cond) (Gradle runs tests with -ea) and JUnit/kotlin.test fail(…)
     r"|\bassert\s*\(|\bfail\s*\("
 )
+# Roborazzi (#1415): captureRoboImage chỉ là oracle ở chế độ verify (-Proborazzi.test.verify=true: lệch baseline ⇒ test FAIL);
+# ở chế độ record nó không bao giờ fail. Chỉ tính lời gọi thật: comment và chuỗi JVM bị bỏ trước khi dò (_JVM_NONCODE).
+_CAPTURE = re.compile(r"\bcaptureRoboImage\s*\(")
+# ponytail: code trong "${…}" của chuỗi Kotlin bị bỏ cùng chuỗi (capture ở đó vẫn bị báo rỗng); cần thì tách template
+_JVM_NONCODE = re.compile(
+    r'"""[\s\S]*?(?:"""|\Z)'
+    r'|"(?:\\.|[^"\\\n])*"?'
+    r"|'(?:\\.|[^'\\\n])+'"
+    r"|//[^\n]*"
+    r"|/\*[\s\S]*?(?:\*/|\Z)"
+)
 # @Test(expected = X::class) / TestNG expectedExceptions: the thrown exception is the assertion.
 _EXPECTS = re.compile(r"\s*\(\s*(?:expected|expectedExceptions)\s*=")
 _VACUOUS = re.compile(
@@ -204,7 +215,9 @@ def _distinguishing(body: str) -> bool:
     def inside_vacuous(span) -> bool:
         return any(a <= span[0] and span[1] <= b for a, b in vacuous_spans)
 
-    return any(not inside_vacuous(m.span()) for m in _ASSERT.finditer(body))
+    if any(not inside_vacuous(m.span()) for m in _ASSERT.finditer(body)):
+        return True
+    return bool(_CAPTURE.search(_JVM_NONCODE.sub(" ", body)))
 
 
 # A same-file helper a test calls: Kotlin `fun`, Python `def`, Java/C# `void` methods.

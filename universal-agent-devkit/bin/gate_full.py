@@ -420,14 +420,26 @@ def remove_scratch(repo: str, path: str) -> None:
     git(repo, "worktree", "prune")
 
 
+# Marker cấu hình của từng agent (khớp AGENT_MARKERS của scripts/git/worktree.py và sb_scratch_agents của merge gate, #1404).
+SCRATCH_AGENT_MARKERS = (("claude", ".claude/settings.json"), ("codex", ".codex/hooks.json"), ("gemini", ".gemini/settings.json"),
+                         ("cursor", ".cursor/hooks.json"), ("antigravity", ".agents/hooks.json"))
+
+
+def scratch_agents(scratch: str) -> str:
+    """Tập agent cho `install.sh -a` theo marker có trong chính cây scratch (file đã track của ref), luôn có claude như trước (#1416).
+    Chỉ đọc scratch, không đọc checkout chính: file cục bộ bị ignore ở đó (vd .gemini/settings.json) không thuộc ref đang kiểm."""
+    found = [a for a, marker in SCRATCH_AGENT_MARKERS if os.path.exists(os.path.join(scratch, marker))]
+    return ",".join(["claude"] + [a for a in found if a != "claude"])
+
+
 def install_devkit(run: Run, repo: str, scratch: str) -> None:
-    """Như super-board-merge-train.sh: install.sh -t <scratch> -a claude -y --no-githooks, trả file đã theo dõi về commit, rồi
-    super-board-scratch-config.sh. Kit của chính cây scratch trước (đúng phiên bản của ref), rồi kit của repo."""
+    """Như super-board-merge-train.sh: install.sh -t <scratch> -a <tập agent của scratch> -y --no-githooks, trả file đã theo dõi về
+    commit, rồi super-board-scratch-config.sh. Kit của chính cây scratch trước (đúng phiên bản của ref), rồi kit của repo."""
     for c in (os.path.join(scratch, "universal-agent-devkit"), os.path.join(repo, "universal-agent-devkit"),
               os.path.join(repo, ".agents", "devkit")):
         inst = os.path.join(c, "bin", "install.sh")
         if os.path.isfile(inst):
-            rc, out = sh(["bash", inst, "-t", scratch, "-a", "claude", "-y", "--no-githooks"], timeout=1800)
+            rc, out = sh(["bash", inst, "-t", scratch, "-a", scratch_agents(scratch), "-y", "--no-githooks"], timeout=1800)
             run.raw(out)
             if rc != 0:
                 run.log("cài DevKit vào scratch lỗi (exit %d): %s" % (rc, " ".join(out.strip().splitlines()[-3:])))

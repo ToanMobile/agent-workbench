@@ -44,7 +44,9 @@ function setupEnv(t) {
 function writeFakePs(dir, lines) {
   const psPath = path.join(dir, 'ps');
   const body = lines.map((l) => `printf '%s\\n' ${JSON.stringify(l)}`).join('\n');
-  fs.writeFileSync(psPath, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  // Hoi gio bat dau (`-o lstart= -p <pid>`): tien trinh gia bat dau tu 1970, cu hon moi file hub_*.json cua test.
+  const lstart = `case "$*" in *lstart=*) echo 'Thu Jan  1 00:00:01 1970'; exit 0 ;; esac`;
+  fs.writeFileSync(psPath, `#!/bin/sh\n${lstart}\n${body}\n`, { mode: 0o755 });
   process.env.ANTIGRAVITY_PM_PS = psPath;
   return psPath;
 }
