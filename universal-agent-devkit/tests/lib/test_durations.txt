@@ -550,3 +550,12 @@
 1 tests/gates/test_gate_full_card_ac_provable.sh
 # 2026-11-20: #1388 devkit_incident bỏ cảnh báo file sửa dở chặn ff của self-reload; đo 1 s.
 1 tests/verification/test_devkit_incident_dirty_main.sh
+# 2026-11-21: đợt gộp #1392–#1416, đo trên cây gộp (giây, tối thiểu 1).
+1 tests/gates/test_gate_full_flaky_streak_1406.sh
+2 tests/gates/test_gate_full_flaky_streak_skip_1406.sh
+22 tests/gates/test_gate_full_scratch_agents.sh
+134 tests/gates/test_gate_no_tests_flaky_rerun_miss.sh
+1 tests/verification/test_assertion_lint_roborazzi_capture.sh
+16 tests/verification/test_repo_board_and_context.sh
+1 tests/verification/test_repo_board_audit_fixes_1392.sh
+1 tests/verification/test_repo_board_audit_items_1402.sh

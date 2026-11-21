@@ -394,7 +394,10 @@ def resolve_config_slug(argv: list[str], root: Path | None = None) -> str:
     base = root or Path(".")
     active = base / ".claude/super-board/active"
     if active.is_file():
-        return active.read_text().strip()
+        slug = active.read_text().strip()
+        # Slug là tên file config, không phải đường dẫn: có `/`, `\` hoặc là `.`/`..` thì bỏ qua (cùng luật repo_board.py, #1402).
+        if slug and "/" not in slug and "\\" not in slug and slug not in (".", ".."):
+            return slug
     cfgs = sorted((base / ".claude/super-board/configs").glob("*.json"))
     if len(cfgs) == 1:
         return cfgs[0].stem
