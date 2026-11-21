@@ -100,18 +100,36 @@ gh_write_once() {
     # 28/10: lệnh ghi về MỘT thẻ hỏng thì thẻ đó vào Blocked, board chạy tiếp (block_card_after_failed_write). Lệnh ghi của chính
     # bước chặn thẻ hỏng (SB_CARD_BLOCKING) chỉ trả 1: lệnh ghi gốc halt bên dưới với bản ghi verify của nó.
     [ -z "${SB_CARD_BLOCKING:-}" ] || return 1
+    # #1397: lệnh dọn claim idempotent (SB_WRITE_NO_HALT=1) hỏng chỉ trả 1 để caller log và thử lại lượt sau, không chặn thẻ hay halt.
+    [ -z "${SB_WRITE_NO_HALT:-}" ] || return 1
     # #520: argv đúng như đã gửi (comment kèm marker token) cho state ghi lại của block_card_after_failed_write.
-    SB_WRITE_ARGS_JSON=$(printf '%s\0' "${args[@]}" | jq -Rsc 'split("\u0000")[:-1]' 2>/dev/null) || SB_WRITE_ARGS_JSON=""
+    local write_args=""
+    write_args=$(printf '%s\0' "${args[@]}" | jq -Rsc 'split("\u0000")[:-1]' 2>/dev/null) || write_args=""
+    SB_WRITE_ARGS_JSON="$write_args"
     if declare -F block_card_after_failed_write >/dev/null && block_card_after_failed_write "$@"; then return 1; fi
     local verify=() spec=""
     [ -z "$token" ] || spec=$(jq -nc --argjson n "$3" --arg m "$token" '{kind:"comment",issue:$n,marker:$m}' 2>/dev/null) || spec=""
     [ -z "$spec" ] || verify=(--verify "$spec")
+    # #1397: mọi halt do lệnh ghi đều lưu argv đã gửi vào bản ghi halt để biết issue nào (ponytail: cần tự đối chiếu issue edit thì thêm --verify sau).
+    [ -z "$write_args" ] || verify+=(--write-argv "$write_args")
     # --halt exits 79 (HALTED) once its record is saved; any other code means the record is not on disk.
     local hrc=0
     python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" ${verify[@]+"${verify[@]}"} >&2 || hrc=$?
     [ "$hrc" -eq 79 ] || { log "halt record NOT written for the uncertain GitHub $1 $2 write (github-read rc=$hrc): exiting 76, the watchdog will not restart it blind"; exit 76; }
     exit 79
   }
+}
+# #1397: gỡ assignee của bot là thao tác dọn claim idempotent; hỏng chỉ log số issue rồi thử lại ở lượt quét sau, không block thẻ hay halt board.
+sweep_remove_assignee() {
+  [ -n "${BOT_LOGIN:-}" ] || return 0
+  local SB_WRITE_NO_HALT=1
+  if ! SB_WRITE_NO_HALT=1 gh_write_once issue edit "$1" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1; then   # không halt / không block thẻ (#1397)
+    if declare -F log >/dev/null; then
+      log "⚠ remove-assignee failed on #${1} — keeping going, next sweep retries"
+    fi
+    return 1
+  fi
+  return 0
 }
 # mtime (giây epoch) của một file, chạy đúng trên cả GNU stat (Linux: -c %Y) lẫn BSD stat (macOS: -f %m). Thử -c trước vì BSD stat từ chối
 # -c, còn GNU stat nhận `-f` như "filesystem status" và có thể thành công mà in chữ rác. Chỉ nhận kết quả là số nguyên; không lấy được thì
@@ -938,7 +956,7 @@ top_card_in_column() {
       log "reconciled closed #${issue} -> Done (was '${col}') — dispatching 0 workers for it"
       set_card_status "$item_id" "Done" || { gh_checkpoint; log "  ↳ reconcile of #${issue} could not be written to the board"; return 1; }
       gh_checkpoint
-      [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+      sweep_remove_assignee "$issue" || true
       rm -f "$INFLIGHT_DIR/$issue"
       [ "${SB_READY_TICK:-0}" != 1 ] || PREFLIGHT_SKIP="${PREFLIGHT_SKIP:-} ${issue}"
       continue
@@ -2229,7 +2247,7 @@ antigravity_block_card() {
   fi
   set_card_status "$item_id" "Blocked" || { gh_checkpoint; return 1; }
   rm -f "$INFLIGHT_DIR/noops/$issue" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true
-  [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+  sweep_remove_assignee "$issue" || true
   gh_checkpoint
   gh_write_once issue comment "$issue" --body "${hdr}
 Card:        #${issue}${title:+ ${title}}
@@ -2586,7 +2604,7 @@ check_lane_zombie() {
     kill -9 "$pid" 2>/dev/null || true
     ZOMBIE_SEEN=$(printf '%s\n' ${ZOMBIE_SEEN:-} | grep -v "^${pid}:" | tr '\n' ' ' || true)
     gh_checkpoint
-    [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+    sweep_remove_assignee "$issue" || true
     gh_checkpoint
     rm -f "$INFLIGHT_DIR/$issue"
     case "$lane" in
@@ -2908,7 +2926,7 @@ qa_apply_report() {
     fi
     return 1
   fi
-  [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+  sweep_remove_assignee "$issue" || true
   gh_checkpoint
   log "↪ #${issue} QA → ${target}: QA worker ended clean with a [qa] [report] but did not move the card (routed by the runner)"
   return 0
@@ -3175,7 +3193,7 @@ EOF
       if [ -n "$item_id" ] && set_card_status "$item_id" "Ready"; then
         NOOP_MOVED=1
         rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true
-        [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        sweep_remove_assignee "$issue" || true
         gh_checkpoint
         if [ -n "${REVIEW_BOUNCE_KEY:-}" ]; then
           swept_add "$REVIEW_BOUNCE_KEY"
@@ -3302,7 +3320,7 @@ blocked-by: agent" >/dev/null 2>&1 || true
     if [ -n "$item_id" ] && set_card_status "$item_id" "Blocked"; then
       NOOP_MOVED=1
       rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true   # thẻ sang Blocked: cả hai sổ bắt đầu lại khi người kéo về
-      [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+      sweep_remove_assignee "$issue" || true
       gh_checkpoint
       gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tag} ${lane} worker exited ${n} times without moving the card or commenting
 Card:        #${issue}${title:+ ${title}}
@@ -3354,8 +3372,11 @@ reap_finished_locks() {
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
         gh_checkpoint
-        gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
-        log "reaped stale lock + swept assignee on #${issue} (pid=${PID:-empty})"
+        if sweep_remove_assignee "$issue"; then
+          log "reaped stale lock + swept assignee on #${issue} (pid=${PID:-empty})"
+        else
+          log "reaped stale lock for #${issue} (pid=${PID:-empty}; remove-assignee failed, retrying on next sweep)"
+        fi
       else
         log "reaped stale lock for #${issue} (pid=${PID:-empty})"
       fi
@@ -3403,13 +3424,18 @@ adopt_live_locks() {
         # dùng); nếu không, có thể là worker thật đã đổi tiêu đề tiến trình, giữ lock như trước.
         pid_started_after "$PID" "$STARTED" || continue
         gh_checkpoint
+        local swept_msg=""
         if [ -n "$BOT_LOGIN" ]; then
-          gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+          if sweep_remove_assignee "$issue"; then
+            swept_msg="; swept assignee"
+          else
+            swept_msg="; remove-assignee failed, retrying on next sweep"
+          fi
         fi
         gh_checkpoint
         rm -f "$lock"
         REAP_COUNT=$((REAP_COUNT + 1))
-        log "reaped lock on #${issue}: pid=${PID} is alive but no super-board worker (recycled PID)${BOT_LOGIN:+; swept assignee}"
+        log "reaped lock on #${issue}: pid=${PID} is alive but no super-board worker (recycled PID)${swept_msg}"
         continue ;;
     esac
     # R3: worker merge train giữ lock của MỌI thẻ trong đợt cùng một PID: nhận lại một lần, lock còn lại giữ nguyên (không thêm slot).
@@ -3534,7 +3560,7 @@ reclaim_stranded_building() {
     if [ "$issue_rc" -eq 1 ]; then
       if set_card_status "$item_id" "Done"; then
         gh_checkpoint
-        [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        sweep_remove_assignee "$issue" || true
         rm -f "$INFLIGHT_DIR/$issue"
         log "reconciled closed #${issue} -> Done (was 'Building') — builder closed it, AC already met"
       else
@@ -3560,7 +3586,7 @@ reclaim_stranded_building() {
       continue
     fi
     RECLAIM_MOVED=1
-    [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+    sweep_remove_assignee "$issue" || true
     # Comment format: writing-standard.md § 4.
     gh_checkpoint
     gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · stranded in Building
@@ -3601,7 +3627,7 @@ reclaim_dead_builds() {
     if build_handed_to_qa "$issue" && set_card_status "$item_id" "QA"; then
       RECLAIM_MOVED=1
       rm -f "$INFLIGHT_DIR/reclaims/$issue" 2>/dev/null || true
-      [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+      sweep_remove_assignee "$issue" || true
       gh_checkpoint
       log "↪ #${issue} Building → QA: build worker ended clean with a [builder] comment ending Next: QA but did not move the card (routed by the runner)"
       continue
@@ -3616,7 +3642,7 @@ reclaim_dead_builds() {
       wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-build-${issue}.log"
       if set_card_status "$item_id" "Blocked"; then
         RECLAIM_MOVED=1
-        [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        sweep_remove_assignee "$issue" || true
         gh_checkpoint
         gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · 🔁 build worker died mid-run $((n + 1)) times in 24h
 Card:        #${issue}${title:+ ${title}}
@@ -4071,7 +4097,7 @@ sweep_closed_cards() {
 Did: sweep found the issue closed (completed) while its card was in ${col}
 ✅ Done: card moved to Done
 Next: -" >/dev/null 2>&1 || log "⚠ #${n} moved to Done but its report comment failed"
-    [ -n "$BOT_LOGIN" ] && SB_CARD_BLOCKING=1 gh_write_once issue edit "$n" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+    sweep_remove_assignee "$n" || true
     rm -f "$INFLIGHT_DIR/$n"
     # #1222: a leftover ac-open on a closed card is a stale trace once it is Done; failure is logged, not fatal.
     if echo "${PROJECT_ITEMS_JSON:-{\}}" | jq -e --argjson n "$n" 'any(.items[]?; .content.number == $n
