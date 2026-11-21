@@ -691,6 +691,86 @@ def train_line(train: dict[str, Any]) -> str:
     return f"🚂 Merge train: {cards} · {step} · {train['elapsed_s'] // 60}m"
 
 
+def _tz_info(tz_name: str) -> datetime.tzinfo:
+    if tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(tz_name)
+        except (ImportError, KeyError, ValueError, OSError):
+            pass
+    return datetime.timezone.utc
+
+
+def summarize_ungated_merges(
+    prs: list[dict[str, Any]],
+    common_dir: Path | None,
+    now_epoch: int | None = None,
+    tz_name: str = "UTC",
+    ok: bool = True,
+) -> dict[str, Any]:
+    """Đếm PR merge vào base trong 7 ngày qua không có biên nhận merge gate (`merge_receipts/`), nhóm theo ngày (#1406)."""
+    if not ok:
+        return {"total_7d": 0, "by_date": {}, "ok": False}
+    receipts: list[dict[str, Any]] = []
+    if common_dir is not None:
+        rdir = common_dir / "postfix-gate" / "merge_receipts"
+        if rdir.is_dir():
+            for p in sorted(rdir.glob("*.json")):
+                if p.name.startswith("."):
+                    continue
+                try:
+                    rec = json.loads(p.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if isinstance(rec, dict) and isinstance(rec.get("pr"), int):
+                    receipts.append(rec)
+
+    now_ep = int(time.time()) if now_epoch is None else int(now_epoch)
+    cutoff_ep = now_ep - 7 * 86400
+    tz = _tz_info(tz_name)
+    by_date: dict[str, int] = {}
+    total = 0
+
+    for pr in prs or []:
+        if not isinstance(pr, dict) or not isinstance(pr.get("number"), int):
+            continue
+        raw_ts = pr.get("mergedAt") or ""
+        try:
+            m_dt = datetime.datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if m_dt.tzinfo is None:
+            m_dt = m_dt.replace(tzinfo=datetime.timezone.utc)
+        if int(m_dt.timestamp()) < cutoff_ep:
+            continue
+        num = pr["number"]
+        head = pr.get("headRefOid") or ""
+        squash = ((pr.get("mergeCommit") or {}).get("oid")) or ""
+        matched = any(
+            rec.get("pr") == num and ((head and rec.get("head") == head) or (squash and rec.get("squash") == squash))
+            for rec in receipts
+        )
+        if matched:
+            continue
+        day_key = m_dt.astimezone(tz).strftime("%Y-%m-%d")
+        by_date[day_key] = by_date.get(day_key, 0) + 1
+        total += 1
+
+    return {"total_7d": total, "by_date": dict(sorted(by_date.items())), "ok": True}
+
+
+def ungated_merges_line(summary: dict[str, Any]) -> str:
+    """Dòng báo cáo số PR merge ngoài gate trong 7 ngày cho mục Health."""
+    if not summary.get("ok"):
+        return "   ungated merges (7d): ?"
+    total = int(summary.get("total_7d") or 0)
+    by_date = summary.get("by_date") or {}
+    if total == 0 or not by_date:
+        return f"   ungated merges (7d): {total}"
+    parts = [f"{d}: {c}" for d, c in sorted(by_date.items(), reverse=True)]
+    return truncate_to(f"   ungated merges (7d): {total}  ({', '.join(parts)})", 79)
+
+
 def render_collapsed(label: str, lane_items: list[dict[str, Any]]) -> str:
     """One line of issue numbers, newest first, `… +N more` past 76 cols."""
     out = [box_top(label, len(lane_items))]
@@ -1030,6 +1110,26 @@ def main() -> int:
                 )
 
     # ── health ──
+    base_branch = cfg.get("base_branch") or "main"
+    tz_name = cfg.get("timezone") or "UTC"
+    pr_out = gh(
+        "pr", "list", "--state", "merged", "--base", base_branch, "--limit", "100",
+        "--json", "number,headRefOid,mergeCommit,mergedAt", check=False,
+    )
+    ungated_ok = False
+    merged_prs_list: list[dict[str, Any]] = []
+    if pr_out.strip():
+        try:
+            parsed_prs = json.loads(pr_out)
+            if isinstance(parsed_prs, list):
+                merged_prs_list = parsed_prs
+                ungated_ok = True
+        except ValueError:
+            pass
+    ungated_summary = summarize_ungated_merges(
+        merged_prs_list, common_dir, now_epoch=now_epoch, tz_name=tz_name, ok=ungated_ok
+    )
+
     print()
     print("▎Health")
     if run_active:
@@ -1044,6 +1144,7 @@ def main() -> int:
         )
     else:
         print(f"   no run today    workers: 0/{max_workers} idle")
+    print(ungated_merges_line(ungated_summary))
 
     return 0
 
