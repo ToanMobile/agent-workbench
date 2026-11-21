@@ -376,6 +376,7 @@ def file_wait: [((.labels // []) + (.content.labels // []))[] | (if type == "obj
 # #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
 session_sweep_helper() { printf '%s' "${SB_SESSION_SWEEP:-$(dirname "$SB_GITHUB_READ")/super-board-session-sweep.py}"; }
 waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
+audit_sweep_helper() { printf '%s' "${SB_AUDIT_SWEEP:-$(dirname "$SB_GITHUB_READ")/super-board-audit-sweep.py}"; }
 # P3: cờ dependency_unblock_v1 (#1320: mặc định BẬT, không cần flags.json ở từng repo). Env SB_DEPENDENCY_UNBLOCK_V1=0|1 thắng; không thì
 # `dependency_unblock_v1: false` trong <checkout chính>/.agents/local/flags.json tắt nó (git common dir, như guard_v2 của
 # super-board-needs-you.py). Thiếu file, thiếu khoá hay file hỏng = bật.
@@ -4140,6 +4141,29 @@ sweep_dead_sessions() {
   return 0
 }
 
+# #1406: hậu kiểm định kỳ: (1) mở lại thẻ đóng COMPLETED còn AC `- [ ]` chưa tick và không có PR merged liên kết (gắn ac-open,
+# chuyển Done -> Ready); (2) ghi cảnh báo một lần và tổng hợp theo ngày với PR merge vào trunk không có biên nhận merge gate.
+sweep_audit() {
+  local now items out rc=0 reopened ungated by_day
+  now=$(date +%s)
+  [ "$now" -lt "${AUDIT_SWEEP_NEXT:-0}" ] && return 1
+  items=$(mktemp "${TMPDIR:-/tmp}/sb-audit-items.XXXXXX") || { log "⚠ audit sweep: mktemp failed — retrying next tick"; return 1; }
+  printf '%s' "$PROJECT_ITEMS_JSON" > "$items"
+  out=$(python3 "$(audit_sweep_helper)" sweep --config "$CONFIG_PATH" --items "$items" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -f "$items"
+  if [ "$rc" -ne 0 ]; then log "⚠ audit sweep failed (exit ${rc}) — retrying next tick"; return 1; fi
+  AUDIT_SWEEP_NEXT=$((now + ${SB_AUDIT_SWEEP_EVERY:-300}))
+  reopened=$(printf '%s' "$out" | jq -r '[(.reopened // [])[] | "#\(.)"] | join(" ")' 2>/dev/null) || reopened=""
+  ungated=$(printf '%s' "$out" | jq -r '.ungated_total_7d // 0' 2>/dev/null) || ungated=0
+  if [ "${ungated:-0}" -gt 0 ]; then
+    by_day=$(printf '%s' "$out" | jq -r '[(.ungated_by_date // {}) | to_entries[] | "\(.key)=\(.value)"] | join(" ")' 2>/dev/null) || by_day=""
+    log "⚠ audit sweep: ungated merges (7d)=${ungated}${by_day:+ (${by_day})}"
+  fi
+  [ -n "$reopened" ] || return 1
+  log "audit sweep: reopened ${reopened} (completed with unticked AC and no merged PR)"
+  return 0
+}
+
 # #601: gỡ nhãn `waiting-on:#N` khi #N đã CLOSED/MERGED (helper `sweep` tự gọi gh). Chỉ chạy khi board có thẻ mang nhãn đó; nhịp
 # SB_WAITING_SWEEP_EVERY (300 s) hoặc ngay khi tập Done đổi. Helper lỗi: log, không dời mốc (tick sau thử lại), không bao giờ exit
 # runner. Trả 0 khi đã gỡ ít nhất một nhãn (caller đọc lại board), 1 khi không.
@@ -4981,6 +5005,7 @@ while true; do
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
   sweep_dead_sessions || true                              # #1193 (đặt lại nhịp của sweep_closed_cards ngay dưới)
   if sweep_closed_cards; then tick_fetch || continue; fi   # #558
+  if sweep_audit; then tick_fetch || continue; fi          # #1406
   if sweep_waiting_on; then tick_fetch || continue; fi     # #601
   if sweep_file_wait; then tick_fetch || continue; fi      # #556
   if maybe_sweep_blocked; then tick_fetch || continue; fi

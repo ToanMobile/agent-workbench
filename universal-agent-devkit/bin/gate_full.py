@@ -1135,12 +1135,113 @@ def open_issue_for(slug: str, first: str):
 
 CARD_SUITE = re.compile(re.escape(CARD_PREFIX) + r" \S+: (.+?) đỏ$")   # .+? : "agent-kit test" có dấu cách
 TRUNK_REF = "origin/main"   # mặc định của --ref: ref lượt đêm chạy và thẻ gate-full nói tới
+# ponytail: mặc định đề xuất của dự án, cần đo thật; override qua DEVKIT_GATE_FULL_FLAKY_STREAK (#1406).
+FLAKY_CLOSE_STREAK = 3
+_FLAKY_BODY_MARKS = (
+    "nhóm b (thời gian thực / môi trường",
+    "không tái hiện khi chạy lại ở đỉnh",
+    "flaky",
+    "chập chờn",
+)
 
 
-def close_proven_cards(run, slug: str, sha: str) -> None:
-    """#1275: AC cuối của thẻ gate-full là "lượt gate_full.py run kế tiếp không còn <suite> đỏ"; không ai kiểm AC đó nên thẻ nằm Blocked
-    (ac-open) chờ người mãi. Sau lượt: thẻ gate-full còn mở mà suite của nó PASS ở lượt này ⇒ comment bằng chứng, gỡ ac-open, đóng
-    completed (sweep đóng-issue của board chuyển thẻ về Done). gh lỗi ⇒ chỉ log, thẻ giữ nguyên, lượt sau thử lại."""
+def _flaky_streak_target() -> int:
+    raw = os.environ.get("DEVKIT_GATE_FULL_FLAKY_STREAK")
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return FLAKY_CLOSE_STREAK
+
+
+def _is_flaky_card(item: dict) -> bool:
+    """True khi thẻ gate-full là lỗi chập chờn / nhóm b (chỉ đóng khi đủ N đêm xanh hoặc có commit sửa liên kết)."""
+    labels = {(lb.get("name") if isinstance(lb, dict) else lb) for lb in (item.get("labels") or [])}
+    if any(isinstance(lb, str) and lb.lower() == "flaky" for lb in labels):
+        return True
+    body = (item.get("body") or "").lower()
+    return any(mark in body for mark in _FLAKY_BODY_MARKS)
+
+
+def _parse_iso_ts(text: str):
+    if not text:
+        return None
+    try:
+        d = dt.datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.astimezone()
+    except ValueError:
+        return None
+
+
+def _consecutive_pass_streak(pg: str, sid: str, created_at: str) -> int:
+    """Số lượt liên tiếp (tính cả lượt hiện tại) suite `sid` PASS thực chất sau lúc mở thẻ `created_at`."""
+    if not pg:
+        return 1
+    hist_path = os.path.join(pg, "nightly", "history.jsonl")
+    try:
+        with open(hist_path, encoding="utf-8") as fh:
+            rows = [json.loads(ln) for ln in fh if ln.strip().startswith("{")]
+    except (OSError, ValueError):
+        return 1
+    cut = _parse_iso_ts(created_at)
+    streak = 0
+    for r in reversed(rows):
+        if not isinstance(r, dict) or r.get("result") not in ("green", "red", "red-env"):
+            continue
+        r_dt = _parse_iso_ts(r.get("at") or "")
+        if cut is not None and r_dt is not None and r_dt < cut:
+            break
+        passed = r.get("passed") or []
+        red = r.get("red") or []
+        if sid in passed and sid not in red:
+            streak += 1
+        else:
+            break
+    return streak + 1
+
+
+def _has_linked_fix(repo: str, slug: str, issue_num: int, created_at: str, item: dict, ref: str) -> bool:
+    """True khi có PR merged hoặc commit trên ref liên kết sửa thẻ `#issue_num` sau khi thẻ mở."""
+    if item.get("closedByPullRequestsReferences"):
+        return True
+    cut = _parse_iso_ts(created_at)
+    if repo and os.path.isdir(repo):
+        since_args = ["--since", cut.isoformat()] if cut else []
+        target_ref = ref if ref else "HEAD"
+        if git(repo, "rev-parse", "--verify", "-q", target_ref)[0] != 0:
+            target_ref = "HEAD"
+        rc, out = git(repo, "log", target_ref, "--format=%H %s", "--grep", "#%d" % issue_num, "-n", "20", *since_args)
+        if rc == 0 and out.strip():
+            pat = re.compile(r"(?<![A-Za-z0-9_])#%d(?!\d)" % issue_num)
+            if any(pat.search(ln) for ln in out.splitlines()):
+                return True
+    if slug and shutil.which("gh"):
+        rc, out = sh(["gh", "pr", "list", "--repo", slug, "--state", "merged", "--search", "#%d" % issue_num,
+                      "--limit", "20", "--json", "number,headRefName,mergedAt,closingIssuesReferences"], timeout=60)
+        if rc == 0 and out.strip():
+            try:
+                prs = json.loads(out.strip().splitlines()[-1])
+            except ValueError:
+                prs = []
+            for pr in prs if isinstance(prs, list) else []:
+                if not isinstance(pr, dict):
+                    continue
+                m_dt = _parse_iso_ts(pr.get("mergedAt") or "")
+                if cut is not None and m_dt is not None and m_dt < cut:
+                    continue
+                head_ref = pr.get("headRefName") or ""
+                closes = [c.get("number") for c in (pr.get("closingIssuesReferences") or []) if isinstance(c, dict)]
+                if head_ref.startswith("issue-%d-" % issue_num) or issue_num in closes:
+                    return True
+    return False
+
+
+def close_proven_cards(run, slug: str, sha: str, pg: str = "", repo: str = "") -> None:
+    """#1275 + #1406: Sau lượt, đóng thẻ gate-full còn mở mà suite của nó PASS ở lượt này.
+    Riêng thẻ lỗi chập chờn (nhóm b / flaky): chỉ tự đóng khi có commit/PR sửa liên kết HOẶC đủ N đêm xanh liên tiếp (mặc định 3)."""
     passed = set(run.info.get("passed") or [])
     # Thẻ đêm nói về origin/main: lượt --ref nhánh khác hay lệnh gate thay thế (DEVKIT_GATE_FULL_CMD) không chứng minh AC của nó.
     if run.info.get("ref") != TRUNK_REF or os.environ.get("DEVKIT_GATE_FULL_CMD"):
@@ -1148,7 +1249,7 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
     if not slug or not passed or not shutil.which("gh"):
         return
     rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "open", "--search", '"gate-full đêm" in:title',
-                  "--json", "number,title,labels", "--limit", "50"], timeout=60)
+                  "--json", "number,title,labels,body,createdAt,closedByPullRequestsReferences", "--limit", "50"], timeout=60)
     try:
         items = json.loads(out.strip().splitlines()[-1]) if rc == 0 and out.strip() else []
     except ValueError:
@@ -1157,14 +1258,30 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
     if rc != 0:
         run.log("đóng thẻ đã chứng minh: gh issue list exit %d — lượt sau thử lại" % rc)
         return
+    pg_dir = pg or run.info.get("pg") or ""
+    if not pg_dir and repo and os.path.isdir(repo):
+        common = git_out(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        if common:
+            pg_dir = os.path.join(common, "postfix-gate")
+    need_streak = _flaky_streak_target()
     for it in items if isinstance(items, list) else []:
         n, t = (it.get("number"), it.get("title")) if isinstance(it, dict) else (None, None)
         m = CARD_SUITE.match(t) if isinstance(t, str) else None
         if not isinstance(n, int) or not m or m.group(1) not in passed:
             continue
         sid = m.group(1)
-        body = ("[gate-full] %s %s PASS trên %s @ %s (lượt gate_full chạy thật, không cache): suite không còn đỏ. Log: %s"
-                % (run.started.strftime("%Y-%m-%d"), sid, run.info.get("ref") or "?", sha[:12], run.log_path))
+        extra_note = ""
+        if _is_flaky_card(it):
+            created_at = it.get("createdAt") or ""
+            has_fix = _has_linked_fix(repo, slug, n, created_at, it, run.info.get("ref") or TRUNK_REF)
+            streak = _consecutive_pass_streak(pg_dir, sid, created_at)
+            if not has_fix and streak < need_streak:
+                run.log("thẻ #%d (%s PASS, flaky): đêm xanh liên tiếp %d/%d, chưa có commit sửa liên kết — giữ mở"
+                        % (n, sid, streak, need_streak))
+                continue
+            extra_note = " (có commit/PR sửa liên kết)" if has_fix else " (đủ %d/%d đêm xanh liên tiếp)" % (streak, need_streak)
+        body = ("[gate-full] %s %s PASS trên %s @ %s (lượt gate_full chạy thật, không cache): suite không còn đỏ%s. Log: %s"
+                % (run.started.strftime("%Y-%m-%d"), sid, run.info.get("ref") or "?", sha[:12], extra_note, run.log_path))
         # ac-open gỡ trước (sweep của board mở lại thẻ còn ac-open); bằng chứng đi cùng lệnh đóng: đóng lỗi thì lượt sau làm lại cả hai,
         # không để lại comment bằng chứng lặp trên thẻ còn mở.
         labels = {(lb.get("name") if isinstance(lb, dict) else lb) for lb in (it.get("labels") or [])}
@@ -1177,7 +1294,7 @@ def close_proven_cards(run, slug: str, sha: str) -> None:
         rc3, _ = sh(["gh", "issue", "close", str(n), "--repo", slug, "--reason", "completed", "--comment", body], timeout=60)
         run.log("thẻ #%d: %s PASS ⇒ %s" % (n, sid, "đã đóng" if rc3 == 0 else "đóng lỗi exit %d, lượt sau thử lại" % rc3))
         if rc3 == 0:
-            run.info.setdefault("notes", []).append("đã đóng thẻ #%d: %s PASS (lượt chạy thật không còn đỏ)" % (n, sid))
+            run.info.setdefault("notes", []).append("đã đóng thẻ #%d: %s PASS (lượt chạy thật không còn đỏ)%s" % (n, sid, extra_note))
 
 
 def closed_cards(slug: str, before: dt.datetime) -> dict:
@@ -1363,6 +1480,7 @@ def history_row(pg: str, run: "Run") -> None:
             row[k] = i[k]
     if i["result"] in ("green", "red", "red-env"):   # mốc so đỏ mới của lượt sau; suite chưa báo được không vào mốc
         row["red_tests"] = {k: v for k, v in (i.get("red_tests") or {}).items() if k not in (i.get("unreported") or [])}
+        row["passed"] = list(i.get("passed") or [])
     if i.get("new_red") is not None:
         row["new_red"] = i["new_red"]
     with open(os.path.join(hist, "history.jsonl"), "a", encoding="utf-8") as f:
@@ -1508,8 +1626,8 @@ def cmd_run(args) -> int:
         verdict, checks = collect_red(run, scratch, kit_rel or "universal-agent-devkit", gate_rc, gate_out_full, kit_rc, kit_out,
                                       timing_ref=timing_ref(pg, repo, sha))
         run.info["result"] = verdict
-        try:   # #1275: chỉ đọc kết quả lượt này + ghi GitHub; lỗi không đổi kết luận hay exit
-            close_proven_cards(run, args.slug or origin_slug(repo), sha)
+        try:   # #1275 + #1406: chỉ đọc kết quả lượt này + ghi GitHub; lỗi không đổi kết luận hay exit
+            close_proven_cards(run, args.slug or origin_slug(repo), sha, pg=pg, repo=repo)
         except Exception as exc:
             run.log("đóng thẻ đã chứng minh lỗi: %r" % exc)
         last_green_path = os.path.join(pg, "last_full_green_sha")
