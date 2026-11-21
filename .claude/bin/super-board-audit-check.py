@@ -251,6 +251,28 @@ def chain_audit(sha, base, top=None):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--edited-existing":
+        ep = argparse.ArgumentParser(prog="super-board-audit-check.py --edited-existing")
+        ep.add_argument("sha")
+        ep.add_argument("--base", required=True)
+        ep.add_argument("--top")
+        ep.add_argument("--pr", type=int)
+        eargs = ep.parse_args(sys.argv[2:])
+        top = eargs.top or repo_top()
+        if not top or not isinstance(eargs.sha, str) or not SHA.fullmatch(eargs.sha) or not eargs.base:
+            return 3
+        if eargs.pr is not None:
+            ensure_commit(top, eargs.sha, eargs.pr)
+        gate = push_gate()
+        try:
+            hits = edited_existing(top, eargs.sha, eargs.base, gate)
+        except Exception as error:   # noqa: BLE001 - lỗi git / kit không được coi là "không sửa test"
+            print(f"audit-check: --edited-existing failed: {error.__class__.__name__}", file=sys.stderr)
+            return 3
+        if hits:
+            print("\n".join(hits))
+            return 0
+        return 1
     if len(sys.argv) > 1 and sys.argv[1] == "--chain-audit":
         cp = argparse.ArgumentParser(prog="super-board-audit-check.py --chain-audit")
         cp.add_argument("sha")

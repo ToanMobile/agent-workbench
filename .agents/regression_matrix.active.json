@@ -4817,6 +4817,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-review-antigravity-1390",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-audit-check.py",
+        "tests/super-board/test_runner_review_antigravity_1390.sh",
+        "tests/super-board/test_runner_review_antigravity_1390_qa_gaps.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEW-ANTIGRAVITY-1390-01",
+          "name": "#1390: preflight Antigravity/MCP (claude và agy), --edited-existing, nhận diện noop từ log/comment (kể cả backtick, miễn bounce), và sweep_antigravity_blocked tự phục hồi thẻ Blocked",
+          "command": "bash tests/super-board/test_runner_review_antigravity_1390.sh && bash tests/super-board/test_runner_review_antigravity_1390_qa_gaps.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

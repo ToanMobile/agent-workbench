@@ -1993,6 +1993,297 @@ dependency_gate() {
   return 1
 }
 
+antigravity_pm_mcp_runnable() {
+  # Chỉ nhận script có sẵn @modelcontextprotocol/sdk cạnh file hoặc ở package root (../node_modules).
+  local js="${1:-}" d
+  [ -n "$js" ] && [ -f "$js" ] || return 1
+  d=$(dirname "$js")
+  [ -d "$d/node_modules/@modelcontextprotocol/sdk" ] || [ -d "$d/../node_modules/@modelcontextprotocol/sdk" ]
+}
+
+antigravity_pm_mcp_script() {
+  # Tìm file entrypoint antigravity-pm-mcp.js chạy được trên máy (ưu tiên env test, repo hiện tại, các profile ~/.claude*, ~/.gemini, rồi git common/script root).
+  if [ -n "${SB_ANTIGRAVITY_PM_MCP:-}" ]; then
+    [ -f "$SB_ANTIGRAVITY_PM_MCP" ] && { printf '%s\n' "$SB_ANTIGRAVITY_PM_MCP"; return 0; }
+    return 1
+  fi
+  local cand cfg p repo_abs common_dir common_root script_root
+  cand="${REPO_ROOT:-.}/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
+  antigravity_pm_mcp_runnable "$cand" && { printf '%s\n' "$cand"; return 0; }
+  repo_abs=$(cd "${REPO_ROOT:-.}" 2>/dev/null && pwd -P || printf '%s' "${REPO_ROOT:-.}")
+  for cfg in "${POOL_CFG:-}/.claude.json" "$HOME/.claude/.claude.json" "$HOME/.claude-finos/.claude.json" "$HOME/.claude-finos_team/.claude.json" "$HOME/.claude.json" "$HOME/.gemini/config/mcp_config.json" "$HOME/.gemini/settings.json"; do
+    [ -f "$cfg" ] || continue
+    p=$(jq -r --arg r "$repo_abs" '(.mcpServers["antigravity-pm"].args[0] // .projects[$r].mcpServers["antigravity-pm"].args[0] // empty)' "$cfg" 2>/dev/null || true)
+    antigravity_pm_mcp_runnable "$p" && { printf '%s\n' "$p"; return 0; }
+  done
+  common_dir=$(git -C "${REPO_ROOT:-.}" rev-parse --git-common-dir 2>/dev/null || true)
+  if [ -n "$common_dir" ]; then
+    [ "${common_dir#/}" != "$common_dir" ] || common_dir="${REPO_ROOT:-.}/$common_dir"
+    common_root=$(cd "$common_dir/.." 2>/dev/null && pwd -P || true)
+    if [ -n "$common_root" ]; then
+      cand="${common_root}/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
+      antigravity_pm_mcp_runnable "$cand" && { printf '%s\n' "$cand"; return 0; }
+    fi
+  fi
+  script_root=$(python3 -c 'import os,sys; print(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(sys.argv[1])))))' "${BASH_SOURCE[0]}" 2>/dev/null || true)
+  if [ -n "$script_root" ]; then
+    cand="${script_root}/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js"
+    antigravity_pm_mcp_runnable "$cand" && { printf '%s\n' "$cand"; return 0; }
+  fi
+  return 1
+}
+
+mcp_file_has_antigravity_pm() {
+  # 0 khi file JSON $1 khai báo mcpServers["antigravity-pm"] (hoặc .projects[$2].mcpServers["antigravity-pm"]) đang bật và chạy được.
+  local f="${1:-}" repo_abs="${2:-}" row cmd arg0
+  [ -f "$f" ] || return 1
+  row=$(jq -r --arg r "$repo_abs" '
+    (.mcpServers["antigravity-pm"] // (if $r != "" then .projects[$r].mcpServers["antigravity-pm"] else null end)) as $e
+    | select($e != null and (($e.disabled // false) != true))
+    | [($e.command // ""), ($e.args[0] // "")] | @tsv
+  ' "$f" 2>/dev/null || true)
+  [ -n "$row" ] || return 1
+  IFS=$'\t' read -r cmd arg0 <<EOF
+$row
+EOF
+  case "$cmd" in
+    node|*/node)
+      case "$arg0" in
+        *.js)
+          antigravity_pm_mcp_runnable "$arg0" && return 0
+          if [ "${arg0#/}" = "$arg0" ] && [ -n "${REPO_ROOT:-}" ]; then
+            antigravity_pm_mcp_runnable "${REPO_ROOT}/$arg0" && return 0
+          fi
+          return 1 ;;
+        *) return 0 ;;
+      esac ;;
+    *) return 0 ;;
+  esac
+}
+
+profile_has_antigravity_pm() {
+  # 0 khi profile Claude ($1 = POOL_CFG, rỗng = mặc định) hoặc .mcp.json của repo đã khai báo antigravity-pm chạy được.
+  local cfg_dir="${1:-}" f repo_abs
+  repo_abs=$(cd "${REPO_ROOT:-.}" 2>/dev/null && pwd -P || printf '%s' "${REPO_ROOT:-.}")
+  if mcp_file_has_antigravity_pm "${REPO_ROOT:-.}/.mcp.json" ""; then
+    return 0
+  fi
+  if [ -n "$cfg_dir" ]; then
+    mcp_file_has_antigravity_pm "$cfg_dir/.claude.json" "$repo_abs" && return 0
+  else
+    for f in "$HOME/.claude.json" "$HOME/.claude/.claude.json"; do
+      mcp_file_has_antigravity_pm "$f" "$repo_abs" && return 0
+    done
+  fi
+  return 1
+}
+
+agy_has_antigravity_pm() {
+  # 0 khi cấu hình MCP của agy (POOL_CFG, ~/.gemini/config/mcp_config.json, ~/.gemini/settings.json, ~/.gemini/antigravity*/mcp_config.json hoặc .mcp.json) đã nạp antigravity-pm chạy được.
+  local cfg_dir="${1:-}" repo_abs f
+  repo_abs=$(cd "${REPO_ROOT:-.}" 2>/dev/null && pwd -P || printf '%s' "${REPO_ROOT:-.}")
+  if mcp_file_has_antigravity_pm "${REPO_ROOT:-.}/.mcp.json" ""; then
+    return 0
+  fi
+  for f in \
+    "${cfg_dir:+$cfg_dir/mcp_config.json}" \
+    "${cfg_dir:+$cfg_dir/settings.json}" \
+    "$HOME/.gemini/config/mcp_config.json" \
+    "$HOME/.gemini/settings.json" \
+    "$HOME"/.gemini/antigravity*/mcp_config.json; do
+    [ -n "$f" ] || continue
+    mcp_file_has_antigravity_pm "$f" "$repo_abs" && return 0
+  done
+  return 1
+}
+
+antigravity_can_provide_mcp() {
+  # 0 khi phiên review có thể nạp antigravity-pm ($1 = POOL_CFG, $2 = POOL_ENGINE).
+  # Engine antigravity (agy) không dùng --mcp-config nên bắt buộc cấu hình sẵn trong MCP config của agy.
+  local cfg_dir="${1:-}" engine="${2:-${POOL_ENGINE:-claude}}"
+  if [ "$engine" = "antigravity" ]; then
+    agy_has_antigravity_pm "$cfg_dir"
+    return $?
+  fi
+  if [ -n "${SB_ANTIGRAVITY_PM_MCP:-}" ]; then
+    [ -f "$SB_ANTIGRAVITY_PM_MCP" ]
+    return $?
+  fi
+  profile_has_antigravity_pm "$cfg_dir" || antigravity_pm_mcp_script >/dev/null 2>&1
+}
+
+review_mcp_args() {
+  # Đặt MCP_ARGS=(--mcp-config <file>) cho phiên review nếu profile thiếu antigravity-pm (hoặc test ghim SB_ANTIGRAVITY_PM_MCP).
+  MCP_ARGS=()
+  local cfg_dir="${1:-}" mcp_js cfg_file is_tmp=0
+  mcp_js=$(antigravity_pm_mcp_script 2>/dev/null || true)
+  [ -n "$mcp_js" ] || return 0
+  if [ -z "${SB_ANTIGRAVITY_PM_MCP:-}" ] && profile_has_antigravity_pm "$cfg_dir"; then
+    return 0
+  fi
+  if [ -n "${INFLIGHT_DIR:-}" ] && [ "$INFLIGHT_DIR" != "/dev/null" ] && mkdir -p "$INFLIGHT_DIR" 2>/dev/null; then
+    cfg_file="$INFLIGHT_DIR/antigravity-pm-mcp.json"
+  else
+    cfg_file=$(mktemp "${TMPDIR:-/tmp}/sb-ag-mcp.XXXXXX" 2>/dev/null) || return 0
+    is_tmp=1
+  fi
+  if jq -nc --arg js "$mcp_js" '{"mcpServers":{"antigravity-pm":{"type":"stdio","command":"node","args":[$js]}}}' > "$cfg_file.tmp" 2>/dev/null \
+     && mv -f "$cfg_file.tmp" "$cfg_file" 2>/dev/null; then
+    MCP_ARGS=(--mcp-config "$cfg_file")
+  else
+    rm -f "$cfg_file.tmp" 2>/dev/null || true
+    [ "$is_tmp" -eq 1 ] && rm -f "$cfg_file" 2>/dev/null || true
+  fi
+}
+
+antigravity_probe() {
+  # Kiểm tra kết nối tới Antigravity language_server (pm_doctor / probe). In chẩn đoán nếu lỗi, trả 0 khi nối được.
+  local out rc=0 mcp_js
+  if [ -n "${SB_ANTIGRAVITY_PROBE:-}" ]; then
+    out=$("$SB_ANTIGRAVITY_PROBE" "${REPO_ROOT:-.}" 2>&1) || rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    printf '%s\n' "$out" | tail -n 3
+    return 1
+  fi
+  mcp_js=$(antigravity_pm_mcp_script 2>/dev/null || true)
+  if [ -n "$mcp_js" ] && command -v node >/dev/null 2>&1; then
+    # Bỏ qua env cũ kế thừa từ terminal để probe tiến trình language_server thật đang chạy.
+    out=$(env -u ANTIGRAVITY_LS_ADDRESS -u ANTIGRAVITY_CSRF_TOKEN node "$mcp_js" --doctor "${REPO_ROOT:-.}" 2>&1) || rc=$?
+    if [ "$rc" -ne 0 ] || printf '%s\n' "$out" | grep -qE 'KHONG NOI DUOC|agentapi: KHONG TIM THAY|CHUA DANG KY'; then
+      printf '%s\n' "$out" | grep -E 'KHONG NOI DUOC|Goi y:|agentapi: KHONG TIM THAY|CHUA DANG KY' | head -n 3 || printf '%s\n' "$out" | tail -n 3
+      return 1
+    fi
+    return 0
+  fi
+  # Fallback khi chỉ profile khai báo mà không đọc được path script: kiểm tiến trình language_server.
+  # Đọc ra biến trước để tránh SIGPIPE (rc=141) lên `ps` dưới `set -euo pipefail` khi `grep -qE` đóng stdin sớm.
+  local ps_out
+  ps_out=$(ps -ww -A -o command= 2>/dev/null || true)
+  if grep -qE 'language_server.*--standalone' <<<"$ps_out"; then
+    return 0
+  fi
+  printf '%s\n' "Khong thay tien trinh Antigravity language_server nao dang chay."
+  return 1
+}
+
+review_needs_antigravity() {
+  # 0 khi thẻ Review #$1 cần audit qua Antigravity (không chạy nhánh claude-verify thuần).
+  local issue="$1" pr="" head="" branch="" prs base_ref issue_n=-1
+  [ "${SB_REVIEW_ANTIGRAVITY:-0}" = "1" ] && return 0
+  if [ -n "${CONFIG_PATH:-}" ] && [ -f "$CONFIG_PATH" ] \
+     && jq -e '((.worker_backend // "workflow") == "workflow") or (([.review_tiers[]?[]?] | index("antigravity")) != null)' "$CONFIG_PATH" >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! merge_queue_on && [ "${SB_SLOT_LIB_MODE:-0}" != "1" ]; then
+    return 0
+  fi
+  if [ -n "${SB_AUDIT_CHECK:-}" ] && [ -f "$SB_AUDIT_CHECK" ]; then
+    case "$issue" in ''|*[!0-9]*) ;; *) issue_n="$issue" ;; esac
+    prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid,closingIssuesReferences" 2>/dev/null || true)
+    if [ -n "$prs" ]; then
+      read -r pr head branch <<EOF || true
+$(printf '%s' "$prs" | jq -r --arg p "issue-${issue}-" --argjson n "$issue_n" '([.[] | select((.headRefName // "") | startswith($p))][0]
+    // ([.[] | select(any((.closingIssuesReferences // [])[]; .number == $n))] | if length == 1 then .[0] else null end))
+  | select(. != null) | "\(.number // "") \(.headRefOid // "") \(.headRefName // "")"' 2>/dev/null)
+EOF
+    fi
+    if [ -n "${head:-}" ]; then
+      base_ref="${BASE_BRANCH:-main}"
+      git -C "${REPO_ROOT:-.}" rev-parse --verify -q "origin/${base_ref}" >/dev/null 2>&1 && base_ref="origin/${base_ref}"
+      if python3 "$SB_AUDIT_CHECK" --edited-existing "$head" --base "$base_ref" --top "${REPO_ROOT:-.}" ${pr:+--pr "$pr"} >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+antigravity_block_card() {
+  # Chuyển thẻ sang Blocked kèm block-template đúng nguyên nhân (closed | missing-mcp) và dòng `blocked-by:  agent`.
+  # $1=issue $2=item_id $3=title $4=kind(closed|missing-mcp) $5=evidence $6=checked
+  local issue="$1" item_id="$2" title="$3" kind="$4" evidence="$5" checked="$6"
+  local hdr why what_blocks why_bot to_unblock marker mcp_hint
+  [ -n "$item_id" ] || return 1
+  mcp_hint=$(antigravity_pm_mcp_script 2>/dev/null || printf '%s' "${REPO_ROOT:-.}/mcp-servers/antigravity-pm-mcp/bin/antigravity-pm-mcp.js")
+  if [ "$kind" = "missing-mcp" ]; then
+    hdr="[orchestrator] [blocker] 🛑 blocked · ❓ thiếu antigravity-pm cho phiên review"
+    why="phiên review cho #${issue} thiếu antigravity-pm (MCP antigravity-pm chưa được nạp hoặc không có tool audit)"
+    what_blocks="thiếu antigravity-pm nên phiên review không thể gọi pm_task_create / pm_dispatch kind=audit"
+    why_bot="chỉ có thể tự nạp MCP khi tìm thấy antigravity-pm-mcp.js hoặc profile đã khai báo MCP"
+    if [ "${POOL_ENGINE:-claude}" = "antigravity" ]; then
+      to_unblock="             [ ] Cài MCP cho agy: agy mcp add antigravity-pm node ${mcp_hint} (hoặc claude mcp add antigravity-pm --scope user -- node ${mcp_hint})
+             [ ] Đưa #${issue} về Review (hoặc đợi runner tự trả về Review khi antigravity-pm sẵn sàng)"
+    else
+      to_unblock="             [ ] Cài MCP: claude mcp add antigravity-pm --scope user -- node ${mcp_hint}
+             [ ] Đưa #${issue} về Review (hoặc đợi runner tự trả về Review khi antigravity-pm sẵn sàng)"
+    fi
+    marker="<!-- sb-blocked-reason: antigravity-missing-mcp -->"
+  else
+    hdr="[orchestrator] [blocker] 🛑 blocked · ❓ Antigravity chưa mở"
+    why="Antigravity chưa mở (không nối được language_server để audit PR #${issue})"
+    what_blocks="app Antigravity đang đóng hoặc chưa mở project này nên pm_dispatch kind=audit sẽ lỗi"
+    why_bot="MCP antigravity-pm chỉ điều khiển IDE Antigravity đang mở, không tự mở app GUI"
+    to_unblock="             [ ] Mở app Antigravity (\`open -a Antigravity\`) và mở project này 1 lần
+             [ ] Runner tự đưa #${issue} về Review khi Antigravity nối lại (hoặc kéo về Review)"
+    marker="<!-- sb-blocked-reason: antigravity-closed -->"
+  fi
+  set_card_status "$item_id" "Blocked" || { gh_checkpoint; return 1; }
+  rm -f "$INFLIGHT_DIR/noops/$issue" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true
+  [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+  gh_checkpoint
+  gh_write_once issue comment "$issue" --body "${hdr}
+Card:        #${issue}${title:+ ${title}}
+Reason tag:  ❓
+Why blocked: ${why}
+Evidence:    ${evidence:-không có}
+Checked:     ${checked}
+What blocks: ${what_blocks}
+Why I (bot) cannot decide:
+             ${why_bot}
+To unblock:  ${to_unblock#             }
+Owner:       repo admin
+Move back:   drag this card to Review after the steps above are done
+${marker}
+blocked-by:  agent" >/dev/null 2>&1 || true
+  return 0
+}
+
+review_antigravity_preflight() {
+  # Kiểm tra MCP antigravity-pm và kết nối Antigravity TRƯỚC khi claim/dispatch review cần audit.
+  # Trả 0 = sẵn sàng dispatch; 1 = không sẵn sàng (đã chuyển Blocked nếu chuyển được).
+  local issue="$1" item_id title probe_err
+  item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
+  title=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .content.title][0] // empty' 2>/dev/null || true)
+  if ! antigravity_can_provide_mcp "${POOL_CFG:-}" "${POOL_ENGINE:-claude}"; then
+    local mcp_ev
+    if [ "${POOL_ENGINE:-claude}" = "antigravity" ]; then
+      mcp_ev="engine=antigravity; thiếu antigravity-pm chạy được trong ~/.gemini/config/mcp_config.json, ~/.gemini/settings.json và .mcp.json"
+    else
+      mcp_ev="profile=${POOL_CFG:-$HOME/.claude}; thiếu antigravity-pm trong .claude.json/.mcp.json và không thấy antigravity-pm-mcp.js"
+    fi
+    if antigravity_block_card "$issue" "$item_id" "$title" "missing-mcp" \
+         "$mcp_ev" \
+         "kiểm tra cấu hình MCP trước khi giao lane review"; then
+      log "🛑 #${issue} Review → Blocked: thiếu antigravity-pm trước khi dispatch (${POOL_ENGINE:-claude})"
+    else
+      log "⚠ #${issue} thiếu antigravity-pm và không chuyển được sang Blocked — bỏ qua tick này"
+    fi
+    return 1
+  fi
+  if ! probe_err=$(antigravity_probe); then
+    probe_err=$(printf '%s' "$probe_err" | tr '\n' ' ' | cut -c1-240)
+    if antigravity_block_card "$issue" "$item_id" "$title" "closed" \
+         "${probe_err:-pm_doctor: Khong thay tien trinh Antigravity language_server nao dang chay.}" \
+         "kiểm tra pm_doctor / language_server trước khi giao lane review"; then
+      log "🛑 #${issue} Review → Blocked: Antigravity chưa mở trước khi dispatch"
+    else
+      log "⚠ #${issue} Antigravity chưa mở và không chuyển được sang Blocked — bỏ qua tick này"
+    fi
+    return 1
+  fi
+  return 0
+}
+
 dispatch_lane() {
   # $1 = lane (build|qa|review); $2 = issue number
   local lane="$1" issue="$2" prompt pid
@@ -2045,6 +2336,18 @@ dispatch_lane() {
   if [ "$lane" = "build" ]; then
     { dependency_gate "$issue" && preflight_gate "$issue"; } || { [ "${SB_READY_TICK:-0}" != 1 ] || PREFLIGHT_SKIP="${PREFLIGHT_SKIP:-} ${issue}"; return 0; }
   fi
+  local mo_cached="" run_ag_preflight=1
+  if [ "${SB_SLOT_LIB_MODE:-0}" = "1" ] && [ "${SB_REVIEW_ANTIGRAVITY:-0}" != "1" ] \
+     && [ -z "${SB_ANTIGRAVITY_PROBE:-}" ] && [ -z "${SB_ANTIGRAVITY_PM_MCP:-}" ]; then
+    run_ag_preflight=0
+  fi
+  if [ "$lane" = "review" ] && [ -z "${TRAIN_BATCH:-}" ]; then
+    if ! merge_queue_on && mo_cached=$(review_approved_head "$issue"); then
+      :
+    elif [ "$run_ag_preflight" -eq 1 ] && review_needs_antigravity "$issue"; then
+      review_antigravity_preflight "$issue" || return 0
+    fi
+  fi
   if ! try_claim_assignee "$issue"; then
     return 0
   fi
@@ -2088,7 +2391,7 @@ EOF
         noop_judge=0
         log "review lane: merge-train for #${train_issues// /, #} (PRs ${train_prs}) — one worker, one verify, no fresh review"
         prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done (not when the gate printed ac-open: #N — that card stays open, the gate moved it to Ready); red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred, timeout or base-moved → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
-      elif ! merge_queue_on && merge_only=$(review_approved_head "$issue"); then   # Pha 2: queue bật thì không có worker merge-only
+      elif ! merge_queue_on && { [ -n "$mo_cached" ] && merge_only="$mo_cached" || merge_only=$(review_approved_head "$issue"); }; then   # Pha 2: queue bật thì không có worker merge-only
         noop_judge=0
         read -r mo_pr mo_head <<EOF
 $merge_only
@@ -2134,6 +2437,10 @@ EOF
   unset POSTFIX_GATE_FORCE_FULL
   local claude_model
   claude_model=$(claude_model_for_tier)
+  MCP_ARGS=()
+  if [ "$lane" = "review" ] && [ "$pool_engine" != "antigravity" ]; then
+    review_mcp_args "$pool_cfg"
+  fi
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
     # #1102: agy runs no hook, so its cwd decides what its relative writes touch: the card's lane worktree when it exists (a rebuild, a QA /
     # review of a card whose build worktree stays), never the main checkout by default. `exec` keeps `$!` = the wrapper's PID (the subshell
@@ -2145,10 +2452,10 @@ EOF
       exec nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-hydrogen-high --dangerously-skip-permissions -p "$prompt" ) >> "$worker_log_abs" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
     agent_office_args "$worker_log"; worker_session_args "$lane" "$issue" "$worker_log"
-    AGENT_OFFICE_NONCE="$AO_NONCE" CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
+    AGENT_OFFICE_NONCE="$AO_NONCE" CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" ${MCP_ARGS[@]+"${MCP_ARGS[@]}"} --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
   else
     agent_office_args "$worker_log"; worker_session_args "$lane" "$issue" "$worker_log"
-    AGENT_OFFICE_NONCE="$AO_NONCE" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
+    AGENT_OFFICE_NONCE="$AO_NONCE" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" ${MCP_ARGS[@]+"${MCP_ARGS[@]}"} --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
   fi
   pid=$!
   global_slot_register "$pid" "${lane}#${issue}"
@@ -2761,11 +3068,67 @@ note_worker_end() {
   NOOP_CHECK="${NOOP_CHECK:-} ${1}:${LANE}:${FROM_COL}:${COMMENTS0}:${WORKER_LOG:-${WORKER_LOG_DIR:-docs/super-board}/worker-${LANE}-${1}.log}"
 }
 
+review_antigravity_failure_reason() {
+  # Phát hiện phiên review thất bại do thiếu MCP antigravity-pm hoặc Antigravity đóng (language_server không chạy).
+  # Bỏ qua các dòng metadata/prompt (`prompt:`, `=== dispatch`, ...) để không khớp nhầm chữ trong prompt.
+  # Với stream-json có bản ghi `result`, chỉ lấy `result` cuối cùng để tránh bắt nhầm các block `assistant` lúc đang đọc/phân tích PR.
+  # $1 = đường log worker, $2 = comment cuối (tuỳ chọn). In "missing-mcp" hoặc "closed"; không khớp thì rỗng.
+  local wlog="${1:-}" comment="${2:-}" txt=""
+  if [ -n "$wlog" ] && [ -f "$wlog" ]; then
+    txt=$(python3 -c 'import json, sys
+buf = []
+results = []
+with open(sys.argv[1], errors="replace") as fh:
+    for line in fh:
+        if line.startswith("=== dispatch "):
+            buf = []
+            results = []
+            continue
+        if line.startswith(("prompt: ", "account_pool: ", "agent_office: ", "worker: ", "worker_exit: ")):
+            continue
+        if line.startswith("{"):
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                buf.append(line)
+                continue
+            if obj.get("type") == "result" and isinstance(obj.get("result"), str):
+                results.append(obj["result"])
+            elif obj.get("type") == "assistant":
+                msg = obj.get("message") or {}
+                for block in (msg.get("content") or []):
+                    if isinstance(block, dict) and isinstance(block.get("text"), str):
+                        buf.append(block["text"])
+        else:
+            buf.append(line)
+if results:
+    print(results[-1][-8000:])
+else:
+    print("\n".join(buf[-80:])[-8000:])' "$wlog" 2>/dev/null || true)
+  fi
+  local combined="${txt}
+${comment}"
+  local pm_tok='[`"'\'']?antigravity-pm[`"'\'']?'
+  local pm_tool='[`"'\'']?pm_task_create[`"'\'']?'
+  local ls_tok='[`"'\'']?language_server[`"'\'']?'
+  local mcp_prefix='((công cụ|cong cu)[[:space:]]+)?(MCP[[:space:]]+)?(server[[:space:]]+)?'
+  if grep -qiE "(thiếu|không có|chưa nạp|chưa cấu hình|chưa cài)[[:space:]]+${mcp_prefix}${pm_tok}|${mcp_prefix}${pm_tok}[[:space:]]+(không có|thiếu|chưa nạp|chưa sẵn sàng|không khả dụng|unavailable|missing|not found|not loaded)|bật[[:space:]]+MCP[[:space:]]+(server[[:space:]]+)?${pm_tok}|khi[[:space:]]+${pm_tok}[[:space:]]+(khả dụng|có mặt|sẵn sàng)|${pm_tok}[^.;,]{0,40}(not loaded|missing|unavailable|chưa nạp|chưa được nạp|không có|không khả dụng)|ToolSearch[^.;]{0,60}${pm_tok}[^.;]{0,40}(not found|missing|không tìm thấy|không có|failed|error|unavailable)|ToolSearch[^.;]{0,60}(not found|missing|không tìm thấy|không có|failed|error|unavailable)[^.;]{0,40}${pm_tok}|${pm_tok}[^.;]{0,40}ToolSearch[^.;]{0,40}(not found|missing|không tìm thấy|không có)|${pm_tool}[^.;,]{0,40}(missing|not found|không có)" <<<"$combined"; then
+    printf '%s\n' "missing-mcp"
+    return 0
+  fi
+  if grep -qiE "Antigravity chưa mở|Khong thay tien trinh Antigravity language_server|${ls_tok}[^.;,]{0,40}(khong|không|chua|chưa|unavailable|not running)|AntigravityUnavailable|KHONG NOI DUOC" <<<"$combined"; then
+    printf '%s\n' "closed"
+    return 0
+  fi
+  return 0
+}
+
 block_noop_workers() {
   # Expensive tick, after fetch_project_items: judge the workers queued by note_worker_end. Sets NOOP_MOVED=1 when a card was moved.
   local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
   local entry issue lane from c0 col count f now n item_id title wlog last tag human_line
   local whead wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait stall_why
+  local ag_fail last_body new_body ag_ev new_hdr new_blocked_by
   NOOP_CHECK=""
   for entry in $pending; do
     wlog=""
@@ -2776,11 +3139,27 @@ EOF
     issue_locked "$issue" && continue
     f="$INFLIGHT_DIR/noops/$issue"
     [ -n "$wlog" ] || wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
-    eff_max="$max"; over_wait=""; human_wait=""
+    eff_max="$max"; over_wait=""; human_wait=""; ag_fail=""; last_body=""; new_body=""
+    new_hdr=""; new_blocked_by=""
     col=$(issue_status "$issue")
     [ -n "$col" ] || continue
     count=$(issue_comment_count "$issue")
     [ -n "$count" ] || continue   # GitHub cannot say: conclude nothing
+    if [ "$lane" = review ] && [ "$col" = Review ]; then
+      last_body=$(issue_last_comment "$issue" "$count" 2>/dev/null || true)
+      # Chỉ kiểm tra comment mới phát sinh trong lượt này; tránh khớp nhầm comment blocker Antigravity cũ khi count <= c0.
+      if [ "$count" -gt "$c0" ]; then
+        new_body="$last_body"
+        new_hdr=$(printf '%s\n' "$last_body" | tr -d '\r' | awk '!h && NF && $0 !~ /^<!--/ {h=1; print}')
+        new_blocked_by=$(printf '%s\n' "$last_body" | tr -d '\r' | awk 'NF{l=$0} END{if (l ~ /^blocked-by:/) print l}' | sed 's/^blocked-by:[[:space:]]*//; s/[[:space:]]*$//')
+      fi
+      # Không đánh dấu ag_fail nếu PR đã vào merge-queue, hoặc reviewer vừa báo ✅, hoặc vừa báo ❌ bounce hợp lệ (không phải blocked-by: agent).
+      if ! { merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; } \
+         && ! { [ "$count" -gt "$c0" ] && grep -qE '^\[reviewer\] \[report\] ✅' <<<"$new_hdr"; } \
+         && ! { [ "$count" -gt "$c0" ] && grep -qE '^\[reviewer\] \[report\] ❌' <<<"$new_hdr" && [ "$new_blocked_by" != "agent" ]; }; then
+        ag_fail=$(review_antigravity_failure_reason "$wlog" "$new_body")
+      fi
+    fi
     stall_why=""
     # #1316: a review worker that ended clean concluding "not approved" but never moved the card is a bounce it forgot to route (also when it
     # commented): the builder only takes Ready/Building cards, so move it to Ready, not the review-stall ledger or Blocked ❓. A queued PR or a
@@ -2788,9 +3167,9 @@ EOF
     # #1350: also a clean-ended review worker whose newest [reviewer] comment hands a CONCRETE code finding to "a person" (`blocked-by: -`, ❌ + file:line, no
     # closed-list reason): the builder can fix it, so it is a bounce too (review_dash_is_bounceable; once per comment, 3 per card). The queued-PR guard stays.
     REVIEW_BOUNCE_KEY=""
-    if [ "$lane" = review ] && [ "$col" = Review ] && [ "$col" = "$from" ] && worker_ended_clean "$wlog" \
+    if [ -z "$ag_fail" ] && [ "$lane" = review ] && [ "$col" = Review ] && [ "$col" = "$from" ] && worker_ended_clean "$wlog" \
        && ! { merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; } \
-       && { review_dash_is_bounceable "$issue" "$(issue_last_comment "$issue" "$count")" \
+       && { review_dash_is_bounceable "$issue" "$last_body" \
             || { REVIEW_BOUNCE_KEY=""; review_concluded_bounce "$wlog" && ! review_holds_in_review "$issue" "$count"; }; }; then
       item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
       if [ -n "$item_id" ] && set_card_status "$item_id" "Ready"; then
@@ -2818,7 +3197,7 @@ blocked-by: agent" >/dev/null 2>&1 || true
       rm -f "$f" 2>/dev/null || true
       continue
     fi
-    if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
+    if [ "$col" != "$from" ] || { [ "$count" -gt "$c0" ] && [ -z "$ag_fail" ]; }; then
       rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # it moved the card or wrote something: progress
       [ "$col" = "$from" ] || rm -f "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true   # the card moved: stall ledger starts over
       if [ "$lane" = review ] && [ "$col" = Review ] && [ "$col" = "$from" ] && worker_ended_clean "$wlog" \
@@ -2826,7 +3205,7 @@ blocked-by: agent" >/dev/null 2>&1 || true
         # #1221 AC3: a review turn that exits 0 and comments but leaves the card in Review is a no-op in effect when it repeats (e.g. a
         # condition only a person can meet): SB_REVIEW_STALL_MAX (3) such turns inside SB_NOOP_WINDOW_S park the card in Blocked instead of
         # a fourth dispatch that ends in RUNAWAY. A turn waiting on a named condition (`blocked-by: <X>`) has its own cap (SB_REVIEW_WAIT_MAX).
-        wait_val=$(issue_last_comment "$issue" "$count" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
+        wait_val=$(printf '%s\n' "$last_body" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
         wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
         if [ -n "$wait_what" ] && [ "$wait_what" != "-" ]; then continue; fi
         wlimit="${SB_REVIEW_STALL_MAX:-3}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=3 ;; esac
@@ -2851,7 +3230,7 @@ blocked-by: agent" >/dev/null 2>&1 || true
     fi
     # Pha 2 (M4): a reviewer that queued the PR (merge-queue label + approved-head at the head) rightly leaves the card in Review:
     # the queue merges it later, so this is no no-op. Checked only here, on the would-be no-op path, so a queue-off board reads nothing more.
-    if [ -z "$stall_why" ] && [ "$lane" = review ] && [ "$col" = Review ] && merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; then
+    if [ -z "$stall_why" ] && [ -z "$ag_fail" ] && [ "$lane" = review ] && [ "$col" = Review ] && merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; then
       rm -f "$f" 2>/dev/null || true
       continue
     fi
@@ -2860,8 +3239,8 @@ blocked-by: agent" >/dev/null 2>&1 || true
     # Chỉ comment của [reviewer] mới tính (dòng đầu sau marker `<!-- -->` là `[reviewer]`, dòng cuối là `blocked-by:`).
     # Miễn có trần: thẻ nghỉ SB_REVIEW_WAIT_S (900) giữa hai lượt (review_wait_cooldown) và chỉ được miễn SB_REVIEW_WAIT_MAX (8) lượt trong
     # SB_NOOP_WINDOW_S (24 giờ), quá thì Blocked "chờ <X> quá lâu". `blocked-by: -` là chờ người: không miễn, Blocked ngay.
-    if [ -z "$stall_why" ] && [ "$lane" = review ] && worker_ended_clean "$wlog"; then
-      wait_val=$(issue_last_comment "$issue" "$count" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
+    if [ -z "$stall_why" ] && [ -z "$ag_fail" ] && [ "$lane" = review ] && worker_ended_clean "$wlog"; then
+      wait_val=$(printf '%s\n' "$last_body" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
       wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
       if [ -n "$wait_val" ] && [ "$wait_what" = "-" ]; then
         eff_max=1; human_wait=1   # chờ người, không có gì để dispatch lại
@@ -2884,6 +3263,9 @@ blocked-by: agent" >/dev/null 2>&1 || true
         if [ "${wn:-0}" -ge 1 ]; then over_wait="${wait_what:-?}"; eff_max=1; fi
       fi
     fi
+    if [ -n "$ag_fail" ]; then
+      eff_max=1
+    fi
     now=$(date +%s)
     mkdir -p "$INFLIGHT_DIR/noops" 2>/dev/null || true
     { { tail -n 19 "$f" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now $lane $col $count"; } > "$f.tmp" 2>/dev/null \
@@ -2896,6 +3278,19 @@ blocked-by: agent" >/dev/null 2>&1 || true
     fi
     item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
     title=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .content.title][0] // empty' 2>/dev/null || true)
+    if [ -n "$ag_fail" ]; then
+      ag_ev=$(worker_result_text "$wlog" 2>/dev/null | tr '\n' ' ' | cut -c1-200)
+      if antigravity_block_card "$issue" "$item_id" "$title" "$ag_fail" \
+           "${wlog}${ag_ev:+; ${ag_ev}}" \
+           "inflight lock reaped; card still in ${col}; phát hiện nguyên nhân Antigravity/MCP (${ag_fail})"; then
+        NOOP_MOVED=1
+        log "🛑 #${issue} ${col} → Blocked: ${ag_fail} (review worker không thể audit)"
+      else
+        gh_checkpoint
+        log "⚠ #${issue} in ${col} — review failed (${ag_fail}) but the card could not be moved to Blocked; drag it by hand"
+      fi
+      continue
+    fi
     tag="❓"
     printf '%s' "$last" | grep -qiE 'máy thật|thiết bị|real device|device|adb' && tag="📱"
     # #529: `blocked-by:  -` hands the card to a person; only a missing device is theirs. Other no-ops are agent work (no machine line).
@@ -3360,6 +3755,111 @@ EOF
 # #1342 part B: run.md says a different root-cause hash resets the rebuild counter, but a card Blocked at rebuild_cap stayed Blocked even when
 # every round found NEW findings (#1318, #1328, #1333). Seam for tests: JSON array of {body} (oldest first) of issue $1, read through an isolated
 # halt file so a failed read can never leave a real github-halt.json that stops the board; unreadable -> non-zero.
+# #1390 (AC 3): Thẻ Blocked vì Antigravity đóng hoặc thiếu MCP antigravity-pm (kể cả thẻ cũ từng bị chặn 'waiting on a person'
+# khi comment của reviewer/orchestrator hoặc log review nhắc antigravity-pm / language_server) tự về Review khi Antigravity nối lại.
+# Trả 0 khi có ít nhất một thẻ được chuyển (caller đọc lại board), 1 khi không.
+sweep_antigravity_blocked() {
+  local now cands cand_nums kept_non_ag n_old issue item_id cj ctx_json blocker prev_rev legacy_ctx kind ev_log moved=1 probe_checked=0 probe_ok=0
+  now=$(date +%s)
+  [ "$now" -lt "${AG_SWEEP_NEXT:-0}" ] && return 1
+  cands=$(printf '%s' "${PROJECT_ITEMS_JSON:-}" | jq -r --arg bot "${BOT_LOGIN:-}" '
+    .items[]?
+    | select(.status == "Blocked" and (.content.type // "Issue") == "Issue")
+    | select(((.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
+    | ((.labels // []) + (.content.labels // []) | map(if type == "object" then .name else . end | ascii_downcase)) as $l
+    | select(($l | index("needs-you") | not) and ($l | index("human-gated") | not))
+    | [(.content.number | tostring), (.id // "")] | @tsv' 2>/dev/null) || return 1
+  if [ -z "$cands" ]; then
+    AG_NON_AG_CARDS=""
+    return 1
+  fi
+  # Loại khỏi cache âm tính các thẻ đã rời khỏi cột Blocked để không bỏ qua nếu về sau bị chặn lại vì Antigravity.
+  cand_nums=$(printf '%s\n' "$cands" | cut -f1)
+  kept_non_ag=""
+  for n_old in ${AG_NON_AG_CARDS:-}; do
+    if printf '%s\n' "$cand_nums" | grep -qx "$n_old"; then
+      kept_non_ag="${kept_non_ag} ${n_old}"
+    fi
+  done
+  AG_NON_AG_CARDS="$kept_non_ag"
+  while IFS=$'\t' read -r issue item_id; do
+    [ -n "$issue" ] && [ -n "$item_id" ] || continue
+    issue_locked "$issue" && continue
+    case " ${AG_NON_AG_CARDS:-} " in *" ${issue} "*) continue ;; esac
+    cj=$(cap_progress_comments "$issue" 2>/dev/null) || continue
+    # Chỉ xét comment blocker mới nhất (và tối đa 1 comment [reviewer] lỗi liền trước nếu là thẻ cũ trước bản vá),
+    # tránh dính marker/từ khóa Antigravity cũ khi thẻ đã bị chặn lại vì lý do khác (🔐/🛡).
+    ctx_json=$(printf '%s' "$cj" | jq -c '
+      ([to_entries[] | select((.value.body // "") | test("^\\[(orchestrator|builder|qa|reviewer|merge-queue)\\] \\[blocker\\]|🛑 blocked|(^|\n)Move back:"))] | last) as $b
+      | if $b == null then {blocker: "", prev_rev: ""}
+        elif ([to_entries[] | select(.key > $b.key and ((.value.body // "") | test("^\\[orchestrator\\] \\[report\\] ↩️ back to Review")))] | length) > 0 then {blocker: "", prev_rev: ""}
+        else {
+          blocker: ($b.value.body // ""),
+          prev_rev: (if $b.key > 0 then (.[$b.key - 1].body // "" | if test("^\\[reviewer\\]") and (test("^\\[reviewer\\] \\[report\\] ✅") | not) then . else "" end) else "" end)
+        } end' 2>/dev/null) || continue
+    blocker=$(printf '%s' "$ctx_json" | jq -r '.blocker // ""' 2>/dev/null) || continue
+    prev_rev=$(printf '%s' "$ctx_json" | jq -r '.prev_rev // ""' 2>/dev/null) || continue
+    kind=""
+    if [ -n "$blocker" ]; then
+      if grep -q 'sb-blocked-reason: antigravity-missing-mcp' <<<"$blocker"; then
+        kind="missing-mcp"
+      elif grep -q 'sb-blocked-reason: antigravity-closed' <<<"$blocker"; then
+        kind="closed"
+      elif grep -qE 'Move back:[[:space:]]*drag this card to Review|still in Review|the reviewer for #' <<<"$blocker"; then
+        local struct_lines
+        struct_lines=$(printf '%s\n' "$blocker" | tr -d '\r' | awk '
+          NF && !h && $0 !~ /^<!--/ { h=1; print; next }
+          /^[[:space:]]*(Reason tag|Why blocked|What blocks):/ { print }
+        ')
+        if ! grep -qiE 'Reason tag:[[:space:]]*(💳|🔐|🧑|🙋|📱|🛡)|thanh toán|payment|billing|drop table|destructive|live[- ]db|migration|máy thật|real device|rebuild cap' <<<"$struct_lines"; then
+          legacy_ctx="${blocker}
+${prev_rev}"
+          if grep -qiE 'antigravity-pm|Antigravity chưa mở|language_server|AntigravityUnavailable|pm_task_create|pm_dispatch|khi antigravity-pm' <<<"$legacy_ctx"; then
+            kind="antigravity"
+          else
+            ev_log=$(printf '%s\n' "$legacy_ctx" | sed -nE 's/.*Evidence:[[:space:]]*([^;[:space:]]+worker-review-[^;[:space:]]+\.log).*/\1/p' | tail -1)
+            if [ -n "$ev_log" ] && [ -f "$ev_log" ] && [ -n "$(review_antigravity_failure_reason "$ev_log" "")" ]; then
+              kind="antigravity"
+            fi
+          fi
+        fi
+      fi
+    fi
+    if [ -z "$kind" ]; then
+      AG_NON_AG_CARDS="${AG_NON_AG_CARDS:-} ${issue}"
+      continue
+    fi
+    if [ "$probe_checked" -eq 0 ]; then
+      probe_checked=1
+      if ( POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
+           resolve_worker_account >/dev/null 2>&1 || { POOL_ENGINE="claude"; POOL_CFG=""; }
+           antigravity_can_provide_mcp "${POOL_CFG:-}" "${POOL_ENGINE:-claude}" && antigravity_probe >/dev/null 2>&1 ); then
+        probe_ok=1
+      else
+        probe_ok=0
+        AG_SWEEP_NEXT=$((now + ${SB_ANTIGRAVITY_SWEEP_EVERY:-120}))
+      fi
+    fi
+    [ "$probe_ok" -eq 1 ] || return 1
+    if ! set_card_status "$item_id" "Review"; then
+      gh_checkpoint
+      log "⚠ antigravity sweep: could not move #${issue} from Blocked to Review — retrying next tick"
+      continue
+    fi
+    rm -f "$INFLIGHT_DIR/noops/$issue" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Review · Antigravity đã nối lại
+Did: đã xác nhận kết nối Antigravity language_server và sẵn sàng MCP antigravity-pm
+✅ Done: chuyển #${issue} từ Blocked về Review
+Next: reviewer chạy lại audit cho PR hiện tại" >/dev/null 2>&1 || true
+    log "↩ antigravity sweep: #${issue} Blocked → Review (Antigravity/MCP ready)"
+    moved=0
+  done <<EOF
+$cands
+EOF
+  return "$moved"
+}
+
 cap_progress_comments() {
   local haltf out rc=0
   haltf=$(mktemp -u "${TMPDIR:-/tmp}/sb-cap-halt.XXXXXX") || return 1
@@ -4458,6 +4958,7 @@ while true; do
   if sweep_waiting_on; then tick_fetch || continue; fi     # #601
   if sweep_file_wait; then tick_fetch || continue; fi      # #556
   if maybe_sweep_blocked; then tick_fetch || continue; fi
+  if sweep_antigravity_blocked; then tick_fetch || continue; fi
   # #363: ≥2 thẻ Blocked cùng suite id trong N giờ → một thẻ + ngưng giao Builder (suite_fuse_tick).
   if suite_fuse_tick; then tick_fetch || continue; fi
 
