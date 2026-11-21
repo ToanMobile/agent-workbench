@@ -740,7 +740,6 @@ def summarize_ungated_merges(
     tz = _tz_info(tz_name)
     by_date: dict[str, int] = {}
     total = 0
-    saw_older = False   # đã thấy PR merge trước cửa sổ 7 ngày ⇒ danh sách phủ hết cửa sổ
 
     for pr in prs or []:
         if not isinstance(pr, dict) or not isinstance(pr.get("number"), int):
@@ -753,7 +752,6 @@ def summarize_ungated_merges(
         if m_dt.tzinfo is None:
             m_dt = m_dt.replace(tzinfo=datetime.timezone.utc)
         if int(m_dt.timestamp()) < cutoff_ep:
-            saw_older = True
             continue
         num = pr["number"]
         head = pr.get("headRefOid") or ""
@@ -768,7 +766,7 @@ def summarize_ungated_merges(
         by_date[day_key] = by_date.get(day_key, 0) + 1
         total += 1
 
-    return {"total_7d": total, "by_date": dict(sorted(by_date.items())), "ok": True, "saw_older": saw_older}
+    return {"total_7d": total, "by_date": dict(sorted(by_date.items())), "ok": True}
 
 
 def ungated_merges_line(summary: dict[str, Any]) -> str:
@@ -1125,9 +1123,12 @@ def main() -> int:
     # ── health ──
     base_branch = cfg.get("base_branch") or "main"
     tz_name = cfg.get("timezone") or "UTC"
+    # `gh pr list` xếp theo ngày TẠO (#1416 review): một PR merge trước mốc trong danh sách không chứng minh danh sách phủ hết cửa sổ,
+    # nên hỏi đúng cửa sổ merge (ngày UTC của mốc 7 ngày; summarize_ungated_merges lọc chính xác tới giây).
+    since = datetime.datetime.fromtimestamp(now_epoch - 7 * 86400, datetime.timezone.utc).strftime("%Y-%m-%d")
     pr_out = gh(
-        "pr", "list", "--state", "merged", "--base", base_branch, "--limit", str(UNGATED_PR_LIMIT),
-        "--json", "number,headRefOid,mergeCommit,mergedAt", check=False,
+        "pr", "list", "--state", "merged", "--base", base_branch, "--search", f"merged:>={since}",
+        "--limit", str(UNGATED_PR_LIMIT), "--json", "number,headRefOid,mergeCommit,mergedAt", check=False,
     )
     ungated_ok = False
     merged_prs_list: list[dict[str, Any]] = []
@@ -1142,8 +1143,8 @@ def main() -> int:
     ungated_summary = summarize_ungated_merges(
         merged_prs_list, common_dir, now_epoch=now_epoch, tz_name=tz_name, ok=ungated_ok
     )
-    # Chạm trần --limit mà chưa thấy PR nào cũ hơn 7 ngày: còn PR trong cửa sổ chưa đọc ⇒ báo `N+`, không đếm thiếu âm thầm.
-    ungated_summary["capped"] = len(merged_prs_list) >= UNGATED_PR_LIMIT and not ungated_summary.get("saw_older")
+    # Mọi PR trả về đều merge trong cửa sổ: chạm trần --limit ⇒ có thể còn PR chưa đọc, báo `N+`, không đếm thiếu âm thầm.
+    ungated_summary["capped"] = len(merged_prs_list) >= UNGATED_PR_LIMIT
 
     print()
     print("▎Health")
