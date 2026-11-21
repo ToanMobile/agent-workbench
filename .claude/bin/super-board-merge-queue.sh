@@ -290,7 +290,7 @@ REBASE_PURE_F="$QDIR/merge-queue.rebase-pure"   # "<PR> <pure rebases so far>" (
 REBUILD_TOTAL_DIR="${SB_REBUILD_TOTAL_DIR:-$QDIR/rebuild-total}"
 # The ledger counts pure rebases of a PR that is still in play; a PR that merged or left the queue Blocked starts from zero if it comes back.
 rebase_pure_drop() { [ -f "$REBASE_PURE_F" ] || return 0; awk -v p="$1" '$1 != p' "$REBASE_PURE_F" > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"; }
-rebuild_total_drop() { [ -n "${1:-}" ] && rm -f "$REBUILD_TOTAL_DIR/$1"; }
+rebuild_total_drop() { [ -z "${1:-}" ] || rm -f "$REBUILD_TOTAL_DIR/$1"; }
 rebuild_total_info() {
   # $1 = issue, $2 = cur (loop:rebuild-N), $3 = issue JSON. Xuất `total_n=... causes_str=...` (tab-free) qua stdout.
   local k="$1" cur="${2:-0}" ij="$3" lf="$REBUILD_TOTAL_DIR/$1"
