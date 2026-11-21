@@ -738,7 +738,11 @@ export async function syncLiveQuotas(opts = {}) {
         ...q,
         updatedAtMs: nowMs,
       };
-      if (freezeUntouched && q.remainingPct <= 0 && q.resetAtMs > nowMs) {
+      // #1412: het gioi han TUAN thi dong bang toi gio reset tuan, du cua so 5 gio con trong (khop voi pool cua runner).
+      const weeklyOut = typeof q.weeklyRemainingPct === 'number' && q.weeklyRemainingPct <= 0 && q.weeklyResetAtMs > nowMs;
+      if (freezeUntouched && weeklyOut) {
+        fresh.frozenUntil[p.id] = Math.max(q.weeklyResetAtMs, q.remainingPct <= 0 ? q.resetAtMs || 0 : 0);
+      } else if (freezeUntouched && q.remainingPct <= 0 && q.resetAtMs > nowMs) {
         fresh.frozenUntil[p.id] = q.resetAtMs;
       } else if (freezeUntouched && q.remainingPct > 0 && fresh.frozenUntil[p.id]) {
         delete fresh.frozenUntil[p.id];
