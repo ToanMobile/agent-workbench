@@ -1105,6 +1105,61 @@ def _gh_graphql_endpoint(x):
     x = x.rstrip("/")
     return x == "graphql" or x.endswith("/graphql")
 
+BOARD_WARNINGS = []   # (#1392) cảnh báo `gh project item-list` sai board (1 dòng, không chặn)
+
+
+def _gh_item_list_number(rest):
+    """Số project trong `gh project item-list <n>`, hoặc None."""
+    args = _gh_strip_globals(drop_redirects(rest))
+    j = 0
+    while j < len(args) and args[j].startswith("-"):
+        j += 1
+    if args[j:j + 2] != ["project", "item-list"]:
+        return None
+    k, tail = 0, args[j + 2:]
+    while k < len(tail):
+        a = tail[k]
+        if a == "--":
+            return int(tail[k + 1]) if k + 1 < len(tail) and tail[k + 1].isdigit() else None
+        if a.startswith("--"):
+            opt, eq, _ = a.partition("=")
+            k += 1 if (eq or opt in ("--web", "--help")) else 2
+            continue
+        if a.startswith("-") and len(a) > 1:
+            k += 1 if (len(a) > 2 or a in ("-w", "-h")) else 2
+            continue
+        return int(a) if a.isdigit() else None
+    return None
+
+
+def gh_project_item_list_warn(rest, base):
+    """Ghi nhận cảnh báo 1 dòng khi `gh project item-list <N>` khác board trong config repo hiện tại."""
+    num = _gh_item_list_number(rest)
+    if num is None:
+        return
+    try:
+        gov_dir = os.path.join(os.path.dirname(_HOOK_DIR), "scripts", "governance")
+        if not os.path.isfile(os.path.join(gov_dir, "repo_board.py")):
+            # #1402: kit cài kiểu copy — hook nằm ở <repo>/.claude/hooks nên không có scripts/governance cạnh hook;
+            # lấy bản của kit dưới gốc dự án (suy từ vị trí hook trước, rồi tới CLAUDE_PROJECT_DIR).
+            for _proj in (os.path.dirname(os.path.dirname(_HOOK_DIR)), os.environ.get("CLAUDE_PROJECT_DIR") or ""):
+                _cand = os.path.join(_proj, ".agents", "devkit", "scripts", "governance") if os.path.isabs(_proj) else ""
+                if _cand and os.path.isfile(os.path.join(_cand, "repo_board.py")):
+                    gov_dir = _cand
+                    break
+        if gov_dir not in sys.path:
+            sys.path.insert(0, gov_dir)
+        import repo_board  # noqa: PLC0415
+        b = repo_board.resolve_board(base or os.environ.get("CLAUDE_PROJECT_DIR") or ".")
+    except Exception:
+        return
+    if b and int(b["number"]) != num:
+        msg = (f"⚠️ Cảnh báo: đang chạy `gh project item-list {num}`, nhưng board của repo này là #{b['number']} "
+               f"({b['title']}, {b['owner']}/projects/{b['number']}). Dùng: gh project item-list {b['number']} --owner {b['owner']}")
+        if msg not in BOARD_WARNINGS:
+            BOARD_WARNINGS.append(msg)
+
+
 def gh_comment_rule(rest, base):
     """Lý do chặn khi lệnh gh đăng comment tự duyệt; None khi không phải đăng comment hoặc body sạch."""
     rest = _gh_strip_globals(drop_redirects(rest))
@@ -1673,7 +1728,10 @@ def analyse_simple(tokens, depth):
     if prog.lower() == "gh" or (re.search(r"[*?\[]", prog) and _fnm("gh", prog)):
         prog = "gh"
     if prog == "gh":   # (#605 Lane H) agent không tự đăng approved-head trơn / done; (#536) nhãn merge-queue cần approved-head
-        return gh_comment_rule(rest, CUR_DIR[0]) or gh_label_rule(rest, CUR_DIR[0], assigns.get("GH_REPO"))
+        reason = gh_comment_rule(rest, CUR_DIR[0]) or gh_label_rule(rest, CUR_DIR[0], assigns.get("GH_REPO"))
+        if not reason:
+            gh_project_item_list_warn(rest, CUR_DIR[0])
+        return reason
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git. So may a $(…) / backtick there
     # (`$(echo gi)t reset --hard`, 2026-10-09): its output is the program name.
     if prog.startswith("$") or SUBST in prog:
@@ -2488,4 +2546,8 @@ if reason:
           + (f"Không mất gì thì dùng `{kit}`; còn không: " if kit else "")
           + "Nếu thực sự cần, User sẽ tự chạy qua prefix \"!\".", file=sys.stderr)
     sys.exit(2)
+if BOARD_WARNINGS:
+    msg = BOARD_WARNINGS[0]
+    sys.stderr.write(msg + "\n")
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": msg}}, ensure_ascii=False))
 sys.exit(0)

@@ -177,7 +177,7 @@ Không để SSH hỏi mật khẩu giữa đêm: `ssh-add --apple-use-keychain 
 - CC Switch để chế độ `Direct`: không proxy, không chèn token tĩnh. `claude` nói chuyện thẳng với Anthropic bằng Keychain.
 - Máy này có dữ liệu CC Switch (`~/.cc-switch/`) nhưng chưa có `CC Switch.app` trong `/Applications`, nên mục 7 của `--verify` báo FAIL (đo ngày 22/10). `ccswitch` dòng lệnh vẫn chạy.
 - Ba thư mục `~/.claude-{finos,finos_team,max}` dùng symlink về `~/.claude/`, nên đổi tài khoản vẫn giữ lịch sử `claude --resume`.
-- Khi cả 3 tài khoản Claude chạm 95 %, chỉ chuyển sang Antigravity nếu bật `SB_FALLBACK_ANTIGRAVITY=1` (hoặc `=pro`); Grok đã gỡ 17/11. Không bật thì runner tạm dừng tới khi hạn mức hồi.
+- 21/11 (#1412): chỉ dùng tài khoản Claude. Tài khoản Claude ghim cho repo chạm 95 % thì `resolve` trả `state=pause` kèm `resets_at` và runner không giao worker cho repo đó tới giờ reset; không nhảy sang tài khoản Claude khác, không đổi sang Antigravity (`SB_FALLBACK_ANTIGRAVITY` đã bỏ; Grok đã gỡ 17/11). Script pool nằm trong kit: `.claude/bin/super-board-account-pool.sh`; đoạn script ở mục 12.3 bên dưới là bản cũ.
 
 Lệnh hay dùng:
 

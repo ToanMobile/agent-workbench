@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 create_task.py — Tự động tạo issue và đẩy lên cột Backlog của GitHub Project Board
-Hỗ trợ cả 5 repositories:
+Hỗ trợ cả 6 repositories:
   1. ToanMobile/agent-workbench             ➔ Project #1: Agent Workbench
   2. ToanMobile/OfficeReader                ➔ Project #2: OfficeReader
   3. ToanMobile/Goods-Triple-Shelf-Match-3D ➔ Project #3: Goods Triple Shelf Match 3D
   4. ToanMobile/GeelyEx2                    ➔ Project #4: GeelyEx2
   5. ToanMobile/Idle-Plaza-3D               ➔ Project #5: Idle Plaza 3D
+  6. ToanMobile/Humans-vs.-UFOs             ➔ Project #6: Humans vs. UFOs
 
 Sử dụng:
   1. Tạo nhanh từ câu tóm tắt (auto-format):
@@ -36,9 +37,16 @@ import tempfile
 import time
 from pathlib import Path
 
+_GOV_DIR = str(Path(__file__).resolve().parent)
+if _GOV_DIR not in sys.path:
+    sys.path.insert(0, _GOV_DIR)
+if sys.pycache_prefix is None:
+    sys.dont_write_bytecode = True
+import repo_board  # noqa: E402
+
 PROJECT_OWNER = "ToanMobile"
 
-# Cấu hình 5 repositories tương ứng 5 Project Boards trên ToanMobile
+# Cấu hình 6 repositories tương ứng 6 Project Boards trên ToanMobile
 PROJECT_REGISTRY = {
     "ToanMobile/agent-workbench": {
         "number": 1,
@@ -202,6 +210,13 @@ def run_cmd(cmd, check=True):
         raise RuntimeError(f"Command failed ({' '.join(cmd)}):\n{r.stderr.strip()}")
     return r
 
+def _normalize_repo_slug(repo_slug):
+    for known_repo in PROJECT_REGISTRY:
+        if repo_slug.lower() == known_repo.lower():
+            return known_repo
+    return repo_slug
+
+
 def detect_repo():
     try:
         r = run_cmd(["git", "remote", "get-url", "origin"], check=False)
@@ -209,14 +224,12 @@ def detect_repo():
             url = r.stdout.strip()
             m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$", url)
             if m:
-                repo_slug = m.group(1)
-                # Chuẩn hóa tên slug
-                for known_repo in PROJECT_REGISTRY:
-                    if repo_slug.lower() == known_repo.lower():
-                        return known_repo
-                return repo_slug
+                return _normalize_repo_slug(m.group(1))
     except Exception:
         pass
+    board = repo_board.resolve_board(str(_repo_root_path()))
+    if board and board.get("repo"):
+        return _normalize_repo_slug(board["repo"])
     return DEFAULT_REPO
 
 def other_repos_named(text, repo):
@@ -341,7 +354,8 @@ def ready_started(repo):
 
 def board_items(cfg):
     """Mọi item của board (gh project item-list). Lỗi đọc → RuntimeError; danh sách bị cắt → cảnh báo."""
-    res = run_cmd(["gh", "project", "item-list", str(cfg["number"]), "--owner", PROJECT_OWNER,
+    owner = cfg.get("owner", PROJECT_OWNER)
+    res = run_cmd(["gh", "project", "item-list", str(cfg["number"]), "--owner", owner,
                    "--format", "json", "--limit", "500"], check=False)
     if res.returncode != 0:
         raise RuntimeError(res.stderr.strip()[:200] or f"gh project item-list thoát {res.returncode}")
@@ -590,25 +604,49 @@ def read_body_from_file(file_path: Path):
     return content
 
 
+def _repo_root_path():
+    r = run_cmd(["git", "rev-parse", "--show-toplevel"], check=False)
+    return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else Path(".")
+
+
 def resolve_project_config(repo: str):
+    board = repo_board.resolve_board(str(_repo_root_path()))
+    if board and ((board.get("repo") and board["repo"].lower() == repo.lower())
+                  or (not board.get("repo") and repo == DEFAULT_REPO)):
+        reg = PROJECT_REGISTRY.get(repo, {})
+        cfg = {
+            "owner": board["owner"],
+            "number": board["number"],
+            "name": board["title"],
+            "project_id": reg.get("project_id", "") if reg.get("number") == board["number"] else "",
+            "status_field_id": reg.get("status_field_id", "") if reg.get("number") == board["number"] else "",
+            "backlog_option_id": reg.get("backlog_option_id", "") if reg.get("number") == board["number"] else "",
+        }
+        if reg.get("batch"):
+            cfg["batch"] = True
+        return cfg
+
     if repo in PROJECT_REGISTRY:
-        return PROJECT_REGISTRY[repo]
-    
-    # 1. Tìm trong .claude/super-board/configs/
-    for p in Path(".").glob(".claude/super-board/configs/*.json"):
+        return {**PROJECT_REGISTRY[repo], "owner": PROJECT_OWNER}
+
+    # 1. Tìm trong .claude/super-board/configs/ (tính từ git root để chạy được từ thư mục con)
+    for p in sorted(_repo_root_path().glob(".claude/super-board/configs/*.json")):
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-            p_num = data.get("project", {}).get("number")
-            p_title = data.get("project", {}).get("title", repo)
+            proj = data.get("project", {})
+            p_num = proj.get("number")
+            p_owner = str(proj.get("owner") or PROJECT_OWNER).strip()
+            p_title = proj.get("title", repo)
             if p_num:
                 # Query dynamic fields
-                f_res = run_cmd(["gh", "project", "field-list", str(p_num), "--owner", PROJECT_OWNER, "--format", "json"], check=False)
+                f_res = run_cmd(["gh", "project", "field-list", str(p_num), "--owner", p_owner, "--format", "json"], check=False)
                 if f_res.returncode == 0:
                     f_data = json.loads(f_res.stdout)
                     s_field = next((f for f in f_data.get("fields", []) if f.get("name") == "Status"), None)
                     if s_field:
                         b_opt = next((o for o in s_field.get("options", []) if o.get("name") == "Backlog"), None)
                         return {
+                            "owner": p_owner,
                             "number": p_num,
                             "name": p_title,
                             "project_id": "",
@@ -619,11 +657,11 @@ def resolve_project_config(repo: str):
             pass
 
     # Fallback mặc định về Agent Workbench (Project #1)
-    return PROJECT_REGISTRY[DEFAULT_REPO]
+    return {**PROJECT_REGISTRY[DEFAULT_REPO], "owner": PROJECT_OWNER}
 
-def project_node_id(number):
+def project_node_id(number, owner=PROJECT_OWNER):
     """ID node của board, cho repo tìm board qua .claude/super-board/configs (cấu hình đó không ghi ID này)."""
-    res = run_cmd(["gh", "project", "view", str(number), "--owner", PROJECT_OWNER, "--format", "json"], check=False)
+    res = run_cmd(["gh", "project", "view", str(number), "--owner", owner, "--format", "json"], check=False)
     try:
         return json.loads(res.stdout)["id"] if res.returncode == 0 else ""
     except (KeyError, ValueError, TypeError):
@@ -634,8 +672,9 @@ def backlog_target(cfg):
 
     Cột đổi tên hoặc thêm cột (22/10: thêm Needs You) làm ID cứng trong registry lệch, và gh item-edit với ID lạ
     để lại cột trống mà không báo lỗi."""
+    owner = cfg.get("owner", PROJECT_OWNER)
     fallback = (cfg.get("status_field_id", ""), cfg.get("backlog_option_id", ""))
-    res = run_cmd(["gh", "project", "field-list", str(cfg["number"]), "--owner", PROJECT_OWNER, "--format", "json"], check=False)
+    res = run_cmd(["gh", "project", "field-list", str(cfg["number"]), "--owner", owner, "--format", "json"], check=False)
     why = f"gh project field-list thoát {res.returncode}"
     if res.returncode == 0:
         try:
@@ -664,11 +703,12 @@ def ensure_on_board(issue_url, repo=None):
         print(f"   ✅ {issue_url} đã nằm trên board, giữ nguyên cột.")
         return 0
     cfg = resolve_project_config(repo or detect_repo())
-    project_id = cfg.get("project_id", "") or project_node_id(cfg["number"])
+    owner = cfg.get("owner", PROJECT_OWNER)
+    project_id = cfg.get("project_id", "") or project_node_id(cfg["number"], owner)
     if not project_id:
         print(f"   ❌ Không tra được ID node của Project #{cfg['number']}: chưa thêm {issue_url}.", file=sys.stderr)
         return 1
-    res_add = run_cmd(["gh", "project", "item-add", str(cfg["number"]), "--owner", PROJECT_OWNER, "--url", issue_url,
+    res_add = run_cmd(["gh", "project", "item-add", str(cfg["number"]), "--owner", owner, "--url", issue_url,
                        "--format", "json"], check=False)
     try:
         item_id = json.loads(res_add.stdout).get("id") if res_add.returncode == 0 else None
@@ -694,10 +734,11 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
         body = with_needs_you_section(body, needs_you, needs_you_next)
 
     cfg = resolve_project_config(repo)
+    owner = cfg.get("owner", PROJECT_OWNER)
     project_number = cfg["number"]
     project_name = cfg["name"]
     project_id = cfg.get("project_id", "")
-    project_url = f"https://github.com/users/{PROJECT_OWNER}/projects/{project_number}/views/2"
+    project_url = f"https://github.com/users/{owner}/projects/{project_number}/views/2"
 
     print(f"\n🚀 {'[DRY-RUN] ' if dry_run else ''}Chuẩn bị tạo Task:")
     print(f"   📌 Tiêu đề : {title}")
@@ -735,13 +776,13 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
 
     # 2. Thêm vào Project tương ứng
     if not project_id:
-        project_id = project_node_id(project_number)
+        project_id = project_node_id(project_number, owner)
         if not project_id:
             print(f"   ⚠️  Chưa tra được ID node của Project #{project_number}: gán cột sẽ lỗi.", file=sys.stderr)
     print(f"   ⏳ Đang đẩy vào Project #{project_number} ({project_name})...")
     cmd_add = [
         "gh", "project", "item-add", str(project_number),
-        "--owner", PROJECT_OWNER,
+        "--owner", owner,
         "--url", issue_url,
         "--format", "json"
     ]

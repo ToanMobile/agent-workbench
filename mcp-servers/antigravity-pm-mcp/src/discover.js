@@ -50,11 +50,57 @@ export function agentapiPath() {
 function safeLstat(target, expectDir) {
   let st;
   try { st = fs.lstatSync(target); } catch { return null; }
-  if (st.isSymbolicLink()) return null;
-  if (expectDir ? !st.isDirectory() : !st.isFile()) return null;
-  if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return null;
-  if ((st.mode & 0o022) !== 0) return null;
-  return st;
+  return trustedStat(st, expectDir) ? st : null;
+}
+
+function trustedStat(st, expectDir) {
+  if (st.isSymbolicLink()) return false;
+  if (expectDir ? !st.isDirectory() : !st.isFile()) return false;
+  if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return false;
+  return (st.mode & 0o022) === 0;
+}
+
+/** Doc JSON qua MOT fd: mo O_NOFOLLOW, kiem tren chinh fd do (fstat) roi doc — khong con khe lstat xong moi doc lai theo duong dan (#1405). */
+function readTrustedJson(filePath) {
+  let fd;
+  try { fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); } catch { return null; }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!trustedStat(st, false)) return null;
+    return { st, data: JSON.parse(fs.readFileSync(fd, 'utf8')) };
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+const SYSTEM_PS = ['/bin/ps', '/usr/bin/ps'];
+
+/**
+ * ps dung de doc process table. ANTIGRAVITY_PM_PS (cho test) khong nhan duong dan bat ky (#1405): chi ps he thong, hoac file thuong
+ * cua chinh user, khong symlink, file va thu muc cha khong cho group/other ghi. Khong hop le thi nem loi, KHONG roi ve ps that
+ * (test dat ps gia de khong cham IDE that cua may).
+ */
+function psBinary() {
+  const override = process.env.ANTIGRAVITY_PM_PS;
+  if (!override || SYSTEM_PS.includes(override)) return override || SYSTEM_PS[0];
+  if (path.isAbsolute(override) && safeLstat(override, false) && safeLstat(path.dirname(override), true)) return override;
+  throw new AntigravityUnavailable(
+    'Khong doc duoc process table: ANTIGRAVITY_PM_PS khong hop le (can /bin/ps, hoac file cua chinh user, khong symlink, khong cho group/other ghi).',
+    'Bo bien ANTIGRAVITY_PM_PS (chi dung cho test) roi thu lai.',
+  );
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Gio bat dau (ms, UTC) cua pid theo `ps -o lstart=` (LC_ALL=C TZ=UTC, lam tron xuong giay); null khi pid da thoat hoac khong doc duoc. */
+async function procStartMs(psBin, pid) {
+  const r = await run(psBin, ['-o', 'lstart=', '-p', String(pid)], { timeoutMs: 15000, env: { LC_ALL: 'C', TZ: 'UTC' } });
+  const m = /^[A-Za-z]{3}\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$/.exec(r.stdout.trim());
+  const month = m ? MONTHS.indexOf(m[1]) : -1;
+  if (r.code !== 0 || month < 0) return null;
+  return Date.UTC(Number(m[6]), month, Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5]));
 }
 
 /** Lay ten thu muc app_data_dir an toan tu argv (chan path traversal / duong dan tuyet doi). */
@@ -66,12 +112,12 @@ function appDataDirsFromArgs(line) {
   return [name];
 }
 
-/** Tim file daemon hub_<port>.json khop dung pid trong ~/.gemini/<app_data_dir>/daemon. */
-function findDaemonEntry(pid, line) {
+/** Cac file daemon hub_<port>.json khop dung pid trong ~/.gemini/<app_data_dir>/daemon, moi nhat truoc. */
+function findDaemonEntries(pid, line) {
   const home = process.env.HOME || os.homedir() || '';
-  if (!home) return null;
+  if (!home) return [];
   const geminiDir = path.join(home, '.gemini');
-  if (!safeLstat(geminiDir, true)) return null;
+  if (!safeLstat(geminiDir, true)) return [];
 
   const matches = [];
   for (const dirName of appDataDirsFromArgs(line)) {
@@ -84,10 +130,9 @@ function findDaemonEntry(pid, line) {
     for (const name of entries) {
       if (!/^hub_\d+\.json$/.test(name)) continue;
       const filePath = path.join(daemonDir, name);
-      const st = safeLstat(filePath, false);
-      if (!st) continue;
-      let data;
-      try { data = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { continue; }
+      const read = readTrustedJson(filePath);
+      if (!read) continue;
+      const { st, data } = read;
       if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
       if (Number(data.pid) !== pid) continue;
       if (typeof data.csrfToken !== 'string' || !TOKEN_RE.test(data.csrfToken)) continue;
@@ -97,14 +142,13 @@ function findDaemonEntry(pid, line) {
       matches.push({ pid, secret: data.csrfToken, hintPorts, mtimeMs: st.mtimeMs });
     }
   }
-  if (matches.length === 0) return null;
   matches.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return matches[0];
+  return matches;
 }
 
 /** Doc process table, lay pid + khoa phien cua language_server dang chay. */
 async function findLsProcess() {
-  const psBin = process.env.ANTIGRAVITY_PM_PS || '/bin/ps';
+  const psBin = psBinary();
   const ps = await run(psBin, ['ax', '-o', 'pid=,command='], { timeoutMs: 15000 });
   if (ps.code !== 0 && !ps.stdout) throw new AntigravityUnavailable('Khong doc duoc process table (ps that bai).');
   const lines = ps.stdout.split('\n').filter((l) => l.includes(LS_PROC_MATCH) && l.includes('--standalone'));
@@ -113,7 +157,12 @@ async function findLsProcess() {
     if (!Number.isInteger(pid) || pid <= 0) continue;
     const m = /--csrf_token[= ]([0-9a-fA-F-]{8,})/.exec(line);
     if (m) return { pid, secret: m[1], hintPorts: [] };
-    const daemon = findDaemonEntry(pid, line);
+    const entries = findDaemonEntries(pid, line);
+    if (entries.length === 0) continue;
+    // Doc file xong moi hoi gio bat dau: pid con song, va file phai duoc ghi SAU khi chinh pid nay bat dau. File cu hon la cua tien trinh
+    // truoc da chet ma pid bi dung lai (#1405); khong doc duoc gio bat dau thi khong tin file nao.
+    const startMs = await procStartMs(psBin, pid);
+    const daemon = startMs === null ? null : entries.find((e) => e.mtimeMs >= startMs);
     if (daemon) return { pid: daemon.pid, secret: daemon.secret, hintPorts: daemon.hintPorts };
   }
   throw new AntigravityUnavailable(

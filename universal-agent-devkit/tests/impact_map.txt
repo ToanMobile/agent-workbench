@@ -73,3 +73,6 @@ hooks/block_dangerous_git_main.py   tests/gates/test_guard_remote_ref_forge.sh
 scripts/governance/merge_json.py   tests/installer/test_init_legacy_hook_spelling.sh
 # 13/11 (#1159): oracle of the literal "$" in a command name (hardware_safety_gate_main.literal_dollar_words); a second line for the same file adds one more entry
 hooks/hardware_safety_gate_main.py   tests/gates/test_hardware_literal_dollar_1159.sh
+# 20/11 (#1392): repo_board.py và shims/gh được context_sync, create_task, enrich_context, session_context, block_dangerous_git_main nạp mà test riêng có thể không nêu tên đủ mọi caller
+scripts/governance/repo_board.py   tests/verification/test_repo_board_and_context.sh tests/context_memory/test_context_sync.sh tests/verification/test_create_task_registry.sh tests/context_memory/test_session_context.sh tests/context_memory/test_prompt_context.sh
+shims/gh   tests/verification/test_repo_board_and_context.sh

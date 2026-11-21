@@ -155,7 +155,7 @@ trap 'rm -f "$BODY_TMP"' EXIT
   echo "---"
   echo
   if [ -n "$FILES" ]; then
-    echo "**Files:** $(echo "$FILES" | tr ',' '\n' | sed 's/^/`/; s/$/`/' | paste -sd ', ' -)"
+    echo "**Files:** $(echo "$FILES" | tr ',' '\n' | sed 's/^/`/; s/$/`/' | awk '{out = (NR == 1 ? $0 : out ", " $0)} END {print out}')"
   fi
   if [ -n "$PR" ]; then echo "**Spotted reviewing:** #${PR}"; fi
   echo "**Recommendation strength:** ${STRENGTH}"

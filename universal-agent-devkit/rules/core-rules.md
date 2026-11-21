@@ -300,20 +300,20 @@ The essentials keep the obligation; this section keeps how the tools carry it ou
    nhầm, sync ghi đè dữ liệu.
 2. **Cấm sửa mã của kit ngay tại repo con.** Bản sao ở repo con sẽ bị lần đồng bộ sau ghi đè, và các repo con khác vẫn mắc lỗi.
    Sửa một lần ở nguồn, rồi đồng bộ xuống.
-3. **Tạo task cho DevKit** (skill `createTask`, hoặc issue ở repo nguồn của kit), gồm đủ:
+3. **Tạo task cho DevKit** (gọi `python3 .agents/devkit/scripts/governance/devkit_incident.py report --trace ... --symptom ... --lane <lane> --from-col <cột> --json` — mở rộng của `devkit_incident.py`, không viết bộ tạo task riêng; tra thẻ mở `kitbug<fp>` trên `ToanMobile/agent-workbench` trước để không đẻ trùng), gồm đủ:
    - Tiêu đề: `[devkit] <triệu chứng ngắn>`.
    - Triệu chứng: repo nào, lúc nào, hệ quả (board dừng, gate chặn, …).
-   - Bằng chứng: đường dẫn log, trích dòng log có giờ, nội dung file trạng thái (vd `github-halt.json`), mã thoát. Chỉ ghi điều
-     đã đo, nhãn rõ "tự chạy" hay "suy đoán".
+   - Bằng chứng: đường dẫn log, trích dòng log có giờ, nội dung file trạng thái (vd `github-halt.json`), mã thoát (đã che bí mật và đường dẫn riêng). Chỉ ghi điều đã đo, nhãn rõ "tự chạy" hay "suy đoán".
    - Nguyên nhân gốc: tên file và hàm của kit (file:dòng) và cơ chế gây lỗi. Chưa chắc thì ghi "giả thuyết".
    - Hướng sửa đề xuất, bản tối thiểu trước (nguyên tắc lazy senior, §4).
    - Oracle: test RED trước, GREEN sau, đặt ở repo nguồn, tái hiện được không cần repo con.
    - Nghiệm thu ở repo con: lệnh chạy lại và kết quả mong đợi sau khi đồng bộ.
    Gom lỗi cùng nguyên nhân vào một task, không đẻ trùng. Tra task đang mở trước khi tạo.
-4. **Ở repo con chỉ được làm hai việc**, cả hai không đụng mã của kit:
+4. **Ở repo con chỉ được làm ba việc**, không đụng mã của kit:
    a. Gỡ tắc tạm thời bằng dữ liệu runtime, và chỉ khi đã kiểm chứng trạng thái thật (vd đọc lại GitHub rồi mới
       `--resume --reconciled "<lý do>"`). Ghi lý do vào task.
-   b. Tiếp tục việc của repo con không phụ thuộc phần lỗi.
+   b. Khi thẻ app bị chặn vì lỗi kit: **KHÔNG** gắn `needs-you` / `Reason tag: 🙋` / `blocked-by: -`. Dùng `block_comment` mà `devkit_incident.py report` trả về (có marker `<!-- sb-blocked-reason: devkit-incident repo=ToanMobile/agent-workbench issue=<N> from=<cột> -->`, `Reason tag: ⚙`, và `blocked-by: ToanMobile/agent-workbench#<N>`). Khi task kit đóng và kit đã đồng bộ, `sweep_devkit_blocked` của runner tự trả thẻ về lane cũ (Building → Ready).
+   c. Tiếp tục việc của repo con không phụ thuộc phần lỗi.
    Không bypass gate, không `--no-verify`, không xoá file halt hay khoá khi chưa kiểm chứng.
 5. **Không chắc nguyên nhân thuộc kit hay repo con**: tìm cho ra bằng log, đừng đoán. Chưa chốt được thì sửa phần chắc chắn thuộc
    repo con, và ghi giả thuyết về kit vào task DevKit.

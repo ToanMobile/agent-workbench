@@ -5,6 +5,8 @@
 # status line của phiên tương tác ghi; worker `claude -p` không có status line nên không ai ghi. Cả 5 runner cứ giao
 # cho finos, worker chết sau ~30 s, gỡ lock, giao lại, trong khi còn finos_team, max, 2 Antigravity và Grok.
 # Người dùng chọn (16/10): hết Claude thì Antigravity Ultra -> Antigravity Pro -> Grok; hết cả 6 thì không giao.
+# #1412 (lệnh chủ repo 21/11) thay lựa chọn đó: chỉ tài khoản Claude đã ghim, chạm ngưỡng thì không giao tới giờ reset
+# (ca 5; các ca chỉ Claude chi tiết ở test_account_claude_only_1412.sh).
 # Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -99,20 +101,16 @@ reap_finished_locks
   && ok "reaping a dead worker that hit its limit marks its account paused" \
   || fail "reap did not mark finos paused (lock=$([ -e "$INFLIGHT_DIR/36" ] && echo kept || echo gone))"
 
-# ── 5. Thứ tự dự phòng khi hết Claude: Ultra -> Pro, bỏ account đã bị đánh dấu; không bao giờ Grok (chủ repo bỏ Grok 13/11).
+# ── 5. #1412: không còn dự phòng khác hãng. Runner không bật công tắc Antigravity/Grok cho pool, dù account Antigravity
+# có bị đánh dấu hết hay không (trước #1412: ag=1, rồi ag=pro, rồi rỗng).
 STUB_POOL_JSON='{"state":"ok","engine":"claude","account":"max","config_dir":"/x/.claude-max"}'; export STUB_POOL_JSON
 resolve_worker_account >/dev/null 2>&1
-grep -qx "ag=1 grok=" "$TMP/pool.env" && ok "no fallback paused: pool may fail over to Antigravity Ultra" \
+grep -qx "ag= grok=" "$TMP/pool.env" && ok "nothing paused: no cross-vendor fallback switch reaches the pool" \
   || fail "fallback env with nothing paused: $(cat "$TMP/pool.env" 2>/dev/null)"
 note_worker_limit "wl/worker-build-38.log"     # antigravity hết
 resolve_worker_account >/dev/null 2>&1
-grep -qx "ag=pro grok=" "$TMP/pool.env" && ok "Ultra paused: fall over to Antigravity Pro" \
+grep -qx "ag= grok=" "$TMP/pool.env" && ok "Ultra paused: still no cross-vendor fallback switch" \
   || fail "fallback env with Ultra paused: $(cat "$TMP/pool.env" 2>/dev/null)"
-jq '.rate_limits.five_hour.resets_at' "$TMP/state/usage-antigravity.json" >/dev/null
-cp "$TMP/state/usage-antigravity.json" "$TMP/state/usage-antigravity_pro.json"
-resolve_worker_account >/dev/null 2>&1
-grep -qx "ag= grok=" "$TMP/pool.env" && ok "both Antigravity accounts paused: no Grok fallback" \
-  || fail "fallback env with both Antigravity paused: $(cat "$TMP/pool.env" 2>/dev/null)"
 
 # ── 6. Hết cả 6 account: không nhận thẻ, không khởi worker (trước đây rơi về `claude` mặc định).
 claim_calls=0

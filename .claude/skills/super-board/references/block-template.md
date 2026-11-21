@@ -74,6 +74,7 @@ same rule: **prose above for the human, one parseable line below for the loop.**
   answers it, run.md → "Owner's standing decision"), and the sweep leaves it alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` and `🙋` block.
 - `blocked-by: agent` — the runner parked it (a crashed build worker, a no-op worker): agent work, no person, nothing to wait
   for. Not human-gated, never swept (#529).
+- `blocked-by: ToanMobile/agent-workbench#<N>` — cross-repo DevKit blocker (#1402): khi lane gặp lỗi có dấu vết thuộc kit (`core-rules §20` mục 1), gọi `python3 .agents/devkit/scripts/governance/devkit_incident.py report --trace ... --lane <lane> --from-col <cột> --json` để tạo/gắn task `[devkit]` ở repo nguồn, đăng `block_comment` trả về (kèm `<!-- sb-blocked-reason: devkit-incident ... -->`, `Reason tag: ⚙`, KHÔNG `🙋` / `needs-you`). Khi task kit đóng và kit đã đồng bộ, `sweep_devkit_blocked` tự đưa thẻ về lane cũ (Building → Ready).
 
 Write only issues that are still OPEN: generate the line with
 `python3 .claude/bin/super-board-blocked-by.py line --repo <owner/name> <N,M…>` (closed numbers are dropped, its stderr gives the

@@ -4881,6 +4881,120 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-scratch-antigravity-hooks-1404",
+      "watch_files": [
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_merge_scratch_antigravity_hooks_1404.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SCRATCH-AG-HOOKS-1404-01",
+          "name": "#1404: scratch của merge gate và merge train dựng đủ .agents/hooks/ theo tập agent của checkout chính / PR",
+          "command": "bash tests/super-board/test_merge_scratch_antigravity_hooks_1404.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-account-pool-claude-only-1412",
+      "watch_files": [
+        ".claude/bin/super-board-account-pool.sh",
+        ".claude/bin/super-board-usage.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_account_pool_1412.sh",
+        "tests/super-board/test_account_claude_only_1412.sh",
+        "tests/super-board/test_account_failover.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-ACCOUNT-POOL-1412-01",
+          "name": "#1412: bể tài khoản chỉ dùng Claude (pause kèm resets_at, không Antigravity/Grok, không nhảy chéo), khoá đóng băng theo đúng cửa sổ 5 giờ/tuần và không thắng quota sống, runner không giao khi pool pause",
+          "command": "bash tests/super-board/test_account_pool_1412.sh && bash tests/super-board/test_account_claude_only_1412.sh && bash tests/super-board/test_account_failover.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-antigravity-auto-open-1405",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_antigravity_auto_open_1405.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-ANTIGRAVITY-AUTO-OPEN-1405-01",
+          "name": "#1405: runner tự mở Antigravity khi không có language_server, chờ có hạn theo đồng hồ thật rồi mới Block, nghỉ sau lần mở trượt",
+          "command": "bash tests/super-board/test_runner_antigravity_auto_open_1405.sh",
+          "parallel_safe": false
+        }
+      ]
+    },
+    {
+      "component": "super-board-audit-sweep-1406",
+      "watch_files": [
+        ".claude/bin/super-board-audit-sweep.py",
+        ".claude/bin/super-board-ac-check.py",
+        "tests/super-board/test_audit_sweep_1406.sh",
+        "tests/super-board/test_audit_sweep_branch_items_1406.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AUDIT-SWEEP-1406-01",
+          "name": "#1406: audit-sweep mở lại thẻ đóng sớm còn AC chưa tick, khớp nhánh issue-N, lọc thẻ repo khác, truy vấn dự phòng head:issue-N không rơi PR thật",
+          "command": "bash tests/super-board/test_audit_sweep_1406.sh && bash tests/super-board/test_audit_sweep_branch_items_1406.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-status-ungated-merges-1406",
+      "watch_files": [
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_status_ungated_limit_1406.sh",
+        "tests/super-board/test_status_ungated_merges_1406.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-STATUS-UNGATED-1406-01",
+          "name": "#1406: mục Health đếm PR merge ngoài gate trong 7 ngày theo đúng cửa sổ merge, chạm trần --limit báo cận dưới N+",
+          "command": "bash tests/super-board/test_status_ungated_limit_1406.sh && bash tests/super-board/test_status_ungated_merges_1406.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-status-active-slug-1402",
+      "watch_files": [
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_status_active_slug_path_1402.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-STATUS-ACTIVE-SLUG-1402-01",
+          "name": "#1402: super-board-status.py bỏ qua slug active chứa đường dẫn, rơi về config duy nhất",
+          "command": "bash tests/super-board/test_status_active_slug_path_1402.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-review-file-refactor-files-join",
+      "watch_files": [
+        ".claude/bin/super-review-file-refactor.sh",
+        "tests/super-board/test_review_file_refactor_files_join.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEW-REFACTOR-FILES-JOIN-01",
+          "name": "super-review-file-refactor.sh: dòng **Files:** nối file bằng \", \" (không dùng paste -sd của BSD)",
+          "command": "bash tests/super-board/test_review_file_refactor_files_join.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

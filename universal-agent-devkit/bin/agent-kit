@@ -166,6 +166,10 @@ case "$CMD" in
     shift || true
     python3 "$DEVKIT_ROOT/bin/agent-config.py" "$@"
     ;;
+  board)
+    shift || true
+    exec python3 "$(find_script governance repo_board.py)" "$@"
+    ;;
   parity)
     shift || true
     exec python3 "$DEVKIT_ROOT/bin/parity_check.py" "$@"
@@ -360,6 +364,8 @@ Commands:
   profile [name|opts] Switch or inspect domain profile (see: agent-kit profile --help)
                       android | ios | web | backend | automotive | game | voice-assistant | universal
                       (case-insensitive; aliases e.g. xehoi, frontend, api)
+  board [path] [--json] [--field <key>]
+                      Print owner, number, title and URL of the current repo's super-board
   health              Run the health diagnostic
   parity [path] [--fix]  List where the project differs from this kit (forbidden verify flags, broken links,
                       unregistered hooks, stale super-board copies); exit 1 when it differs. --fix drops
