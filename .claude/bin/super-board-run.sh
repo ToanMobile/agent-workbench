@@ -36,6 +36,7 @@ set -euo pipefail
 RUNNER_BORN=$(date +%s)
 SB_WORKER_WRAP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-worker-wrap.sh"
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
+_SB_DEFAULT_GITHUB_READ="$SB_GITHUB_READ"
 SB_APPROVED_HEAD_JQ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-approved-head.jq"   # #605: chung với merge-queue
 SB_AUDIT_CHECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-audit-check.py"          # #605: task_id ↔ biên bản audit
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
@@ -152,6 +153,7 @@ fi
 # ───────────────────────────── args + paths ─────────────────────────────
 # SB_LIB_ONLY=1 sources this file for its helpers only (gate tests). Config discovery,
 # preconditions and the run loop are all skipped; the caller supplies whatever vars it needs.
+_SB_LIB_ONLY_MODE="${SB_LIB_ONLY:-0}"
 CONFIG_SLUG="${1:-}"
 if [ "${SB_LIB_ONLY:-0}" = "1" ]; then
   CONFIG_SLUG="${CONFIG_SLUG:-lib}"
@@ -2915,16 +2917,36 @@ qa_apply_report() {
   else
     labs=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)][]' 2>/dev/null || true)
     cur=$(printf '%s\n' "$labs" | sed -nE 's/^loop:rebuild-([0-9]+)$/\1/p' | sort -n | tail -1); cur=${cur:-0}
-    [ "$cur" -lt "${REBUILD_CAP:-2}" ] || return 1
-    local tdir total_cap total_now=0
+    local tdir total_cap total_now=0 total_capped=0 cj="[]" prior_causes="" all_causes=""
     total_cap="${SB_REBUILD_TOTAL_MAX:-}"
     case "$total_cap" in ''|*[!0-9]*|0) total_cap="${REBUILD_TOTAL_CAP:-}" ;; esac
     case "$total_cap" in ''|*[!0-9]*|0) total_cap=$(( ${REBUILD_CAP:-2} + 1 )) ;; esac
+    cj=$(cap_progress_comments "$issue" 2>/dev/null) || cj="[]"
+    read -r total_now total_capped <<EOF
+$(card_rebuild_total "$issue" "$cur" "${REBUILD_CAP:-2}" "$cj")
+EOF
     tdir=$(rebuild_total_dir)
-    if [ -f "$tdir/$issue" ]; then
-      total_now=$(wc -l < "$tdir/$issue" 2>/dev/null | tr -d ' ' || true)
+    if [ "${total_capped:-0}" -eq 1 ] || [ "${total_now:-0}" -ge "$total_cap" ]; then
+      if [ -n "$tdir" ] && [ -f "$tdir/$issue" ]; then
+        prior_causes=$(awk -F '\t' 'NF >= 3 {print $3}' "$tdir/$issue" 2>/dev/null | awk '!seen[$0]++' | paste -sd '; ' - | cut -c1-300)
+      fi
+      all_causes="${prior_causes:+${prior_causes}; }qa-fail"
+      set_card_status "$item_id" "Blocked" || return 1
+      sweep_remove_assignee "$issue" || true
+      gh_checkpoint
+      gh_write_once issue comment "$issue" --body "[qa] [blocker] 🛑 blocked · 🛡 total rebuild cap ${total_cap} reached (${total_now} rounds across all causes; latest: QA fail)
+Card:        #${issue}
+Reason tag:  🛡
+Why blocked: total rebuild cap ${total_cap} reached (${total_now} rounds across all causes; latest: QA fail)
+Evidence:    rounds=${total_now}/${total_cap}; causes: ${all_causes}
+<!-- sb-rebuild-total-capped -->
+<!-- sb-rebuild-total: ${total_now} -->
+To unblock:  [ ] a person reviews all ${total_now} rebuild rounds and their causes, then drags the card to Ready
+blocked-by:  -" >/dev/null 2>&1 || true
+      log "🛑 #${issue} QA → Blocked: total rebuild cap ${total_now}/${total_cap} reached"
+      return 0
     fi
-    [ "${total_now:-0}" -lt "$total_cap" ] || return 1
+    [ "$cur" -lt "${REBUILD_CAP:-2}" ] || return 1
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
     gh_checkpoint
     gh_write_once label create "loop:rebuild-$((cur + 1))" --color BFD4F2 --force >/dev/null 2>&1 || return 1   # a repo without the label would fail the edit below (audit 19/11)
@@ -2938,11 +2960,9 @@ qa_apply_report() {
     fi
     return 1
   fi
-  if [ "$verdict" = fail ]; then
-    local tdir
-    tdir=$(rebuild_total_dir)
+  if [ "$verdict" = fail ] && [ -n "${tdir:-}" ]; then
     mkdir -p "$tdir" 2>/dev/null || true
-    printf '%s qa qa-fail\n' "$(date +%s)" >> "$tdir/$issue" 2>/dev/null || true
+    printf '%s\tqa\tqa-fail\n' "$(date +%s)" >> "$tdir/$issue" 2>/dev/null || true
   fi
   sweep_remove_assignee "$issue" || true
   gh_checkpoint
@@ -3166,7 +3186,9 @@ review_wait_reason_key() {
   # In một token không dấu cách cho sổ chung `review-wait/<issue>` (<epoch> <head> <reason_key>).
   local what="${1:-}" body="${2:-}"
   if [ "$what" != "agent" ]; then
-    printf '%s' "$what" | tr -cs 'A-Za-z0-9._:-' '_' | sed 's/^_//; s/_$//'
+    local k
+    k=$(printf '%s' "$what" | tr -cs 'A-Za-z0-9._:-' '_' | sed 's/^_//; s/_$//')
+    printf '%s' "${k:-other}"
     return 0
   fi
   if printf '%s' "$body" | grep -qiE '429|rate limit|quota'; then
@@ -4009,6 +4031,7 @@ rebuild_total_dir() {
     return 0
   fi
   if [ -n "${INFLIGHT_DIR:-}" ] && [ "$INFLIGHT_DIR" != ".claude/super-board/inflight" ]; then
+    [ "$INFLIGHT_DIR" = "/dev/null" ] && return 0
     printf '%s/rebuild-total' "$INFLIGHT_DIR"
     return 0
   fi
@@ -4027,7 +4050,7 @@ card_rebuild_total() {
   local issue="$1" cur="${2:-0}" cap="${3:-2}" cj="${4:-[]}"
   local tdir ledger_n=0 marker_n=0 bounce_n=0 capped=0 total=0
   tdir=$(rebuild_total_dir)
-  if [ -f "$tdir/$issue" ]; then
+  if [ -n "$tdir" ] && [ -f "$tdir/$issue" ]; then
     ledger_n=$(wc -l < "$tdir/$issue" 2>/dev/null | tr -d ' ' || echo 0)
   fi
   eval "$(printf '%s' "$cj" | python3 -I -c '
@@ -4043,12 +4066,10 @@ for c in cs:
     b = (c or {}).get("body") or ""
     for m in re.finditer(r"<!--\s*sb-rebuild-total:\s*(\d+)\s*-->", b):
         marker_n = max(marker_n, int(m.group(1)))
-    if re.search(r"^\[(merge-queue|qa|reviewer|orchestrator)\] \[(report|blocker)\] (❌ .*back to Build|↩️ back to Ready)", b, re.M):
+    if re.search(r"^(?:\[(?:merge-queue|qa|reviewer)\] \[(?:report|blocker)\] ❌ .*back to Build|\[orchestrator\] \[report\] ↩️ back to Ready · (?:the findings changed since the last round|the reviewer\x27s finding is a code fix))", b, re.M):
         bounce_n += 1
     if "<!-- sb-rebuild-total-capped -->" in b:
         capped = 1
-    elif re.search(r"^\[orchestrator\] \[report\] ↩️ back to Ready", b):
-        capped = 0
 print(f"marker_n={marker_n} bounce_n={bounce_n} capped={capped}")
 ' 2>/dev/null || echo 'marker_n=0 bounce_n=0 capped=0')"
   total=$ledger_n
@@ -4061,6 +4082,13 @@ print(f"marker_n={marker_n} bounce_n={bounce_n} capped={capped}")
 }
 
 cap_progress_comments() {
+  # Trong chế độ kiểm thử SB_LIB_ONLY=1 chưa stub SB_GITHUB_READ hay fake gh: tránh gọi GitHub thật.
+  if [ "${_SB_LIB_ONLY_MODE:-0}" = "1" ] && [ -z "${SB_TEST_ALLOW_GH:-}" ] \
+     && [ "${SB_GITHUB_READ:-}" = "${_SB_DEFAULT_GITHUB_READ:-}" ]; then
+    case "$(command -v gh 2>/dev/null)" in
+      /opt/homebrew/bin/gh|/usr/local/bin/gh|/usr/bin/gh) return 1 ;;
+    esac
+  fi
   local haltf out rc=0
   haltf=$(mktemp -u "${TMPDIR:-/tmp}/sb-cap-halt.XXXXXX") || return 1
   out=$(SB_GITHUB_HALT_FILE="$haltf" python3 "$SB_GITHUB_READ" --kind json -- issue view "$1" --json comments 2>/dev/null) || rc=$?
@@ -4103,8 +4131,10 @@ EOF
     set_card_status "$item_id" "Ready" || { log "⚠ cap-progress: could not move #${issue} to Ready"; continue; }
     swept_add "$key"
     tdir=$(rebuild_total_dir)
-    mkdir -p "$tdir" 2>/dev/null || true
-    printf '%s %s cap-progress\n' "$(date +%s)" "$hl" >> "$tdir/$issue" 2>/dev/null || true
+    if [ -n "$tdir" ]; then
+      mkdir -p "$tdir" 2>/dev/null || true
+      printf '%s\t%s\tcap-progress\n' "$(date +%s)" "$hl" >> "$tdir/$issue" 2>/dev/null || true
+    fi
     gh_checkpoint
     gh_write_once label create "loop:rebuild-$((cap - 1))" --color BFD4F2 --force >/dev/null 2>&1 || true   # #1382: a repo without the label would fail the edit below and the card re-matches forever
     gh_write_once issue edit "$issue" --add-label "loop:rebuild-$((cap - 1))" --remove-label "loop:rebuild-${cur}" >/dev/null 2>&1 || log "⚠ cap-progress: could not lower the label of #${issue}"

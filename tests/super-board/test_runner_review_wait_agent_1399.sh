@@ -141,19 +141,24 @@ sweep_antigravity_blocked; rc1=$?
 sweep_antigravity_blocked; rc2=$?
 : > "$TMP/writes"
 ( set -euo pipefail; sweep_antigravity_blocked ) >/dev/null 2>&1; rc3=$?
+c1_dash=0; grep -qx "blocked-by:  -" "$TMP/writes" && c1_dash=1
 : > "$TMP/writes"
 ( set -euo pipefail; sweep_antigravity_blocked ) >/dev/null 2>&1; rc4=$?   # lần 4 cũng không spam thêm comment
+c1_nospam=0; ! grep -qx "blocked-by:  -" "$TMP/writes" && c1_nospam=1
 if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$rc3" -ne 0 ] && [ "$rc4" -ne 0 ] \
+   && [ "$c1_dash" = 1 ] && [ "$c1_nospam" = 1 ] \
    && ! grep -q "^move " "$TMP/writes"; then
-  # kiểm tra ghi 2 lần trong ag-sweep/13995 và đã đổi blocked-by: - một lần
-  ok "C1 (Oracle sweep): sweep_antigravity_blocked moves at most 2 times / 24h, blocks further sweeps"
+  ok "C1 (Oracle sweep): sweep_antigravity_blocked moves at most 2 times / 24h, posts blocked-by:  - once, blocks further sweeps"
 else
-  fail "C1 (Oracle sweep): rc1=$rc1 rc2=$rc2 rc3=$rc3 rc4=$rc4 writes=$(tr '\n' ';' < "$TMP/writes")"
+  fail "C1 (Oracle sweep): rc1=$rc1 rc2=$rc2 rc3=$rc3 rc4=$rc4 dash=$c1_dash nospam=$c1_nospam writes=$(tr '\n' ';' < "$TMP/writes")"
 fi
-# Sau 24h (mốc cũ hơn 86400s), cho sweep lại
+# Sau 24h (mốc cũ hơn 86400s) và có thẻ bị chặn Antigravity mới (R5), cho sweep lại
 if [ -f "$INFLIGHT_DIR/ag-sweep/13995" ]; then
   old=$(( $(date +%s) - 90000 ))
   printf '%s\n%s\n' "$old" "$old" > "$INFLIGHT_DIR/ag-sweep/13995"
+  cap_progress_comments() {
+    printf '%s' '[{"body":"[orchestrator] [blocker] 🛑 blocked · ❓ Antigravity sweep đã thử 2/2 lần\nblocked-by:  -"},{"body":"[orchestrator] [blocker] 🛑 blocked · ❓ Antigravity chưa mở\n<!-- sb-blocked-reason: antigravity-closed -->\nblocked-by:  agent"}]'
+  }
   : > "$TMP/writes"
   sweep_antigravity_blocked; rc_after=$?
   if [ "$rc_after" -eq 0 ] && grep -qx "move PVTI_13995 Review" "$TMP/writes"; then
@@ -194,6 +199,21 @@ for i in "${!d_neg[@]}"; do
     fail "D-neg-$((i + 1)): false positive '$got' for: ${d_neg[$i]}"
   fi
 done
+
+# ── E (R3): review_wait_reason_key không trả chuỗi rỗng khi what != "agent" chỉ có ký tự ngoài ASCII/dấu câu
+rk_nonascii=$(review_wait_reason_key "⏳ …" "body")
+reset_case; set_card 13996
+okwlog "$WORKER_LOG_DIR/worker-review-13996.log"
+LAST_COMMENT=$'[reviewer] [report] ⏳ …\nblocked-by: ⏳ …'
+turn_same 13996
+LAST_COMMENT=$'[reviewer] [report] ⏳ chờ gate_receipt\nblocked-by: gate_receipt'
+turn_same 13996
+e_lines=$(wc -l < "$INFLIGHT_DIR/review-wait/13996" 2>/dev/null | tr -d ' ' || echo 0)
+if [ -n "$rk_nonascii" ] && [ "$e_lines" = 1 ]; then
+  ok "E (R3): review_wait_reason_key falls back to non-empty token ('$rk_nonascii') and resets ledger on reason change"
+else
+  fail "E (R3): rk='$rk_nonascii' lines=$e_lines content='$(cat "$INFLIGHT_DIR/review-wait/13996" 2>/dev/null | tr '\n' '|')'"
+fi
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_runner_review_wait_agent_1399: PASS"; exit 0; } || { echo "test_runner_review_wait_agent_1399: FAIL ($FAILS)"; exit 1; }

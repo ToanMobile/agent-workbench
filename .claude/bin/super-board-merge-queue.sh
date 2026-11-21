@@ -311,7 +311,7 @@ for c in (d.get("comments") or []):
     b = (c or {}).get("body") or ""
     for m in re.finditer(r"<!--\s*sb-rebuild-total:\s*(\d+)\s*-->", b):
         marker_n = max(marker_n, int(m.group(1)))
-    if re.search(r"^\[(merge-queue|qa|reviewer|orchestrator)\] \[(report|blocker)\] (❌ .*back to Build|↩️ back to Ready)", b, re.M):
+    if re.search(r"^(?:\[(?:merge-queue|qa|reviewer)\] \[(?:report|blocker)\] ❌ .*back to Build|\[orchestrator\] \[report\] ↩️ back to Ready · (?:the findings changed since the last round|the reviewer\x27s finding is a code fix))", b, re.M):
         bounce_n += 1
     for line in b.splitlines():
         s = line.strip()
