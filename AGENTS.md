@@ -115,7 +115,7 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
    DONE / NOT DONE / AWAITING APPROVAL). Line 2: what the user gets. Line 3: gate exit code, then
    image path and serial, or "ảnh: không cần — <reason>"; then the next step. Stay short.
    Every handover (an XONG, or any turn that runs `git push`) carries the acceptance report
-   (core-rules §2.3), 1–2 lines each: 1. Đã làm gì / Đã fix gì · 2. Chặn bug cũ · 3. Nguy cơ bug mới:
+   (core-rules §2.3), 1–2 lines each: 1. Đã làm gì / Đã fix gì + `Nguyên nhân:` line · 2. Chặn bug cũ · 3. Nguy cơ bug mới:
    the old–new comparison you ran, with its numbers · 4. An toàn mã nguồn · 5. Còn hở / chưa kiểm
    (or "không có"); every number tagged "tự chạy" or "agent báo"; score /100 (≥ 95/100, the
    standards docked; core-rules §18). `proof_gate.sh` refuses the reply without all four.
@@ -136,7 +136,7 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
   9-slice bevel, pressed scale 0.95 with a 2–4 px sink, never `LiberationSans SDF`.
 
 ## Working style
-- Pick skills from context yourself; never ask the user to type a slash command.
+- Pick skills yourself; never ask the user for a slash command.
 - Act, don't offer: a defect an audit or review finds here is fixed in the same turn (oracle, gate,
   proof) unless the fix needs the ask list; never end a turn with a menu of prescribed steps (tests,
   gate, fresh-context review, proof capture): do them.
@@ -168,9 +168,9 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
   are Vietnamese; replies match the user's language; identifiers, commands and paths stay English (core-rules §2.3).
-- Long session or big refactor: checkpoint and compact. Read code
-  by range (Read offset/limit, codebase-memory); never `cat` a big file.
-- Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.
+- Long session: checkpoint, compact; read code by range (codebase-memory), never `cat` big files.
+- DevKit defect in a host repo: file a `[devkit]` task at its source, never patch there (core-rules §20).
+- Read the trap each request names (`.agents/instincts.md`).
 <!-- devkit-essentials:end -->
 <!-- universal-agent-devkit:end -->
 

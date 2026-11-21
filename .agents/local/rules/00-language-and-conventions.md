@@ -6,7 +6,7 @@
 
 ## 2. Báo Cáo Tiến Độ & Nghiệm Thu (Reports & Handovers)
 - **Báo cáo nghiệm thu 5 mục** (chi tiết: `rules/core-rules.md` §2.3): Bắt buộc viết bằng **Tiếng Việt**, mỗi con số ghi nguồn `tự chạy` hoặc `agent báo`:
-  1. Đã làm gì / Đã fix gì: Lỗi hoặc thay đổi, nguyên nhân gốc, bằng chứng đối lập (RED ➔ GREEN).
+  1. Đã làm gì / Đã fix gì: Lỗi hoặc thay đổi, bằng chứng đối lập (RED ➔ GREEN). Kèm một dòng riêng `Nguyên nhân:` (chủ repo 21/11): bug thì nguyên nhân gốc + cơ chế, không phải bug thì vì sao phải đổi.
   2. Chặn bug cũ: Test hồi quy và rào chắn bất biến lịch sử đã chạy lại, kèm kết quả.
   3. Nguy cơ bug mới: Phép so cũ–mới đã chạy (lệnh, số đầu vào, số ca đổi kết quả) hoặc `chưa so — <lý do>`.
   4. An toàn mã nguồn: Quét secret, placeholder; OCR chỉ ghi khi đã chạy, không thì `OCR: không chạy — <lý do>`.
