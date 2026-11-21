@@ -4850,6 +4850,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-scratch-antigravity-hooks-1404",
+      "watch_files": [
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_merge_scratch_antigravity_hooks_1404.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SCRATCH-AG-HOOKS-1404-01",
+          "name": "#1404: scratch của merge gate và merge train dựng đủ .agents/hooks/ theo tập agent của checkout chính / PR",
+          "command": "bash tests/super-board/test_merge_scratch_antigravity_hooks_1404.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

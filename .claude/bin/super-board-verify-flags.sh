@@ -174,3 +174,74 @@ sb_merge_guard_rerun() {
       DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
       && python3 "$here/super-board-heavy-slot.py" -- bash -c "$cmd" ) 8>&-
 }
+
+# sb_scratch_agents <dir>...: gom tập agent từ các marker hiện diện ở checkout chính / scratch
+# (khớp AGENT_MARKERS của worktree.py: claude, codex, gemini, cursor, antigravity), mặc định "claude".
+sb_scratch_agents() {
+  local dir ags="" has_claude=0 has_codex=0 has_gemini=0 has_cursor=0 has_ag=0
+  for dir in "$@"; do
+    [ -n "$dir" ] && [ -d "$dir" ] || continue
+    [ -e "$dir/.claude/settings.json" ] && has_claude=1
+    [ -e "$dir/.codex/hooks.json" ] && has_codex=1
+    [ -e "$dir/.gemini/settings.json" ] && has_gemini=1
+    [ -e "$dir/.cursor/hooks.json" ] && has_cursor=1
+    [ -e "$dir/.agents/hooks.json" ] && has_ag=1
+  done
+  [ "$has_claude" -eq 1 ] && ags="${ags:+$ags,}claude"
+  [ "$has_codex" -eq 1 ] && ags="${ags:+$ags,}codex"
+  [ "$has_gemini" -eq 1 ] && ags="${ags:+$ags,}gemini"
+  [ "$has_cursor" -eq 1 ] && ags="${ags:+$ags,}cursor"
+  [ "$has_ag" -eq 1 ] && ags="${ags:+$ags,}antigravity"
+  printf '%s' "${ags:-claude}"
+}
+
+# sb_install_scratch_devkit <repo_path> <main_wt> <scratch> <log_file>:
+# Hàm dùng chung cho merge gate và merge train: cài DevKit vào scratch với đúng tập agent như checkout chính / scratch,
+# trả các file đã track về đúng commit rồi dọn các file mới chưa track do install.sh tạo (trừ .agents/devkit).
+# Đặt SB_DK_INSTALL (đường dẫn install.sh tìm thấy) và SB_DK_RC (exit code của install.sh). Trả 0 nếu có install.sh, 1 nếu không có.
+sb_install_scratch_devkit() {
+  local repo="$1" main_wt="${2:-$1}" scratch="$3" log="$4" c agents untracked_before dk_new f pass
+  SB_DK_INSTALL=""
+  SB_DK_RC=0
+  for c in "$repo/universal-agent-devkit" "$repo/.agents/devkit" \
+           "${main_wt:-$repo}/universal-agent-devkit" "${main_wt:-$repo}/.agents/devkit"; do
+    if [ -f "$c/bin/install.sh" ]; then SB_DK_INSTALL="$c/bin/install.sh"; break; fi
+  done
+  if [ -z "$SB_DK_INSTALL" ]; then
+    : >"$log"
+    return 1
+  fi
+  untracked_before=$(git -C "$scratch" ls-files -z --others --exclude-standard | tr '\0' '\n' | LC_ALL=C sort) || true
+  agents=$(sb_scratch_agents "${main_wt:-$repo}" "$repo" "$scratch")
+  bash "$SB_DK_INSTALL" -t "$scratch" -a "$agents" -y --no-githooks >"$log" 2>&1 8>&- || SB_DK_RC=$?
+  git -C "$scratch" checkout -q -- . 2>/dev/null || true
+  # Nhiều lượt: repo không track .gitignore thì install.sh tạo một .gitignore chưa track che .agents/context/*; xoá nó ở lượt 1 làm các file
+  # đó lộ ra ở lượt 2. .agents/devkit không bao giờ xoá (verify cần nó).
+  for pass in 1 2 3; do
+    dk_new=$(git -C "$scratch" ls-files -z --others --exclude-standard | LC_ALL=C tr '\0' '\n' | LC_ALL=C sort \
+      | LC_ALL=C comm -13 <(printf '%s\n' "$untracked_before") -) \
+      || { echo "could not list the files the DevKit install left untracked in the scratch tree; verify may count them" >&2; break; }
+    dk_new=$(printf '%s\n' "$dk_new" | grep -v '^\.agents/devkit\(/\|$\)' || true)
+    [ -n "$dk_new" ] || break
+    while IFS= read -r f; do
+      [ -z "$f" ] || rm -f -- "$scratch/$f" || true
+    done <<<"$dk_new"
+  done
+  return 0
+}
+
+# sb_ensure_scratch_bridge_hooks <repo_path> <main_wt> <scratch> <log_file>:
+# Gọi sau khi scratch nhận commit mới (merge-train build_chain hoặc merge-gate merge_scratch_onto khi base dời):
+# nếu cây mới có marker cầu nối (.agents/hooks.json, .gemini/settings.json, .codex/hooks.json, .cursor/hooks.json)
+# mà thiếu .agents/hooks/agent_bridge.sh, cài bổ sung DevKit để scratch có đủ .agents/hooks/.
+sb_ensure_scratch_bridge_hooks() {
+  local scratch="$3"
+  if { [ -e "$scratch/.agents/hooks.json" ] || [ -e "$scratch/.gemini/settings.json" ] \
+       || [ -e "$scratch/.codex/hooks.json" ] || [ -e "$scratch/.cursor/hooks.json" ]; } \
+     && [ ! -e "$scratch/.agents/hooks/agent_bridge.sh" ]; then
+    sb_install_scratch_devkit "$1" "$2" "$scratch" "$4"
+    return $?
+  fi
+  SB_DK_RC=0
+  return 0
+}
