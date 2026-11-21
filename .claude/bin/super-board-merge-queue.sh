@@ -423,10 +423,8 @@ ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
     add_label "$k" "loop:rebuild-$((cur + 1))" ${rm[@]+"${rm[@]}"} || return 1
     LABEL_DONE=1
-    if [ "$RETRY" -eq 0 ]; then
-      mkdir -p "$REBUILD_TOTAL_DIR" 2>/dev/null || true
-      printf '%s\t%s\t%s\n' "$(date +%s)" "${rch:-none}" "$cause_one" >> "$REBUILD_TOTAL_DIR/$k" 2>/dev/null || true
-    fi
+    mkdir -p "$REBUILD_TOTAL_DIR" 2>/dev/null || true
+    printf '%s\t%s\t%s\n' "$(date +%s)" "${rch:-none}" "$cause_one" >> "$REBUILD_TOTAL_DIR/$k" 2>/dev/null || true
     [ "$CARD_RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ ${tag} · PR #${p} back to Build (loop:rebuild-$((cur + 1)))
 Did: ${did}
 ❌ Not done: ${why}${det:+; the gate / verify lines:
@@ -439,12 +437,16 @@ root-cause-hash: ${rch}}" || true
     # Count the pure rebase only now that its label is on: a failed add_label is routed again and must not count twice.
     if [ "$kind" = rebase-pure ]; then
       { awk -v p="$p" '$1 != p' "$REBASE_PURE_F" 2>/dev/null || true; echo "$p $rn"; } > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"
-    elif [ "$RETRY" -eq 0 ]; then
+    else
       mkdir -p "$REBUILD_TOTAL_DIR" 2>/dev/null || true
       printf '%s\t%s\t%s\n' "$(date +%s)" "${rch:-none}" "$cause_one" >> "$REBUILD_TOTAL_DIR/$k" 2>/dev/null || true
     fi
     # R9: a pure rebase carries no root-cause-hash line (R2); a conflict does.
-    rhl=""; { [ "$kind" != rebase-pure ] && [ -n "$rch" ]; } && rhl=$'\n'"<!-- sb-rebuild-total: ${new_total} -->"$'\n'"root-cause-hash: ${rch}"
+    rhl=""
+    if [ "$kind" != rebase-pure ]; then
+      rhl=$'\n'"<!-- sb-rebuild-total: ${new_total} -->"
+      [ -z "$rch" ] || rhl="${rhl}"$'\n'"root-cause-hash: ${rch}"
+    fi
     LABEL_DONE=1
     # tag ở nhánh rebase: `conflict`, hoặc `merge refused` khi train in lời git/hook (gate-exit-5 không file xung đột, #775). Chỉ
     # `merge refused` chép train-detail (một nơi quyết định: route_one chọn tag); conflict không kèm dòng nào, như comment PR.

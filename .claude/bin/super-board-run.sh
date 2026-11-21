@@ -216,7 +216,9 @@ PROJECT_NUMBER=$(jq -r '.project.number' "$CONFIG_PATH")
 BASE_BRANCH=$(jq -r '.base_branch // "main"' "$CONFIG_PATH")
 HUMAN_APPROVES=$(jq -r '.human_approves_merge // false' "$CONFIG_PATH")
 REBUILD_CAP=$(jq -r '.rebuild_cap // 2' "$CONFIG_PATH")
-REBUILD_TOTAL_CAP=$(jq -r --argjson cap "${REBUILD_CAP:-2}" '.rebuild_total_cap // ($cap + 1)' "$CONFIG_PATH" 2>/dev/null || echo "$((REBUILD_CAP + 1))")
+case "${REBUILD_CAP:-}" in ''|*[!0-9]*|0) REBUILD_CAP=2 ;; esac
+REBUILD_TOTAL_CAP=$(jq -r '.rebuild_total_cap // empty' "$CONFIG_PATH" 2>/dev/null || true)
+case "${REBUILD_TOTAL_CAP:-}" in ''|*[!0-9]*|0) REBUILD_TOTAL_CAP=$((REBUILD_CAP + 1)) ;; esac
 BLOCK_ALERT_PCT=$(jq -r '.block_rate_alert_pct // 30' "$CONFIG_PATH")
 TICK_SECONDS=$(jq -r '.tick_seconds // 120' "$CONFIG_PATH")
 # Bản số cho phép tính: tick_seconds sai (chữ) trong $((…)) làm runner chết dưới set -u ("abc: unbound variable", từ #229)
@@ -2915,7 +2917,9 @@ qa_apply_report() {
     cur=$(printf '%s\n' "$labs" | sed -nE 's/^loop:rebuild-([0-9]+)$/\1/p' | sort -n | tail -1); cur=${cur:-0}
     [ "$cur" -lt "${REBUILD_CAP:-2}" ] || return 1
     local tdir total_cap total_now=0
-    total_cap="${SB_REBUILD_TOTAL_MAX:-${REBUILD_TOTAL_CAP:-$(( ${REBUILD_CAP:-2} + 1 ))}}"
+    total_cap="${SB_REBUILD_TOTAL_MAX:-}"
+    case "$total_cap" in ''|*[!0-9]*|0) total_cap="${REBUILD_TOTAL_CAP:-}" ;; esac
+    case "$total_cap" in ''|*[!0-9]*|0) total_cap=$(( ${REBUILD_CAP:-2} + 1 )) ;; esac
     tdir=$(rebuild_total_dir)
     if [ -f "$tdir/$issue" ]; then
       total_now=$(wc -l < "$tdir/$issue" 2>/dev/null | tr -d ' ' || true)
@@ -3399,6 +3403,7 @@ blocked-by: agent" >/dev/null 2>&1 || true
     [ -z "$stall_why" ] || { human_line="blocked-by:  -"; why_line="the reviewer for #${issue} ended ${stall_why} review turns in a row (exit 0, with a comment) and the card is still in Review: a condition no review turn can meet is unmet (e.g. a test edit awaiting cross-approval, a red CI, an audit the gate does not accept); another turn would repeat it until RUNAWAY"; }
     if [ -n "$over_wait" ]; then
       if [ "$over_wait" = "agent" ]; then
+        human_line="blocked-by:  agent"
         why_line="the review worker for #${issue} ended ${wn} turns in a row with blocked-by: agent on PR head ${whead} (${rkey}) — chờ ${over_wait} quá lâu"
       else
         why_line="the ${lane} worker for #${issue} has waited on ${over_wait} for more than ${wlimit} review turns in the last $((window / 3600)) hours with no new comment (chờ ${over_wait} quá lâu)"
@@ -3962,7 +3967,7 @@ ${prev_rev}"
       ag_cnt=$(awk -v from=$((now - ag_win)) '$1 >= from {c++} END{print c+0}' "$ag_sfile" 2>/dev/null || echo 0)
     fi
     if [ "${ag_cnt:-0}" -ge "$ag_max" ]; then
-      ag_cap_ts=$(cat "${ag_sfile}.capped" 2>/dev/null | tr -dc '0-9')
+      ag_cap_ts=$( { cat "${ag_sfile}.capped" 2>/dev/null || true; } | tr -dc '0-9')
       if [ -z "$ag_cap_ts" ] || [ $((now - ag_cap_ts)) -ge "$ag_win" ]; then
         mkdir -p "$INFLIGHT_DIR/ag-sweep" 2>/dev/null || true
         echo "$now" > "${ag_sfile}.capped" 2>/dev/null || true
@@ -4001,6 +4006,10 @@ EOF
 rebuild_total_dir() {
   if [ -n "${SB_REBUILD_TOTAL_DIR:-}" ]; then
     printf '%s' "$SB_REBUILD_TOTAL_DIR"
+    return 0
+  fi
+  if [ -n "${INFLIGHT_DIR:-}" ] && [ "$INFLIGHT_DIR" != ".claude/super-board/inflight" ]; then
+    printf '%s/rebuild-total' "$INFLIGHT_DIR"
     return 0
   fi
   local common=""
@@ -4066,7 +4075,10 @@ cap_progress_comments() {
 sweep_cap_progress() {
   local moved=1 issue item_id cur cap max total_cap total_n total_capped cj bodies last prev hl hp key count tdir
   cap="${REBUILD_CAP:-2}"; max="${SB_CAP_PROGRESS_MAX:-3}"
-  total_cap="${SB_REBUILD_TOTAL_MAX:-${REBUILD_TOTAL_CAP:-$((cap + 1))}}"
+  case "$cap" in ''|*[!0-9]*|0) cap=2 ;; esac
+  total_cap="${SB_REBUILD_TOTAL_MAX:-}"
+  case "$total_cap" in ''|*[!0-9]*|0) total_cap="${REBUILD_TOTAL_CAP:-}" ;; esac
+  case "$total_cap" in ''|*[!0-9]*|0) total_cap=$((cap + 1)) ;; esac
   while IFS=$'\t' read -r issue item_id cur; do
     [ -n "$issue" ] && [ -n "$item_id" ] || continue
     cj=$(cap_progress_comments "$issue" 2>/dev/null) || { log "cap-progress: #${issue} comments unreadable — skipped"; continue; }

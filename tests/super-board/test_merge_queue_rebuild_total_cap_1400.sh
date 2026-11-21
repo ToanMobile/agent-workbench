@@ -164,10 +164,11 @@ RUNNER="$ROOT/.claude/bin/super-board-run.sh"
   PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_21","status":"Blocked","labels":["bug","loop:rebuild-2"],"content":{"type":"Issue","number":21,"title":"c"}}]}'
   # Đặt thêm label loop:rebuild-2 để chắc chắn sweep_cap_progress coi là ứng viên nếu không kiểm trần tổng
   sweep_cap_progress; rc=$?
-  if [ "$rc" -ne 0 ] && ! grep -q "move PVTI_21 Ready" "$TMP/run.writes"; then
+  tdir_check=$(rebuild_total_dir)
+  if [ "$rc" -ne 0 ] && ! grep -q "move PVTI_21 Ready" "$TMP/run.writes" && [ "$tdir_check" = "$INFLIGHT_DIR/rebuild-total" ]; then
     exit 0
   else
-    echo "run.writes: $(tr '\n' ';' < "$TMP/run.writes")" >&2
+    echo "run.writes: $(tr '\n' ';' < "$TMP/run.writes") tdir=$tdir_check" >&2
     exit 1
   fi
 )

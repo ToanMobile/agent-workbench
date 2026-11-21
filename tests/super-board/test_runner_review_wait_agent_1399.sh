@@ -114,19 +114,20 @@ else
 fi
 
 # ── B2 (Oracle b): 2 lượt KHÔNG comment mới trên thẻ đang có `blocked-by: agent` -> Blocked ở lượt 2 (không phải 8)
+# (kể cả khi dòng cuối log có chữ 'device', vẫn giữ `blocked-by:  agent` chứ không đổi thành `-`)
 reset_case; set_card 13994
-okwlog "$WORKER_LOG_DIR/worker-review-13994.log"
+printf '=== dispatch x\ndevice check ok\n%s\nworker_exit: exit=0 signal=- elapsed=60s\n' "$OKRES" > "$WORKER_LOG_DIR/worker-review-13994.log"
 LAST_COMMENT=$'[reviewer] [report] ⏳ chờ quota 429\nblocked-by: agent'
 turn_same 13994
 mid_b2=0; grep -q "^move " "$TMP/writes" && mid_b2=1
 turn_same 13994
-if [ "$mid_b2" = 0 ] && grep -qx "move PVTI_13994 Blocked" "$TMP/writes" && grep -qx "blocked-by:  agent" "$TMP/writes"; then
-  ok "B2 (Oracle b): 2 silent blocked-by: agent turns -> Blocked on 2nd turn (<=2, not 8)"
+if [ "$mid_b2" = 0 ] && grep -qx "move PVTI_13994 Blocked" "$TMP/writes" && grep -qx "blocked-by:  agent" "$TMP/writes" && ! grep -qx "blocked-by:  -" "$TMP/writes"; then
+  ok "B2 (Oracle b): 2 silent blocked-by: agent turns -> Blocked on 2nd turn (<=2, not 8), keeps blocked-by:  agent"
 else
   fail "B2: mid=$mid_b2 writes=$(tr '\n' ';' < "$TMP/writes")"
 fi
 
-# ── C (Oracle sweep - AC6): sweep_antigravity_blocked tối đa 2 lần / 24h
+# ── C (Oracle sweep - AC6): sweep_antigravity_blocked tối đa 2 lần / 24h (an toàn dưới set -euo pipefail)
 reset_case
 antigravity_can_provide_mcp() { return 0; }
 antigravity_probe() { return 0; }
@@ -139,9 +140,9 @@ cap_progress_comments() {
 sweep_antigravity_blocked; rc1=$?
 sweep_antigravity_blocked; rc2=$?
 : > "$TMP/writes"
-sweep_antigravity_blocked; rc3=$?
+( set -euo pipefail; sweep_antigravity_blocked ) >/dev/null 2>&1; rc3=$?
 : > "$TMP/writes"
-sweep_antigravity_blocked; rc4=$?   # lần 4 cũng không spam thêm comment
+( set -euo pipefail; sweep_antigravity_blocked ) >/dev/null 2>&1; rc4=$?   # lần 4 cũng không spam thêm comment
 if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$rc3" -ne 0 ] && [ "$rc4" -ne 0 ] \
    && ! grep -q "^move " "$TMP/writes"; then
   # kiểm tra ghi 2 lần trong ag-sweep/13995 và đã đổi blocked-by: - một lần
