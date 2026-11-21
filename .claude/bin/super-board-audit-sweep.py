@@ -37,6 +37,7 @@ AC_ITEM = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]+\S")
 CHECKBOX = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]*\[([ xX])\][ \t]*(.*)$")
 # Cùng quy ước với CARD_FROM_BRANCH của super-board-ac-check.py (#1406 R4): `issue-<N>` có hoặc không hậu tố, có thể có tiền tố thư mục.
 BRANCH_CARD_RE = re.compile(r"(?:^|/)issue-(\d+)(?:\D|$)")
+FALLBACK_PR_LIMIT = 1000   # trần kết quả của GitHub search
 UNGATED_MARKER_FMT = "<!-- sb-ungated-merge:PR#{pr} -->"
 REOPEN_MARKER = "<!-- sb-sweep:reopen-ac-open -->"
 
@@ -425,8 +426,10 @@ def sweep(args: argparse.Namespace) -> int:
         has_closed_by_pr = bool(iss.get("closedByPullRequestsReferences")) or bool(merged_prs_by_issue.get(num))
         # Nếu bulk PR list chưa thấy PR cho thẻ, kiểm trực tiếp nhánh issue-<N>- trước khi mở lại để tránh cắt đuôi khi >200 PR.
         if not has_ac_open and unticked and not has_closed_by_pr:
+            # `head:issue-<N>` của GitHub search khớp theo tiền tố (issue-14 trả cả issue-1405…, mới nhất trước, #1416 review): đọc tới
+            # trần 1000 của search, lọc đúng số thẻ bằng BRANCH_CARD_RE; chạm trần mà chưa thấy thì không chứng minh được là không có PR.
             r_one = run(gh + ["pr", "list", "--repo", slug, "--state", "merged", "--base", base,
-                              "--search", f"head:issue-{num}", "--limit", "20", "--json", "number,headRefName"],
+                              "--search", f"head:issue-{num}", "--limit", str(FALLBACK_PR_LIMIT), "--json", "number,headRefName"],
                         cwd=repo_path)
             if r_one.returncode != 0:
                 print(f"audit-sweep: fallback gh pr list for #{num} failed; skipping reopen", file=sys.stderr)
@@ -436,6 +439,10 @@ def sweep(args: argparse.Namespace) -> int:
                 if any(isinstance(p, dict) and (m_one := BRANCH_CARD_RE.search(p.get("headRefName") or ""))
                        and int(m_one.group(1)) == num for p in one_prs):
                     has_closed_by_pr = True
+                elif isinstance(one_prs, list) and len(one_prs) >= FALLBACK_PR_LIMIT:
+                    print(f"audit-sweep: fallback search for #{num} hit --limit {FALLBACK_PR_LIMIT} without its branch; skipping reopen",
+                          file=sys.stderr)
+                    continue
             except (ValueError, TypeError):
                 print(f"audit-sweep: fallback gh pr list invalid JSON for #{num}; skipping reopen", file=sys.stderr)
                 continue

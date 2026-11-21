@@ -5,6 +5,8 @@
 #     AC chưa tick KHÔNG bị mở lại; `issue-3010-…` / `reissue-301-…` không bị nhận nhầm cho thẻ 301 khác.
 #  I. File --items có thẻ của repo khác (content.repository != repo nhà) trùng SỐ với thẻ đã đóng của repo nhà ⇒ không tính là thẻ
 #     trên board (như fetch_board_items): không mở lại, không chuyển cột.
+#  F (review #1416). Tìm kiếm `head:issue-<N>` của GitHub khớp theo tiền tố (`head:issue-14` trả cả issue-1405…, issue-146…, mới nhất
+#     trước): PR thật của thẻ số nhỏ nằm sau 20 kết quả vẫn phải được thấy; kết quả chạm trần mà không thấy thì không mở lại.
 # Offline; gh giả. Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -51,9 +53,11 @@ cat > "$T/items.json" <<'JSON'
     {"id": "I305", "status": "Done", "content": {"type": "Issue", "number": 305, "repository": "O/R"}},
     {"id": "I306", "status": "Done", "content": {"type": "Issue", "number": 306, "repository": "o/other"}},
     {"id": "I307", "status": "Done", "content": {"type": "Issue", "number": 307, "repository": "https://github.com/o/r"}},
-    {"id": "I308", "status": "Done", "content": {"type": "Issue", "number": 308, "repository": {"nameWithOwner": "o/r"}}}
+    {"id": "I308", "status": "Done", "content": {"type": "Issue", "number": 308, "repository": {"nameWithOwner": "o/r"}}},
+    {"id": "I14", "status": "Done", "content": {"type": "Issue", "number": 14, "repository": "o/r"}},
+    {"id": "I15", "status": "Done", "content": {"type": "Issue", "number": 15, "repository": "o/r"}}
   ],
-  "totalCount": 8
+  "totalCount": 10
 }
 JSON
 
@@ -61,7 +65,7 @@ python3 - "$T/closed_issues.json" "$NOW_ISO" <<'PY'
 import json, sys
 rows = [{"number": n, "title": "t%d" % n, "stateReason": "COMPLETED", "labels": [], "closedAt": sys.argv[2],
          "closedByPullRequestsReferences": [], "body": "## Acceptance Criteria\n- [ ] AC chưa tick\n"}
-        for n in (301, 302, 303, 304, 305, 306, 307, 308)]
+        for n in (301, 302, 303, 304, 305, 306, 307, 308, 14, 15)]
 json.dump(rows, open(sys.argv[1], "w"))
 PY
 
@@ -85,6 +89,18 @@ json.dump([pr(905, "issue-304")], open(t + "/fallback_304.json", "w"))
 PY
 
 : > "$T/calls.log"
+# Kết quả tìm kiếm tiền tố giả: $1 = số thẻ, $2 = số PR ứng viên (issue-<N><k>-x, mới nhất trước), $3 = vị trí PR thật issue-<N>-fix
+# (-1 = không có), cắt theo --limit như gh thật.
+cat > "$T/prefix.py" <<'PY'
+import json, sys
+num, total, real = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+a = sys.argv[4:]
+limit = int(a[a.index("--limit") + 1]) if "--limit" in a else 30
+rows = [{"number": 2000 + i, "headRefName": "issue-%d%d-x" % (num, i)} for i in range(total)]
+if real >= 0:
+    rows.insert(real, {"number": 1900, "headRefName": "issue-%d-fix" % num})
+print(json.dumps(rows[:limit]))
+PY
 cat > "$T/gh" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -92,6 +108,8 @@ echo "gh $*" >> "$FAKE_DIR/calls.log"
 case "$*" in
   *"issue list"*"--state closed"*) cat "$FAKE_DIR/closed_issues.json" ;;
   *"pr list"*"--state merged"*"head:issue-304"*) cat "$FAKE_DIR/fallback_304.json" ;;
+  *"pr list"*"--state merged"*"head:issue-14 "*) python3 "$FAKE_DIR/prefix.py" 14 30 25 "$@" ;;
+  *"pr list"*"--state merged"*"head:issue-15 "*) python3 "$FAKE_DIR/prefix.py" 15 5000 -1 "$@" ;;
   *"pr list"*"--state merged"*"head:issue-"*) echo '[]' ;;
   *"pr list"*"--state merged"*) cat "$FAKE_DIR/merged_prs.json" ;;
   *"api "*"/issues/"*"/comments"*) echo '[[]]' ;;
@@ -127,6 +145,11 @@ reopened 306 && fail "I1 thẻ 306 của repo khác (o/other) trong file --items
 grep -q "card .*move 306 " "$T/calls.log" && fail "I1b thẻ 306 của repo khác bị chuyển cột" || ok "I1b thẻ của repo khác không bị chuyển cột"
 reopened 307 && reopened 308 && ok "I2 repository dạng URL / object {nameWithOwner} của repo nhà không bị lọc nhầm (#307, #308 mở lại)" \
   || fail "I2 thẻ repo nhà (repository dạng URL / object) bị lọc nhầm"
+
+reopened 14 && fail "F1 thẻ 14 bị mở lại dù PR thật 'issue-14-fix' có trong kết quả tìm kiếm tiền tố (sau 25 ứng viên issue-14<k>-x)" \
+  || ok "F1 PR thật của thẻ số nhỏ nằm sau 20 kết quả tiền tố vẫn được thấy: thẻ 14 không bị mở lại"
+reopened 15 && fail "F2 thẻ 15 bị mở lại dù kết quả tìm kiếm chạm trần --limit (không chứng minh được là không có PR)" \
+  || ok "F2 kết quả tìm kiếm chạm trần mà chưa thấy PR: không mở lại thẻ 15"
 
 # Quy ước nhánh trùng nguyên văn với CARD_FROM_BRANCH của super-board-ac-check.py
 python3 - "$SWEEP" "$AC_CHECK" <<'PY'
