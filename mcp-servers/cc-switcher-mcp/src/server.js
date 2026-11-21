@@ -13,7 +13,7 @@ export const SERVER_VERSION = '0.1.0';
 
 const INSTRUCTIONS = `Quan ly va tu dong xoay vong an toan 6 profile CC Switch (4 Claude Code + 2 Antigravity Gemini) kem canh bao & dieu khien tu xa qua Telegram.
 Quy tac chong ban:
-- Khi tai khoan Claude dinh 429 / het quota, goi switcher_report_limit hoac switcher_rotate(markCurrentLimited=true) de dong bang tai khoan do 5 gio va chuyen sang profile an toan tiep theo.
+- Khi tai khoan Claude dinh 429 / het quota, goi switcher_report_limit hoac switcher_rotate(markCurrentLimited=true) de dong bang tai khoan do 5 gio va chuyen sang tai khoan Claude an toan tiep theo (khong tu doi sang Antigravity).
 - Cooldown an toan mac dinh giua 2 tai khoan Claude la 15 phut (900s); chuyen sang Antigravity thi khong can cho.`;
 
 export function createServer() {

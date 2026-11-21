@@ -19,11 +19,14 @@ import {
   setRepoAccount,
   addRepo,
   removeRepo,
-  CROSS_VENDOR_ORDER,
+  openDesignConfigPath,
+  setOpenDesignAccount,
 } from './profiles.js';
 
 export const DEFAULT_PANEL_URL = 'http://ai-factory.localhost:4317/cc-switcher';
-export const BACKUP_ORDER = CROSS_VENDOR_ORDER;
+// #1412: Antigravity khong con la du phong tu dong; danh sach nay chi la cac profile khac hang hien tren trang de chon tay
+// (giu ten khoa JSON backupOrder/backupPriority cho trang).
+export const BACKUP_ORDER = DEFAULT_PROFILES.filter((p) => p.vendor !== 'anthropic').map((p) => p.id);
 export const PANEL_ACTIONS = [
   'refresh', 'switch', 'rotate', 'limit', 'unfreeze', 'balance', 'cooldown', 'repo_assign', 'repo_add', 'repo_remove',
 ];
@@ -128,7 +131,7 @@ function profileView(p, state, nowMs) {
  * chi phi, phan bo repo, lich su chuyen va suc khoe he thong. Khong chua token/chat id/duong dan config.
  */
 export async function buildPanelState(opts = {}) {
-  const { stateDir, nowMs = Date.now(), repos, sync = true, forceRefresh = false, quotaFetcher, daemonProbe, claudeHomes, accountReader } = opts;
+  const { stateDir, nowMs = Date.now(), repos, sync = true, forceRefresh = false, quotaFetcher, daemonProbe, claudeHomes, accountReader, openDesignConfig } = opts;
   let syncError = '';
   if (sync) {
     try {
@@ -138,7 +141,7 @@ export async function buildPanelState(opts = {}) {
       logStructured('warn', 'panel_quota_sync_failed', { error: syncError });
     }
   }
-  const report = getStatusReport({ stateDir, nowMs, repos, accountReader });
+  const report = getStatusReport({ stateDir, nowMs, repos, accountReader, openDesignConfig });
   const state = loadSwitcherState(stateDir);
   const dir = resolveStateDir(stateDir);
   const profiles = report.profiles.map((p) => profileView(p, state, nowMs));
@@ -156,7 +159,6 @@ export async function buildPanelState(opts = {}) {
       claudeSwitchCooldownSec: cooldownSec,
       cooldownMinutes: Math.round(cooldownSec / 60),
       rateLimitFreezeSec: report.policy?.rateLimitFreezeSec ?? 18000,
-      preferCrossVendorOnCooldown: Boolean(report.policy?.preferCrossVendorOnCooldown),
       lastClaudeSwitchAtMs: state.lastClaudeSwitchAtMs || 0,
       lastClaudeRateLimitAtMs: state.lastClaudeRateLimitAtMs || 0,
     },
@@ -232,10 +234,15 @@ export function repoLastUsed(repoPath, worktrees = [], claudeHomes = claudeHomes
 /**
  * Tai khoan repo dang dung THUC TE luc nay, theo dung luat cua ham claude() trong ~/.zshrc + chong ban:
  * - chua ghim account -> lenh claude dung ~/.claude mac dinh;
- * - tai khoan Claude duoc gan dang 429/het quota -> KHONG nhay cheo Claude, Super-Board xoay khac hang AGY Ultra -> AGY Pro.
+ * - tai khoan Claude duoc gan dang 429/het quota -> KHONG nhay cheo Claude, KHONG doi sang hang khac (#1412):
+ *   Super-Board tam dung repo toi gio reset.
  */
 export function effectiveRepoAccount(row, profilesById) {
   if (!row.pathExists) return { kind: 'missing', account: '', note: 'Không thấy thư mục repo trên máy.' };
+  // dong app Open Design: ly do khong co tai khoan (file hong, thu muc la, chua dat) do profiles.js ghi san
+  if (row.source === 'app' && !row.pinnedInFile) {
+    return { kind: row.appUnset ? 'unpinned' : 'unknown', account: '', note: row.appNote || '' };
+  }
   if (!row.pinnedInFile) {
     return { kind: 'unpinned', account: '', note: 'Chưa ghim "account" trong .claude/settings.local.json: lệnh claude dùng ~/.claude mặc định.' };
   }
@@ -243,18 +250,15 @@ export function effectiveRepoAccount(row, profilesById) {
   if (!p) return { kind: 'unknown', account: '', note: `"${row.account}" không phải tài khoản cc-switcher biết.` };
   if (!p.isFrozen) return { kind: 'assigned', account: p.id, note: '' };
   const until = p.resetTimeFormatted ? ` tới ${p.resetTimeFormatted}` : '';
-  const fb = BACKUP_ORDER.map((id) => profilesById[id]).find((b) => b && !b.isFrozen);
-  if (!fb) {
-    return { kind: 'blocked', account: '', note: `${p.shortLabel || p.name} chạm 429/hết quota${until}; cả ${BACKUP_ORDER.length} dự phòng khác hãng cũng đang khóa.` };
-  }
   return {
-    kind: 'fallback',
-    account: fb.id,
-    note: `${p.shortLabel || p.name} chạm 429/hết quota${until} → không nhảy chéo Claude, Super-Board xoay sang ${fb.shortLabel || fb.name}.`,
+    kind: 'blocked',
+    account: '',
+    note: `${p.shortLabel || p.name} chạm 429/hết quota${until} → không nhảy chéo Claude, không đổi sang hãng khác: tạm dừng tới giờ reset.`,
   };
 }
 
 function groupLabel(row, profilesById) {
+  if (row.source === 'app') return 'App';
   if (row.source === 'custom') return 'Tự thêm';
   const p = profilesById[row.defaultAccount];
   return p ? `Nhóm ${p.shortLabel || p.name}` : 'Mặc định';
@@ -263,8 +267,9 @@ function groupLabel(row, profilesById) {
 function repoRows(report, profiles, claudeHomes) {
   const byId = Object.fromEntries(profiles.map((p) => [p.id, p]));
   return report.repoAssignments.map((r) => {
-    const worktrees = r.pathExists ? listGitWorktrees(r.path) : [];
-    const last = r.pathExists ? repoLastUsed(r.path, worktrees, claudeHomes) : { atMs: 0, account: '' };
+    const isRepo = r.pathExists && r.source !== 'app'; // dong app Open Design khong co worktree hay phien Claude Code theo thu muc
+    const worktrees = isRepo ? listGitWorktrees(r.path) : [];
+    const last = isRepo ? repoLastUsed(r.path, worktrees, claudeHomes) : { atMs: 0, account: '' };
     const eff = effectiveRepoAccount(r, byId);
     return {
       name: r.name,
@@ -307,7 +312,7 @@ function badInput(message) {
  * kem needsForce de trang hoi "Ep chuyen" ro rang, khong nem ra ngoai.
  */
 export async function runPanelAction(action, params = {}, opts = {}) {
-  const { stateDir, nowMs = Date.now(), repos, quotaFetcher } = opts;
+  const { stateDir, nowMs = Date.now(), repos, quotaFetcher, openDesignConfig } = opts;
   if (action !== LOGIN_ACTION && !PANEL_ACTIONS.includes(action)) throw badInput(`Thao tác không hợp lệ: ${action}`);
 
   if (action === 'refresh') {
@@ -405,6 +410,11 @@ export async function runPanelAction(action, params = {}, opts = {}) {
     const repoPath = String(params.repo ?? '').trim();
     if (!repoPath) throw badInput('Thiếu đường dẫn repo.');
     const label = (id) => DEFAULT_PROFILES.find((p) => p.id === id)?.shortLabel || id;
+    // #1412: dong "Open Design (app)" dung chung thao tac repo_assign, "repo" la duong dan app-config.json cua app
+    if (action === 'repo_assign' && repoPath === openDesignConfigPath({ stateDir, openDesignConfig })) {
+      const res = setOpenDesignAccount({ stateDir, openDesignConfig, account: String(params.account ?? '') });
+      return { ok: true, message: `${res.name}: ${res.previous ? `${label(res.previous)} → ` : ''}${label(res.account)}. Mở lại Open Design để phiên agent mới dùng tài khoản này.`, repo: res };
+    }
     if (action === 'repo_assign') {
       const res = setRepoAccount({ stateDir, repos, repoPath, account: String(params.account ?? '') });
       return { ok: true, message: `${res.name}: ${res.previous ? `${label(res.previous)} → ` : ''}${label(res.account)}.`, repo: res };

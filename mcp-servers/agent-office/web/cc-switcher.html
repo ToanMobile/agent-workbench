@@ -205,7 +205,7 @@
     </section>
 
     <section aria-labelledby="h-backup">
-      <h2 id="h-backup">Dự phòng khác hãng <small>hết limit tự xoay: AGY Ultra → AGY Pro · không lo ban</small></h2>
+      <h2 id="h-backup">Antigravity <small>chỉ chọn tay · Claude hết limit thì repo tạm dừng tới giờ reset, không tự đổi sang</small></h2>
       <div class="grid g2" id="backup"><div class="skel"></div><div class="skel"></div></div>
     </section>
 
@@ -450,7 +450,7 @@
     var card = el('article', { class: 'card' + (p.isActive ? ' active' : '') + (p.isFrozen ? ' frozen' : ''), 'aria-label': n.title });
     card.appendChild(el('div', { class: 'acc-head' }, [
       el('div', null, [el('div', { class: 'acc-name', text: n.title }), el('div', { class: 'acc-mail', text: n.detail })]),
-      el('div', null, [el('span', { class: 'badge b-prio', text: 'Ưu tiên ' + p.backupPriority }), ' ', badgeFor(p)])
+      el('div', null, [el('span', { class: 'badge b-prio', text: 'Chọn tay' }), ' ', badgeFor(p)])
     ]));
     card.appendChild(facts([
       ['Hãng', p.vendor === 'google' ? 'Google (Antigravity)' : p.vendor],
@@ -490,10 +490,9 @@
   function effBadge(r) {
     var e = r.effective || {};
     if (e.kind === 'assigned') return el('span', { class: 'badge b-active', text: pShort(e.account) });
-    if (e.kind === 'fallback') return el('span', { class: 'badge b-fallback', text: 'Tạm: ' + pShort(e.account) });
     if (e.kind === 'unpinned') return el('span', { class: 'badge b-ready', text: '~/.claude mặc định' });
     if (e.kind === 'missing') return el('span', { class: 'badge b-frozen', text: 'Không thấy repo' });
-    if (e.kind === 'blocked') return el('span', { class: 'badge b-frozen', text: 'Đang khóa hết' });
+    if (e.kind === 'blocked') return el('span', { class: 'badge b-frozen', text: 'Tạm dừng' });
     return el('span', { class: 'badge b-frozen', text: 'Không rõ' });
   }
   function renderRepoByAcc() {
@@ -505,7 +504,7 @@
       items.forEach(function (x) {
         var e = x.effective || {};
         ul.appendChild(el('li', null, [el('span', { text: x.name }),
-          el('span', { class: 'tag' + (x.differs ? ' warn' : ''), text: e.kind === 'fallback' ? 'tạm dùng ' + pShort(e.account) : e.kind === 'missing' ? 'không thấy thư mục' : x.lastUsedAtMs ? 'dùng ' + ago(x.lastUsedAtMs) : 'chưa dùng' })]));
+          el('span', { class: 'tag' + (x.differs ? ' warn' : ''), text: e.kind === 'blocked' ? 'tạm dừng tới giờ reset' : e.kind === 'missing' ? 'không thấy thư mục' : x.source === 'app' ? 'app' : x.lastUsedAtMs ? 'dùng ' + ago(x.lastUsedAtMs) : 'chưa dùng' })]));
       });
       if (!items.length) ul.appendChild(el('li', { class: 'empty', text: 'Chưa có repo nào gán' }));
       box.appendChild(el('div', { class: 'card' + (p.isFrozen ? ' frozen' : '') }, [
@@ -547,10 +546,11 @@
         x.lastUsedAtMs && x.pinnedInFile && x.lastUsedAccount && x.lastUsedAccount !== x.account
           ? el('div', { class: 'tag warn', text: 'phiên cuối chạy bằng tài khoản khác', title: 'Phiên Claude Code gần nhất của repo (hoặc worktree) nằm trong ' + pShort(x.lastUsedAccount) + ', không phải tài khoản gán. Thường do mở claude bằng alias claude-<tên> hoặc CLAUDE_CONFIG_DIR đặt tay.' })
           : null]);
-      var rm = el('button', { type: 'button', class: 'btn ghost sm', 'data-repo-remove': x.path, text: 'Gỡ', 'aria-label': 'Gỡ ' + x.name + ' khỏi cc-switcher', disabled: busy ? 'disabled' : null });
+      // dòng app (Open Design, #1412) không nằm trong danh sách repo nên không có nút Gỡ
+      var rm = x.source === 'app' ? null : el('button', { type: 'button', class: 'btn ghost sm', 'data-repo-remove': x.path, text: 'Gỡ', 'aria-label': 'Gỡ ' + x.name + ' khỏi cc-switcher', disabled: busy ? 'disabled' : null });
       tb.appendChild(el('tr', { class: x.differs ? 'differs' : '' }, [nameCell,
         el('td', null, [el('div', { class: 'rp-assign' }, [sel, save]), !x.settingsExists && x.pathExists ? el('div', { class: 'tag warn', text: 'chưa có settings.local.json' }) : null]),
-        effCell, lastCell, el('td', null, [rm])]));
+        effCell, lastCell, el('td', null, rm ? [rm] : [])]));
     });
     r.appendChild(el('table', null, [el('thead', null, [el('tr', null, [
       el('th', { scope: 'col', text: 'Repo · nhóm · đường dẫn' }), el('th', { scope: 'col', text: 'Tài khoản gán' }),
@@ -625,8 +625,10 @@
       var eff = rp.effective || {};
       confirmDlg('Gán ' + rp.name + ' → ' + pShort(acc) + '?',
         rp.path + '\n\nTừ: ' + (rp.pinnedInFile ? pShort(rp.account) : 'chưa ghim (~/.claude)') + '\nSang: ' + pShort(acc) +
-        '\n\nGhi "account" vào .claude/settings.local.json (giữ nguyên các khóa khác). Phiên claude đang mở không đổi; phiên mới trong repo và các worktree của nó dùng tài khoản mới.' +
-        (state.profiles.some(function (p) { return p.id === acc && p.isFrozen; }) ? '\n\n⚠ ' + pShort(acc) + ' đang khóa 429: repo sẽ tạm chạy dự phòng khác hãng tới khi mở khóa.' : ''),
+        (rp.source === 'app'
+          ? '\n\nGhi agentCliEnv.claude.CLAUDE_CONFIG_DIR vào app-config.json của Open Design (giữ nguyên các khóa khác). Mở lại Open Design để phiên agent mới dùng tài khoản này.'
+          : '\n\nGhi "account" vào .claude/settings.local.json (giữ nguyên các khóa khác). Phiên claude đang mở không đổi; phiên mới trong repo và các worktree của nó dùng tài khoản mới.') +
+        (state.profiles.some(function (p) { return p.id === acc && p.isFrozen; }) ? '\n\n⚠ ' + pShort(acc) + ' đang khóa 429: repo sẽ tạm dừng tới giờ reset (không đổi sang hãng khác).' : ''),
         'Gán tài khoản').then(function (ok) {
         if (!ok) return;
         act({ action: 'repo_assign', repo: rp.path, account: acc }, sv).then(function () {
@@ -667,7 +669,7 @@
     if (!a || a.disabled) return;
     var kind = a.dataset.act;
     var cfg = {
-      rotate: ['Đổi sang tài khoản kế tiếp?', 'Xoay vòng theo thứ tự 1 → 5 rồi 7 (số 6 bỏ trống), bỏ qua tài khoản đang đóng băng. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đổi', false],
+      rotate: ['Đổi sang tài khoản kế tiếp?', 'Xoay vòng qua các tài khoản Claude theo thứ tự 1 → 2 → 3 → 7 (không sang Antigravity), bỏ qua tài khoản đang đóng băng. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đổi', false],
       limit: ['Báo tài khoản hiện tại chạm 429?', 'Đóng băng "' + (state ? profileName(state.activeProfileId) : '') + '" ' + (state ? Math.round(state.antiBan.rateLimitFreezeSec / 3600 * 10) / 10 : 5) + ' giờ và chuyển ngay sang tài khoản an toàn kế tiếp. Phiên claude đang mở giữ nguyên tài khoản cũ, chỉ phiên mới đổi.', 'Đóng băng & đổi', true],
       unfreeze: ['Mở khóa toàn bộ?', 'Xóa mọi đóng băng 429 và đặt lại thời gian nghỉ chống ban về 0. Chỉ làm khi chắc quota đã hồi.', 'Mở khóa', true],
       balance: a.dataset.mode === 'swap'

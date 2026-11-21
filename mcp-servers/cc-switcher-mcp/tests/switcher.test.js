@@ -110,7 +110,7 @@ test('Anti-Ban Guard: chan chuyen tuc thi giua 2 tai khoan Claude khi chua du 15
   }
 });
 
-test('Xoay vong 6 profile tuan tu va bo qua tai khoan dang dong bang 5h', () => {
+test('Xoay vong tuan tu qua cac tai khoan Claude (#1412: khong sang Antigravity) va bo qua tai khoan dang dong bang 5h', () => {
   const tmp = createTempEnv();
   try {
     const t0 = 1_700_000_000_000;
@@ -124,19 +124,18 @@ test('Xoay vong 6 profile tuan tu va bo qua tai khoan dang dong bang 5h', () => 
     const r2 = rotateNextProfile({ stateDir: tmp.dir, nowMs: t0 + 25 * 60 * 1000, markCurrentLimited: true });
     assert.equal(r2.activeProfile.id, 'finos_toan_max');
 
+    // #1412: sau Claude Max la tai khoan Claude thu 7 (finos_lua), bo qua 2 profile Antigravity (4, 5)
     const r3 = rotateNextProfile({ stateDir: tmp.dir, nowMs: t0 + 40 * 60 * 1000, markCurrentLimited: true });
-    assert.equal(r3.activeProfile.id, 'antigravity_ultra');
+    assert.equal(r3.activeProfile.id, 'finos_lua');
 
+    // Ca 4 tai khoan Claude deu dong bang: chon tai khoan Claude het dong bang som nhat (finos_toan), kem thoi gian cho
     const r4 = rotateNextProfile({ stateDir: tmp.dir, nowMs: t0 + 41 * 60 * 1000, markCurrentLimited: true });
-    assert.equal(r4.activeProfile.id, 'antigravity_pro');
+    assert.equal(r4.activeProfile.id, 'finos_toan');
+    assert.ok(r4.requiredWaitSec > 0);
 
-    // 17/11 go Grok: profile thu 7 (finos_lua) nam ngay sau AGY Pro trong vong xoay
-    const r6 = rotateNextProfile({ stateDir: tmp.dir, nowMs: t0 + 43 * 60 * 1000, markCurrentLimited: true });
-    assert.equal(r6.activeProfile.id, 'finos_lua');
-
-    // Sau 5 tieng + 1 phut, finos (Account 1) da het dong bang -> quay vong lai finos!
+    // Sau 5 tieng 50 phut, finos_linh (dong bang luc phut 25) da het dong bang -> xoay tiep sang finos_linh
     const r7 = rotateNextProfile({ stateDir: tmp.dir, nowMs: t0 + (5 * 3600 + 3000) * 1000, markCurrentLimited: true });
-    assert.equal(r7.activeProfile.id, 'finos_toan');
+    assert.equal(r7.activeProfile.id, 'finos_linh');
   } finally {
     tmp.cleanup();
   }
