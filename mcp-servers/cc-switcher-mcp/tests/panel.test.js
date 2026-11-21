@@ -259,17 +259,17 @@ test('gio reset hien ca khi utilization = 0 (con 100%)', async () => {
   }
 });
 
-test('thu tu du phong khac hang AGY Ultra -> AGY Pro (17/11 go Grok); 429 tren Claude de xuat AGY Ultra', async () => {
+test('Antigravity chi con la profile chon tay (#1412, 17/11 go Grok); 429 tren Claude goi y tai khoan Claude ke tiep', async () => {
   const tmp = createTempDir();
   try {
     const text = formatStatusText(getStatusReport({ stateDir: tmp.dir }));
-    const iU = text.indexOf('Dự phòng 1 · 4. Antigravity Ultra');
-    const iP = text.indexOf('Dự phòng 2 · 5. Antigravity Pro');
+    const iU = text.indexOf('Chọn tay · 4. Antigravity Ultra');
+    const iP = text.indexOf('Chọn tay · 5. Antigravity Pro');
     assert.ok(iU > 0 && iP > iU);
     assert.doesNotMatch(text, /Grok/);
     assert.match(text, /ai-factory\.localhost:4317\/cc-switcher/);
     assert.doesNotMatch(text, /BẢNG ĐIỀU KHIỂN/);
-    assert.equal(reportRateLimit({ stateDir: tmp.dir, nowMs: 1_700_000_000_000 }).nextProfile.id, 'antigravity_ultra');
+    assert.equal(reportRateLimit({ stateDir: tmp.dir, nowMs: 1_700_000_000_000 }).nextProfile.id, 'finos_linh');
   } finally {
     tmp.cleanup();
   }

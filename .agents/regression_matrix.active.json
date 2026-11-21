@@ -4850,6 +4850,25 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-account-pool-claude-only-1412",
+      "watch_files": [
+        ".claude/bin/super-board-account-pool.sh",
+        ".claude/bin/super-board-usage.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_account_pool_1412.sh",
+        "tests/super-board/test_account_claude_only_1412.sh",
+        "tests/super-board/test_account_failover.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-ACCOUNT-POOL-1412-01",
+          "name": "#1412: bể tài khoản chỉ dùng Claude (pause kèm resets_at, không Antigravity/Grok, không nhảy chéo), khoá đóng băng theo đúng cửa sổ 5 giờ/tuần và không thắng quota sống, runner không giao khi pool pause",
+          "command": "bash tests/super-board/test_account_pool_1412.sh && bash tests/super-board/test_account_claude_only_1412.sh && bash tests/super-board/test_account_failover.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

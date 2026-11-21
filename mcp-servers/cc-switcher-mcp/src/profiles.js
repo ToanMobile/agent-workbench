@@ -99,9 +99,6 @@ export const DEFAULT_PROFILES = [
   },
 ];
 
-/** Thu tu du phong khac hang khi tai khoan Claude cham 429 (khong nhay cheo Claude). 17/11 chu repo go Grok: chi con AGY. */
-export const CROSS_VENDOR_ORDER = ['antigravity_ultra', 'antigravity_pro'];
-
 /** Id cu cua 4 tai khoan da doi ten. Id cu van duoc nhan khi doc (state, ghim account, CLI/API); ghi ra luon la id moi. */
 export const LEGACY_ID_ALIASES = {
   finos: 'finos_toan',
@@ -141,8 +138,6 @@ const DEFAULT_POLICY = {
   claudeSwitchCooldownSec: 900,
   // Thoi gian dong bang tai khoan vua dinh Rate Limit 429 (mac dinh 18000s = 5 tieng theo cua so truot cua Claude)
   rateLimitFreezeSec: 18000,
-  // Tu dong uu tien nhay sang provider khac (Antigravity) neu Claude dang trong vung cooldown
-  preferCrossVendorOnCooldown: false,
 };
 
 function stateFilePath(stateDir) {
@@ -167,6 +162,8 @@ export function loadSwitcherState(stateDir) {
   // ca hai nguon (state da luu, settings CC Switch) deu loc profile da go
   const live = (id) => (REMOVED_PROFILE_IDS.has(id) ? '' : id);
   const initialActive = canonicalProfileId(live(existing?.activeProfileId) || live(ccSettings?.currentProviderClaude) || 'finos_toan');
+  // #1412: khoa policy preferCrossVendorOnCooldown da bo (chi dung tai khoan Claude); state cu con khoa do thi bo khi doc.
+  const { preferCrossVendorOnCooldown: _removed, ...savedPolicy } = existing?.policy || {};
 
   return {
     activeProfileId: initialActive,
@@ -179,7 +176,7 @@ export function loadSwitcherState(stateDir) {
     switchHistory: Array.isArray(existing?.switchHistory) ? existing.switchHistory.slice(-50) : [],
     policy: {
       ...DEFAULT_POLICY,
-      ...(existing?.policy || {}),
+      ...savedPolicy,
     },
   };
 }
@@ -203,9 +200,6 @@ export function updateAntiBanPolicy(stateDir, partialPolicy = {}) {
   }
   if (typeof partialPolicy.rateLimitFreezeSec === 'number' && partialPolicy.rateLimitFreezeSec >= 60) {
     state.policy.rateLimitFreezeSec = Math.round(partialPolicy.rateLimitFreezeSec);
-  }
-  if (typeof partialPolicy.preferCrossVendorOnCooldown === 'boolean') {
-    state.policy.preferCrossVendorOnCooldown = partialPolicy.preferCrossVendorOnCooldown;
   }
   return saveSwitcherState(stateDir, state).policy;
 }
@@ -420,7 +414,9 @@ export function switchProfile(opts = {}) {
 }
 
 /**
- * Xoay vong sang profile kha dung tiep theo theo thu tu 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 1 (so 6 Grok go 17/11).
+ * Xoay vong sang tai khoan Claude kha dung tiep theo theo thu tu 1 -> 2 -> 3 -> 7 -> 1.
+ * #1412 (lenh chu repo 21/11): chi di qua profile vendor anthropic, khong bao gio tu doi sang Antigravity (4, 5);
+ * Antigravity van chon tay duoc qua switchProfile.
  */
 export function rotateNextProfile(opts = {}) {
   const {
@@ -451,39 +447,27 @@ export function rotateNextProfile(opts = {}) {
   const claudeCooldownMs = (freshState.policy.claudeSwitchCooldownSec ?? 900) * 1000;
   const isClaudeInCooldown = prevClaudeEvent > 0 && nowMs - prevClaudeEvent < claudeCooldownMs;
 
-  // Tim ung vien khong bi dong bang: neu dang trong Cooldown cua Claude va bat che do uu tien khac hang,
-  // xoay theo dung thu tu chong ban: AGY Ultra (4) -> AGY Pro (5)
+  // Xoay tuan tu qua cac tai khoan Claude (bo qua tai khoan dang dong bang 5h). Dang chon tay Antigravity
+  // (claudeIdx = -1) thi bat dau tu tai khoan Claude dau tien.
+  const claudeProfiles = DEFAULT_PROFILES.filter((p) => p.vendor === 'anthropic');
+  const claudeIdx = claudeProfiles.findIndex((p) => p.id === currentProfile.id);
   let chosen = null;
-  if (freshState.policy.preferCrossVendorOnCooldown && isClaudeInCooldown) {
-    for (const candId of CROSS_VENDOR_ORDER) {
-      const candidate = DEFAULT_PROFILES.find((p) => p.id === candId);
-      if (!candidate) continue;
-      const frozenUntilMs = freshState.frozenUntil[candidate.id] || 0;
-      if (frozenUntilMs > nowMs) continue;
+  let requiredWaitSec = 0;
+  for (let offset = 1; offset <= claudeProfiles.length; offset += 1) {
+    const candidate = claudeProfiles[(claudeIdx + offset + claudeProfiles.length) % claudeProfiles.length];
+    const frozenUntilMs = freshState.frozenUntil[candidate.id] || 0;
+    if (frozenUntilMs <= nowMs) {
       chosen = candidate;
+      if (isClaudeInCooldown) {
+        requiredWaitSec = Math.ceil((claudeCooldownMs - (nowMs - prevClaudeEvent)) / 1000);
+      }
       break;
     }
   }
 
-  // Xoay tuan tu qua 6 tai khoan (bo qua tai khoan dang dong bang 5h)
-  let requiredWaitSec = 0;
   if (!chosen) {
-    for (let offset = 1; offset <= DEFAULT_PROFILES.length; offset += 1) {
-      const candidate = DEFAULT_PROFILES[(currentIdx + offset) % DEFAULT_PROFILES.length];
-      const frozenUntilMs = freshState.frozenUntil[candidate.id] || 0;
-      if (frozenUntilMs <= nowMs) {
-        chosen = candidate;
-        if (candidate.vendor === 'anthropic' && isClaudeInCooldown) {
-          requiredWaitSec = Math.ceil((claudeCooldownMs - (nowMs - prevClaudeEvent)) / 1000);
-        }
-        break;
-      }
-    }
-  }
-
-  if (!chosen) {
-    // Moi profile deu dang dong bang -> chon profile sap het dong bang som nhat
-    chosen = [...DEFAULT_PROFILES].sort(
+    // Moi tai khoan Claude deu dang dong bang -> chon tai khoan sap het dong bang som nhat
+    chosen = [...claudeProfiles].sort(
       (a, b) => (freshState.frozenUntil[a.id] || 0) - (freshState.frozenUntil[b.id] || 0),
     )[0];
     requiredWaitSec = Math.max(0, Math.ceil(((freshState.frozenUntil[chosen.id] || 0) - nowMs) / 1000));
@@ -505,7 +489,8 @@ export function rotateNextProfile(opts = {}) {
 
 /**
  * Bao cao tai khoan hien tai cham Rate Limit (429 / Quota Exhausted):
- * Dong bang 5h va de xuat tai khoan du phong khac hang theo thu tu AGY Ultra -> AGY Pro (khong nhay cheo Claude).
+ * Dong bang 5h va goi y tai khoan Claude chua dong bang ke tiep (nextProfile = null khi khong con).
+ * #1412: khong bao gio goi y profile khac hang (Antigravity).
  */
 export function reportRateLimit(opts = {}) {
   const { stateDir, profileId, nowMs = Date.now(), reason = '429_rate_limit' } = opts;
@@ -520,26 +505,14 @@ export function reportRateLimit(opts = {}) {
   }
   saveSwitcherState(stateDir, state);
 
-  // Neu tai khoan vua cham limit la Claude, uu tien chuyen thang sang Khac Hang (AGY Ultra -> AGY Pro)
-  // de tuyet doi khong nhay cheo giua cac tai khoan Claude tren cung Repo.
   let nextCandidate = null;
-  if (limitedProfile.vendor === 'anthropic') {
-    for (const candId of CROSS_VENDOR_ORDER) {
-      const cand = DEFAULT_PROFILES.find((p) => p.id === candId);
-      if (cand && (state.frozenUntil[cand.id] || 0) <= nowMs) {
-        nextCandidate = cand;
-        break;
-      }
-    }
-  }
-  if (!nextCandidate) {
-    const currentIdx = DEFAULT_PROFILES.findIndex((p) => p.id === limitedProfile.id);
-    for (let offset = 1; offset <= DEFAULT_PROFILES.length; offset += 1) {
-      const cand = DEFAULT_PROFILES[(currentIdx + offset) % DEFAULT_PROFILES.length];
-      if ((state.frozenUntil[cand.id] || 0) <= nowMs) {
-        nextCandidate = cand;
-        break;
-      }
+  const claudeProfiles = DEFAULT_PROFILES.filter((p) => p.vendor === 'anthropic');
+  const claudeIdx = claudeProfiles.findIndex((p) => p.id === limitedProfile.id);
+  for (let offset = 1; offset <= claudeProfiles.length; offset += 1) {
+    const cand = claudeProfiles[(claudeIdx + offset + claudeProfiles.length) % claudeProfiles.length];
+    if ((state.frozenUntil[cand.id] || 0) <= nowMs) {
+      nextCandidate = cand;
+      break;
     }
   }
 
@@ -938,6 +911,102 @@ export function getRepoAssignments(opts = {}) {
 
 const CLAUDE_ACCOUNT_IDS = () => DEFAULT_PROFILES.filter((p) => p.vendor === 'anthropic').map((p) => p.id);
 
+// ---- App Open Design (#1412) ----------------------------------------------------------------------------------
+// Open Design chay agent `claude` voi tai khoan ghi trong app-config.json: agentCliEnv.claude.CLAUDE_CONFIG_DIR.
+// No an han muc cua tai khoan do nhu mot repo, nen /cc-switcher hien no thanh mot dong trong bang Repo <-> Tai khoan.
+export const OPEN_DESIGN_ROW_NAME = 'Open Design (app)';
+
+/**
+ * Duong dan app-config.json: opts.openDesignConfig > bien CC_SWITCHER_OPEN_DESIGN_CONFIG > mac dinh macOS.
+ * stateDir tuy chinh (test/co lap) thi KHONG doc file that cua may; tra '' = khong co dong Open Design.
+ */
+export function openDesignConfigPath(opts = {}) {
+  if (opts.openDesignConfig) return String(opts.openDesignConfig);
+  if (process.env.CC_SWITCHER_OPEN_DESIGN_CONFIG) return process.env.CC_SWITCHER_OPEN_DESIGN_CONFIG;
+  if (opts.stateDir && resolveStateDir(opts.stateDir) !== resolveStateDir()) return '';
+  return path.join(os.homedir(), 'Library', 'Application Support', 'Open Design', 'namespaces', 'release-stable', 'data', 'app-config.json');
+}
+
+function expandHome(p) {
+  const s = String(p || '').trim();
+  if (s === '~') return os.homedir();
+  return s.startsWith('~/') ? path.join(os.homedir(), s.slice(2)) : s;
+}
+
+/** Doc app-config.json; nem INVALID_INPUT khi khong doc duoc / khong phai JSON object / agentCliEnv sai dang (giu nguyen file, nhu #757). */
+function readOpenDesignConfig(file) {
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    throw new AppError('INVALID_INPUT', `${file} (app-config.json của Open Design) không đọc được hoặc không phải JSON hợp lệ (${err?.message}), giữ nguyên.`);
+  }
+  const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+  if (!isObj(data) || (data.agentCliEnv !== undefined && !isObj(data.agentCliEnv))
+    || (isObj(data.agentCliEnv) && data.agentCliEnv.claude !== undefined && !isObj(data.agentCliEnv.claude))) {
+    throw new AppError('INVALID_INPUT', `${file} (app-config.json của Open Design) không phải object JSON đúng dạng, giữ nguyên.`);
+  }
+  return data;
+}
+
+function openDesignAccountOf(data) {
+  const raw = data?.agentCliEnv?.claude?.CLAUDE_CONFIG_DIR;
+  const claudeDir = typeof raw === 'string' ? raw.trim() : '';
+  if (!claudeDir) return { claudeDir: '', account: '' };
+  const wanted = path.resolve(expandHome(claudeDir));
+  const prof = DEFAULT_PROFILES.find((p) => p.vendor === 'anthropic' && p.configDir && path.resolve(p.configDir) === wanted);
+  return { claudeDir, account: prof ? prof.id : '' };
+}
+
+/**
+ * Dong "Open Design (app)" cho bang Repo <-> Tai khoan (cung dang voi getRepoAssignments), null khi may khong co app.
+ * File hong: van tra dong (account rong, kem appNote) de trang bao, khong nem.
+ */
+export function getOpenDesignAssignment(opts = {}) {
+  const file = openDesignConfigPath(opts);
+  if (!file || !fs.existsSync(file)) return null;
+  const row = {
+    name: OPEN_DESIGN_ROW_NAME, path: file, account: '', pinnedInFile: false, exists: true, pathExists: true,
+    defaultAccount: '', source: 'app', appNote: '',
+  };
+  try {
+    const { claudeDir, account } = openDesignAccountOf(readOpenDesignConfig(file));
+    if (account) return { ...row, account, pinnedInFile: true };
+    return {
+      ...row,
+      appNote: claudeDir
+        ? `agentCliEnv.claude.CLAUDE_CONFIG_DIR = ${claudeDir} không phải thư mục của tài khoản Claude nào cc-switcher biết.`
+        : 'app-config.json chưa đặt agentCliEnv.claude.CLAUDE_CONFIG_DIR: Open Design dùng ~/.claude mặc định.',
+      appUnset: !claudeDir,
+    };
+  } catch (err) {
+    logStructured('warn', 'open_design_config_unreadable', { error: err?.message });
+    return { ...row, appNote: err?.message || 'app-config.json của Open Design không đọc được.', appBroken: true };
+  }
+}
+
+/**
+ * Doi tai khoan Claude cua Open Design: ghi lai dung khoa agentCliEnv.claude.CLAUDE_CONFIG_DIR (ghi nguyen tu, giu moi khoa
+ * khac va quyen file). File hong thi khong ghi, nem INVALID_INPUT.
+ */
+export function setOpenDesignAccount(opts = {}) {
+  const account = canonicalProfileId(String(opts.account || '').trim());
+  assertClaudeAccount(account);
+  const file = openDesignConfigPath(opts);
+  if (!file || !fs.existsSync(file)) throw new AppError('INVALID_INPUT', 'Không thấy app-config.json của Open Design trên máy.');
+  if (fs.lstatSync(file).isSymbolicLink()) throw new AppError('INVALID_INPUT', `${file} là symlink, không ghi xuyên qua symlink.`);
+  const data = readOpenDesignConfig(file);
+  const previous = openDesignAccountOf(data).account;
+  const target = DEFAULT_PROFILES.find((p) => p.id === account);
+  const next = {
+    ...data,
+    agentCliEnv: { ...(data.agentCliEnv || {}), claude: { ...(data.agentCliEnv?.claude || {}), CLAUDE_CONFIG_DIR: target.configDir } },
+  };
+  writeJsonAtomic(file, next, fs.statSync(file).mode & 0o777);
+  logStructured('info', 'open_design_account_set', { from: previous, to: account });
+  return { name: OPEN_DESIGN_ROW_NAME, path: file, previous, account };
+}
+
 function findKnownRepo(opts, repoPath) {
   const wanted = String(repoPath || '').trim().replace(/\/+$/, '') || '/';
   const repo = listKnownRepos(opts).find((r) => r.path === wanted);
@@ -1116,6 +1185,9 @@ export function getStatusReport(opts = {}) {
   const state = loadSwitcherState(stateDir);
   const usage = readUsageStatsFromDb(stateDir);
   const repoAssignments = getRepoAssignments({ repos, stateDir });
+  // #1412: app Open Design an han muc cua tai khoan no ghim nhu mot repo: tinh vao assignedRepoCount va hien trong bang.
+  const openDesign = getOpenDesignAssignment({ stateDir, openDesignConfig: opts.openDesignConfig });
+  if (openDesign) repoAssignments.push(openDesign);
 
   const lastClaudeEvent = Math.max(state.lastClaudeSwitchAtMs || 0, state.lastClaudeRateLimitAtMs || 0);
   const claudeCooldownMs = (state.policy.claudeSwitchCooldownSec ?? 900) * 1000;

@@ -1037,11 +1037,15 @@ issue_locked() {
   return 1
 }
 
-# ── Xoay account của worker (pool: $HOME/.claude/bin/super-board-account-pool.sh, lệnh `ccswitch`).
+# ── Account của worker (pool: super-board-account-pool.sh nằm cạnh runner trong kit từ #1412, lệnh `ccswitch`).
 # Pool chỉ biết account hết limit qua usage-<acct>.json, file mà status line của phiên tương tác ghi; worker
 # `claude -p` không có status line. Nên runner tự ghi khi worker chết vì hết limit (16/10: cả 5 runner giao mãi cho
-# finos đã hết session limit trong khi còn 5 account khác).
-SB_ACCOUNT_POOL="${SB_ACCOUNT_POOL:-$HOME/.claude/bin/super-board-account-pool.sh}"
+# finos đã hết session limit).
+# #1412: bản pool trong kit thắng bản cũ ở ~/.claude/bin (bản đó nằm ngoài repo, không test, còn dự phòng khác hãng).
+if [ -z "${SB_ACCOUNT_POOL:-}" ]; then
+  SB_ACCOUNT_POOL="$SCRIPT_DIR/super-board-account-pool.sh"
+  [ -x "$SB_ACCOUNT_POOL" ] || SB_ACCOUNT_POOL="$HOME/.claude/bin/super-board-account-pool.sh"
+fi
 SB_ACCOUNT_STATE_DIR="${SB_STATE_DIR:-$HOME/.claude/super-board}"
 POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
 
@@ -1050,6 +1054,9 @@ note_worker_limit() {
   # `account_pool:` của lần giao đó là 100 % tới giờ reset (không đọc được giờ thì 1 giờ), đúng dạng usage-<acct>.json
   # mà pool đọc. Chỉ ghi file của account đó, không ghi usage.json chung (file chung kéo theo `switch` credential
   # toàn cục của người dùng). Lỗi ở đây không bao giờ chặn runner.
+  # #1412: ghi đúng loại cửa sổ. "weekly limit" là seven_day, còn lại là five_hour (19/11 một giới hạn tuần "resets Nov 22
+  # at 12am" bị ghi thành five_hour 100 % tới 22/11, pool giữ PAUSE 432 phút dù cửa sổ 5 giờ thật còn 35 %). Pool chặn trần
+  # bản ghi five_hour ở 5 giờ kể từ recorded_at.
   LIMIT_PAUSED=0   # #1121: 1 when this call paused the account; the reaper then skips the early-death ledger (the limit is the cause, the pause the cure)
   [ -f "$1" ] || return 0
   worker_ended_clean "$1" && return 0   # a finished turn's report may quote a limit message; only a death pauses an account
@@ -1082,43 +1089,40 @@ if m:
         resets = int(t.timestamp())
     except (ValueError, KeyError, ImportError) as error:
         print(f'reset time unreadable ({error}); pausing 1h', file=sys.stderr)
+window = 'seven_day' if re.search(r'hit your (?:weekly|7-day|seven-day) limit', tail, re.I) else 'five_hour'
 os.makedirs(state, exist_ok=True)
 path = os.path.join(state, f'usage-{acct[1]}.json')
 tmp = f'{path}.{os.getpid()}'
 with open(tmp, 'w') as f:
     json.dump({'recorded_at': now, 'source': 'super-board-run worker log',
-               'rate_limits': {'five_hour': {'used_percentage': 100, 'resets_at': resets}}}, f)
+               'rate_limits': {window: {'used_percentage': 100, 'resets_at': resets}}}, f)
 os.replace(tmp, path)
 print(acct[1], time.strftime('%H:%M', time.localtime(resets)))
 PY
 ) || { log "⚠ could not read worker log $1 for an account limit"; return 0; }
-  [ -z "$out" ] || { LIMIT_PAUSED=1; log "account ${out% *} hit its limit — paused until ${out#* }; next dispatch takes the pool's next account"; }
+  [ -z "$out" ] || { LIMIT_PAUSED=1; log "account ${out% *} hit its limit — paused until ${out#* }; no dispatch on that account until then"; }
   return 0
 }
 
-account_paused() {
-  # 0 khi usage-<acct>.json có cửa sổ ≥ 95 % (ngưỡng mặc định của pool) chưa tới giờ reset.
-  local f="$SB_ACCOUNT_STATE_DIR/usage-$1.json"
-  [ -f "$f" ] || return 1
-  jq -e --argjson now "$(date +%s)" \
-    '[.rate_limits[]? | select((.used_percentage // 0) >= 95 and (.resets_at // 0) > $now)] | length > 0' "$f" >/dev/null 2>&1
-}
-
 resolve_worker_account() {
-  # Đặt POOL_ENGINE/POOL_ACCT/POOL_CFG cho worker kế tiếp. Pool tự xoay finos -> finos_team -> max theo usage; hết cả 3
-  # thì theo lựa chọn của người dùng (16/10): Antigravity Ultra -> Antigravity Pro (13/11 chủ repo bỏ Grok: không còn dự phòng Grok), bỏ account đang bị ghi là
-  # hết. Trả 1 (POOL_RESETS = giờ reset sớm nhất nếu pool biết) khi mọi account đều hết: không giao.
+  # Đặt POOL_ENGINE/POOL_ACCT/POOL_CFG cho worker kế tiếp. #1412 (lệnh chủ repo 21/11): chỉ tài khoản Claude đã ghim cho
+  # repo; không nhảy sang tài khoản Claude khác, không dự phòng Antigravity hay hãng khác. Trả 1 (POOL_RESETS = giờ reset nếu
+  # pool biết) khi tài khoản ghim chạm ngưỡng: không giao tới giờ reset.
   POOL_ENGINE="claude"; POOL_ACCT=""; POOL_CFG=""; POOL_RESETS=""
   [ -x "$SB_ACCOUNT_POOL" ] || return 0
-  local ag="" json
-  if ! account_paused antigravity; then ag=1; elif ! account_paused antigravity_pro; then ag=pro; fi
-  json=$(SB_FALLBACK_ANTIGRAVITY="$ag" SB_FALLBACK_GROK="" "$SB_ACCOUNT_POOL" resolve "$PWD" 2>/dev/null) || true
+  local json engine
+  json=$("$SB_ACCOUNT_POOL" resolve "$PWD" 2>/dev/null) || true
   [ -n "$json" ] || { log "⚠ account pool printed nothing; worker uses the default claude account"; return 0; }
   if [ "$(printf '%s' "$json" | jq -r '.state // "ok"' 2>/dev/null)" = "pause" ]; then
     POOL_RESETS=$(printf '%s' "$json" | jq -r '.resets_at // empty | tonumber | strftime("%H:%M UTC")' 2>/dev/null || true)
     return 1
   fi
-  POOL_ENGINE=$(printf '%s' "$json" | jq -r '.engine // "claude"' 2>/dev/null || echo claude)
+  # Bản pool cũ ngoài kit còn có thể trả engine=antigravity: không giao (đọc vào biến cục bộ trước, POOL_* giữ mặc định).
+  engine=$(printf '%s' "$json" | jq -r '.engine // "claude"' 2>/dev/null || echo claude)
+  if [ "$engine" != "claude" ]; then
+    log "⚠ account pool answered engine=${engine}; workers run on Claude accounts only (#1412) — not dispatching"
+    return 1
+  fi
   POOL_ACCT=$(printf '%s' "$json" | jq -r '.account // empty' 2>/dev/null || true)
   POOL_CFG=$(printf '%s' "$json" | jq -r '.config_dir // empty' 2>/dev/null || true)
   return 0

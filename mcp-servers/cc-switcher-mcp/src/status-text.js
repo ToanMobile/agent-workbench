@@ -44,7 +44,7 @@ export function formatStatusText(report) {
   lines.push('');
   BACKUP_ORDER.map((id) => report.profiles.find((p) => p.id === id)).filter(Boolean).forEach((p, i) => {
     const icon = p.isFrozen ? '🔴' : p.isActive ? '🟢' : '⚪️';
-    lines.push(`${icon} Dự phòng ${i + 1} · ${p.name}${p.isActive ? ' — đang dùng' : ''}`);
+    lines.push(`${icon} Chọn tay · ${p.name}${p.isActive ? ' — đang dùng' : ''}`);
   });
   if (Array.isArray(report.repoAssignments) && report.repoAssignments.length > 0) {
     lines.push('');

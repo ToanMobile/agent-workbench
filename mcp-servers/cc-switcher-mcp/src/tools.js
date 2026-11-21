@@ -86,7 +86,7 @@ export const TOOLS = [
   },
   {
     name: 'switcher_rotate',
-    description: 'Tu dong xoay sang profile an toan ke tiep trong 6 profile (bo qua tai khoan dang dong bang 5h hoac dang vung cooldown Claude).',
+    description: 'Tu dong xoay sang tai khoan Claude an toan ke tiep (bo qua tai khoan dang dong bang 5h; khong bao gio tu doi sang Antigravity).',
     inputSchema: {
       type: 'object',
       properties: {
