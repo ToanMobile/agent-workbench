@@ -18,12 +18,13 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
    - Chạy đủ bộ test cục bộ (`npm test`, `gradlew test`). Thử nghiệm trên các chế độ tương ứng.
 3. **Bằng chứng nghiệm thu & Báo cáo Tự nhiên Súc tích (BẮT BUỘC):**
    - MỌI báo cáo kiểm thử / nghiệm thu BẮT BUỘC có **bằng chứng thật của trạng thái THÀNH CÔNG (Pass / Success State)**. Luật đứng nằm ở `rules/essentials.md` mục "Every prompt": cùng lượt phải có `post-fix-gate.py --run-tests --scoped` exit 0 — biên nhận scoped (và biên nhận task; repo đi PR: biên nhận merge gate thay cho nó, không chạy gate local); task không chạy tay `--full`: scoped tự leo `--full` khi đụng file lõi, điểm gộp (merge queue / merge train của repo đi PR, `agent-kit integrate` của repo trunk-push) chạy cùng `--scoped`, `--full` đêm do skill `gate-full`; push nhận biên nhận scoped hoặc `--full` của đúng cây đó — và, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4), một PNG chụp trong lượt (`reports/proof-<yyyyMMdd-HHmmss>.png`), gắn vào câu trả lời. Serial trong `.adb-denylist` hoặc bị luật dự án cấm thì không chụp. Ảnh chụp bằng `python3 .agents/devkit/bin/proof-capture.py`: serial đã khai mà offline thì lệnh không screencap vào địa chỉ đó và không đổi sang máy khác đang cắm — nó mở AVD rồi chụp. Lệnh thoát khác 0 thì CHƯA XONG. Cấm vẽ ảnh hoặc lấy XML test thay ảnh. Kèm **Báo Cáo Nghiệm Thu 5 Mục**, mỗi mục 1–2 dòng (vừa giới hạn 12 dòng ở §13); mỗi con số ghi nguồn `tự chạy` hoặc `agent báo`:
-     1. **Đã làm gì / Đã fix gì (What Was Done / Fixed):** Lỗi hoặc thay đổi, nguyên nhân gốc, cơ chế lỗi, bằng chứng đối lập (RED ➔ GREEN); việc không phải bug: thay đổi + cách kiểm.
+     1. **Đã làm gì / Đã fix gì (What Was Done / Fixed):** Lỗi hoặc thay đổi, bằng chứng đối lập (RED ➔ GREEN); việc không phải bug: thay đổi + cách kiểm. Kèm một dòng riêng `Nguyên nhân:` (chủ repo 21/11): bug thì nguyên nhân gốc + cơ chế lỗi (file:dòng khi có), không phải bug thì vì sao phải đổi; chưa chắc thì ghi "giả thuyết".
      2. **Chặn bug cũ (Zero Reopened Bugs):** Test hồi quy và rào chắn bất biến lịch sử (`immutable_guards`) đã chạy lại, kèm kết quả.
      3. **Nguy cơ bug mới (Zero Collateral Damage):** Phép so cũ–mới đã chạy (lệnh, số đầu vào, số ca đổi kết quả) hoặc `chưa so — <lý do>`; "đã rà caller" không kèm phép so không được tính.
      4. **An toàn mã nguồn:** Kết quả quét bí mật/token, placeholder; OCR chỉ ghi khi đã chạy, không thì `OCR: không chạy — <lý do>`.
      5. **Còn hở / chưa kiểm:** Liệt kê những gì chưa kiểm hoặc còn hở, hoặc `không có`.
    - `ponytail: hook proof_gate chỉ kiểm mục 1–4; đòi mục 5 khi thấy bàn giao thật thiếu nó`
+   - `ponytail: hook proof_gate chưa kiểm dòng "Nguyên nhân:"; thêm khi thấy bàn giao XONG thật thiếu nó`
    - **Quy chuẩn ngôn ngữ báo cáo, bàn giao & comment:**
      - **Mặc định:** Comment mã nguồn (code comments), báo cáo nghiệm thu 5 mục, bàn giao, PR reviews, và commit messages mặc định viết bằng **Tiếng Anh (English)**.
      - **Dự án cấu hình `"lang": "vi"`:** Toàn bộ comment mã nguồn, báo cáo nghiệm thu 5 mục (Đã làm gì / Đã fix gì, Chặn bug cũ, Nguy cơ bug mới, An toàn mã nguồn, Còn hở / chưa kiểm), bàn giao, và commit messages viết bằng **Tiếng Việt**. Tên biến/hàm/class và đường dẫn giữ Tiếng Anh.
@@ -287,3 +288,35 @@ The essentials keep the obligation; this section keeps how the tools carry it ou
 - **Scratch**: the session hooks remove the session's temp dir at SessionEnd and prune dead sessions' dirs (idle 7 days) at
   SessionStart (`.agents/devkit/scripts/governance/scratch_cleanup.py`); a stage awaiting the user or a handoff lives outside
   `/tmp/claude-<uid>`, e.g. in the repo's ignored `.agents/local/`.
+
+## 20. Lỗi ở repo con do DevKit gây ra: tạo task cho DevKit, KHÔNG sửa ở repo con (lệnh chủ repo 21/11/2026)
+Áp dụng khi repo con (GeelyEx2, OfficeReader, Goods-…, …) gặp lỗi, và nguyên nhân gốc nằm ở DevKit hoặc DevKit có thể sửa được.
+1. **Phân loại nguyên nhân gốc trước khi sửa.** Lỗi thuộc DevKit khi dấu vết dẫn tới một trong:
+   - `.agents/devkit/**`, `.agents/skills/**` do kit cấp, `hooks/*`, gate (`post-fix-gate.py`, `proof_gate.sh`, `agent-kit`);
+   - `.claude/bin/super-board-*`, `.claude/skills/super-*`, watchdog, runner, merge gate (bản sao đồng bộ từ repo nguồn của kit,
+     `agent-workbench`);
+   - file có dòng "đồng bộ từ agent-workbench" trong lịch sử commit.
+   Lỗi vẫn thuộc DevKit khi chính kit làm repo con hỏng, dù mã repo con không sai: halt kẹt không tự gỡ, gate đỏ giả, hook chặn
+   nhầm, sync ghi đè dữ liệu.
+2. **Cấm sửa mã của kit ngay tại repo con.** Bản sao ở repo con sẽ bị lần đồng bộ sau ghi đè, và các repo con khác vẫn mắc lỗi.
+   Sửa một lần ở nguồn, rồi đồng bộ xuống.
+3. **Tạo task cho DevKit** (skill `createTask`, hoặc issue ở repo nguồn của kit), gồm đủ:
+   - Tiêu đề: `[devkit] <triệu chứng ngắn>`.
+   - Triệu chứng: repo nào, lúc nào, hệ quả (board dừng, gate chặn, …).
+   - Bằng chứng: đường dẫn log, trích dòng log có giờ, nội dung file trạng thái (vd `github-halt.json`), mã thoát. Chỉ ghi điều
+     đã đo, nhãn rõ "tự chạy" hay "suy đoán".
+   - Nguyên nhân gốc: tên file và hàm của kit (file:dòng) và cơ chế gây lỗi. Chưa chắc thì ghi "giả thuyết".
+   - Hướng sửa đề xuất, bản tối thiểu trước (nguyên tắc lazy senior, §4).
+   - Oracle: test RED trước, GREEN sau, đặt ở repo nguồn, tái hiện được không cần repo con.
+   - Nghiệm thu ở repo con: lệnh chạy lại và kết quả mong đợi sau khi đồng bộ.
+   Gom lỗi cùng nguyên nhân vào một task, không đẻ trùng. Tra task đang mở trước khi tạo.
+4. **Ở repo con chỉ được làm hai việc**, cả hai không đụng mã của kit:
+   a. Gỡ tắc tạm thời bằng dữ liệu runtime, và chỉ khi đã kiểm chứng trạng thái thật (vd đọc lại GitHub rồi mới
+      `--resume --reconciled "<lý do>"`). Ghi lý do vào task.
+   b. Tiếp tục việc của repo con không phụ thuộc phần lỗi.
+   Không bypass gate, không `--no-verify`, không xoá file halt hay khoá khi chưa kiểm chứng.
+5. **Không chắc nguyên nhân thuộc kit hay repo con**: tìm cho ra bằng log, đừng đoán. Chưa chốt được thì sửa phần chắc chắn thuộc
+   repo con, và ghi giả thuyết về kit vào task DevKit.
+6. **Báo người dùng một dòng**: số task, tiêu đề, nơi tạo, tình trạng repo con (đã gỡ tạm / vẫn chờ kit sửa).
+   Không hỏi xin phép tạo task.
+Ngoại lệ duy nhất sửa trực tiếp ở repo con: lỗi thuộc cấu hình riêng của repo (`.agents/local/**`, luật dự án).
