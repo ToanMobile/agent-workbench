@@ -47,6 +47,10 @@ _ASSERT = re.compile(
 # Roborazzi (#1415): captureRoboImage chỉ là oracle ở chế độ verify (-Proborazzi.test.verify=true: lệch baseline ⇒ test FAIL);
 # ở chế độ record nó không bao giờ fail. Chỉ tính lời gọi thật: comment và chuỗi JVM bị bỏ trước khi dò (_JVM_NONCODE).
 _CAPTURE = re.compile(r"\bcaptureRoboImage\s*\(")
+# Chế độ verify bật: gradle.properties `roborazzi.test.verify=true`, systemProperty("roborazzi.test.verify", "true") trong gradle,
+# hoặc lệnh `-Proborazzi.test.verify=true` trong ma trận gate. ponytail: dòng comment chứa chuỗi đó cũng được tính.
+_VERIFY_ON = re.compile(r"roborazzi\.test\.verify[\"']?\s*[=:,]\s*[\"']?true\b", re.I)
+_VERIFY_FILES = ("gradle.properties", "*.gradle", "*.gradle.kts", ".agents/regression_matrix*.json")
 # ponytail: code trong "${…}" của chuỗi Kotlin bị bỏ cùng chuỗi (capture ở đó vẫn bị báo rỗng); cần thì tách template
 _JVM_NONCODE = re.compile(
     r'"""[\s\S]*?(?:"""|\Z)'
@@ -187,7 +191,31 @@ def _python_body(text: str, start: int) -> str:
     return "".join(out)
 
 
-def _distinguishing(body: str) -> bool:
+@functools.lru_cache(maxsize=64)
+def roborazzi_verify_on(start: str) -> bool:
+    """True khi repo chứa `start` chạy Roborazzi ở chế độ verify (#1416): chỉ khi đó captureRoboImage( mới làm test FAIL.
+    Dò mọi thư mục từ `start` lên tới gốc repo (thư mục có .git); ở gốc dò thêm file gradle của module cấp một."""
+    here = Path(start).resolve()
+    if not here.is_dir():
+        here = here.parent
+    chain = [here]
+    for d in here.parents:
+        if (chain[-1] / ".git").exists():
+            break
+        chain.append(d)
+    patterns = list(_VERIFY_FILES) + ["*/" + g for g in _VERIFY_FILES[:3]]
+    for i, d in enumerate(chain):
+        for pat in (patterns if i == len(chain) - 1 else _VERIFY_FILES):
+            for f in d.glob(pat):
+                try:
+                    if f.is_file() and f.stat().st_size <= 2 * 1024 * 1024 and _VERIFY_ON.search(f.read_text(encoding="utf-8", errors="replace")):
+                        return True
+                except OSError:
+                    continue
+    return False
+
+
+def _distinguishing(body: str, capture_ok: bool = True) -> bool:
     vacuous_spans = [(m.start(), m.end()) for m in _VACUOUS.finditer(body)]
 
     for m in _EXISTENCE.finditer(body):
@@ -217,7 +245,7 @@ def _distinguishing(body: str) -> bool:
 
     if any(not inside_vacuous(m.span()) for m in _ASSERT.finditer(body)):
         return True
-    return bool(_CAPTURE.search(_JVM_NONCODE.sub(" ", body)))
+    return capture_ok and bool(_CAPTURE.search(_JVM_NONCODE.sub(" ", body)))
 
 
 # A same-file helper a test calls: Kotlin `fun`, Python `def`, Java/C# `void` methods.
@@ -229,7 +257,7 @@ _HELPER_DEF = re.compile(
 )
 
 
-def _asserting_helpers(text: str) -> set:
+def _asserting_helpers(text: str, capture_ok: bool = True) -> set:
     """Names of same-file functions whose body asserts, directly or through another such
     helper (GeelyEx2 2026-09-27: five tests calling `kiem(...)` were called vacuous and
     rewritten only to please the gate). A helper whose only assertion is vacuous does not count."""
@@ -248,7 +276,7 @@ def _asserting_helpers(text: str) -> set:
             if "{" not in text[m.end():limit if limit is not None else len(text)]:
                 body = text[m.end():limit]          # expression body: fun f() = assertX(...)
         bodies[name] = bodies.get(name, "") + body
-    helpers = {n for n, b in bodies.items() if _distinguishing(b)}
+    helpers = {n for n, b in bodies.items() if _distinguishing(b, capture_ok)}
     changed = True
     while changed:
         changed = False
@@ -259,10 +287,12 @@ def _asserting_helpers(text: str) -> set:
     return helpers
 
 
-def findings(text: str) -> list:
-    """[(line, name)] methods that never assert on a value."""
+def findings(text: str, path: "str | None" = None) -> list:
+    """[(line, name)] methods that never assert on a value. `path` (mặc định: thư mục hiện tại) chọn repo để biết
+    captureRoboImage( có phải oracle không (roborazzi_verify_on)."""
     out = []
-    helpers = _asserting_helpers(text)
+    capture_ok = bool(_CAPTURE.search(text)) and roborazzi_verify_on(str(path) if path else ".")
+    helpers = _asserting_helpers(text, capture_ok)
     calls_helper = re.compile(r"\b(?:%s)\s*\(" % "|".join(map(re.escape, helpers))) if helpers else None
     for m in _MARKER.finditer(text):
         window_start = max(0, m.start() - 120)
@@ -275,7 +305,7 @@ def findings(text: str) -> list:
         else:
             nxt = _MARKER.search(text, m.end())
             body = _body(text, m.end(), nxt.start() if nxt else None)
-        if not _distinguishing(body) and not (calls_helper and calls_helper.search(body)):
+        if not _distinguishing(body, capture_ok) and not (calls_helper and calls_helper.search(body)):
             line = text.count("\n", 0, m.start()) + 1
             out.append((line, name.strip()))
     return out
@@ -288,7 +318,7 @@ def main(argv: list) -> int:
     bad = 0
     for raw in argv[1:]:
         text = Path(raw).read_text(encoding="utf-8", errors="replace")
-        for line, name in findings(text):
+        for line, name in findings(text, raw):
             bad += 1
             print(f"{raw}:{line}: test không có assertion phân biệt dữ liệu ({name})")
     return 1 if bad else 0

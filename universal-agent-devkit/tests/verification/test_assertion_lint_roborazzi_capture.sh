@@ -93,9 +93,42 @@ class HomeScreenScreenshotTest {
 KOTLIN
 
 LINT_SCRIPT="$DEVKIT_ROOT/scripts/linters/assertion_lint.py"
+ERRORS=0
+
+# AC4 (review #1416): captureRoboImage( chỉ là oracle khi repo chạy Roborazzi ở chế độ verify. Mỗi repo giả là một thư mục con có
+# .git (dò cấu hình dừng ở gốc repo) và bản sao của file test.
+mkrepo() { mkdir -p "$D/$1/.git" "$D/$1/app/src"; cp src/HomeScreenScreenshotTest.kt "$D/$1/app/src/"; }
+lint_in() { (cd "$D/$1" && python3 -I "$LINT_SCRIPT" app/src/HomeScreenScreenshotTest.kt 2>&1); }
+capture_counts() { ! lint_in "$1" | grep -qE "HomeScreenScreenshotTest.kt:(3|9):"; }
+
+mkrepo r_none
+mkrepo r_false;  printf 'roborazzi.test.verify=false\n' > "$D/r_false/gradle.properties"
+mkrepo r_module; printf 'tasks.withType<Test> { systemProperty("roborazzi.test.verify", "true") }\n' > "$D/r_module/app/build.gradle.kts"
+mkrepo r_matrix; mkdir -p "$D/r_matrix/.agents"
+printf '{"rules":[{"command":"./gradlew testDebugUnitTest -Proborazzi.test.verify=true"}]}\n' > "$D/r_matrix/.agents/regression_matrix.active.json"
+
+for r in r_none r_false; do
+    if capture_counts "$r"; then
+        echo "FAIL: $r: captureRoboImage vẫn tính là assertion dù repo không bật roborazzi.test.verify=true"
+        ERRORS=$((ERRORS+1))
+    else
+        echo "OK: $r: captureRoboImage không tính là assertion khi chưa bật verify"
+    fi
+done
+for r in r_module r_matrix; do
+    if capture_counts "$r"; then
+        echo "OK: $r: verify bật (build.gradle.kts của module / ma trận gate) thì capture là assertion"
+    else
+        echo "FAIL: $r: verify bật mà capture không được tính"
+        ERRORS=$((ERRORS+1))
+    fi
+done
+
+# Các ca dưới đây chạy trong repo bật verify ở gradle.properties gốc.
+mkdir -p .git
+printf 'roborazzi.test.verify=true\n' > gradle.properties
 OUTPUT=$(python3 -I "$LINT_SCRIPT" src/HomeScreenScreenshotTest.kt 2>&1)
 RC=$?
-ERRORS=0
 
 expect_flagged() {
     if echo "$OUTPUT" | grep -q "HomeScreenScreenshotTest.kt:$1:"; then
