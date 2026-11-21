@@ -47,7 +47,7 @@ for p in files:
     if not m:
         if p.endswith("SKILL.md"):
             empty.append(os.path.relpath(p, root))   # a skill always needs frontmatter
-        continue   # a command without frontmatter (commands/unity-test.md) is listed with no description
+        continue   # a command without frontmatter is listed with no description
     fm = m.group(1)
     if re.search(r"^disable-model-invocation:\s*true\b", fm, re.M):
         continue

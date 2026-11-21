@@ -559,3 +559,4 @@
 16 tests/verification/test_repo_board_and_context.sh
 1 tests/verification/test_repo_board_audit_fixes_1392.sh
 1 tests/verification/test_repo_board_audit_items_1402.sh
+12 tests/installer/test_command_profile_filter.sh

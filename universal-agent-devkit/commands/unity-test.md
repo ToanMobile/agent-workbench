@@ -1,3 +1,8 @@
+---
+description: "Chạy test Unity EditMode/PlayMode headless (batchmode), in tóm tắt Pass/Fail. Chỉ cho dự án Unity."
+skill: unity-gc-audit
+---
+
 # /unity-test
 
 Chạy bộ kiểm thử tự động của Unity (EditMode / PlayMode) ở chế độ headless (batchmode không mở GUI).

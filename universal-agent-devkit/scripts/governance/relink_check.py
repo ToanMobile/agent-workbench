@@ -101,6 +101,28 @@ def excluded_skills(project):
     return set(prof.get("exclude_skills", []))
 
 
+def command_skill(src):
+    """The skill a kit command follows in the profile filter: a link's skill folder, or the `skill:` line in a hand-written
+    command's frontmatter (commands/unity-test.md -> unity-gc-audit, game only). None = every profile. Same rule as
+    devkit_command_skill (scripts/git/backup_conflict.sh) and agent-health."""
+    real = os.path.realpath(src)
+    if os.path.basename(real) == "SKILL.md":
+        return os.path.basename(os.path.dirname(real))
+    try:
+        with open(real, encoding="utf-8") as f:
+            if f.readline().strip() != "---":
+                return None
+            for line in f:
+                if line.strip() == "---":
+                    break
+                m = re.match(r"skill:\s*([A-Za-z0-9_-]+)\s*$", line)
+                if m:
+                    return m.group(1)
+    except OSError as e:
+        print(f"relink_check: cannot read {src}: {e}", file=sys.stderr)
+    return None
+
+
 def missing(project, worktree=False):
     """Relative paths of DevKit links the project should have and does not. worktree=True: only command / skill links (a linked
     worktree's .agents/skills/ holds git-ignored links only, so it is wanted when the main checkout has one). None of either when the
@@ -141,9 +163,11 @@ def _kit_items(project, main):
     if ((os.path.isdir(cdir) or (not os.path.lexists(cdir) and os.path.isfile(os.path.join(project, ".claude", "settings.json"))))
             and not in_kit(cdir) and os.path.isdir(cmds)):
         for name in sorted(os.listdir(cmds)):
+            if not name.endswith(".md"):
+                continue
             src = os.path.join(cmds, name)
-            skill = os.path.basename(os.path.dirname(os.path.realpath(src))) if os.path.islink(src) else None
-            if name.endswith(".md") and skill not in excluded and not os.path.lexists(os.path.join(project, ".claude", "commands", name)):
+            skill = command_skill(src)
+            if skill not in excluded and not os.path.lexists(os.path.join(project, ".claude", "commands", name)):
                 out.append(f".claude/commands/{name}")
     # every DevKit skill the profile keeps, in an install that has .agents/skills/: a skill the DevKit gained after the install
     # never got its link (OfficeReader 2026-10-13: health 96, .agents/skills/devkit-audit missing)
