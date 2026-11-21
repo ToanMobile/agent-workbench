@@ -5787,10 +5787,19 @@ def infra_failure(output) -> bool:
 # thành REG-CAR-01 FAIL). Chỉ thông báo của bộ lọc include của Gradle, không phải mọi kiểu "0 test".
 NARROW_NO_TESTS_RE = re.compile(r"No tests found for given includes")
 _GRADLE_CMD_RE = re.compile(r"(?:^|[\s;|&(])(?:\S*/)?gradlew?(?=$|\s)")
-_GRADLE_TASK_LINE_RE = re.compile(r"^(?:> Task )?([\w:.-]*:[\w.-]+)(?:[^\S\n]+([A-Z-]+))?[^\S\n]*$", re.M)
+# Tên task luôn mở bằng ':' (`> Task :app:test`, `:app:test SKIPPED` của --dry-run): dòng log thường kiểu `10:30` / `INFO:ready`
+# của `./gradlew -q` không phải dòng task (review #1403).
+_GRADLE_TASK_LINE_RE = re.compile(r"^(?:> Task )?((?::[\w.-]+)+)(?:[^\S\n]+([A-Z-]+))?[^\S\n]*$", re.M)
 _GRADLE_NON_TEST_TASK_RE = re.compile(
     r"^(?:compile|process|merge|package|generate|transform|bundle|strip|extract|create\w*Coverage|"
     r"lint|ktlint|detekt|assemble|testClasses|testFixtures)", re.I)
+# Task chuẩn bị / report của Android-Kotlin có chữ "Test" trong tên nhưng không chạy test nào (review #1403): preDebugUnitTestBuild,
+# javaPreCompileDebugUnitTest, kspDebugUnitTestKotlin, kaptDebugUnitTestKotlin, mapDebugUnitTestSourceSetPaths,
+# checkDebugAndroidTestAarMetadata, jacocoTestReport. Phân biệt hoa thường (camelCase) để không nuốt task kiểu `premiumTest`.
+_GRADLE_PREP_TASK_RE = re.compile(
+    r"^(?:pre|javaPreCompile|ksp|kapt|map)[A-Z]|"
+    r"(?:Report|Verification|Kotlin|JavaWithJavac|Build|SourceSetPaths|AarMetadata|DuplicateClasses|Resources|Manifest|"
+    r"Classes|Sources|Assets|JniLibs|Shaders|Jar)$")
 _GRADLE_ZERO_TESTS_RE = re.compile(
     r"No tests found for given includes|(?<!\d)0 tests? completed\b|Ran 0 tests\b|\bno tests ran\b|"
     r"0 tests? executed\b|\bNo tests found\b", re.I)
@@ -5800,7 +5809,7 @@ _GRADLE_POS_TESTS_RE = re.compile(r"\b[1-9]\d* tests? completed\b|\b[1-9]\d* (?:
 def _is_gradle_test_task_token(tok: str) -> bool:
     """True khi tên task Gradle là task chạy test (*test* / *Test*), loại trừ task biên dịch/lint/đóng gói."""
     leaf = (tok or "").rsplit(":", 1)[-1]
-    if not leaf or _GRADLE_NON_TEST_TASK_RE.search(leaf):
+    if not leaf or _GRADLE_NON_TEST_TASK_RE.search(leaf) or _GRADLE_PREP_TASK_RE.search(leaf):
         return False
     return "test" in leaf.lower()
 
@@ -9162,7 +9171,7 @@ def main():
                 run_suite(t, t["command"], t.get("mode") or "full", suite_env())
             return
         for k in ("status", "exit_code", "output_tail", "log", "flaky", "infra", "infra_retry",
-                  "env_blocked", "vacuity", "fail_lines"):
+                  "env_blocked", "vacuity", "fail_lines", "no_tests_ran"):
             if k in prev:
                 t[k] = prev[k]
         t["duration"] = prev.get("duration") or "0s"   # its real cost, for pre-commit's light-suite pick
@@ -10039,7 +10048,8 @@ def main():
     _not_here = ("SLOT", "BUSY", "BUDGET", "STALE", "NO_TESTS")
     # suite cached-full (keyed_full) cùng luật: STALE (recheck thấy FAIL mới trên khoá của nó) phải vào kết luận (Antigravity 20/10)
     stale_skipped = [t for t in regression_tests if t["status"] == "UNTESTED"
-                     and (t.get("stale_rerun") or t.get("keyed_full") or t.get("known_red")) and t.get("label") not in _not_here]
+                     and (t.get("stale_rerun") or t.get("keyed_full") or t.get("known_red")) and t.get("label") not in _not_here
+                     and not t.get("no_tests_ran")]   # theo cờ: nhãn của suite dùng chung lệnh là "NO_TESTS (cùng lệnh với …)"
     tests_untested = [t for t in regression_tests if t["status"] == "UNTESTED" and t not in stale_skipped]
     if stale_skipped:
         log_warn(tr("Suite STALE không chạy được trên máy này (vẫn STALE, không tính vào kết luận): ",
@@ -10181,7 +10191,7 @@ def main():
         receipt_untested = sorted({t["id"] or "?" for t in regression_tests if t["status"] == "UNTESTED"}) if lock_held else None
         names = ", ".join(t["id"] or "?" for t in tests_untested)
         stale_names = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "STALE")
-        no_tests_names = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "NO_TESTS")
+        no_tests_names = ", ".join(t["id"] or "?" for t in tests_untested if t.get("no_tests_ran"))
         if stale_names:
             verdict_text = tr(
                 f"UNTESTED — PASS dùng lại của {stale_names} không còn đứng vững (file đã xác nhận nó đã đổi/biến mất trong lúc gate chạy): chạy lại gate; KHÔNG phải PASS",

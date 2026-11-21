@@ -69,7 +69,7 @@ def read_report(root):
     return open(p, encoding="utf-8").read() if os.path.isfile(p) else ""
 
 
-def run_gate(root, flags, extra_env=None):
+def run_gate(root, flags, extra_env=None, checklist=False):
     drop = ("CI", "POSTFIX_GATE_FULL", "POSTFIX_GATE_FORCE_FULL", "DEVKIT_GATE_CACHE", "DEVKIT_SESSION_ID",
             "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "GATE_TOTAL_BUDGET_S", "TEST_RUN_LOCK_WAIT_S",
             "DEVKIT_GATE_SLOTS", "DEVKIT_GATE_SLOT_HELD", "DEVKIT_SLOT_PRIORITY", "SB_HEAVY_SLOT_HELD",
@@ -85,8 +85,8 @@ def run_gate(root, flags, extra_env=None):
     })
     if extra_env:
         env.update(extra_env)
-    p = subprocess.run([PY, GATE, "--matrix", os.path.join(root, "matrix.json"), "--lang", "en",
-                        "--no-checklist", "--run-tests"] + list(flags),
+    p = subprocess.run([PY, GATE, "--matrix", os.path.join(root, "matrix.json"), "--lang", "en"]
+                       + ([] if checklist else ["--no-checklist"]) + ["--run-tests"] + list(flags),
                        cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
@@ -189,6 +189,124 @@ rc, out = run_gate(r1i, ["--full"], {"GRADLE_OUT": "> Task :app:testDebugUnitTes
 runs = read_runs(r1i)
 chk(rc == 4 and runs and runs[-1].get("exit_reason") == "no_tests_ran",
     "1i. keyed_full Gradle NO-SOURCE -> exit 4 (not stale_skipped)", f"rc={rc} runs={runs}")
+
+
+# 1j. Review #1403: task chuẩn bị / report có chữ "Test" trong tên (preDebugUnitTestBuild, kspDebugUnitTestKotlin, jacocoTestReport...)
+#     không phải task chạy test: task test thật NO-SOURCE / SKIPPED thì vẫn UNTESTED dù task chuẩn bị UP-TO-DATE / FROM-CACHE / chạy thật.
+for prep, outcome in [
+    ("preDebugUnitTestBuild", " UP-TO-DATE"),
+    ("javaPreCompileDebugUnitTest", ""),
+    ("kspDebugUnitTestKotlin", " FROM-CACHE"),
+    ("kaptDebugUnitTestKotlin", ""),
+    ("mapDebugUnitTestSourceSetPaths", " UP-TO-DATE"),
+    ("checkDebugAndroidTestAarMetadata", " UP-TO-DATE"),
+    ("jacocoTestReport", " UP-TO-DATE"),
+]:
+    rx = make_gradle_repo("g_prep_" + prep)
+    rc, out = run_gate(rx, ["--full"], {
+        "GRADLE_OUT": f"> Task :app:{prep}{outcome}\n> Task :app:testDebugUnitTest NO-SOURCE\n\nBUILD SUCCESSFUL in 1s"})
+    runs = read_runs(rx)
+    chk(rc == 4 and runs and runs[-1].get("exit_reason") == "no_tests_ran",
+        f"1j. prep/report task {prep}{outcome or ' (executed)'} + test task NO-SOURCE -> exit 4, no_tests_ran",
+        f"rc={rc} reason={runs[-1].get('exit_reason') if runs else None}")
+rx = make_gradle_repo("g_prep_ctl")
+rc, out = run_gate(rx, ["--full"], {
+    "GRADLE_OUT": "> Task :app:preDebugUnitTestBuild UP-TO-DATE\n> Task :app:kspDebugUnitTestKotlin NO-SOURCE\n"
+                  "> Task :app:testDebugUnitTest\n> Task :app:jacocoTestReport SKIPPED\n\nBUILD SUCCESSFUL in 1s"})
+chk(rc == 0, "1j. control: prep NO-SOURCE / report SKIPPED but the test task ran -> PASS (exit 0)", f"rc={rc} out={out[-240:]}")
+
+# 1k. Review #1403: dòng log thường có dấu ':' (`10:30`, `INFO:ready`) của `./gradlew -q` không phải dòng task -> vẫn PASS.
+for tag, g_out in [
+    ("clock + INFO:ready", "10:30\nINFO:ready\nBUILD SUCCESSFUL in 1s"),
+    ("key:value", "status:ok\nhttp://example.invalid:8080\n12:01:59"),
+]:
+    rx = make_gradle_repo("g_quiet_" + tag.replace(" ", "_").replace(":", "_").replace("+", "p"))
+    rc, out = run_gate(rx, ["--full"], {"GRADLE_OUT": g_out})
+    chk(rc == 0, f"1k. Gradle -q ordinary log lines ({tag}) are not task lines -> PASS (exit 0)", f"rc={rc} out={out[-240:]}")
+rx = make_gradle_repo("g_quiet_bare_task")
+rc, out = run_gate(rx, ["--full"], {"GRADLE_OUT": "10:30\n:app:testDebugUnitTest NO-SOURCE\nBUILD SUCCESSFUL in 1s"})
+chk(rc == 4, "1k. control: bare `:app:testDebugUnitTest NO-SOURCE` (no `> Task `) is still a task line -> exit 4", f"rc={rc}")
+
+# 1l. Review #1403: suite thứ hai dùng chung lệnh Gradle no_tests_ran (share_result) phải mang no_tests_ran, được nêu tên trong
+#     kết luận và không rơi vào stale_skipped (keyed_full).
+def two_gradle_suites(name):
+    root = make_gradle_repo(name, cmd="true")
+    put(os.path.join(root, "docs.md"), "hi\n")
+    suites = [{"id": "REG-GRADLE", "name": "gradle", "command": "./gradlew :app:testDebugUnitTest"},
+              {"id": "REG-GRADLE-TWIN", "name": "gradle twin", "command": "./gradlew :app:testDebugUnitTest"}]
+    put(os.path.join(root, "matrix.json"), json.dumps({
+        "project": "t",
+        "rules": [
+            {"component": "Doc", "watch_files": ["docs.md"],
+             "mandatory_regression_tests": [{"id": "REG-DOC", "name": "doc", "command": "true"}]},
+            {"component": "App", "watch_files": ["app/*"], "mandatory_regression_tests": suites}
+        ]
+    }))
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "two gradle suites")
+    return root
+
+NOSRC = {"GRADLE_OUT": "> Task :app:testDebugUnitTest NO-SOURCE\n\nBUILD SUCCESSFUL in 1s"}
+RAN = {"GRADLE_OUT": "> Task :app:testDebugUnitTest\n\nBUILD SUCCESSFUL in 1s"}
+core = "app/src/main/kotlin/pkg/Core.kt"
+for tag in ("changed rule", "stale_rerun"):
+    rx = two_gradle_suites("g_twin_" + tag.replace(" ", "_"))
+    put(os.path.join(rx, core), "package pkg\nclass Core { fun v() = 5 }\n")
+    rc0 = 0
+    if tag == "stale_rerun":
+        # Lượt 1 PASS ghi checklist; đổi tiếp app rồi commit, sau đó chỉ sửa docs.md: hai suite Gradle thành STALE, --full chạy lại (stale_rerun).
+        rc0, _ = run_gate(rx, ["--full"], RAN, checklist=True)
+        put(os.path.join(rx, core), "package pkg\nclass Core { fun v() = 6 }\n")
+        git(rx, "add", "-A")
+        git(rx, "commit", "-qm", "app moved on")
+        put(os.path.join(rx, "docs.md"), "hi 2\n")
+    rc, out = run_gate(rx, ["--full"], NOSRC, checklist=True)
+    runs = read_runs(rx)
+    verdict = [l for l in out.splitlines() if "exited 0 without running any tests" in l]
+    stale_ln = [l for l in out.splitlines() if "STALE suites that cannot run on this machine" in l]
+    chk(rc0 == 0 and rc == 4 and runs and runs[-1].get("exit_reason") == "no_tests_ran"
+        and (tag != "stale_rerun" or "Re-running the checklist STALE suites" in out)
+        and verdict and "REG-GRADLE-TWIN" in verdict[-1] and not any("REG-GRADLE-TWIN" in l for l in stale_ln),
+        f"1l. twin suite sharing a no_tests_ran Gradle command ({tag}) is named in the verdict, not stale_skipped",
+        f"rc0={rc0} rc={rc} verdict={verdict} stale={stale_ln}")
+
+# 1m. QA #1403: bước narrow (`package` / `module`) thoát 0 với NO-SOURCE rơi về full_command và chấm theo lệnh full.
+def make_narrow_repo(name):
+    root = make_gradle_repo(name, cmd="true")
+    calls = os.path.join(TMP, name + ".calls")
+    put(os.path.join(root, "app/src/test/kotlin/pkg/FooTest.kt"),
+        "package pkg\n\nimport org.junit.Test\n\nclass FooTest {\n    @Test fun works() { }\n}\n")
+    put(os.path.join(root, "gradlew"),
+        "#!/bin/sh\necho \"$@\" >> \"$CALLS\"\ncase \"$*\" in\n  *--tests*) echo \"> Task :app:testDebugUnitTest NO-SOURCE\"; echo; "
+        "echo \"BUILD SUCCESSFUL in 1s\"; exit 0 ;;\nesac\necho \"$FULL_OUT\"\nexit \"${FULL_EXIT:-0}\"\n", 0o755)
+    put(os.path.join(root, "matrix.json"), json.dumps({
+        "project": "t",
+        "rules": [{"component": "App", "watch_files": ["app/*"], "mandatory_regression_tests": [
+            {"id": "REG-APP", "name": "app unit tests",
+             "command": "./gradlew :app:testDebugUnitTest :core:testDebugUnitTest",
+             "impacted_command": "./gradlew {gradle_module_tests:testDebugUnitTest}"}]}]
+    }))
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "narrow repo")
+    put(os.path.join(root, "app/src/main/kotlin/pkg/Core.kt"), "package pkg\nclass Core { fun v() = 9 }\n")
+    return root, calls
+
+for tag, full_out, full_exit, want_rc, want_reason in [
+    ("full ran tests", "> Task :app:testDebugUnitTest\n> Task :core:testDebugUnitTest\n\nBUILD SUCCESSFUL in 1s", "0", 0, None),
+    ("full NO-SOURCE too", "> Task :app:testDebugUnitTest NO-SOURCE\n> Task :core:testDebugUnitTest NO-SOURCE\n\nBUILD SUCCESSFUL in 1s",
+     "0", 4, "no_tests_ran"),
+    ("full red", "FooTest > works FAILED\nBUILD FAILED in 1s", "1", 1, None),
+]:
+    rx, calls = make_narrow_repo("g_narrow_" + tag.replace(" ", "_").replace("-", "_"))
+    rc, out = run_gate(rx, [], {"CALLS": calls, "FULL_OUT": full_out, "FULL_EXIT": full_exit, "DEVKIT_GATE_CACHE": "0"})
+    called = open(calls, encoding="utf-8").read().splitlines() if os.path.isfile(calls) else []
+    runs = read_runs(rx)
+    narrow_i = [i for i, c in enumerate(called) if "--tests" in c]
+    full_i = [i for i, c in enumerate(called) if ":core:testDebugUnitTest" in c and "--tests" not in c]
+    chk(rc == want_rc and narrow_i and full_i and narrow_i[0] < full_i[0]
+        and (want_reason is None or (runs and runs[-1].get("exit_reason") == want_reason)),
+        f"1m. narrow exit 0 + NO-SOURCE falls back to full_command ({tag}) -> exit {want_rc}",
+        f"rc={rc} calls={called} reason={runs[-1].get('exit_reason') if runs else None} out={out[-300:]}")
 
 
 # ── 2. Oracle 2: Flaky labeling (same-run flaky_retry + two-run same fp + exclusions + _run_log_fit) ────────
