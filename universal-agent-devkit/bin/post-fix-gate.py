@@ -5786,6 +5786,75 @@ def infra_failure(output) -> bool:
 # Gradle thoát khác 0 mà không test nào chạy — đó không phải test đỏ (GeelyEx2 17/10: một dòng KDoc ở ThemePrefs.kt
 # thành REG-CAR-01 FAIL). Chỉ thông báo của bộ lọc include của Gradle, không phải mọi kiểu "0 test".
 NARROW_NO_TESTS_RE = re.compile(r"No tests found for given includes")
+_GRADLE_CMD_RE = re.compile(r"(?:^|[\s;|&(])(?:\S*/)?gradlew?(?=$|\s)")
+_GRADLE_TASK_LINE_RE = re.compile(r"^(?:> Task )?([\w:.-]*:[\w.-]+)(?:[^\S\n]+([A-Z-]+))?[^\S\n]*$", re.M)
+_GRADLE_NON_TEST_TASK_RE = re.compile(
+    r"^(?:compile|process|merge|package|generate|transform|bundle|strip|extract|create\w*Coverage|"
+    r"lint|ktlint|detekt|assemble|testClasses|testFixtures)", re.I)
+_GRADLE_ZERO_TESTS_RE = re.compile(
+    r"No tests found for given includes|(?<!\d)0 tests? completed\b|Ran 0 tests\b|\bno tests ran\b|"
+    r"0 tests? executed\b|\bNo tests found\b", re.I)
+_GRADLE_POS_TESTS_RE = re.compile(r"\b[1-9]\d* tests? completed\b|\b[1-9]\d* (?:tests? )?passed\b", re.I)
+
+
+def _is_gradle_test_task_token(tok: str) -> bool:
+    """True khi tên task Gradle là task chạy test (*test* / *Test*), loại trừ task biên dịch/lint/đóng gói."""
+    leaf = (tok or "").rsplit(":", 1)[-1]
+    if not leaf or _GRADLE_NON_TEST_TASK_RE.search(leaf):
+        return False
+    return "test" in leaf.lower()
+
+
+def _gradle_test_segment(cmd: str) -> tuple:
+    """Trả (has_test_task, has_dry_run) cho lệnh Gradle; phân tách theo đoạn shell để không đọc nhầm cờ của lệnh khác."""
+    has_test = False
+    dry_run = False
+    for seg in re.split(r"[;&|]+", cmd or ""):
+        if not _GRADLE_CMD_RE.search(seg):
+            continue
+        try:
+            tokens = shlex.split(seg)
+        except ValueError:
+            tokens = seg.split()
+        skip_next = False
+        for tok in tokens:
+            if skip_next:
+                skip_next = False
+                continue
+            if tok in ("-x", "--exclude-task", "-p", "--project-dir", "--tests", "-P", "-D"):
+                skip_next = True
+                continue
+            if tok in ("--dry-run", "-m"):
+                dry_run = True
+                continue
+            if tok.startswith("-") or "=" in tok or "/" in tok:
+                continue
+            if _is_gradle_test_task_token(tok):
+                has_test = True
+    return has_test, dry_run
+
+
+def gradle_no_tests_ran(cmd: str, output: str) -> bool:
+    """True khi suite Gradle có task test thoát 0 nhưng không chạy test nào (NO-SOURCE / SKIPPED / 0 test / --dry-run).
+    Giữ PASS cho UP-TO-DATE / FROM-CACHE và không xét lệnh chỉ chạy ktlintCheck / detekt / lint / assemble."""
+    has_test, dry_run = _gradle_test_segment(cmd)
+    if not has_test:
+        return False
+    if dry_run:
+        return True
+    out = output or ""
+    task_lines = _GRADLE_TASK_LINE_RE.findall(out)
+    test_tasks = [(name, outcome or "") for name, outcome in task_lines if _is_gradle_test_task_token(name)]
+    if test_tasks:
+        if all(outcome in ("NO-SOURCE", "SKIPPED") for _name, outcome in test_tasks):
+            return True
+        if any(outcome == "" for _name, outcome in test_tasks):
+            return bool(_GRADLE_ZERO_TESTS_RE.search(out)) and not bool(_GRADLE_POS_TESTS_RE.search(out))
+        return False
+    if task_lines:
+        # Gradle in ra các dòng task nhưng không có task test nào chạy (vd bị -x test hoặc cấu hình bỏ qua).
+        return True
+    return bool(_GRADLE_ZERO_TESTS_RE.search(out)) and not bool(_GRADLE_POS_TESTS_RE.search(out))
 
 
 # One suite run at a time per project tree, across every DevKit runner (this gate from the Stop
@@ -7260,9 +7329,46 @@ def merge_gate_slots_floor() -> int:
     return int(raw) if raw.isdigit() and int(raw) >= 1 else 0
 
 
+def _detect_flaky_suites(regression_tests, really_ran, git_dir, fp):
+    """Trả danh sách id suite chập chờn (flaky): vừa từ flaky_retry trong cùng lượt vừa từ đỏ-rồi-xanh hai lượt cùng fp.
+    Loại lượt trước có infra / env_blocked / killed_from_outside hoặc exit_reason khác fail."""
+    found = []
+    seen = set()
+    for t in regression_tests:
+        if t.get("flaky") and t.get("id"):
+            sid = str(t["id"])[:40]
+            if sid not in seen:
+                seen.add(sid)
+                found.append(sid)
+    fp = _run_log_fp(fp)
+    if not (git_dir and fp):
+        return found
+    passed = {str(t["id"])[:40] for t in regression_tests
+              if t.get("id") and id(t) in really_ran and t.get("status") == "PASS"}
+    if not passed:
+        return found
+    recs = _run_log_records(_run_log_dir(git_dir)) or ()
+    prior_failed = set()
+    for rec in recs:
+        if (rec.get("fp") != fp or rec.get("exit") != 1 or rec.get("verdict") != "FAIL"
+                or rec.get("exit_reason") != "fail"
+                or rec.get("infra") or rec.get("env_blocked") or rec.get("killed_from_outside")):
+            continue
+        for s in rec.get("suites") or ():
+            if isinstance(s, (list, tuple)) and len(s) >= 2 and s[1] == "FAIL":
+                prior_failed.add(str(s[0])[:40])
+    for t in regression_tests:
+        if t.get("id") and id(t) in really_ran and t.get("status") == "PASS":
+            sid = str(t["id"])[:40]
+            if sid in prior_failed and sid not in seen:
+                seen.add(sid)
+                found.append(sid)
+    return found
+
+
 def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
                   cache, run_tests, force_reason, no_test_only, project_dir, git_dir, read_only=False, log_fp="", exit_reason="",
-                  slot_waits=None, reused_scoped="", reuse_miss_reason=""):
+                  slot_waits=None, reused_scoped="", reuse_miss_reason="", flaky_suites=None, rerun_skip_miss_reason=""):
     """Append the run log line (see above). Takes only values the gate already has and reads nothing; `no_test_only` is main()'s own
     `docs_only` (every changed file passes needs_no_test()), while the logged `docs_only` is stricter: every changed file, rename source
     included, is documentation by DOC_EXT / DOC_NAMES. `log_fp` and `exit_reason` are values main() already holds: this function does not
@@ -7338,6 +7444,15 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             rec["reused_scoped"] = reused_scoped
         elif reuse_miss_reason and re.fullmatch(r"[a-z0-9_]{1,40}", str(reuse_miss_reason)):
             rec["reuse_miss_reason"] = str(reuse_miss_reason)
+        if rerun_skip_miss_reason and re.fullmatch(r"[a-z0-9_]{1,40}", str(rerun_skip_miss_reason)):
+            rec["rerun_skip_miss_reason"] = str(rerun_skip_miss_reason)
+        flaky_ids = [str(s)[:40] for s in (flaky_suites or ()) if s]
+        if flaky_ids:
+            rec["flaky"] = flaky_ids
+        if any(t.get("infra") for t in regression_tests):
+            rec["infra"] = True
+        if any(t.get("env_blocked") for t in regression_tests):
+            rec["env_blocked"] = True
         ptc = [t["ptc"] for t in regression_tests if t.get("ptc")]
         if ptc:   # #472 D: hit-rate của per_test_cache (chỉ lượt có suite run_impacted.sh chạy với sổ per-test bật)
             rec["ptc_reuse"], rec["ptc_ran"] = sum(p[0] for p in ptc), sum(p[1] for p in ptc)
@@ -8749,19 +8864,65 @@ def main():
     unkeyed_selected = any(
         not suite_cacheable(next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t))[0]
         for t in regression_tests if t.get("command"))
-    if (run_tests and rerun_path and rerun_fp and not getattr(args, "force", False)
-            and not getattr(args, "force_full", False)
-            and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0"
-            and hygiene_ok and anti_laziness_ok and deps_ok and settings_ok
-            and rerun_mode != "full"   # #678: --full dùng lại qua cached_full_pass (biên nhận đủ suite + mode "cached"), không qua bản ghi skip
-            and not edited_early and not tests_touched and not device_selected and not unkeyed_selected
-            and not any(t.get("merge_guard") for t in regression_tests)   # mục 7: guard của điểm gộp không bỏ qua theo bản ghi skip
-            and not _rerun_skip_expired(rerun_path)
-            and rerun_skip_match(_read_rerun_skip(rerun_path), rerun_fp, rerun_mode, selected_ids, rerun_local_sha, rerun_base)
-            and not _rerun_cache_blocks(sc, regression_tests, lookup_key, rerun_path)
-            and not _test_run_lock_busy(project_dir)
-            and not _old_receipt_blocks_skip(project_dir)
-            and _gate_pool_has_room()):
+    def _rerun_skip_miss_reason():
+        """Lý do bỏ qua rerun_skip.json ở lượt không --full: None khi đủ điều kiện bỏ qua suite; "" khi không áp dụng/không ghi log; chuỗi mã khi trượt."""
+        if not run_tests or rerun_mode == "full":
+            return ""
+        no_cache = bool(args.no_cache or os.environ.get("DEVKIT_GATE_CACHE", "1") == "0")
+        if no_cache:
+            return ""
+        if not rerun_path:
+            return "no_git"
+        if not rerun_fp:
+            return "no_fp"
+        exists = os.path.lexists(rerun_path)
+        if getattr(args, "force", False):
+            return "force"
+        if getattr(args, "force_full", False):
+            return "force_full"
+        if not (hygiene_ok and anti_laziness_ok and deps_ok and settings_ok):
+            return "static_fail"
+        if edited_early or tests_touched:
+            return "edited_test"
+        if device_selected:
+            return "device_suite"
+        if unkeyed_selected:
+            return "unkeyed_suite"
+        if any(t.get("merge_guard") for t in regression_tests):
+            return "merge_guard"
+        if not exists:
+            return "not_found"
+        if _rerun_skip_expired(rerun_path):
+            return "ttl"
+        data = _read_rerun_skip(rerun_path)
+        if data is None:
+            return "malformed"
+        if not rerun_skip_match(data, rerun_fp, rerun_mode, selected_ids, rerun_local_sha, rerun_base):
+            if data.get("exit") != 0:
+                return "exit"
+            if data.get("result_format") != RESULT_FORMAT:
+                return "format"
+            if _run_log_fp(data.get("fp")) != rerun_fp:
+                return "fp"
+            if data.get("mode") != rerun_mode:
+                return "mode"
+            if not rerun_local_sha or rerun_local_sha == "?" or data.get("local_sha") != rerun_local_sha:
+                return "local_sha"
+            if (data.get("base") or "") != (rerun_base or ""):
+                return "base"
+            return "suites"
+        if _rerun_cache_blocks(sc, regression_tests, lookup_key, rerun_path):
+            return "cache_blocked"
+        if _test_run_lock_busy(project_dir):
+            return "lock_busy"
+        if _old_receipt_blocks_skip(project_dir):
+            return "old_receipt"
+        if not _gate_pool_has_room():
+            return "pool_busy"
+        return None
+
+    rerun_skip_miss = _rerun_skip_miss_reason()
+    if rerun_skip_miss is None:
         _stamp_cached_reuse(args, regression_tests)
         rerun_commands = {t["id"]: t.get("command") for t in regression_tests if t.get("id") and t.get("command")}
         return _emit_rerun_skip(rerun_path, selected_ids, rerun_mode, deferred_by, args,
@@ -9262,8 +9423,11 @@ def main():
         if ext.get("s"):
             t["extended_s"] = ext["s"]   # #616 A: seconds past --timeout the suite was left running because the machine was busy
         full_cmd = t.get("full_command") or ""
-        if (not timed_out and code != 0 and mode in ("package", "module") and full_cmd
-                and full_cmd.strip() != cmd.strip() and NARROW_NO_TESTS_RE.search(out or "")):
+        check_out = out
+        if (not timed_out and mode in ("package", "module") and full_cmd
+                and full_cmd.strip() != cmd.strip()
+                and ((code != 0 and NARROW_NO_TESTS_RE.search(out or ""))
+                     or (code == 0 and gradle_no_tests_ran(cmd, out)))):
             # Bước narrow không chạy test nào: chạy lại lệnh FULL một lần và chấm theo nó (full đỏ thì vẫn FAIL).
             # ponytail: ran_cmds vẫn khoá theo lệnh narrow, một suite khác cùng lệnh full sẽ chạy lại (chậm hơn, không kém kiểm); gom khoá khi việc này hay xảy ra.
             reason = tr(f"bộ lọc narrow không khớp test nào ({cmd}) — chạy lại lệnh đầy đủ",
@@ -9273,9 +9437,14 @@ def main():
             t.update({"command": cmd, "mode": mode, "mode_reason": reason})
             narrow_out = out or ""
             code, out, timed_out = run_in_group(cmd, str(project_dir), env, suite_timeout(t, args.timeout, _stop_like))
+            check_out = out
             out = narrow_out + f"\n# --- narrow không khớp test nào, chạy lại lệnh đầy đủ — exit {code} ---\n" + (out or "")
         if not timed_out:
             t["status"] = "PASS" if code == 0 else "FAIL"
+            if code == 0 and gradle_no_tests_ran(cmd, check_out):
+                # Gradle thoát 0 nhưng không chạy test nào (NO-SOURCE / SKIPPED / 0 test / --dry-run): xếp UNTESTED, không tính PASS.
+                t["status"] = "UNTESTED"
+                t["no_tests_ran"] = True
             # The command's own "cannot run here" code (unity-batch.sh: 2 = no Editor):
             # UNTESTED — not a failing test, and never a PASS.
             if code != 0 and isinstance(t.get("untested_exit"), int) \
@@ -9329,6 +9498,8 @@ def main():
             t["label"] = f"PASS (impacted: {t['impacted_count']} tests)"
         elif t["status"] == "PASS" and mode in ("package", "module"):
             t["label"] = f"PASS ({mode})"
+        elif t.get("no_tests_ran"):
+            t["label"] = "NO_TESTS"
         else:
             t["label"] = "HANG" if t.get("hang") else t["status"]
         _v0 = time.monotonic()
@@ -9865,7 +10036,7 @@ def main():
     # named; it is not the verdict of this change (only a failure of it is). Chỉ UNTESTED do chính suite báo "không chạy được ở
     # máy này" (untested_exit) mới đứng ngoài kết luận; nhãn SLOT / BUSY / BUDGET / STALE vào tests_untested (exit 4). P1 20/10: slot
     # theo từng suite khiến một suite STALE có thể bị SLOT trong khi suite khác PASS (tests/gates/test_gate_slot_classes.sh ca 8).
-    _not_here = ("SLOT", "BUSY", "BUDGET", "STALE")
+    _not_here = ("SLOT", "BUSY", "BUDGET", "STALE", "NO_TESTS")
     # suite cached-full (keyed_full) cùng luật: STALE (recheck thấy FAIL mới trên khoá của nó) phải vào kết luận (Antigravity 20/10)
     stale_skipped = [t for t in regression_tests if t["status"] == "UNTESTED"
                      and (t.get("stale_rerun") or t.get("keyed_full") or t.get("known_red")) and t.get("label") not in _not_here]
@@ -10010,13 +10181,23 @@ def main():
         receipt_untested = sorted({t["id"] or "?" for t in regression_tests if t["status"] == "UNTESTED"}) if lock_held else None
         names = ", ".join(t["id"] or "?" for t in tests_untested)
         stale_names = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "STALE")
-        verdict_text, verdict_color, exit_code = (
-            tr(f"UNTESTED — PASS dùng lại của {stale_names} không còn đứng vững (file đã xác nhận nó đã đổi/biến mất trong lúc gate chạy): chạy lại gate; KHÔNG phải PASS",
-               f"UNTESTED — the re-used PASS of {stale_names} no longer stands (the file that vouched for it changed or went away while the gate ran): run the gate again; NOT a PASS")
-            if stale_names else
-            tr(f"UNTESTED — {names} không chạy được trên máy này (thiếu công cụ/thiết bị); KHÔNG phải PASS",
-               f"UNTESTED — {names} cannot run on this machine (missing tool/device); NOT a PASS")), YELLOW, 4
-        exit_reason = "stale" if stale_names else "missing_tool"
+        no_tests_names = ", ".join(t["id"] or "?" for t in tests_untested if t.get("label") == "NO_TESTS")
+        if stale_names:
+            verdict_text = tr(
+                f"UNTESTED — PASS dùng lại của {stale_names} không còn đứng vững (file đã xác nhận nó đã đổi/biến mất trong lúc gate chạy): chạy lại gate; KHÔNG phải PASS",
+                f"UNTESTED — the re-used PASS of {stale_names} no longer stands (the file that vouched for it changed or went away while the gate ran): run the gate again; NOT a PASS")
+            exit_reason = "stale"
+        elif no_tests_names:
+            verdict_text = tr(
+                f"UNTESTED — {no_tests_names} thoát 0 nhưng không chạy test nào (no_tests_ran); KHÔNG phải PASS",
+                f"UNTESTED — {no_tests_names} exited 0 without running any tests (no_tests_ran); NOT a PASS")
+            exit_reason = "no_tests_ran"
+        else:
+            verdict_text = tr(
+                f"UNTESTED — {names} không chạy được trên máy này (thiếu công cụ/thiết bị); KHÔNG phải PASS",
+                f"UNTESTED — {names} cannot run on this machine (missing tool/device); NOT a PASS")
+            exit_reason = "missing_tool"
+        verdict_color, exit_code = YELLOW, 4
     elif impacted_run:
         exit_reason = "impacted"
         # Exit 0 like any PASS (the Stop hook lets the turn end), but never worded as the
@@ -10047,10 +10228,17 @@ def main():
         verdict_text, verdict_color = tr(
             "PASS (chỉ đọc: một lượt chạy khác giữ khoá) — CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU: không ghi receipt; chạy lại --full khi khoá rảnh",
             "PASS (read-only: another run holds the lock) — NOT READY FOR ACCEPTANCE: no receipt written; run --full again when the lock is free"), YELLOW
+    git_dir = "" if project_gone else os.fsdecode(_git_static(project_dir, "--absolute-git-dir") or b"")
+    log_fp = tested_fp or budget_fp or ""
+    if run_tests and not project_gone and not _run_log_fp(log_fp):
+        log_fp = tree_fp_of(project_dir)
+    flaky_suites = _detect_flaky_suites(regression_tests, really_ran, git_dir, log_fp) if (run_tests and not project_gone) else []
     print(f"  {BOLD}{tr('KẾT LUẬN CỔNG POST-FIX AUDIT:', 'POST-FIX AUDIT GATE VERDICT:')}{RESET} {verdict_color}{BOLD}{verdict_text}{RESET}")
     print(f"  • {tr('Test hồi quy đạt', 'Regression tests passed')}: {tests_passed}/{len(regression_tests)}" + (tr(" (chưa chạy)", " (not run)") if unverified else "")
           + (tr(f" — {len(impacted_run)} lệnh chỉ chạy test bị ảnh hưởng ({impacted_n} test), lệnh đầy đủ CHƯA chạy",
                 f" — {len(impacted_run)} commands ran impacted tests only ({impacted_n} tests), the full commands were NOT run") if impacted_run else ""))
+    if flaky_suites:
+        print(f"  • {YELLOW}🔁 FLAKY ({tr('đỏ rồi xanh cùng nội dung', 'failed then passed on the same content')}):{RESET} {', '.join(flaky_suites)}")
     # Chủ repo 05/11 ("lỗi 1 chỗ thì chạy lại 1 chỗ thôi"): REJECT in đúng lệnh chạy lại RIÊNG từng chỗ đỏ — shard run_impacted.sh in
     # `bash <kit>/tests/<test đỏ>` từ dòng "✖ tests/x.sh", suite khác in lệnh của nó. Sổ PASS từng test khoá cả cây (khoá theo input bị rút,
     # PR #993: đồ thị không thấy file liệt kê lúc chạy ⇒ PASS sai), nên chạy lại cả gate local sau một sửa nhỏ là chạy lại mọi test.
@@ -10312,7 +10500,6 @@ def main():
 
     # Write Markdown summary artifact for user inspection — chỉ ghi những gì đã thực sự kiểm.
     # Written inside .git/ so the report never becomes a change in the audited tree.
-    git_dir = os.fsdecode(_git_static(project_dir, "--absolute-git-dir") or b"")
     report_file = (Path(git_dir) if git_dir else Path(tempfile.gettempdir())) / "postfix-gate" / "last_report.md"
     try:
         report_file.parent.mkdir(parents=True, exist_ok=True)
@@ -10336,6 +10523,8 @@ def main():
             f.write("\n---\n\n")
             f.write(tr("### 2. 🛡️ Checklist hồi quy (TIA)\n", "### 2. 🛡️ Regression checklist (TIA)\n"))
             f.write("\n".join(checklist_markdown) if checklist_markdown else tr("- Không có component nào khớp watch_files", "- No component matches watch_files"))
+            if flaky_suites:
+                f.write(f"\n- 🔁 **FLAKY**: {', '.join(f'`{s}`' for s in flaky_suites)}")
             f.write("\n\n---\n\n")
             f.write(tr("### 3. 🔒 Quét tĩnh (regex heuristic)\n", "### 3. 🔒 Static scan (regex heuristics)\n"))
             found = tr("phát hiện", "findings")
@@ -10363,7 +10552,7 @@ def main():
         print(f"  {tr('Báo cáo', 'Report')}: {report_file}")
 
     if args.json:
-        print(json.dumps({
+        json_out = {
             "verdict": verdict_text, "exit_code": exit_code,
             "accepted": exit_code == 0 and run_tests and not partial and not deferred_by and not impacted_run and not read_only,   # a full run that passed and wrote its receipt
             "files": modified_files,
@@ -10390,7 +10579,10 @@ def main():
             "uncovered": [] if args.allow_no_tests else uncovered_code_files(modified_files, rules),
             "orphan_tests": orphans_new,   # new test files no matrix suite runs (block with --full)
             "checklist": str(get_project_dir() / ".agents" / "regression_checklist.md"),
-        }, ensure_ascii=False))
+        }
+        if flaky_suites:
+            json_out["flaky"] = list(flaky_suites)
+        print(json.dumps(json_out, ensure_ascii=False))
 
     # A lesson is recorded only for a change that actually passed the gate.
     if args.record_lesson:
@@ -10402,9 +10594,6 @@ def main():
     # Last: the run log (data only, see _log_gate_run). Plain names only: nothing here can fail before the function's own guard.
     # Fingerprint đã lấy trước suite thì dùng lại. Chỉ khi chưa có (Stop không --full, không ngân sách) mới lấy một lần ở đây.
     _lap("report")
-    log_fp = tested_fp or budget_fp or ""
-    if run_tests and not _run_log_fp(log_fp):
-        log_fp = tree_fp_of(project_dir)
     global _SHADOW
     if run_tests and git_dir and regression_tests and not force_reason:   # lượt impacted: so map với cách chọn cũ
         _SHADOW = _shadow_compare(project_dir, rules, find_matrix_path(args.matrix), covers, regression_tests,
@@ -10413,7 +10602,8 @@ def main():
                   cache or scoped_cache or (keyed_hits or None), run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only,
                   log_fp=log_fp, exit_reason=exit_reason, slot_waits=slot_waits,
                   reused_scoped=_run_log_fp(scoped_cache.get("fingerprint")) if (scoped_cache and exit_code == 0) else "",
-                  reuse_miss_reason=scoped_miss[0] if (scoped is not None and not scoped_cache) else "")
+                  reuse_miss_reason=scoped_miss[0] if (scoped is not None and not scoped_cache) else "",
+                  flaky_suites=flaky_suites, rerun_skip_miss_reason=rerun_skip_miss)
     return exit_code
 
 
