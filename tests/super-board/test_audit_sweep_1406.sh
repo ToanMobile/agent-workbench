@@ -111,6 +111,12 @@ case "$*" in
   *"issue list"*"--state closed"*)
     cat "$FAKE_DIR/closed_issues.json"
     ;;
+  *"issue view 109"*)
+    echo "OPEN"
+    ;;
+  *"issue view 110"*)
+    echo "CLOSED"
+    ;;
   *"pr list"*"--state merged"*"head:issue-"*)
     echo '[]'
     ;;
@@ -229,14 +235,16 @@ rc_mv=$?
 cat > "$T/gql_items.json" <<'JSON'
 {"data":{"repositoryOwner":{"projectV2":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
   {"id":"I109","content":{"number":109,"title":"open ac-open","repository":{"nameWithOwner":"o/r"},"labels":{"nodes":[{"name":"ac-open"}]}},
+   "fieldValues":{"nodes":[{"name":"Done","field":{"name":"Status"}}]}},
+  {"id":"I110","content":{"number":110,"title":"old closed ac-open","repository":{"nameWithOwner":"o/r"},"labels":{"nodes":[{"name":"ac-open"}]}},
    "fieldValues":{"nodes":[{"name":"Done","field":{"name":"Status"}}]}}
 ]}}}}}
 JSON
 : > "$T/calls.log"
 out_gql="$(python3 "$SWEEP" sweep --config "$T/cfg.json" 2>"$T/err_gql.log")"
 rc_gql=$?
-[ "$rc_gql" -eq 0 ] && grep -q "card .*move 109 Ready" "$T/calls.log" \
-  && ok "GraphQL fallback + thẻ OPEN mang ac-open sót ở Done -> chuyển về Ready" || fail "gql check: rc=$rc_gql out=$out_gql"
+[ "$rc_gql" -eq 0 ] && grep -q "card .*move 109 Ready" "$T/calls.log" && ! grep -q "card .*move 110 Ready" "$T/calls.log" \
+  && ok "GraphQL fallback: thẻ OPEN ac-open sót ở Done chuyển Ready, thẻ CLOSED cũ #110 giữ nguyên" || fail "gql check: rc=$rc_gql out=$out_gql"
 
 GQL_ERRORS=1 python3 "$SWEEP" sweep --config "$T/cfg.json" >/dev/null 2>"$T/err_gqle.log"
 [ "$?" -eq 79 ] && ok "GraphQL errors -> exit 79 (READ_FAILED)" || fail "GraphQL errors không trả 79"

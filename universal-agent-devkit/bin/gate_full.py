@@ -1224,12 +1224,13 @@ def _has_linked_fix(repo: str, slug: str, issue_num: int, created_at: str, item:
         target_ref = ref if ref else "HEAD"
         if git(repo, "rev-parse", "--verify", "-q", target_ref)[0] != 0:
             target_ref = "HEAD"
-        rc, out = git(repo, "log", target_ref, "--format=%H%x00%s%n%b%x00", "--grep", "#%d" % issue_num, "-n", "20", *since_args)
+        rc, out = git(repo, "log", target_ref, "-z", "--format=%H%n%s%n%b", "--grep", "#%d" % issue_num, "-n", "20", *since_args)
         if rc == 0 and out:
             pat = re.compile(r"(?<![A-Za-z0-9_])#%d(?!\d)" % issue_num)
-            for rec in out.split("\x00\x00"):
-                parts = rec.split("\x00", 1)
-                msg = parts[1] if len(parts) == 2 else rec
+            for rec in out.split("\x00"):
+                if "\n" not in rec:
+                    continue
+                _, msg = rec.split("\n", 1)
                 if pat.search(msg):
                     return True
     if slug and shutil.which("gh"):

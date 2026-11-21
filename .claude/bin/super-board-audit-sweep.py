@@ -487,12 +487,15 @@ def sweep(args: argparse.Namespace) -> int:
         if not post_comment(gh, slug, num, cmt, repo_path):
             print(f"audit-sweep: reopened #{num} but comment failed", file=sys.stderr)
 
-    # Phòng ngừa: thẻ đã OPEN mang nhãn ac-open nhưng còn sót ở Done -> đưa về Ready
+    # Phòng ngừa: thẻ đã OPEN mang nhãn ac-open nhưng còn sót ở Done -> đưa về Ready (xác nhận state == OPEN vì closed_issues chỉ lấy 200 thẻ mới nhất)
     closed_nums = {iss.get("number") for iss in closed_issues if isinstance(iss, dict)}
     for num, card_info in board.items():
         if card_info.get("status") != "Done" or num in closed_nums or num in moved_ready:
             continue
         if "ac-open" not in label_names(card_info.get("labels")):
+            continue
+        r_st = run(gh + ["issue", "view", str(num), "--repo", slug, "--json", "state", "-q", ".state"], cwd=repo_path)
+        if r_st.returncode != 0 or r_st.stdout.strip() != "OPEN":
             continue
         if args.dry_run:
             moved_ready.append(num)
