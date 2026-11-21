@@ -4834,6 +4834,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-remove-assignee-no-halt-1397",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-github-read.py",
+        "tests/super-board/test_runner_remove_assignee_no_halt_1397.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REMOVE-ASSIGNEE-1397-01",
+          "name": "#1397: gỡ assignee (--remove-assignee) không block/halt board khi GitHub lỗi và halt do lệnh ghi lưu write_argv",
+          "command": "bash tests/super-board/test_runner_remove_assignee_no_halt_1397.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
