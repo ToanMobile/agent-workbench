@@ -349,5 +349,110 @@ else
   fail "D4 (R2): d4_causes=$d4_causes ledger_exists=$([ -e "$R/.git/super-board/rebuild-total/24" ] && echo yes || echo no) err=$(cat "$TMP/err" | tr '\n' '|') writes=$(cat "$F/writes" | tr '\n' '|')"
 fi
 
+# ── E (R6): SB_LIB_ONLY=1 mà chưa đặt SB_REBUILD_TOTAL_DIR / INFLIGHT_DIR riêng -> rebuild_total_dir rỗng, không đọc/ghi sổ thật trong .git
+(
+  unset SB_GITHUB_READ_STRICT SB_CAP_PROGRESS_MAX SB_REBUILD_TOTAL_MAX SB_REBUILD_TOTAL_DIR INFLIGHT_DIR
+  SB_LIB_ONLY=1 . "$RUNNER" || exit 1
+  set +e
+  mkdir -p "$TMP/cwd_e"; cd "$TMP/cwd_e" || exit 1
+  REPO_ROOT="$R"; REBUILD_CAP=2; SWEPT_CARDS=""
+  log() { :; }; gh_checkpoint() { :; }; gh_write_once() { :; }
+  set_card_status() { echo "move $1 $2" >> "$TMP/run_e.writes"; return 0; }
+  unset INFLIGHT_DIR
+  e_unset=$(rebuild_total_dir)
+  INFLIGHT_DIR=".claude/super-board/inflight"
+  e_default=$(rebuild_total_dir)
+  # sổ "thật" của repo giả đã có 3 dòng: không được đọc (thẻ vẫn về Ready) và không được ghi thêm
+  mkdir -p "$R/.git/super-board/rebuild-total"
+  printf '1\th1\tc1\n2\th2\tc2\n3\th3\tc3\n' > "$R/.git/super-board/rebuild-total/41"
+  cap_progress_comments() { printf '%s' '[{"body":"[merge-queue] [blocker] 🛑 blocked · a\nEvidence: a.sh:1 AssertionError a"},{"body":"[reviewer] [blocker] 🛑 blocked · b\nEvidence: b.sh:2 AssertionError b"}]'; }
+  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_41","status":"Blocked","labels":["bug","loop:rebuild-2"],"content":{"type":"Issue","number":41,"title":"c"}}]}'
+  : > "$TMP/run_e.writes"
+  sweep_cap_progress >/dev/null 2>&1
+  e_lines=$(wc -l < "$R/.git/super-board/rebuild-total/41" | tr -d ' ')
+  rm -f "$R/.git/super-board/rebuild-total/41"
+  e_override=$(SB_REBUILD_TOTAL_DIR="$TMP/own_total" rebuild_total_dir)
+  INFLIGHT_DIR="$TMP/run_inflight_e"
+  e_private=$(rebuild_total_dir)
+  if [ -z "$e_unset" ] && [ -z "$e_default" ] && [ "$e_lines" = 3 ] && grep -qx "move PVTI_41 Ready" "$TMP/run_e.writes" \
+     && [ "$e_override" = "$TMP/own_total" ] && [ "$e_private" = "$TMP/run_inflight_e/rebuild-total" ]; then
+    exit 0
+  else
+    echo "E: unset='$e_unset' default='$e_default' lines=$e_lines override='$e_override' private='$e_private' writes=$(tr '\n' ';' < "$TMP/run_e.writes")" >&2
+    exit 1
+  fi
+)
+if [ $? -eq 0 ]; then
+  ok "E (R6): lib-only rebuild_total_dir is empty without a private dir (real .git ledger neither read nor written)"
+else
+  fail "E (R6): lib-only rebuild_total_dir leaked into the repo's .git/super-board/rebuild-total"
+fi
+
+# ── F (R7): nguyên nhân nối bằng "; " (BSD paste -sd '; ' luân phiên ';' và ' ')
+if grep -q "causes: qa-fail; cap-progress; tests/d4.sh:1; " "$F/issue-comment-24.txt"; then
+  ok "F1 (R7): merge-queue joins ledger causes with '; '"
+else
+  fail "F1 (R7): merge-queue causes line: $(grep -m1 'causes:' "$F/issue-comment-24.txt" 2>/dev/null)"
+fi
+if grep -q "causes: c1; c2; c3; qa-fail" "$TMP/run_d.writes"; then
+  ok "F2 (R7): qa_apply_report joins ledger causes with '; '"
+else
+  fail "F2 (R7): qa_apply_report causes line: $(grep -m1 'causes:' "$TMP/run_d.writes" 2>/dev/null)"
+fi
+
+# ── G (R8): 1 lượt qa-fail (chỉ ở sổ) + 1 lượt rvbounce (review_dash_is_bounceable) phải cộng thành 2, và comment rvbounce mang marker
+(
+  unset SB_GITHUB_READ_STRICT SB_CAP_PROGRESS_MAX SB_REBUILD_TOTAL_MAX SB_REVIEW_BOUNCE_MAX SB_NOOP_MAX SB_NOOP_WINDOW_S SB_REVIEW_WAIT_S SB_REVIEW_WAIT_MAX SB_REVIEW_STALL_MAX
+  SB_LIB_ONLY=1 . "$RUNNER" || exit 1
+  set +e
+  INFLIGHT_DIR="$TMP/run_inflight_g"; mkdir -p "$INFLIGHT_DIR"
+  WORKER_LOG_DIR="$TMP/wl_g"; mkdir -p "$WORKER_LOG_DIR"
+  REPO_ROOT="$R"; REBUILD_CAP=2; BOT_LOGIN="sb-bot"; SWEPT_CARDS=""
+  log() { :; }; gh_checkpoint() { :; }
+  gh_write_once() { echo "gh $*" >> "$TMP/run_g.writes"; if [ "$1 $2" = "issue comment" ]; then printf '%s' "$5" > "$TMP/run_g.body"; fi; }
+  set_card_status() { echo "move $1 $2" >> "$TMP/run_g.writes"; return 0; }
+  note_worker_limit() { :; }; note_early_death() { :; }; fetch_project_items() { :; }; issue_is_open() { return 0; }
+  issue_pr_head() { printf 'abc1234deadbeef'; }
+  merge_queue_on() { return 1; }; review_approved_head() { return 1; }
+  cap_progress_comments() { printf '[]'; }
+  sleep 0 & DEAD=$!; wait "$DEAD"
+  : > "$TMP/run_g.writes"; : > "$TMP/run_g.body"
+  # lượt 1: QA fail -> Ready (qa_apply_report ghi 1 dòng sổ, không có comment back-to-Build)
+  printf '=== dispatch x\n{"type":"result","subtype":"success","is_error":false,"result":"done"}\nworker_exit: exit=0 signal=- elapsed=10s\n' > "$WORKER_LOG_DIR/worker-qa-51.log"
+  issue_comment_count() { printf '4'; }
+  issue_last_comment() { printf '[qa] [report] ❌ fail @ abc1234\n'; }
+  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_51","status":"QA","labels":["bug"],"content":{"type":"Issue","number":51,"title":"c","assignees":["sb-bot"]}}]}'
+  printf 'PID=%s\nLANE=qa\nSTARTED=2026-11-21T10:00:00Z\nWORKER_LOG=%s\nFROM_COL=QA\nCOMMENTS0=3\n' "$DEAD" "$WORKER_LOG_DIR/worker-qa-51.log" > "$INFLIGHT_DIR/51"
+  NOOP_CHECK=""
+  reap_finished_locks; block_noop_workers
+  g_after_qa=$(wc -l < "$INFLIGHT_DIR/rebuild-total/51" 2>/dev/null | tr -d ' ')
+  # lượt 2: reviewer `blocked-by: -` với finding cụ thể -> rvbounce về Ready
+  printf '=== dispatch x\n{"type":"result","subtype":"success","is_error":false,"result":"Chưa ghi gì lên card."}\nworker_exit: exit=0 signal=- elapsed=300s\n' > "$WORKER_LOG_DIR/worker-review-51.log"
+  issue_comment_count() { printf '5'; }
+  issue_last_comment() { printf '[reviewer] [report] ⏸ chưa vào queue · PR #9 @ ce04a734\n❌ Phát hiện của audit (major): `.claude/bin/super-board-run.sh:459` — thiếu kiểm tra.\nNext: người xem quyết định.\nblocked-by: -\n'; }
+  PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_51","status":"Review","labels":["bug","loop:rebuild-1"],"content":{"type":"Issue","number":51,"title":"c","assignees":["sb-bot"]}}]}'
+  printf 'PID=%s\nLANE=review\nSTARTED=2026-11-21T11:00:00Z\nWORKER_LOG=%s\nFROM_COL=Review\nCOMMENTS0=5\n' "$DEAD" "$WORKER_LOG_DIR/worker-review-51.log" > "$INFLIGHT_DIR/51"
+  NOOP_CHECK=""; NOOP_MOVED=0; : > "$TMP/run_g.body"
+  reap_finished_locks; block_noop_workers
+  g_bounced=0; grep -q "the reviewer's finding is a code fix" "$TMP/run_g.body" && g_bounced=1
+  g_col3=$(awk -F '\t' 'NF >= 3 {print $3}' "$INFLIGHT_DIR/rebuild-total/51" 2>/dev/null | tr '\n' ',')
+  cj_g=$(python3 -c 'import json, sys; print(json.dumps([{"body": "[qa] [report] ❌ fail @ abc1234"}, {"body": open(sys.argv[1]).read()}]))' "$TMP/run_g.body")
+  read -r g_tot g_capf <<EOF
+$(card_rebuild_total 51 1 2 "$cj_g")
+EOF
+  g_marker=0; grep -q '<!-- sb-rebuild-total: 2 -->' "$TMP/run_g.body" && g_marker=1
+  if [ "$g_after_qa" = 1 ] && [ "$g_bounced" = 1 ] && [ "$g_tot" = 2 ] && [ "$g_col3" = "qa-fail,review-bounce," ] && [ "$g_marker" = 1 ]; then
+    exit 0
+  else
+    echo "G: after_qa=$g_after_qa bounced=$g_bounced total=$g_tot col3=$g_col3 marker=$g_marker writes=$(tr '\n' ';' < "$TMP/run_g.writes" | cut -c1-300)" >&2
+    exit 1
+  fi
+)
+if [ $? -eq 0 ]; then
+  ok "G (R8): qa-fail + reviewer dash bounce count as 2 rebuild rounds (ledger line + marker on the bounce)"
+else
+  fail "G (R8): reviewer dash bounce not recorded in the rebuild-total ledger / marker"
+fi
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_queue_rebuild_total_cap_1400: PASS"; exit 0; } || { echo "test_merge_queue_rebuild_total_cap_1400: FAIL ($FAILS)"; exit 1; }

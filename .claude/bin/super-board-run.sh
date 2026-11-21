@@ -2929,7 +2929,7 @@ EOF
     tdir=$(rebuild_total_dir)
     if [ "${total_capped:-0}" -eq 1 ] || [ "${total_now:-0}" -ge "$total_cap" ]; then
       if [ -n "$tdir" ] && [ -f "$tdir/$issue" ]; then
-        prior_causes=$(awk -F '\t' 'NF >= 3 {print $3}' "$tdir/$issue" 2>/dev/null | awk '!seen[$0]++' | paste -sd '; ' - | cut -c1-300)
+        prior_causes=$(awk -F '\t' 'NF >= 3 {print $3}' "$tdir/$issue" 2>/dev/null | awk '!seen[$0]++ {out = (out == "" ? $0 : out "; " $0)} END {print out}' | cut -c1-300)   # awk nối bằng "; ": BSD `paste -sd '; '` cho ra `a;b c` (đo trên macOS 21/11)
       fi
       all_causes="${prior_causes:+${prior_causes}; }qa-fail"
       set_card_status "$item_id" "Blocked" || return 1
@@ -3290,11 +3290,19 @@ EOF
         gh_checkpoint
         if [ -n "${REVIEW_BOUNCE_KEY:-}" ]; then
           swept_add "$REVIEW_BOUNCE_KEY"
+          # #1400: lượt bounce này cũng là một vòng rebuild: ghi sổ rebuild-total (cột tab như merge queue) và gắn marker = số dòng sổ
+          # (cận dưới; card_rebuild_total lấy max với marker / comment khác), để qa-fail (chỉ có ở sổ) + rvbounce cộng thành 2.
+          local rb_tdir rb_mark=""
+          rb_tdir=$(rebuild_total_dir)
+          if [ -n "$rb_tdir" ] && mkdir -p "$rb_tdir" 2>/dev/null \
+             && printf '%s\trvbounce\treview-bounce\n' "$(date +%s)" >> "$rb_tdir/$issue" 2>/dev/null; then
+            rb_mark=$'\n'"<!-- sb-rebuild-total: $(wc -l < "$rb_tdir/$issue" 2>/dev/null | tr -d ' ') -->"
+          fi
           gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · the reviewer's finding is a code fix, not a person's decision
 Did: the newest [reviewer] report ended with \`blocked-by: -\` but names a concrete finding (❌ with file:line) and no closed-list reason (money, auth, destructive schema, device, secret, needs-you). The card's own AC answers the scope question.
 ✅ Done: card moved Review → Ready (bounce $(( $(grep -c "^${issue}:rvbounce:" "$(sweep_ledger)" 2>/dev/null || true) ))/${SB_REVIEW_BOUNCE_MAX:-3} for this card)
 Next: builder fixes the reviewer's ❌ finding on the PR, QA, then Review
-blocked-by: agent" >/dev/null 2>&1 || true
+blocked-by: agent${rb_mark}" >/dev/null 2>&1 || true
           REVIEW_BOUNCE_KEY=""
         fi
         log "↩ #${issue} Review → Ready: review worker concluded not approved without moving the card (bounce routed by the runner)"
@@ -4036,6 +4044,8 @@ rebuild_total_dir() {
     printf '%s/rebuild-total' "$INFLIGHT_DIR"
     return 0
   fi
+  # Test SB_LIB_ONLY=1 chưa đặt SB_REBUILD_TOTAL_DIR hay INFLIGHT_DIR riêng: trả rỗng, không đọc/ghi sổ thật trong .git của repo (như guard của cap_progress_comments).
+  [ "${_SB_LIB_ONLY_MODE:-0}" = "1" ] && return 0
   local common=""
   common=$(git -C "${REPO_ROOT:-.}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
   if [ -n "$common" ] && [ -d "$common" ]; then
