@@ -35,7 +35,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 AC_HEADING = re.compile(r"^##[ \t]+(?:Acceptance Criteria|AC)(?!\w)", re.I)
 AC_ITEM = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]+\S")
 CHECKBOX = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]*\[([ xX])\][ \t]*(.*)$")
-BRANCH_CARD_RE = re.compile(r"^issue-(\d+)-")
+# Cùng quy ước với CARD_FROM_BRANCH của super-board-ac-check.py (#1406 R4): `issue-<N>` có hoặc không hậu tố, có thể có tiền tố thư mục.
+BRANCH_CARD_RE = re.compile(r"(?:^|/)issue-(\d+)(?:\D|$)")
 UNGATED_MARKER_FMT = "<!-- sb-ungated-merge:PR#{pr} -->"
 REOPEN_MARKER = "<!-- sb-sweep:reopen-ac-open -->"
 
@@ -243,13 +244,22 @@ def fetch_board_items(cfg: dict, slug: str, repo_path: str) -> dict[int, dict]:
     return items_by_num
 
 
-def parse_items_file(path: str) -> dict[int, dict]:
+def parse_items_file(path: str, home: str = "") -> dict[int, dict]:
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
+    home = home.lower()
     out: dict[int, dict] = {}
     for it in data.get("items") or []:
         c = it.get("content") or {}
         if c.get("type") != "Issue" or not isinstance(c.get("number"), int):
+            continue
+        # Thẻ của repo khác nằm chung board (#1406 R4): lọc như fetch_board_items. `repository` là "owner/repo"
+        # (super-board-card.sh items), URL, hoặc object {nameWithOwner}; thiếu trường thì giữ thẻ.
+        card_repo = c.get("repository")
+        if isinstance(card_repo, dict):
+            card_repo = card_repo.get("nameWithOwner")
+        card_repo = re.sub(r"^.*github\.com[:/]", "", card_repo if isinstance(card_repo, str) else "").removesuffix(".git").strip("/").lower()
+        if home and card_repo and card_repo != home:
             continue
         lbs = []
         for x in (it.get("labels") or []) + (c.get("labels") or []):
@@ -327,7 +337,7 @@ def linked_issues_of_pr(pr: dict) -> list[int]:
     for ref in pr.get("closingIssuesReferences") or []:
         if isinstance(ref, dict) and isinstance(ref.get("number"), int):
             nums.add(int(ref["number"]))
-    m = BRANCH_CARD_RE.match(pr.get("headRefName") or "")
+    m = BRANCH_CARD_RE.search(pr.get("headRefName") or "")
     if m:
         nums.add(int(m.group(1)))
     return sorted(nums)
@@ -351,7 +361,7 @@ def sweep(args: argparse.Namespace) -> int:
     gh = gh_cmd()
 
     try:
-        board = parse_items_file(args.items) if args.items else fetch_board_items(cfg, slug, repo_path)
+        board = parse_items_file(args.items, slug) if args.items else fetch_board_items(cfg, slug, repo_path)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"audit-sweep: cannot read board items: {exc}", file=sys.stderr)
         return READ_FAILED
@@ -416,15 +426,15 @@ def sweep(args: argparse.Namespace) -> int:
         # Nếu bulk PR list chưa thấy PR cho thẻ, kiểm trực tiếp nhánh issue-<N>- trước khi mở lại để tránh cắt đuôi khi >200 PR.
         if not has_ac_open and unticked and not has_closed_by_pr:
             r_one = run(gh + ["pr", "list", "--repo", slug, "--state", "merged", "--base", base,
-                              "--search", f"head:issue-{num}-", "--limit", "5", "--json", "number,headRefName"],
+                              "--search", f"head:issue-{num}", "--limit", "20", "--json", "number,headRefName"],
                         cwd=repo_path)
             if r_one.returncode != 0:
                 print(f"audit-sweep: fallback gh pr list for #{num} failed; skipping reopen", file=sys.stderr)
                 continue
             try:
                 one_prs = json.loads(r_one.stdout)
-                if any(isinstance(p, dict) and BRANCH_CARD_RE.match(p.get("headRefName") or "")
-                       and int(BRANCH_CARD_RE.match(p.get("headRefName") or "").group(1)) == num for p in one_prs):
+                if any(isinstance(p, dict) and (m_one := BRANCH_CARD_RE.search(p.get("headRefName") or ""))
+                       and int(m_one.group(1)) == num for p in one_prs):
                     has_closed_by_pr = True
             except (ValueError, TypeError):
                 print(f"audit-sweep: fallback gh pr list invalid JSON for #{num}; skipping reopen", file=sys.stderr)

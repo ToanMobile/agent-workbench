@@ -704,6 +704,10 @@ def _tz_info(tz_name: str) -> datetime.tzinfo:
     return datetime.timezone.utc
 
 
+# Số PR merged đọc cho mục Health (#1406 R2): không thấp hơn ngưỡng max(200, …) của super-board-audit-sweep.py.
+UNGATED_PR_LIMIT = 300
+
+
 def summarize_ungated_merges(
     prs: list[dict[str, Any]],
     common_dir: Path | None,
@@ -733,6 +737,7 @@ def summarize_ungated_merges(
     tz = _tz_info(tz_name)
     by_date: dict[str, int] = {}
     total = 0
+    saw_older = False   # đã thấy PR merge trước cửa sổ 7 ngày ⇒ danh sách phủ hết cửa sổ
 
     for pr in prs or []:
         if not isinstance(pr, dict) or not isinstance(pr.get("number"), int):
@@ -745,6 +750,7 @@ def summarize_ungated_merges(
         if m_dt.tzinfo is None:
             m_dt = m_dt.replace(tzinfo=datetime.timezone.utc)
         if int(m_dt.timestamp()) < cutoff_ep:
+            saw_older = True
             continue
         num = pr["number"]
         head = pr.get("headRefOid") or ""
@@ -759,7 +765,7 @@ def summarize_ungated_merges(
         by_date[day_key] = by_date.get(day_key, 0) + 1
         total += 1
 
-    return {"total_7d": total, "by_date": dict(sorted(by_date.items())), "ok": True}
+    return {"total_7d": total, "by_date": dict(sorted(by_date.items())), "ok": True, "saw_older": saw_older}
 
 
 def ungated_merges_line(summary: dict[str, Any]) -> str:
@@ -768,10 +774,11 @@ def ungated_merges_line(summary: dict[str, Any]) -> str:
         return "   ungated merges (7d): ?"
     total = int(summary.get("total_7d") or 0)
     by_date = summary.get("by_date") or {}
+    more = "+" if summary.get("capped") else ""   # danh sách PR chạm trần --limit: số đếm chỉ là cận dưới
     if total == 0 or not by_date:
-        return f"   ungated merges (7d): {total}"
+        return f"   ungated merges (7d): {total}{more}"
     parts = [f"{d}: {c}" for d, c in sorted(by_date.items(), reverse=True)]
-    return truncate_to(f"   ungated merges (7d): {total}  ({', '.join(parts)})", 79)
+    return truncate_to(f"   ungated merges (7d): {total}{more}  ({', '.join(parts)})", 79)
 
 
 def render_collapsed(label: str, lane_items: list[dict[str, Any]]) -> str:
@@ -1116,7 +1123,7 @@ def main() -> int:
     base_branch = cfg.get("base_branch") or "main"
     tz_name = cfg.get("timezone") or "UTC"
     pr_out = gh(
-        "pr", "list", "--state", "merged", "--base", base_branch, "--limit", "100",
+        "pr", "list", "--state", "merged", "--base", base_branch, "--limit", str(UNGATED_PR_LIMIT),
         "--json", "number,headRefOid,mergeCommit,mergedAt", check=False,
     )
     ungated_ok = False
@@ -1132,6 +1139,8 @@ def main() -> int:
     ungated_summary = summarize_ungated_merges(
         merged_prs_list, common_dir, now_epoch=now_epoch, tz_name=tz_name, ok=ungated_ok
     )
+    # Chạm trần --limit mà chưa thấy PR nào cũ hơn 7 ngày: còn PR trong cửa sổ chưa đọc ⇒ báo `N+`, không đếm thiếu âm thầm.
+    ungated_summary["capped"] = len(merged_prs_list) >= UNGATED_PR_LIMIT and not ungated_summary.get("saw_older")
 
     print()
     print("▎Health")

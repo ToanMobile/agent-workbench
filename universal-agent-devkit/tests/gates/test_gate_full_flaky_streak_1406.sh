@@ -18,15 +18,21 @@ import gate_full as g
 
 calls = []
 LIST = []
+PR_LIST = []      # (#1406 R3) PR merged mà gh giả trả về; rỗng = như cũ
+PR_NEEDS = None   # None: mọi truy vấn gh pr list thấy PR_LIST; hàm(cmd) -> bool: chỉ truy vấn khớp mới thấy
+ISSUE_LIST_RC = 0
+CLOSE_RC = 0
 
 real_sh = g.sh
 
 def fake_sh(cmd, cwd=None, timeout=None, env=None, shell=False):
     calls.append(cmd)
     if cmd[:3] == ["gh", "issue", "list"]:
-        return 0, json.dumps(LIST)
+        return ISSUE_LIST_RC, json.dumps(LIST) if ISSUE_LIST_RC == 0 else "boom"
     if cmd[:3] == ["gh", "pr", "list"]:
-        return 0, "[]"
+        return 0, json.dumps(PR_LIST if (PR_NEEDS is None or PR_NEEDS(cmd)) else [])
+    if cmd[:3] == ["gh", "issue", "close"]:
+        return CLOSE_RC, ""
     if isinstance(cmd, list) and cmd and cmd[0] == "gh":
         return 0, ""
     return real_sh(cmd, cwd=cwd, timeout=timeout, env=env, shell=shell)
@@ -170,6 +176,79 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(os.path.join(pg2, "nightly", "history.jsonl"), encoding="utf-8") as fh:
         row = json.loads(fh.read().splitlines()[-1])
     check(row.get("passed") == ["REG-FLAKY-01"], "6: history_row lưu danh sách passed để tính chuỗi đêm xanh")
+
+    # 7) (#1406 R1) close_proven_cards báo cho cmd_run biết còn thẻ PASS chưa đóng được ⇒ cmd_run không ghi last_full_green_sha
+    #    (đầu-cuối ở test_gate_full_flaky_streak_skip_1406.sh)
+    LIST[:] = [{"number": 90, "title": g.CARD_PREFIX + " 2026-11-18: REG-FLAKY-01 đỏ",
+                "labels": [{"name": "bug"}], "body": FLAKY_BODY, "createdAt": "2026-11-18T00:05:00Z"}]
+    write_hist(pg, [])
+    calls.clear()
+    held = g.close_proven_cards(Run(dt.datetime(2026, 11, 19, 0, 0)), "o/r", "a" * 40, pg=pg)
+    check(held is True and "90" not in closed_nums(), "7a: thẻ flaky chuỗi 1/3 giữ mở ⇒ trả True (còn thẻ chờ lượt sau)")
+    write_hist(pg, [{"at": "2026-11-19T00:10:00", "result": "green", "red": [], "passed": ["REG-FLAKY-01"]}])
+    calls.clear()
+    held = g.close_proven_cards(Run(dt.datetime(2026, 11, 20, 0, 0)), "o/r", "a" * 40, pg=pg)
+    check(held is True and "90" not in closed_nums(), "7b: thẻ flaky chuỗi 2/3 giữ mở ⇒ trả True")
+    write_hist(pg, [{"at": "2026-11-19T00:10:00", "result": "green", "red": [], "passed": ["REG-FLAKY-01"]},
+                    {"at": "2026-11-20T00:10:00", "result": "green", "red": [], "passed": ["REG-FLAKY-01"]}])
+    calls.clear()
+    held = g.close_proven_cards(Run(dt.datetime(2026, 11, 21, 0, 0)), "o/r", "a" * 40, pg=pg)
+    check(held is False and "90" in closed_nums(), "7c: chuỗi 3/3 đóng thẻ ⇒ trả False (ghi mốc xanh như cũ)")
+    LIST[:] = []
+    check(g.close_proven_cards(Run(), "o/r", "a" * 40, pg=pg) is False, "7d: không có thẻ mở ⇒ trả False")
+    LIST[:] = [{"number": 91, "title": g.CARD_PREFIX + " 2026-11-18: REG-OTHER-01 đỏ",
+                "labels": [{"name": "bug"}], "body": FLAKY_BODY, "createdAt": "2026-11-18T00:05:00Z"}]
+    check(g.close_proven_cards(Run(), "o/r", "a" * 40, pg=pg) is False,
+          "7e: thẻ flaky của suite KHÔNG PASS ở lượt này không tính là giữ mở ⇒ trả False")
+    # thẻ thường (không flaky) đóng lỗi / danh sách thẻ không đọc được: log hứa "lượt sau thử lại" ⇒ cũng phải trả True
+    LIST[:] = [{"number": 92, "title": g.CARD_PREFIX + " 2026-11-18: REG-FLAKY-01 đỏ", "labels": [{"name": "bug"}],
+                "body": "## Risk\n🔴 High — main đỏ\n", "createdAt": "2026-11-18T00:05:00Z"}]
+    CLOSE_RC = 1
+    check(g.close_proven_cards(Run(), "o/r", "a" * 40, pg=pg) is True, "7f: gh issue close lỗi ⇒ trả True (lượt sau thử lại)")
+    CLOSE_RC = 0
+    ISSUE_LIST_RC = 1
+    check(g.close_proven_cards(Run(), "o/r", "a" * 40, pg=pg) is True, "7g: gh issue list lỗi ⇒ trả True (lượt sau thử lại)")
+    ISSUE_LIST_RC = 0
+    os.environ["DEVKIT_GATE_FULL_CMD"] = "true"
+    check(g.close_proven_cards(Run(), "o/r", "a" * 40, pg=pg) is False, "7h: lệnh gate thay thế (không xét thẻ) ⇒ trả False")
+    os.environ.pop("DEVKIT_GATE_FULL_CMD", None)
+
+    # 8) (#1406 R3) PR merged trên nhánh issue-<N>-… KHÔNG nhắc `#<N>` ở tiêu đề/nội dung: truy vấn `--search "#<N>"` không thấy,
+    #    vẫn phải nhận là commit/PR sửa liên kết
+    def no_hash_search(n):
+        def needs(cmd):
+            q = cmd[cmd.index("--search") + 1] if "--search" in cmd else ""
+            return ("#%d" % n) not in q
+        return needs
+    item = {"number": 93, "createdAt": "2026-11-18T00:05:00Z"}
+    PR_NEEDS = no_hash_search(93)
+    PR_LIST[:] = [{"number": 500, "headRefName": "issue-93-fix-flaky", "mergedAt": "2026-11-19T03:00:00Z", "closingIssuesReferences": []}]
+    check(g._has_linked_fix("", "o/r", 93, item["createdAt"], item, "origin/main") is True,
+          "8a: PR merged trên nhánh issue-93-… không nhắc #93 vẫn là PR sửa liên kết")
+    PR_LIST[:] = [{"number": 501, "headRefName": "claude/issue-93", "mergedAt": "2026-11-19T03:00:00Z", "closingIssuesReferences": []}]
+    check(g._has_linked_fix("", "o/r", 93, item["createdAt"], item, "origin/main") is True,
+          "8b: nhánh có tiền tố thư mục và không có hậu tố (claude/issue-93) cũng khớp, cùng quy ước CARD_FROM_BRANCH")
+    PR_LIST[:] = [{"number": 502, "headRefName": "issue-931-other", "mergedAt": "2026-11-19T03:00:00Z", "closingIssuesReferences": []},
+                  {"number": 503, "headRefName": "reissue-93-x", "mergedAt": "2026-11-19T03:00:00Z", "closingIssuesReferences": []}]
+    check(g._has_linked_fix("", "o/r", 93, item["createdAt"], item, "origin/main") is False,
+          "8c: nhánh của thẻ khác (issue-931-…, reissue-93-…) không bị nhận nhầm")
+    PR_LIST[:] = [{"number": 504, "headRefName": "issue-93-old", "mergedAt": "2026-11-17T03:00:00Z", "closingIssuesReferences": []}]
+    check(g._has_linked_fix("", "o/r", 93, item["createdAt"], item, "origin/main") is False,
+          "8d: PR nhánh issue-93-… merge TRƯỚC lúc mở thẻ không tính")
+    PR_LIST[:] = [{"number": 505, "headRefName": "fix-x", "mergedAt": "2026-11-19T03:00:00Z", "closingIssuesReferences": [{"number": 93}]}]
+    check(g._has_linked_fix("", "o/r", 93, item["createdAt"], item, "origin/main") is True,
+          "8e: PR merged gần đây có closingIssuesReferences #93 (không nhắc #93 trong search) vẫn khớp")
+    # đầu-cuối: thẻ flaky 1 đêm xanh + PR nhánh issue-94-… ⇒ đóng ngay
+    PR_NEEDS = no_hash_search(94)
+    PR_LIST[:] = [{"number": 506, "headRefName": "issue-94-fix", "mergedAt": "2026-11-19T03:00:00Z", "closingIssuesReferences": []}]
+    LIST[:] = [{"number": 94, "title": g.CARD_PREFIX + " 2026-11-18: REG-FLAKY-01 đỏ",
+                "labels": [{"name": "bug"}], "body": FLAKY_BODY, "createdAt": "2026-11-18T00:05:00Z"}]
+    write_hist(pg, [])
+    calls.clear()
+    held = g.close_proven_cards(Run(dt.datetime(2026, 11, 20, 0, 0)), "o/r", "a" * 40, pg=pg)
+    check("94" in closed_nums() and held is False, "8f: thẻ flaky 1 đêm xanh có PR nhánh issue-94-… (không nhắc #94) thì đóng ngay")
+    PR_NEEDS = None
+    PR_LIST[:] = []
 
 sys.exit(1 if fails else 0)
 PY
