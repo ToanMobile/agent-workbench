@@ -163,9 +163,11 @@ def _kit_items(project, main):
     if ((os.path.isdir(cdir) or (not os.path.lexists(cdir) and os.path.isfile(os.path.join(project, ".claude", "settings.json"))))
             and not in_kit(cdir) and os.path.isdir(cmds)):
         for name in sorted(os.listdir(cmds)):
+            if not name.endswith(".md"):
+                continue
             src = os.path.join(cmds, name)
             skill = command_skill(src)
-            if name.endswith(".md") and skill not in excluded and not os.path.lexists(os.path.join(project, ".claude", "commands", name)):
+            if skill not in excluded and not os.path.lexists(os.path.join(project, ".claude", "commands", name)):
                 out.append(f".claude/commands/{name}")
     # every DevKit skill the profile keeps, in an install that has .agents/skills/: a skill the DevKit gained after the install
     # never got its link (OfficeReader 2026-10-13: health 96, .agents/skills/devkit-audit missing)

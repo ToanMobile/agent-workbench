@@ -58,4 +58,18 @@ for prof in backend game; do
   fi
 done
 
+# 5. the prompt hook never recommends a skill the backend profile does not install (ui-ux-pro-max); game still gets it
+got="$(python3 - "$DK/scripts/context/enrich_context.py" "$DK" "$TMP/ec" <<'PY'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1]); ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+res = []
+for prof in ("backend", "game"):
+    pdir = os.path.join(sys.argv[3], prof); os.makedirs(os.path.join(pdir, ".agents"), exist_ok=True)
+    open(os.path.join(pdir, ".agents", "active-profile.json"), "w").write('{"profile": "%s"}\n' % prof)
+    res.append("ui-ux-pro-max" in ec.enrich_prompt("thiết kế lại giao diện trang quản trị, chọn bảng màu", sys.argv[2], pdir)["recommended_skills"])
+print(res)
+PY
+)"
+[ "$got" = "[False, True]" ] && ok "5 enrich_context: backend gets no ui-ux-pro-max, game does" || fail "5 enrich_context ui-ux-pro-max [backend, game] = $got"
+
 [ "$FAILS" = 0 ] && { echo "PASS test_command_profile_filter"; exit 0; } || { echo "FAIL test_command_profile_filter ($FAILS)"; exit 1; }
