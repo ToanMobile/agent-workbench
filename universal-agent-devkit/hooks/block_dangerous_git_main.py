@@ -1139,6 +1139,14 @@ def gh_project_item_list_warn(rest, base):
         return
     try:
         gov_dir = os.path.join(os.path.dirname(_HOOK_DIR), "scripts", "governance")
+        if not os.path.isfile(os.path.join(gov_dir, "repo_board.py")):
+            # #1402: kit cài kiểu copy — hook nằm ở <repo>/.claude/hooks nên không có scripts/governance cạnh hook;
+            # lấy bản của kit dưới gốc dự án (suy từ vị trí hook trước, rồi tới CLAUDE_PROJECT_DIR).
+            for _proj in (os.path.dirname(os.path.dirname(_HOOK_DIR)), os.environ.get("CLAUDE_PROJECT_DIR") or ""):
+                _cand = os.path.join(_proj, ".agents", "devkit", "scripts", "governance") if os.path.isabs(_proj) else ""
+                if _cand and os.path.isfile(os.path.join(_cand, "repo_board.py")):
+                    gov_dir = _cand
+                    break
         if gov_dir not in sys.path:
             sys.path.insert(0, gov_dir)
         import repo_board  # noqa: PLC0415

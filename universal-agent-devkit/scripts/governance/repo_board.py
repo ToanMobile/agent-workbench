@@ -126,7 +126,9 @@ def resolve_board(project_dir: str | None = None) -> dict | None:
     if active_file.is_file():
         try:
             active_slug = active_file.read_text(encoding="utf-8").strip()
-            if active_slug:
+            # #1402: slug là TÊN config, không phải đường dẫn — có `/`, `\` hoặc bằng `.`/`..` thì bỏ qua,
+            # không đọc JSON nằm ngoài thư mục configs.
+            if active_slug and active_slug not in (".", "..") and "/" not in active_slug and "\\" not in active_slug:
                 cand = cfg_dir / f"{active_slug}.json"
                 if cand.is_file():
                     res = _read_config(cand, root, origin)

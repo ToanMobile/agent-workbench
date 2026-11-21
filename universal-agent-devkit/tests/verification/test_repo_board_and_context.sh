@@ -228,6 +228,16 @@ if [ -x "$GH_SHIM" ]; then
   else
     fail "3f shims/gh tạo __pycache__ trong cây kit: $(ls -A "$OR/.agents/devkit/scripts/governance/__pycache__")"
   fi
+  # 3g. (#1402, audit PR #1394) gh thật thoát mã khác 0 khi sai board: shim vẫn cảnh báo và trả đúng mã đó, giữ stdout/stderr của gh
+  mkdir -p "$TMP/bin_rc4"
+  printf '#!/bin/sh\necho gh-rc4-out\necho gh-rc4-err >&2\nexit 4\n' > "$TMP/bin_rc4/gh"; chmod +x "$TMP/bin_rc4/gh"
+  shim_rc4_err="$TMP/shim_rc4.err"
+  shim_rc4_out="$(cd "$OR" && env PATH="$OR/.agents/devkit/shims:$TMP/bin_rc4:$PATH" gh project item-list 1 --owner ToanMobile 2>"$shim_rc4_err")"; rc_3g=$?
+  if [ "$rc_3g" = 4 ] && [ "$shim_rc4_out" = "gh-rc4-out" ] && grep -q "#2" "$shim_rc4_err" && grep -q "gh-rc4-err" "$shim_rc4_err"; then
+    ok "3g shims/gh trả đúng mã thoát 4 của gh thật khi sai board (vẫn cảnh báo, giữ stdout/stderr)"
+  else
+    fail "3g shims/gh không giữ mã thoát của gh thật: rc=$rc_3g (muốn 4) err=$(cat "$shim_rc4_err") out=$shim_rc4_out"
+  fi
 else
   fail "3c thiếu shims/gh"
 fi
