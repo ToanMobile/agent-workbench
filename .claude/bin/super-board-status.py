@@ -405,7 +405,11 @@ def resolve_config_slug(argv: list[str], root: Path | None = None) -> str:
         if origin:
             for c in cfgs:
                 try:
-                    remote = (json.loads(c.read_text()).get("repo") or {}).get("remote") or ""
+                    data = json.loads(c.read_text())
+                    repo = data.get("repo") if isinstance(data, dict) else None
+                    remote = repo.get("remote") if isinstance(repo, dict) else ""
+                    if not isinstance(remote, str):
+                        continue
                     slug = re.sub(r"\.git$", "", re.sub(r"^.*github\.com[:/]", "", remote.rstrip("/"))).lower()
                     if slug == origin:
                         return c.stem

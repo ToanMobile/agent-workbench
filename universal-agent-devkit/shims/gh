@@ -4,13 +4,17 @@
 # của repo hiện tại. Không thay đổi stdout hay mã thoát của `gh` thật.
 
 self="${BASH_SOURCE[0]}"
-while [ -L "$self" ]; do
+# Giới hạn 40 tầng và xử lý tên trần (gọi `bash gh` ngay trong thư mục chứa symlink) như shims/adb (#1392).
+_hops=0
+while [ -L "$self" ] && [ $_hops -lt 40 ]; do
+  _hops=$((_hops + 1))
   _tgt="$(readlink "$self" 2>/dev/null)" || break
   case "$_tgt" in
     /*) self="$_tgt" ;;
-    *)  self="${self%/*}/$_tgt" ;;
+    *)  case "$self" in */*) self="${self%/*}/$_tgt" ;; *) self="$_tgt" ;; esac ;;
   esac
 done
+[ -L "$self" ] && { echo "gh-shim: quá nhiều tầng symlink" >&2; exit 2; }
 case "$self" in */*) sdir="${self%/*}" ;; *) sdir="." ;; esac
 sdir="$(cd "$sdir" 2>/dev/null && pwd -L)" || { echo "gh-shim: không đọc được thư mục shim" >&2; exit 2; }
 
