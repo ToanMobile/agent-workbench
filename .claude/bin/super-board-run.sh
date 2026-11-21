@@ -2928,7 +2928,8 @@ EOF
     tdir=$(rebuild_total_dir)
     if [ "${total_capped:-0}" -eq 1 ] || [ "${total_now:-0}" -ge "$total_cap" ]; then
       if [ -n "$tdir" ] && [ -f "$tdir/$issue" ]; then
-        prior_causes=$(awk -F '\t' 'NF >= 3 {print $3}' "$tdir/$issue" 2>/dev/null | awk '!seen[$0]++' | paste -sd '; ' - | cut -c1-300)
+        # Dùng awk nối `; ` thay cho `paste -sd '; '` (BSD paste trên macOS xen kẽ `;` và dấu cách).
+        prior_causes=$(awk -F '\t' 'NF >= 3 && !seen[$3]++ {out = (out == "" ? $3 : out "; " $3)} END {print substr(out, 1, 300)}' "$tdir/$issue" 2>/dev/null)
       fi
       all_causes="${prior_causes:+${prior_causes}; }qa-fail"
       set_card_status "$item_id" "Blocked" || return 1
@@ -3238,7 +3239,7 @@ block_noop_workers() {
   local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
   local entry issue lane from c0 col count f now n item_id title wlog last tag human_line
   local whead wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait stall_why rkey
-  local ag_fail last_body new_body ag_ev new_hdr new_blocked_by
+  local ag_fail last_body new_body ag_ev new_hdr new_blocked_by rt_cj rt_now rt_dir
   NOOP_CHECK=""
   for entry in $pending; do
     wlog=""
@@ -3289,10 +3290,22 @@ EOF
         gh_checkpoint
         if [ -n "${REVIEW_BOUNCE_KEY:-}" ]; then
           swept_add "$REVIEW_BOUNCE_KEY"
+          # Ghi nhận lượt bounce vào sổ rebuild-total và gắn marker để cộng dồn đúng với qa-fail / merge-queue (#1400 R8).
+          rt_cj=$(cap_progress_comments "$issue" 2>/dev/null) || rt_cj="[]"
+          rt_now=0
+          read -r rt_now _ <<EOF
+$(card_rebuild_total "$issue" 0 "${REBUILD_CAP:-2}" "$rt_cj")
+EOF
+          rt_dir=$(rebuild_total_dir)
+          if [ -n "$rt_dir" ]; then
+            mkdir -p "$rt_dir" 2>/dev/null || true
+            printf '%s\treview\trvbounce\n' "$(date +%s)" >> "$rt_dir/$issue" 2>/dev/null || true
+          fi
           gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · the reviewer's finding is a code fix, not a person's decision
 Did: the newest [reviewer] report ended with \`blocked-by: -\` but names a concrete finding (❌ with file:line) and no closed-list reason (money, auth, destructive schema, device, secret, needs-you). The card's own AC answers the scope question.
 ✅ Done: card moved Review → Ready (bounce $(( $(grep -c "^${issue}:rvbounce:" "$(sweep_ledger)" 2>/dev/null || true) ))/${SB_REVIEW_BOUNCE_MAX:-3} for this card)
 Next: builder fixes the reviewer's ❌ finding on the PR, QA, then Review
+<!-- sb-rebuild-total: $(( ${rt_now:-0} + 1 )) -->
 blocked-by: agent" >/dev/null 2>&1 || true
           REVIEW_BOUNCE_KEY=""
         fi
@@ -4033,6 +4046,10 @@ rebuild_total_dir() {
   if [ -n "${INFLIGHT_DIR:-}" ] && [ "$INFLIGHT_DIR" != ".claude/super-board/inflight" ]; then
     [ "$INFLIGHT_DIR" = "/dev/null" ] && return 0
     printf '%s/rebuild-total' "$INFLIGHT_DIR"
+    return 0
+  fi
+  # Trong chế độ kiểm thử SB_LIB_ONLY=1 chưa chỉ định thư mục riêng, trả rỗng để tránh ghi nhầm vào .git/super-board/rebuild-total thật.
+  if [ "${_SB_LIB_ONLY_MODE:-0}" = "1" ]; then
     return 0
   fi
   local common=""
