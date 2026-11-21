@@ -186,6 +186,11 @@ elif a[:1] == ['api'] and '/timeline' in a[1]:
     n = a[1].split('/issues/')[1].split('/')[0]
     ev = [{'event': 'labeled', 'label': {'name': l}, 'created_at': t} for l, t in S['prs'][n].get('labeled', {}).items()]
     emit([ev] if '--slurp' in a else ev)
+elif a[:1] == ['api'] and '/issues/' in a[1] and '/comments?' in a[1]:
+    # issue_last_comment của runner (#1393): per_page=1&page=K → mảng chứa đúng comment thứ K (#1408).
+    k = a[1].split('/issues/')[1].split('/')[0]
+    page = int(dict(p.split('=', 1) for p in a[1].split('?', 1)[1].split('&')).get('page', '1'))
+    emit(S['issues'][k]['comments'][page - 1:page])
 elif a[:1] == ['api'] and '/issues/' in a[1] and a[1].rstrip('/').split('/')[-1].isdigit():
     k = a[1].rstrip('/').split('/')[-1]
     emit({'number': int(k), 'comments': len(S['issues'][k]['comments'])})
