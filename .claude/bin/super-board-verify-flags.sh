@@ -175,7 +175,7 @@ sb_merge_guard_rerun() {
       && python3 "$here/super-board-heavy-slot.py" -- bash -c "$cmd" ) 8>&-
 }
 
-# sb_scratch_agents <dir>...: gom tập agent từ các marker hiện diện ở checkout chính / scratch
+# sb_scratch_agents <dir>...: gom tập agent từ các marker hiện diện ở các thư mục truyền vào (bên gọi chỉ truyền scratch, review #1410 R1)
 # (khớp AGENT_MARKERS của worktree.py: claude, codex, gemini, cursor, antigravity), mặc định "claude".
 sb_scratch_agents() {
   local dir ags="" has_claude=0 has_codex=0 has_gemini=0 has_cursor=0 has_ag=0
@@ -196,7 +196,9 @@ sb_scratch_agents() {
 }
 
 # sb_install_scratch_devkit <repo_path> <main_wt> <scratch> <log_file>:
-# Hàm dùng chung cho merge gate và merge train: cài DevKit vào scratch với đúng tập agent như checkout chính / scratch,
+# Hàm dùng chung cho merge gate và merge train: cài DevKit vào scratch với tập agent của CHÍNH cây scratch (marker git đã checkout ở đó),
+# không lấy theo checkout chính (review #1410 R1: marker cục bộ bị ignore ở checkout chính, vd. .gemini/settings.json, làm scratch nhận
+# .gemini/settings.json — bị ignore nên ở lại — còn .agents/hooks.json — không ignore — bị vòng dọn xoá ⇒ agent-health fatal oan),
 # trả các file đã track về đúng commit rồi dọn các file mới chưa track do install.sh tạo (trừ .agents/devkit).
 # Đặt SB_DK_INSTALL (đường dẫn install.sh tìm thấy) và SB_DK_RC (exit code của install.sh). Trả 0 nếu có install.sh, 1 nếu không có.
 sb_install_scratch_devkit() {
@@ -212,7 +214,7 @@ sb_install_scratch_devkit() {
     return 1
   fi
   untracked_before=$(git -C "$scratch" ls-files -z --others --exclude-standard | tr '\0' '\n' | LC_ALL=C sort) || true
-  agents=$(sb_scratch_agents "${main_wt:-$repo}" "$repo" "$scratch")
+  agents=$(sb_scratch_agents "$scratch")
   bash "$SB_DK_INSTALL" -t "$scratch" -a "$agents" -y --no-githooks >"$log" 2>&1 8>&- || SB_DK_RC=$?
   git -C "$scratch" checkout -q -- . 2>/dev/null || true
   # Nhiều lượt: repo không track .gitignore thì install.sh tạo một .gitignore chưa track che .agents/context/*; xoá nó ở lượt 1 làm các file
@@ -227,21 +229,45 @@ sb_install_scratch_devkit() {
       [ -z "$f" ] || rm -f -- "$scratch/$f" || true
     done <<<"$dk_new"
   done
+  # Cầu nối Gemini bị ignore (lượt cài trước để lại) mà .agents/hooks.json không còn sau vòng dọn: gỡ nốt, kẻo agent-health thấy cầu nối
+  # Gemini thiếu .agents/hooks.json rồi fatal. File git đang track thì giữ nguyên.
+  if [ ! -e "$scratch/.agents/hooks.json" ] && [ -e "$scratch/.gemini/settings.json" ] \
+     && ! sb_scratch_tracked "$scratch" .gemini/settings.json; then
+    rm -f -- "$scratch/.gemini/settings.json" || true
+  fi
   return 0
+}
+
+# sb_scratch_tracked <scratch> <path>: 0 khi git của scratch đang track path (file do install.sh để lại, kể cả bị ignore, không tính).
+sb_scratch_tracked() { git -C "$1" ls-files --error-unmatch -- "$2" >/dev/null 2>&1; }
+SB_BRIDGE_MARKERS=".agents/hooks.json .gemini/settings.json .codex/hooks.json .cursor/hooks.json"
+# sb_scratch_bridge_missing <scratch>: 0 khi cây scratch track một marker cầu nối mà thiếu .agents/hooks/agent_bridge.sh.
+sb_scratch_bridge_missing() {
+  local m
+  [ ! -e "$1/.agents/hooks/agent_bridge.sh" ] || return 1
+  for m in $SB_BRIDGE_MARKERS; do sb_scratch_tracked "$1" "$m" && return 0; done
+  return 1
 }
 
 # sb_ensure_scratch_bridge_hooks <repo_path> <main_wt> <scratch> <log_file>:
 # Gọi sau khi scratch nhận commit mới (merge-train build_chain hoặc merge-gate merge_scratch_onto khi base dời):
 # nếu cây mới có marker cầu nối (.agents/hooks.json, .gemini/settings.json, .codex/hooks.json, .cursor/hooks.json)
 # mà thiếu .agents/hooks/agent_bridge.sh, cài bổ sung DevKit để scratch có đủ .agents/hooks/.
+# Cây mới KHÔNG track marker nào (train chia đôi sang nửa không có cầu nối, review #1410): gỡ .agents/hooks/ và marker chưa track mà lượt
+# cài của nửa trước để lại — chúng bị ignore nên `git clean -qfd` của build_chain không dọn.
 sb_ensure_scratch_bridge_hooks() {
-  local scratch="$3"
-  if { [ -e "$scratch/.agents/hooks.json" ] || [ -e "$scratch/.gemini/settings.json" ] \
-       || [ -e "$scratch/.codex/hooks.json" ] || [ -e "$scratch/.cursor/hooks.json" ]; } \
-     && [ ! -e "$scratch/.agents/hooks/agent_bridge.sh" ]; then
+  local scratch="$3" m has=0
+  SB_DK_RC=0
+  if sb_scratch_bridge_missing "$scratch"; then
     sb_install_scratch_devkit "$1" "$2" "$scratch" "$4"
     return $?
   fi
-  SB_DK_RC=0
+  for m in $SB_BRIDGE_MARKERS; do sb_scratch_tracked "$scratch" "$m" && { has=1; break; }; done
+  if [ "$has" -eq 0 ] && [ -n "$scratch" ]; then
+    for m in $SB_BRIDGE_MARKERS; do [ ! -e "$scratch/$m" ] || rm -f -- "$scratch/$m" || true; done
+    if [ -e "$scratch/.agents/hooks" ] && [ -z "$(git -C "$scratch" ls-files -- .agents/hooks 2>/dev/null)" ]; then
+      rm -rf -- "$scratch/.agents/hooks" || true
+    fi
+  fi
   return 0
 }

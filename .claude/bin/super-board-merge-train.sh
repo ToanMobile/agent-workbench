@@ -296,7 +296,7 @@ for p in "${LIST[@]}"; do
 done
 
 git_retry -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$BASE_SHA" --quiet 2>/dev/null || { say "could not create the train scratch worktree"; exit 1; }
-# Cùng cách chuẩn bị scratch như merge gate (sb_install_scratch_devkit): DevKit theo tập agent của checkout chính + config cục bộ bị ignore.
+# Cùng cách chuẩn bị scratch như merge gate (sb_install_scratch_devkit): DevKit theo tập agent của chính cây scratch + config cục bộ bị ignore.
 if sb_install_scratch_devkit "$REPO_PATH" "${MAIN_WT:-$REPO_PATH}" "$SCRATCH" "$VLOG"; then
   [ "$SB_DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed: $(tail -3 "$VLOG" | tr '\n' ' ')"
 fi
@@ -440,6 +440,7 @@ verify_set() {
   local cmd run_cmd busy_line rc try merged p emeta set_flaky=() set_guard_flaky=()
   build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]: ${CHAIN_WHY}"; return 2; }
   # Nếu PR trong đợt mới thêm cầu nối agent mà main chưa có trước lúc dựng scratch, cài bổ sung .agents/hooks/ trước khi verify.
+  # Ngược lại (chia đôi sang nửa không còn marker cầu nối nào): hàm này gỡ .agents/hooks/ bị ignore mà nửa trước để lại (review #1410).
   if sb_ensure_scratch_bridge_hooks "$REPO_PATH" "${MAIN_WT:-$REPO_PATH}" "$SCRATCH" "$VLOG"; then
     [ "$SB_DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed: $(tail -3 "$VLOG" | tr '\n' ' ')"
   fi

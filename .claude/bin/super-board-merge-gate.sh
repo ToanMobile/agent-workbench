@@ -1233,6 +1233,19 @@ if sb_install_scratch_devkit "$REPO_PATH" "${DK_MAIN:-$REPO_PATH}" "$SCRATCH" "$
 else
   say "no DevKit install.sh in ${REPO_PATH} or ${DK_MAIN:-the main checkout}: the scratch tree has no .agents/devkit"
 fi
+# rebridge_scratch: gọi ngay trước khi verify lại cây scratch vừa gộp base mới (base dời trong lúc verify). Base mới thêm cầu nối agent
+# (.agents/hooks.json…) mà scratch chưa có .agents/hooks/ thì cài bổ sung; cài xong vẫn thiếu .agents/hooks/agent_bridge.sh là lỗi môi
+# trường, không phải lỗi PR ⇒ exit 9 (verification-readiness) như khối post-fix-gate.py bên dưới, không verify rồi đỏ exit 11 (review #1410).
+rebridge_scratch() {
+  if sb_ensure_scratch_bridge_hooks "$REPO_PATH" "${DK_MAIN:-$REPO_PATH}" "$SCRATCH" "$VERIFY_LOG"; then
+    DK_INSTALL="$SB_DK_INSTALL"
+    [ "$SB_DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed (exit ${SB_DK_RC}): $(tail -3 "$VERIFY_LOG" | clip 300)"
+  fi
+  if sb_scratch_bridge_missing "$SCRATCH"; then
+    echo "verification-readiness: the scratch tree has no .agents/hooks/agent_bridge.sh after the base moved (the DevKit agent bridge could not be installed there) — an environment problem, not PR #${PR}; the card stays where it is.${DK_INSTALL:+ Install log: $(tail -3 "$VERIFY_LOG" 2>/dev/null | clip 300)}" >&2
+    exit 9
+  fi
+}
 # Config cục bộ bị git ignore (google-services.json, local.properties…) để build trong SCRATCH không đỏ vì môi trường.
 bash "$HERE/super-board-scratch-config.sh" "$REPO_PATH" "$SCRATCH" || true
 # Lệnh verify gọi post-fix-gate mà scratch không có nó: lỗi môi trường, không phải lỗi PR. Exit 11 sẽ đẩy thẻ về Build/Blocked dù PR
@@ -2069,11 +2082,8 @@ while :; do
     old_base=$BASE_SHA
     BASE_SHA=$BASE_NOW
     merge_scratch_onto "$BASE_SHA"
-    # Nếu base vừa dời thêm cầu nối agent (.agents/hooks.json…) mà main/PR trước đó chưa có, cài bổ sung .agents/hooks/ trước khi verify lại.
-    if sb_ensure_scratch_bridge_hooks "$REPO_PATH" "${DK_MAIN:-$REPO_PATH}" "$SCRATCH" "$VERIFY_LOG"; then
-      DK_INSTALL="$SB_DK_INSTALL"
-      [ "$SB_DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed (exit ${SB_DK_RC}): $(tail -3 "$VERIFY_LOG" | clip 300)"
-    fi
+    # prove_tree TRƯỚC (review #1410): cây mới đã có biên nhận thì không verify lại, không tốn một lượt install.sh. Chỉ khi sắp verify lại
+    # mới cài bổ sung cầu nối (rebridge_scratch, ngay trước verify_scratch ở hai nhánh dưới).
     prove_tree
     if [ "$TREE_PROVED" -eq 1 ] || [ "$TRAIN_PROVED" -eq 1 ]; then
       say "base moved ${old_base:0:12} -> ${BASE_SHA:0:12} during verify; merge(BASE_NOW, head) already has a receipt: not verifying again"
@@ -2081,12 +2091,14 @@ while :; do
       OPT_LEFT=$((OPT_LEFT - 1))
       drop_lock
       say "base moved ${old_base:0:12} -> ${BASE_SHA:0:12} during verify: verifying merge(BASE_NOW, head) again outside the lock (re-verifies left after this one: ${OPT_LEFT})"
+      rebridge_scratch
       verify_scratch
       continue
     else
       # #1012: AUTOSYNC trong khoá cũng verify ở đây (giữ khoá: đẩy và merge theo ngay sau verify, base không dời giữa chừng).
       if [ "$AUTOSYNC" -eq 1 ]; then say "base moved ${old_base:0:12} -> ${BASE_SHA:0:12} during verify: verifying the merge ${MERGED_SHA:0:12} inside the merge lock before syncing ${HEAD_REF}"
       else say "base moved ${old_base:0:12} -> ${BASE_SHA:0:12} again: last verify inside the merge lock (progress guaranteed)"; fi
+      rebridge_scratch
       verify_scratch
       fetch_base_now
       if [ "$BASE_NOW" != "$BASE_SHA" ]; then
