@@ -306,6 +306,7 @@ REASON_TABLE: list[tuple[str, str]] = [
     ("🔐", "missing creds"),
     ("💳", "quota / billing"),
     ("❓", "ambiguous AC"),
+    ("🔧", "devkit / tooling"),
     ("⚙",  "infra / tooling"),
 ]
 
@@ -319,7 +320,9 @@ def reason_for(body: str) -> tuple[str, str]:
 
 
 _BLOCKED_BY_LINE = re.compile(r"^[ \t]*blocked-by:(.*)$", re.I | re.M)
-_BLOCKED_BY_OK = re.compile(r"^(-|agent|[0-9]+(,[0-9]+)*)?$")  # `agent` (#529): parked by the runner, same rule as deps.sh
+_BLOCKED_BY_OK = re.compile(
+    r"^(-|agent|(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#)?[0-9]+(?:,(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#)?[0-9]+)*)?$"
+)  # `agent` (#529) và `owner/repo#N` chéo repo (#1402), cùng luật với deps.sh
 
 
 def split_unreadable_blocked_by(

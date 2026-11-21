@@ -3886,6 +3886,148 @@ EOF
   return "$moved"
 }
 
+devkit_issue_status() {
+  # Đọc trạng thái issue $2 ở repo $1 qua halt file riêng (không làm halt board hiện tại).
+  # In "<STATE> <stateReason>"; không đọc được thì trả 1.
+  local repo="$1" issue="$2" haltf out rc=0
+  haltf=$(mktemp -u "${TMPDIR:-/tmp}/sb-dk-halt.XXXXXX") || return 1
+  out=$(SB_GITHUB_HALT_FILE="$haltf" python3 "$SB_GITHUB_READ" --kind json -- issue view "$issue" --repo "$repo" --json state,stateReason 2>/dev/null) || rc=$?
+  rm -f "$haltf"
+  [ "$rc" -eq 0 ] || return 1
+  printf '%s' "$out" | jq -r '((.state // "") + " " + (.stateReason // ""))' 2>/dev/null
+}
+
+devkit_is_synced() {
+  # Kiểm tra repo hiện tại đã đồng bộ với DevKit chưa (trả 0 = đã sync, 1 = còn lệch).
+  if [ -n "${SB_DEVKIT_SYNC_CHECK:-}" ]; then
+    "$SB_DEVKIT_SYNC_CHECK" "${REPO_ROOT:-.}" >/dev/null 2>&1
+    return $?
+  fi
+  local root="${REPO_ROOT:-.}" parity="" dk_link kit_root head orig
+  if [ -f "$root/.agents/devkit/bin/parity_check.py" ]; then
+    parity="$root/.agents/devkit/bin/parity_check.py"
+  elif [ -f "$root/universal-agent-devkit/bin/parity_check.py" ]; then
+    parity="$root/universal-agent-devkit/bin/parity_check.py"
+  fi
+  if [ -n "$parity" ]; then
+    python3 "$parity" "$root" >/dev/null 2>&1 || return 1
+  fi
+  dk_link="$root/.agents/devkit"
+  if [ -L "$dk_link" ]; then
+    kit_root=$(python3 -c 'import os,sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$dk_link" 2>/dev/null || true)
+    if [ -n "$kit_root" ] && git -C "$kit_root" rev-parse -q --verify origin/main >/dev/null 2>&1; then
+      head=$(git -C "$kit_root" rev-parse -q --verify HEAD 2>/dev/null || true)
+      orig=$(git -C "$kit_root" rev-parse -q --verify origin/main 2>/dev/null || true)
+      if [ -n "$head" ] && [ -n "$orig" ] && [ "$head" != "$orig" ] \
+         && git -C "$kit_root" merge-base --is-ancestor "$head" "$orig" >/dev/null 2>&1; then
+        return 1
+      fi
+    fi
+  fi
+  return 0
+}
+
+# #1402: Thẻ Blocked vì lỗi DevKit (marker `sb-blocked-reason: devkit-incident ...`) tự trở về lane cũ (Building → Ready)
+# khi task [devkit] ở repo nguồn đã CLOSED (không phải NOT_PLANNED) VÀ repo này đã đồng bộ DevKit.
+# Trả 0 khi có ít nhất một thẻ được chuyển (caller đọc lại board), 1 khi không.
+sweep_devkit_blocked() {
+  local now cands cand_nums kept_non_dk n_old issue item_id cj blocker marker kit_repo kit_issue from_col to_col st state reason moved=1 sync_checked=0 sync_ok=0
+  now=$(date +%s)
+  [ "$now" -lt "${DEVKIT_SWEEP_NEXT:-0}" ] && return 1
+  cands=$(printf '%s' "${PROJECT_ITEMS_JSON:-}" | jq -r --arg bot "${BOT_LOGIN:-}" '
+    .items[]?
+    | select(.status == "Blocked" and (.content.type // "Issue") == "Issue")
+    | select(((.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
+    | ((.labels // []) + (.content.labels // []) | map(if type == "object" then .name else . end | ascii_downcase)) as $l
+    | select(($l | index("needs-you") | not) and ($l | index("human-gated") | not))
+    | [(.content.number | tostring), (.id // "")] | @tsv' 2>/dev/null) || return 1
+  if [ -z "$cands" ]; then
+    DEVKIT_NON_DK_CARDS=""
+    return 1
+  fi
+  cand_nums=$(printf '%s\n' "$cands" | cut -f1)
+  kept_non_dk=""
+  for n_old in ${DEVKIT_NON_DK_CARDS:-}; do
+    if printf '%s\n' "$cand_nums" | grep -qx "$n_old"; then
+      kept_non_dk="${kept_non_dk} ${n_old}"
+    fi
+  done
+  DEVKIT_NON_DK_CARDS="$kept_non_dk"
+  while IFS=$'\t' read -r issue item_id; do
+    [ -n "$issue" ] && [ -n "$item_id" ] || continue
+    issue_locked "$issue" && continue
+    case " ${DEVKIT_NON_DK_CARDS:-} " in *" ${issue} "*) continue ;; esac
+    cj=$(cap_progress_comments "$issue" 2>/dev/null) || continue
+    # Chỉ xét comment blocker mới nhất; nếu sau đó đã có comment ↩️ back to hoặc blocker mới khác không phải devkit-incident thì bỏ qua.
+    blocker=$(printf '%s' "$cj" | jq -r '
+      ([to_entries[] | select((.value.body // "") | test("^\\[(orchestrator|builder|qa|reviewer|merge-queue)\\] \\[blocker\\]|🛑 blocked|(^|\n)Move back:"))] | last) as $b
+      | if $b == null then ""
+        elif ([to_entries[] | select(.key > $b.key and ((.value.body // "") | test("^\\[orchestrator\\] \\[report\\] ↩️ back to ")))] | length) > 0 then ""
+        else ($b.value.body // "") end' 2>/dev/null) || continue
+    marker=$(printf '%s\n' "$blocker" | grep -oE '<!-- *sb-blocked-reason: *devkit-incident[^>]*-->' | tail -1 || true)
+    if [ -z "$marker" ]; then
+      DEVKIT_NON_DK_CARDS="${DEVKIT_NON_DK_CARDS:-} ${issue}"
+      continue
+    fi
+    kit_repo=$(printf '%s' "$marker" | sed -nE 's/.*repo=([^ >]+).*/\1/p')
+    kit_issue=$(printf '%s' "$marker" | sed -nE 's/.*issue=([0-9]+).*/\1/p')
+    if [ -z "$kit_repo" ] || [ -z "$kit_issue" ]; then
+      # Hỗ trợ dạng rút gọn `ToanMobile/agent-workbench#500` trong marker hoặc dòng blocked-by:
+      kit_repo=$(printf '%s\n' "$marker" "$blocker" | sed -nE 's/.*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([0-9]+).*/\1/p' | head -1)
+      kit_issue=$(printf '%s\n' "$marker" "$blocker" | sed -nE 's/.*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([0-9]+).*/\2/p' | head -1)
+    fi
+    [ -n "$kit_repo" ] && [ -n "$kit_issue" ] && [ "$kit_issue" != "0" ] || {
+      DEVKIT_NON_DK_CARDS="${DEVKIT_NON_DK_CARDS:-} ${issue}"
+      continue
+    }
+    from_col=$(printf '%s' "$marker" | sed -nE 's/.*from=([A-Za-z]+).*/\1/p')
+    if [ -z "$from_col" ]; then
+      from_col=$(printf '%s\n' "$blocker" | sed -nE 's/.*Move back:[[:space:]]*drag this card to (Ready|Building|QA|Review).*/\1/p' | tail -1)
+    fi
+    case "$from_col" in
+      Ready|QA|Review) to_col="$from_col" ;;
+      *) to_col="Ready" ;;
+    esac
+    if ! st=$(devkit_issue_status "$kit_repo" "$kit_issue"); then
+      DEVKIT_SWEEP_NEXT=$((now + ${SB_DEVKIT_SWEEP_EVERY:-120}))
+      continue
+    fi
+    state="${st%% *}"
+    reason="${st#* }"
+    [ "$reason" != "$st" ] || reason=""
+    if [ "$state" != "CLOSED" ] || [ "$reason" = "NOT_PLANNED" ]; then
+      DEVKIT_SWEEP_NEXT=$((now + ${SB_DEVKIT_SWEEP_EVERY:-120}))
+      continue
+    fi
+    if [ "$sync_checked" -eq 0 ]; then
+      sync_checked=1
+      if devkit_is_synced; then
+        sync_ok=1
+      else
+        sync_ok=0
+        DEVKIT_SWEEP_NEXT=$((now + ${SB_DEVKIT_SWEEP_EVERY:-120}))
+      fi
+    fi
+    [ "$sync_ok" -eq 1 ] || return 1
+    if ! set_card_status "$item_id" "$to_col"; then
+      gh_checkpoint
+      log "⚠ devkit sweep: could not move #${issue} from Blocked to ${to_col} — retrying next tick"
+      continue
+    fi
+    rm -f "$INFLIGHT_DIR/noops/$issue" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" "$INFLIGHT_DIR/early-deaths/$issue" 2>/dev/null || true
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to ${to_col} · lỗi DevKit đã sửa và đồng bộ
+Did: ${kit_repo}#${kit_issue} đã đóng và kit của repo đã đồng bộ
+✅ Done: chuyển #${issue} từ Blocked về ${to_col}
+Next: lane tiếp tục xử lý thẻ" >/dev/null 2>&1 || true
+    log "↩ devkit sweep: #${issue} Blocked → ${to_col} (${kit_repo}#${kit_issue} closed + synced)"
+    moved=0
+  done <<EOF
+$cands
+EOF
+  return "$moved"
+}
+
 cap_progress_comments() {
   local haltf out rc=0
   haltf=$(mktemp -u "${TMPDIR:-/tmp}/sb-cap-halt.XXXXXX") || return 1
@@ -4985,6 +5127,7 @@ while true; do
   if sweep_file_wait; then tick_fetch || continue; fi      # #556
   if maybe_sweep_blocked; then tick_fetch || continue; fi
   if sweep_antigravity_blocked; then tick_fetch || continue; fi
+  if sweep_devkit_blocked; then tick_fetch || continue; fi
   # #363: ≥2 thẻ Blocked cùng suite id trong N giờ → một thẻ + ngưng giao Builder (suite_fuse_tick).
   if suite_fuse_tick; then tick_fetch || continue; fi
 
