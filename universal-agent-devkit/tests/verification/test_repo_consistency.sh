@@ -187,7 +187,7 @@ _sync_path = os.path.join(ROOT, "scripts/governance/sync_commands.sh")
 if not os.path.isfile(_sync_path):
     _sync_path = os.path.join(ROOT, "scripts/sync_commands.sh")
 sync = open(_sync_path, encoding="utf-8").read()
-alias_missing = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', sync, re.M)
+alias_missing = [a for a in re.findall(r'^\s*"([A-Za-z0-9-]+):[A-Za-z0-9-]+"\s*$', sync, re.M)
                  if not os.path.exists(os.path.join(ROOT, "commands", a + ".md"))]
 check(not alias_missing, "R5 every alias in sync_commands.sh has commands/<alias>.md", ", ".join(alias_missing))
 
@@ -201,7 +201,7 @@ check(not gone and "DEPRECATED_ALIASES" not in sync,
 
 # An alias is a link to its skill: a hand-written file under the alias name drifts from the skill and
 # lists a second entry (commands/sandbox.md, 2026-10-25: hard-coded universal-agent-devkit/ paths).
-shadowed = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', sync, re.M)
+shadowed = [a for a in re.findall(r'^\s*"([A-Za-z0-9-]+):[A-Za-z0-9-]+"\s*$', sync, re.M)
             if os.path.lexists(os.path.join(ROOT, "commands", a + ".md"))
             and not os.path.islink(os.path.join(ROOT, "commands", a + ".md"))]
 check(not shadowed, "R5 every alias in sync_commands.sh is a link, not a hand-written file", ", ".join(shadowed))

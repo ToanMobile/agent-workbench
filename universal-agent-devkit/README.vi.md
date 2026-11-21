@@ -338,7 +338,7 @@ Mỗi profile gồm `profile.json`, `rules/<id>-rules.md`, `regression_matrix.js
 | android, automotive | — (đủ catalog) |
 | game | `android-real-device-qa`, `compose-recomp-audit`, `deploy`, `impeccable`, `taste-mobile-app` |
 | ios, universal, web | `android-real-device-qa`, `compose-recomp-audit`, `deploy`, `unity-gc-audit` |
-| backend | như web + `qa-visual`, `impeccable` |
+| backend | như web + `qa-visual`, `impeccable`, `ui-ux-pro-max` |
 | voice-assistant | `compose-recomp-audit`, `unity-gc-audit` |
 
 `agent-kit init -y` chọn profile theo domain phát hiện được: Android → `android`, iOS → `ios`, web → `web`, backend → `backend`, còn lại → `universal`.

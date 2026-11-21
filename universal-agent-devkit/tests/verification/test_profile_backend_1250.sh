@@ -103,7 +103,7 @@ bad += [(k, n + " (excluded)") for k, n in named if (k == "skill" and n in j["ex
         (k == "agent" and n in j["exclude_agents"]) or (k == "council" and n + ".md" not in j["active_councils"])]
 need("07-performance-anr" in {n for _k, n in named}, "council 07 not named in section 14")
 missing = sorted({"observability-instrumentation", "security-checklist", "tdd-workflow", "qc", "verification-before-completion",
-                  "deep-module-design", "ui-ux-pro-max", "database-reliability-auditor", "security-penetration-auditor",
+                  "deep-module-design", "database-reliability-auditor", "security-penetration-auditor",
                   "test-architect-seti", "principal-code-reviewer", "07-performance-anr"} - {n for _k, n in named})
 need(not bad and not missing, "toolset names: bad=%s not named=%s" % (bad, missing))
 

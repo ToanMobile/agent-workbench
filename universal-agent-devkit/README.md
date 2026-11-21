@@ -339,7 +339,7 @@ Each profile holds `profile.json`, `rules/<id>-rules.md`, `regression_matrix.jso
 | android, automotive | — (full catalog) |
 | game | `android-real-device-qa`, `compose-recomp-audit`, `deploy`, `impeccable`, `taste-mobile-app` |
 | ios, universal, web | `android-real-device-qa`, `compose-recomp-audit`, `deploy`, `unity-gc-audit` |
-| backend | same as web + `qa-visual`, `impeccable` |
+| backend | same as web + `qa-visual`, `impeccable`, `ui-ux-pro-max` |
 | voice-assistant | `compose-recomp-audit`, `unity-gc-audit` |
 
 `agent-kit init -y` picks the profile from the detected domain: Android → `android`, iOS → `ios`, web → `web`, backend → `backend`, anything else → `universal`.

@@ -27,6 +27,7 @@ for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
     if _sub_path not in sys.path:
         sys.path.insert(0, _sub_path)
 from devkit_i18n import resolve_lang, set_lang, tr  # noqa: E402
+from relink_check import command_skill  # noqa: E402  (one rule for install, relink and health)
 
 # Fix Unicode on Windows consoles if needed
 if hasattr(sys.stdout, "reconfigure"):
@@ -523,7 +524,7 @@ def project_wiring(target: Path, score: Score):
     excluded = set((prof or {}).get("exclude_skills", []))
     gone = []
     for c in sorted((BASE_DIR / "commands").glob("*.md")):
-        skill = os.path.basename(os.path.dirname(os.path.realpath(c))) if c.is_symlink() else None
+        skill = command_skill(str(c))  # a link's skill, or a hand-written command's frontmatter `skill:` line
         if skill not in excluded and not os.path.lexists(target / ".claude" / "commands" / c.name):
             gone.append(f".claude/commands/{c.name}")
     for sk in sorted(p for p in (BASE_DIR / "skills").iterdir() if (p / "SKILL.md").is_file()):

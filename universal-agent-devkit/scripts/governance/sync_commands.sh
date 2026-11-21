@@ -58,6 +58,8 @@ ALIASES=(
   "review-code:open-code-review"
   "check:qc"
   "done:verification-before-completion"
+  # /createTask = the create-task skill (one listing row; both names still typed)
+  "createTask:create-task"
 )
 
 # The 1.1.0 renames kept one release as redirect stubs (/review /qa /test /bugs /crashlytics) and are
