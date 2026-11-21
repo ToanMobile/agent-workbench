@@ -25,13 +25,43 @@ set -u
 
 [ "${SESSION_CONTEXT:-1}" = "0" ] && exit 0
 
-# (#867) shim adb: đưa shims/ lên đầu PATH của mọi lệnh Bash trong phiên (Claude Code nạp $CLAUDE_ENV_FILE trước mỗi lệnh).
-# Lớp bổ sung cho hardware_safety_gate: kiểm thiết bị lúc adb chạy, không đọc chuỗi lệnh. Tắt: ADB_SHIM=0. Một dòng cho mỗi shims/.
-if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ "${ADB_SHIM:-1}" != "0" ]; then
+# (#867, #1392) đưa shims/ lên đầu PATH của mọi lệnh Bash trong phiên (Claude Code nạp $CLAUDE_ENV_FILE trước mỗi lệnh).
+# Lớp bổ sung cho hardware_safety_gate (`adb`) và cảnh báo sai board (`gh`). Tắt riêng: ADB_SHIM=0 hoặc GH_SHIM=0.
+if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+  _shim_env_add() {
+    local _dir="$1" _name="$2" _base _sum _iso _ok
+    _base="${TMPDIR:-${XDG_CACHE_HOME:-${HOME:+${HOME%/}/.cache}}}"
+    _base="${_base%/}"
+    case "$_base" in /*) ;; *) return 1 ;; esac
+    [ -d "$_base" ] || mkdir -m 700 "$_base" 2>/dev/null || true
+    _sum="$(printf '%s' "$_dir" | cksum | awk '{print $1}')"
+    _iso="${_base}/devkit-${_name}-shim-$(id -u)-${_sum}"
+    [ -d "$_iso" ] || mkdir -m 700 "$_iso" 2>/dev/null || true
+    _ok="$(find "$_iso" -prune -type d -user "$(id -u)" ! -perm -020 ! -perm -002 -print 2>/dev/null)"
+    [ -n "$_ok" ] || return 1
+    ln -sf "$_dir/$_name" "$_iso/$_name" 2>/dev/null && {
+      grep -qsF -- "$_iso" "$CLAUDE_ENV_FILE" 2>/dev/null || printf 'export PATH="%s:$PATH"\n' "$_iso" >> "$CLAUDE_ENV_FILE"
+    }
+  }
   _sr="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
   for _sd in "$_sr/.agents/devkit/shims" "$_sr/shims"; do
-    if [ -x "$_sd/adb" ]; then
-      grep -qsF "$_sd" "$CLAUDE_ENV_FILE" 2>/dev/null || printf 'export PATH="%s:$PATH"\n' "$_sd" >> "$CLAUDE_ENV_FILE"
+    _has_adb=0; [ "${ADB_SHIM:-1}" != "0" ] && [ -x "$_sd/adb" ] && _has_adb=1
+    _has_gh=0; [ "${GH_SHIM:-1}" != "0" ] && [ -x "$_sd/gh" ] && _has_gh=1
+    if [ "$_has_adb" = 1 ]; then
+      if [ "$_has_gh" = 1 ] || [ ! -e "$_sd/gh" ]; then
+        grep -qsF "$_sd" "$CLAUDE_ENV_FILE" 2>/dev/null || printf 'export PATH="%s:$PATH"\n' "$_sd" >> "$CLAUDE_ENV_FILE"
+      else
+        # GH_SHIM=0 nhưng vẫn giữ shims/adb: tạo thư mục riêng chỉ chứa symlink adb để không đưa shims/gh lên PATH.
+        _shim_env_add "$_sd" adb
+      fi
+      break
+    elif [ "$_has_gh" = 1 ]; then
+      if [ ! -e "$_sd/adb" ]; then
+        grep -qsF "$_sd" "$CLAUDE_ENV_FILE" 2>/dev/null || printf 'export PATH="%s:$PATH"\n' "$_sd" >> "$CLAUDE_ENV_FILE"
+      else
+        # ADB_SHIM=0 nhưng vẫn giữ shims/gh: tạo thư mục riêng chỉ chứa symlink gh để không đưa shims/adb lên PATH.
+        _shim_env_add "$_sd" gh
+      fi
       break
     fi
   done
@@ -114,6 +144,7 @@ HARNESS_PY="$(dirname "${SELF}")/devkit_harness.py"
 # a cut payload is not JSON, so the python block falls back to the old behaviour (fetch).
 REPO_ROOT="${REPO_ROOT}" INDEXER="${INDEXER}" HOOK_FILE="${HOOK_FILE}" GATE_HOOK="${GATE_HOOK}" WT_SCRIPT="${WT_SCRIPT}" SESSION_START_INPUT="${INPUT:0:16384}" python3 -I - <<'PY' 2>/dev/null
 import json, os, re, signal, subprocess, sys, time
+sys.dont_write_bytecode = True   # python3 -I bỏ qua PYTHONDONTWRITEBYTECODE: không ghi __pycache__ vào cây kit (#813, #1392)
 
 root = os.environ["REPO_ROOT"]
 out = []
@@ -145,6 +176,19 @@ try:
 except (OSError, ValueError, AttributeError):
     pass
 out.append(f"[DevKit] Phiên mới — profile: {prof}. DevKit là core; bộ riêng của dự án ở .agents/local/.")
+try:
+    _gov = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(os.environ.get("GATE_HOOK") or "."))), "scripts", "governance")
+    if os.path.isdir(_gov):
+        sys.path.insert(0, _gov)
+        sys.dont_write_bytecode = True
+        import repo_board as _rb
+        _b = _rb.resolve_board(root)
+        if _b:
+            _note = " (chỉ việc của kit)" if _b["is_kit"] else ""
+            out.append(f"Board của repo này: {_b['owner']}/projects/{_b['number']} ({_b['title']}){_note} — "
+                       f"kiểm tra bằng `python3 .claude/bin/super-board-status.py` hoặc `gh project item-list {_b['number']} --owner {_b['owner']}`.")
+except Exception:
+    pass
 
 # Failure memory map
 inst = os.path.join(root, ".agents", "instincts.md")

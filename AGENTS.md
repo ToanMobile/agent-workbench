@@ -10,6 +10,8 @@ Loaded at every session start. Claude Code and Gemini CLI expand the `@` lines. 
 A device serial in `.adb-denylist`, or forbidden by a project rule, is never captured.
 
 <!-- devkit-essentials:start — generated from the DevKit's rules/essentials.md by scripts/context_sync.py; do not edit -->
+> Board của repo này: ToanMobile/projects/1 (Agent Workbench) — board #1 chỉ chứa việc của kit (`agent-workbench`), không dùng cho 5 repo app.
+
 # DevKit Essentials — always loaded
 
 Loaded in every session; paths are relative to the project root, `.agents/devkit/` is the DevKit.

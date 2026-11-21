@@ -1,15 +1,15 @@
 ---
 name: create-task
-description: "Tạo task chuẩn Super-Board lên cột Backlog của GitHub Project #1. Kích hoạt khi gõ /createTask, /create-task, hoặc khi người dùng yêu cầu 'tạo task', 'đẩy lên backlog'."
+description: "Tạo task chuẩn Super-Board lên cột Backlog của GitHub Project board của repo hiện tại (đọc qua agent-kit board). Kích hoạt khi gõ /createTask, /create-task, hoặc khi người dùng yêu cầu 'tạo task', 'đẩy lên backlog'."
 ---
 
 # Create Task & Push to Backlog (Super-Board)
 
-Skill này giúp tự động hóa việc khởi tạo task theo đúng quy chuẩn **Super-Board** ([`docs/agents/issue-tracker.md`](file:///Volumes/Data/Toan/agent-workbench/docs/agents/issue-tracker.md)) và đẩy trực tiếp lên cột **Backlog** của [GitHub Project #1](https://github.com/users/ToanMobile/projects/1/views/2).
+Skill này giúp tự động hóa việc khởi tạo task theo đúng quy chuẩn **Super-Board** ([`docs/agents/issue-tracker.md`](file:///Volumes/Data/Toan/agent-workbench/docs/agents/issue-tracker.md)) và đẩy trực tiếp lên cột **Backlog** của GitHub Project board của repo hiện tại (tra bằng `agent-kit board`).
 
 ## Phạm vi
 
-Tự động tạo task chuẩn Super-Board (Problem, Context, Fix, AC, Risk) và đẩy trực tiếp lên cột Backlog của GitHub Project Board #1 (https://github.com/users/ToanMobile/projects/1/views/2).
+Tự động tạo task chuẩn Super-Board (Problem, Context, Fix, AC, Risk) và đẩy trực tiếp lên cột Backlog của GitHub Project board cấu hình trong `.claude/super-board/configs/*.json` của repo hiện tại (`agent-kit board --field url`).
 
 ---
 
@@ -169,5 +169,4 @@ python3 docs/super-board/push-to-github-board.py --apply --ticket 1..5
 
 ## 📋 Sau Khi Tạo Thành Công
 1. Trả về link GitHub Issue vừa tạo.
-2. Xác nhận card đã nằm trên cột **Backlog** tại:
-   👉 [https://github.com/users/ToanMobile/projects/1/views/2](https://github.com/users/ToanMobile/projects/1/views/2)
+2. Xác nhận card đã nằm trên cột **Backlog** tại URL board của repo (in ra bởi script hoặc chạy `agent-kit board --field url`).
