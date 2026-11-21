@@ -148,3 +148,55 @@ handoff complete. Add file summaries and critical inline notes on the PR, not in
 ### 5. Final report
 
 When the selected GitHub Project `Ready` queue is empty, or only blocked cards remain: report a summary listing PRs opened this run (cards in `QA`), issues not built (`needs-you` / `loop:halted` / blocked dependencies), and any halts. Suggest: "Run `super-board run` to test, review and merge them."
+
+## Standalone reference (moved from SKILL.md, #1420)
+
+**Curation contract:** the human moves cards into `Ready` when they should be worked. The loop never reads `Backlog`, `In Progress`, or `Done` cards. If `Ready` is empty, the loop reports "queue empty" and exits cleanly — no error.
+
+**This skill is single-purpose: EXECUTE curated GitHub Project `Ready` issues.** It is INDEPENDENT of `/super-qa` / **Super QA** (the autonomous bug-bash loop that hardens shipped code). They share no state unless a `super-board run` sequences them through the board. Run **Super Build** to make forward progress on the issue queue; run **Super QA** to bug-bash the existing codebase. They CAN run concurrently in different orchestrator sessions, but expect merge conflicts if both touch the same files.
+
+## Issue contract
+
+Every Ready issue should be executable without live clarification. Preferred issue body shape:
+
+```markdown
+## Goal
+<one-sentence outcome>
+
+## Acceptance Criteria
+- [ ] <observable behavior or artifact>
+- [ ] <test/verification expectation>
+
+## Notes / Constraints
+- Depends on: #123, #456
+- Skills: mattpocock-skills:tdd, verification-before-completion
+- Human gates: <deploy, destructive DB action, product decision, etc.>
+```
+
+## Recovery / re-entry
+
+If the user invokes `/super-build` after a partial run:
+- Re-read `gh issue list`. Issues already closed are skipped automatically.
+- If legacy `.worktrees/issue-N` exists, stop and inspect it before dispatch. Preserve edits and use `git worktree move` to the matching `.claude/worktrees/issue-N` path; never delete the old folder to make a fresh dispatch fit.
+- If `.claude/worktrees/issue-N` exists for an N that's still open: a previous worker was interrupted. Default: notify the user and ask before auto-resuming (a re-dispatch overwrites the previous attempt's branch).
+- If the `loop:in-progress` label is set on issue N but no worktree exists: stale lock from a crashed orchestrator. Remove the label and treat as ready.
+
+## Stop conditions
+
+- Selected GitHub Project `Ready` queue is empty, or all remaining Ready cards are blocked / `needs-you` / `loop:halted`.
+- Any worker fails (dispatcher exit 2 or 3).
+- HUMAN GATE TRIPPED (dispatcher exit 4).
+- Push or PR creation fails.
+- User interrupts.
+
+**Not a stop condition:** WIP-PARTIAL (dispatcher exit 5). The orchestrator opens a partial PR, leaves the issue open with `needs-you`, and continues dispatching the next issue in the wave. WIP-PARTIAL is intentional, bounded work.
+
+## Invocation patterns
+
+- `Super Build` / `/super-build` → process all GitHub Project `Ready` issues in board order
+- `/super-build --only N` → execute only issue #N (smoke-test mode, ignores `loop:in-progress` label on that issue if you set `FORCE=1`)
+- `/super-build --dry-run` → print the dispatch plan (issues, order, parallelism waves) without invoking workers, without setting labels, without commenting
+
+## Companion skill
+
+`/super-qa` / **Super QA** is the autonomous bug-bash iteration loop. It is **independent of this skill** unless a `super-board run` sequences them through the board. Run **Super Build** for forward progress on Ready issues; run **Super QA** to harden the existing codebase by hunting bugs.

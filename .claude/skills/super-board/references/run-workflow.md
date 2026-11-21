@@ -5,8 +5,8 @@ The DEFAULT backend (v1.6.0+): used when the active config sets
 (`.claude/bin/super-board-run.sh`, see `run.md`) runs only on explicit
 `"worker_backend": "claude-p"`; this file ONLY changes who dispatches
 workers. Lane lifecycles, branch/PR model, comment cadence, Block
-templates, halt gates, and done conditions are all inherited from `run.md`
-unchanged.
+templates and halt gates are inherited from `run.md`, done conditions from
+`run-orchestrator.md`, unchanged.
 
 ## Codex runs
 
@@ -84,7 +84,7 @@ The interactive session that runs this backend is the orchestrator. It:
 
 ## Preconditions (before the first wave)
 
-Run the same preconditions as `run.md` §Preconditions, minus PID checks:
+Run the same preconditions as `run-orchestrator.md` §Preconditions, minus PID checks:
 1. Config exists and validates against `config-schema.json`. Run
    `python3 .claude/bin/super-board-verification-ready.py --config <config>`; exit 9
    stops before dispatch until the owning project's verification commands are configured.
@@ -92,7 +92,7 @@ Run the same preconditions as `run.md` §Preconditions, minus PID checks:
 2. Production-merge guard: refuse `base_branch: main` + `human_approves_merge:
    false` when deploy markers exist (same rule as super-board-run.sh).
 3. Worktree check: if legacy `.worktrees/issue-*` exists, halt for inspection/move
-   as described in run.md. Scan only board worktrees under `.claude/worktrees/`;
+   as described in run-orchestrator.md → Preconditions. Scan only board worktrees under `.claude/worktrees/`;
    when their named branch is gone use `agent-kit worktree remove` (never `--force`). Preserve
    detached, dirty, locked, unregistered, and unrelated folders.
 4. For Claude waves, `node --check` passes on a wrapped copy of
@@ -135,7 +135,7 @@ Run the same preconditions as `run.md` §Preconditions, minus PID checks:
 Repeat until a done condition or halt gate fires:
 
 1. **Rate guard** — `sb_gh_guard_check 200` (super-board-gh-guard.sh; `gh api rate_limit` misreports GraphQL); if GraphQL remaining < 200, wait for
-   reset (same thresholds as run.md). A failing `gh` call outranks the reading:
+   reset (same thresholds as run-orchestrator.md → Preconditions). A failing `gh` call outranks the reading:
    right after a reset the REST reading has shown 4999 while calls still failed.
    With GraphQL dry, the orchestrator's own writes go over REST, a separate
    quota: `gh api repos/<o>/<r>/issues/<n>/comments -f body=…` for a comment,
