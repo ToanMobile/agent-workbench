@@ -1,0 +1,17 @@
+# Bằng chứng QA · #1397 / PR #1407 (v3)
+
+- **Head kiểm thử:** `3bf1c6caaa2b77d41bc35c8469a09212582fca68` (đã đối chiếu `origin/main` `1c256ac2`: already up to date)
+- **Ảnh chụp màn hình:** bỏ qua có chủ đích (issue backend/runner không có UI)
+- **Kiểm thử mục tiêu & liên đới (10/10 bộ PASS, exit 0):**
+  - `bash tests/super-board/test_runner_review_wait_agent_1399.sh`: PASS (14/14, đã gồm E/R3)
+  - `bash tests/super-board/test_merge_queue_rebuild_total_cap_1400.sh`: PASS (7/7, đã gồm A2 đủ 3 vòng, C1–C2/R1, D1–D4/R2)
+  - `bash tests/super-board/test_runner_remove_assignee_no_halt_1397.sh`: PASS (9/9)
+  - `bash tests/super-board/test_merge_queue.sh`: PASS (115/115)
+  - `bash tests/super-board/test_merge_queue_root_cause_cap.sh`: PASS (6/6)
+  - `bash tests/super-board/test_merge_queue_rebase_not_capped_1319.sh`: PASS (7/7)
+  - `bash tests/super-board/test_runner_cap_progress_sweep_1342.sh`: PASS (11/11)
+  - `bash tests/super-board/test_runner_review_antigravity_1390.sh`: PASS (30/30)
+  - `bash tests/super-board/test_runner_review_antigravity_1390_qa_gaps.sh`: PASS (3/3)
+  - `bash tests/super-board/test_issue671_review_wait_not_noop.sh`: PASS (20/20)
+- **Kiểm tra bảo mật (`pr-security-review`):** 0 findings (đã kiểm `eval` + `python3 -I` + `shlex.quote`, đường dẫn theo `$issue`/`$k`, và lời gọi `gh_write_once`/`gh_w`/`awk`/`jq`)
+- **Rà Test-gap:** 0 High gaps (8/11 AC có oracle PASS; 3 AC hậu đồng bộ giữ `ac-open`: AC3, AC8, AC11)
