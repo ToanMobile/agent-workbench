@@ -36,6 +36,7 @@ set -euo pipefail
 RUNNER_BORN=$(date +%s)
 SB_WORKER_WRAP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-worker-wrap.sh"
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
+_SB_DEFAULT_GITHUB_READ="$SB_GITHUB_READ"
 SB_APPROVED_HEAD_JQ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-approved-head.jq"   # #605: chung với merge-queue
 SB_AUDIT_CHECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-audit-check.py"          # #605: task_id ↔ biên bản audit
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
@@ -152,6 +153,7 @@ fi
 # ───────────────────────────── args + paths ─────────────────────────────
 # SB_LIB_ONLY=1 sources this file for its helpers only (gate tests). Config discovery,
 # preconditions and the run loop are all skipped; the caller supplies whatever vars it needs.
+_SB_LIB_ONLY_MODE="${SB_LIB_ONLY:-0}"
 CONFIG_SLUG="${1:-}"
 if [ "${SB_LIB_ONLY:-0}" = "1" ]; then
   CONFIG_SLUG="${CONFIG_SLUG:-lib}"
@@ -216,6 +218,9 @@ PROJECT_NUMBER=$(jq -r '.project.number' "$CONFIG_PATH")
 BASE_BRANCH=$(jq -r '.base_branch // "main"' "$CONFIG_PATH")
 HUMAN_APPROVES=$(jq -r '.human_approves_merge // false' "$CONFIG_PATH")
 REBUILD_CAP=$(jq -r '.rebuild_cap // 2' "$CONFIG_PATH")
+case "${REBUILD_CAP:-}" in ''|*[!0-9]*|0) REBUILD_CAP=2 ;; esac
+REBUILD_TOTAL_CAP=$(jq -r '.rebuild_total_cap // empty' "$CONFIG_PATH" 2>/dev/null || true)
+case "${REBUILD_TOTAL_CAP:-}" in ''|*[!0-9]*|0) REBUILD_TOTAL_CAP=$((REBUILD_CAP + 1)) ;; esac
 BLOCK_ALERT_PCT=$(jq -r '.block_rate_alert_pct // 30' "$CONFIG_PATH")
 TICK_SECONDS=$(jq -r '.tick_seconds // 120' "$CONFIG_PATH")
 # Bản số cho phép tính: tick_seconds sai (chữ) trong $((…)) làm runner chết dưới set -u ("abc: unbound variable", từ #229)
@@ -914,11 +919,11 @@ Next: Eric — merge this card into ${dup}, or cut the overlap from its Fix" >/d
 }
 
 review_wait_cooldown() {
-  # $1 = issue. 0 = lượt review gần nhất của thẻ kết thúc sạch khi đang chờ một điều kiện (#671) chưa quá SB_REVIEW_WAIT_S (900) giây: chưa cho reviewer mới.
-  # Sổ review-wait/<issue> mỗi lượt chờ một dòng (epoch); mốc nghỉ là dòng cuối.
+  # $1 = issue. 0 = lượt review gần nhất của thẻ kết thúc sạch khi đang chờ một điều kiện (#671/#1399) chưa quá SB_REVIEW_WAIT_S (900) giây: chưa cho reviewer mới.
+  # Sổ review-wait/<issue> mỗi lượt chờ một dòng (`<epoch> [<head> <reason_key>]`); mốc nghỉ là cột đầu của dòng cuối.
   local f="$INFLIGHT_DIR/review-wait/$1" t
   [ -f "$f" ] || return 1
-  t=$(tail -n 1 "$f" 2>/dev/null | tr -dc '0-9')
+  t=$(tail -n 1 "$f" 2>/dev/null | awk '{print $1}' | tr -dc '0-9')
   [ -n "$t" ] && [ $(( $(date +%s) - t )) -lt "${SB_REVIEW_WAIT_S:-900}" ]
 }
 
@@ -2912,6 +2917,36 @@ qa_apply_report() {
   else
     labs=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)][]' 2>/dev/null || true)
     cur=$(printf '%s\n' "$labs" | sed -nE 's/^loop:rebuild-([0-9]+)$/\1/p' | sort -n | tail -1); cur=${cur:-0}
+    local tdir total_cap total_now=0 total_capped=0 cj="[]" prior_causes="" all_causes=""
+    total_cap="${SB_REBUILD_TOTAL_MAX:-}"
+    case "$total_cap" in ''|*[!0-9]*|0) total_cap="${REBUILD_TOTAL_CAP:-}" ;; esac
+    case "$total_cap" in ''|*[!0-9]*|0) total_cap=$(( ${REBUILD_CAP:-2} + 1 )) ;; esac
+    cj=$(cap_progress_comments "$issue" 2>/dev/null) || cj="[]"
+    read -r total_now total_capped <<EOF
+$(card_rebuild_total "$issue" "$cur" "${REBUILD_CAP:-2}" "$cj")
+EOF
+    tdir=$(rebuild_total_dir)
+    if [ "${total_capped:-0}" -eq 1 ] || [ "${total_now:-0}" -ge "$total_cap" ]; then
+      if [ -n "$tdir" ] && [ -f "$tdir/$issue" ]; then
+        # Dùng awk nối `; ` thay cho `paste -sd '; '` (BSD paste trên macOS xen kẽ `;` và dấu cách).
+        prior_causes=$(awk -F '\t' 'NF >= 3 && !seen[$3]++ {out = (out == "" ? $3 : out "; " $3)} END {print substr(out, 1, 300)}' "$tdir/$issue" 2>/dev/null)
+      fi
+      all_causes="${prior_causes:+${prior_causes}; }qa-fail"
+      set_card_status "$item_id" "Blocked" || return 1
+      sweep_remove_assignee "$issue" || true
+      gh_checkpoint
+      gh_write_once issue comment "$issue" --body "[qa] [blocker] 🛑 blocked · 🛡 total rebuild cap ${total_cap} reached (${total_now} rounds across all causes; latest: QA fail)
+Card:        #${issue}
+Reason tag:  🛡
+Why blocked: total rebuild cap ${total_cap} reached (${total_now} rounds across all causes; latest: QA fail)
+Evidence:    rounds=${total_now}/${total_cap}; causes: ${all_causes}
+<!-- sb-rebuild-total-capped -->
+<!-- sb-rebuild-total: ${total_now} -->
+To unblock:  [ ] a person reviews all ${total_now} rebuild rounds and their causes, then drags the card to Ready
+blocked-by:  -" >/dev/null 2>&1 || true
+      log "🛑 #${issue} QA → Blocked: total rebuild cap ${total_now}/${total_cap} reached"
+      return 0
+    fi
     [ "$cur" -lt "${REBUILD_CAP:-2}" ] || return 1
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
     gh_checkpoint
@@ -2925,6 +2960,10 @@ qa_apply_report() {
       gh_write_once issue edit "$issue" --remove-label "loop:rebuild-$((cur + 1))" ${cur:+$([ "$cur" -gt 0 ] && echo "--add-label loop:rebuild-$cur")} >/dev/null 2>&1 || true
     fi
     return 1
+  fi
+  if [ "$verdict" = fail ] && [ -n "${tdir:-}" ]; then
+    mkdir -p "$tdir" 2>/dev/null || true
+    printf '%s\tqa\tqa-fail\n' "$(date +%s)" >> "$tdir/$issue" 2>/dev/null || true
   fi
   sweep_remove_assignee "$issue" || true
   gh_checkpoint
@@ -3129,8 +3168,10 @@ ${comment}"
   local pm_tok='[`"'\'']?antigravity-pm[`"'\'']?'
   local pm_tool='[`"'\'']?pm_task_create[`"'\'']?'
   local ls_tok='[`"'\'']?language_server[`"'\'']?'
-  local mcp_prefix='((công cụ|cong cu)[[:space:]]+)?(MCP[[:space:]]+)?(server[[:space:]]+)?'
-  if grep -qiE "(thiếu|không có|chưa nạp|chưa cấu hình|chưa cài)[[:space:]]+${mcp_prefix}${pm_tok}|${mcp_prefix}${pm_tok}[[:space:]]+(không có|thiếu|chưa nạp|chưa sẵn sàng|không khả dụng|unavailable|missing|not found|not loaded)|bật[[:space:]]+MCP[[:space:]]+(server[[:space:]]+)?${pm_tok}|khi[[:space:]]+${pm_tok}[[:space:]]+(khả dụng|có mặt|sẵn sàng)|${pm_tok}[^.;,]{0,40}(not loaded|missing|unavailable|chưa nạp|chưa được nạp|không có|không khả dụng)|ToolSearch[^.;]{0,60}${pm_tok}[^.;]{0,40}(not found|missing|không tìm thấy|không có|failed|error|unavailable)|ToolSearch[^.;]{0,60}(not found|missing|không tìm thấy|không có|failed|error|unavailable)[^.;]{0,40}${pm_tok}|${pm_tok}[^.;]{0,40}ToolSearch[^.;]{0,40}(not found|missing|không tìm thấy|không có)|${pm_tool}[^.;,]{0,40}(missing|not found|không có)" <<<"$combined"; then
+  local mcp_prefix='((các|cac)[[:space:]]+)?((công cụ|cong cu)[[:space:]]+)?(MCP[[:space:]]+)?(server[[:space:]]+)?((của|cua)[[:space:]]+)?'
+  local pm_opt_parens='([[:space:]]*\([^)]{0,120}\))?[[:space:]]+[*_`]*'
+  local missing_verb='(không có( mặt)?|vắng mặt|thiếu|không nạp|chưa nạp|chưa được nạp|chưa sẵn sàng|không khả dụng|unavailable|missing|not found|not loaded)'
+  if grep -qiE "(thiếu|không có|không nạp|chưa nạp|chưa cấu hình|chưa cài)[[:space:]]+${mcp_prefix}${pm_tok}|${mcp_prefix}${pm_tok}${pm_opt_parens}${missing_verb}|bật[[:space:]]+MCP[[:space:]]+(server[[:space:]]+)?${pm_tok}|khi[[:space:]]+${pm_tok}[[:space:]]+(khả dụng|có mặt|sẵn sàng)|${pm_tok}[^.;,]{0,40}(not loaded|missing|unavailable|chưa nạp|chưa được nạp|không có|không khả dụng)|ToolSearch[^.;]{0,60}${pm_tok}[^.;]{0,40}(not found|missing|không tìm thấy|không có|failed|error|unavailable)|ToolSearch[^.;]{0,60}(not found|missing|không tìm thấy|không có|failed|error|unavailable)[^.;]{0,40}${pm_tok}|${pm_tok}[^.;]{0,40}ToolSearch[^.;]{0,40}(not found|missing|không tìm thấy|không có)|${pm_tool}[^.;,]{0,40}(missing|not found|không có)" <<<"$combined"; then
     printf '%s\n' "missing-mcp"
     return 0
   fi
@@ -3141,12 +3182,64 @@ ${comment}"
   return 0
 }
 
+review_wait_reason_key() {
+  # $1 = wait_what (từ sau `blocked-by:`), $2 = nội dung comment cuối.
+  # In một token không dấu cách cho sổ chung `review-wait/<issue>` (<epoch> <head> <reason_key>).
+  local what="${1:-}" body="${2:-}"
+  if [ "$what" != "agent" ]; then
+    local k
+    k=$(printf '%s' "$what" | tr -cs 'A-Za-z0-9._:-' '_' | sed 's/^_//; s/_$//')
+    printf '%s' "${k:-other}"
+    return 0
+  fi
+  if printf '%s' "$body" | grep -qiE '429|rate limit|quota'; then
+    printf 'agent:quota'
+  elif printf '%s' "$body" | grep -qiE 'antigravity-pm|pm_task_create|pm_dispatch|language_server|Antigravity'; then
+    printf 'agent:antigravity'
+  elif printf '%s' "$body" | grep -qiE 'claude_verify|gate_receipt|receipt'; then
+    printf 'agent:verify'
+  elif printf '%s' "$body" | grep -qiE 'timed? ?out|connection (refused|reset)|ECONN|502|503|504'; then
+    printf 'agent:network'
+  else
+    local h="" rch=""
+    rch="$(dirname "$SB_GITHUB_READ")/super-board-root-cause-hash.py"
+    if [ -f "$rch" ]; then
+      h=$(printf '%s' "$body" | python3 -I "$rch" hash --lane review 2>/dev/null || true)
+    fi
+    printf 'agent:%s' "${h:-other}"
+  fi
+}
+
+review_wait_record() {
+  # Ghi một dòng `<epoch> <head> <reason_key>` vào sổ chung `review-wait/<issue>` (#1399).
+  # Tự reset sổ khi đổi head (cả hai khác `-`) hoặc đổi reason_key. In ra số dòng hiện có (0 nếu ghi lỗi).
+  local issue="$1" now="$2" window="$3" whead="$4" rkey="$5"
+  local wfile="$INFLIGHT_DIR/review-wait/$issue" prev_head="" prev_rkey="" keep_prev=1 wn=0
+  mkdir -p "$INFLIGHT_DIR/review-wait" 2>/dev/null || true
+  if [ -s "$wfile" ]; then
+    read -r _ prev_head prev_rkey <<EOF
+$(tail -n 1 "$wfile" 2>/dev/null || true)
+EOF
+    if [ -n "$whead" ] && [ "$whead" != "-" ] && [ -n "$prev_head" ] && [ "$prev_head" != "-" ] && [ "$prev_head" != "$whead" ]; then
+      keep_prev=0
+    fi
+    if [ -n "$prev_rkey" ] && [ "$prev_rkey" != "$rkey" ]; then
+      keep_prev=0
+    fi
+  fi
+  if { [ "$keep_prev" -eq 1 ] && { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now $whead $rkey"; } 2>/dev/null > "$wfile.tmp" \
+     && mv "$wfile.tmp" "$wfile" 2>/dev/null; then
+    wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ' || true)
+  fi
+  printf '%s' "${wn:-0}"
+}
+
 block_noop_workers() {
   # Expensive tick, after fetch_project_items: judge the workers queued by note_worker_end. Sets NOOP_MOVED=1 when a card was moved.
   local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
   local entry issue lane from c0 col count f now n item_id title wlog last tag human_line
-  local whead wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait stall_why
-  local ag_fail last_body new_body ag_ev new_hdr new_blocked_by
+  local whead wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait stall_why rkey
+  local ag_fail last_body new_body ag_ev new_hdr new_blocked_by rt_cj rt_now rt_dir
   NOOP_CHECK=""
   for entry in $pending; do
     wlog=""
@@ -3158,7 +3251,7 @@ EOF
     f="$INFLIGHT_DIR/noops/$issue"
     [ -n "$wlog" ] || wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
     eff_max="$max"; over_wait=""; human_wait=""; ag_fail=""; last_body=""; new_body=""
-    new_hdr=""; new_blocked_by=""
+    new_hdr=""; new_blocked_by=""; wait_val=""; wait_what=""; whead="-"; rkey=""
     col=$(issue_status "$issue")
     [ -n "$col" ] || continue
     count=$(issue_comment_count "$issue")
@@ -3197,10 +3290,22 @@ EOF
         gh_checkpoint
         if [ -n "${REVIEW_BOUNCE_KEY:-}" ]; then
           swept_add "$REVIEW_BOUNCE_KEY"
+          # Ghi nhận lượt bounce vào sổ rebuild-total và gắn marker để cộng dồn đúng với qa-fail / merge-queue (#1400 R8).
+          rt_cj=$(cap_progress_comments "$issue" 2>/dev/null) || rt_cj="[]"
+          rt_now=0
+          read -r rt_now _ <<EOF
+$(card_rebuild_total "$issue" 0 "${REBUILD_CAP:-2}" "$rt_cj")
+EOF
+          rt_dir=$(rebuild_total_dir)
+          if [ -n "$rt_dir" ]; then
+            mkdir -p "$rt_dir" 2>/dev/null || true
+            printf '%s\treview\trvbounce\n' "$(date +%s)" >> "$rt_dir/$issue" 2>/dev/null || true
+          fi
           gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · the reviewer's finding is a code fix, not a person's decision
 Did: the newest [reviewer] report ended with \`blocked-by: -\` but names a concrete finding (❌ with file:line) and no closed-list reason (money, auth, destructive schema, device, secret, needs-you). The card's own AC answers the scope question.
 ✅ Done: card moved Review → Ready (bounce $(( $(grep -c "^${issue}:rvbounce:" "$(sweep_ledger)" 2>/dev/null || true) ))/${SB_REVIEW_BOUNCE_MAX:-3} for this card)
 Next: builder fixes the reviewer's ❌ finding on the PR, QA, then Review
+<!-- sb-rebuild-total: $(( ${rt_now:-0} + 1 )) -->
 blocked-by: agent" >/dev/null 2>&1 || true
           REVIEW_BOUNCE_KEY=""
         fi
@@ -3215,7 +3320,28 @@ blocked-by: agent" >/dev/null 2>&1 || true
       rm -f "$f" 2>/dev/null || true
       continue
     fi
-    if [ "$col" != "$from" ] || { [ "$count" -gt "$c0" ] && [ -z "$ag_fail" ]; }; then
+    # #1399: Kiểm tra `blocked-by: agent` TRƯỚC nhánh xoá sổ của `count > c0`, để CẢ lượt có comment mới lẫn lượt không comment mới
+    # dùng chung một sổ `review-wait/<issue>` (<epoch> <head> <reason_key>), bật cooldown 900s và Blocked ở lượt thứ 2 cùng head + cùng lý do.
+    if [ -z "$ag_fail" ] && [ "$lane" = review ] && [ "$col" = Review ] && [ "$col" = "$from" ] && worker_ended_clean "$wlog" \
+       && ! { merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; }; then
+      wait_val=$(printf '%s\n' "$last_body" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
+      wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+    fi
+    if [ "$wait_what" = "agent" ]; then
+      [ "$count" -le "$c0" ] || rm -f "$f" 2>/dev/null || true   # có comment mới thì không còn là no-op im lặng
+      now=$(date +%s)
+      whead=$(issue_pr_head "$issue" 2>/dev/null || true); [ -n "$whead" ] || whead="-"
+      rkey=$(review_wait_reason_key "$wait_what" "$last_body")
+      wlimit="${SB_REVIEW_AGENT_WAIT_MAX:-2}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=2 ;; esac
+      [ "${#wlimit}" -le 2 ] && [ "$wlimit" -le 19 ] || wlimit=19
+      wn=$(review_wait_record "$issue" "$now" "$window" "$whead" "$rkey")
+      if [ "${wn:-0}" -ge 1 ] && [ "$wn" -lt "$wlimit" ]; then
+        continue   # lượt 1: giữ ở Review, sổ chung bật cooldown SB_REVIEW_WAIT_S (900s)
+      fi
+      if [ "${wn:-0}" -ge 1 ]; then
+        over_wait="agent"; eff_max=1
+      fi
+    elif [ "$col" != "$from" ] || { [ "$count" -gt "$c0" ] && [ -z "$ag_fail" ]; }; then
       rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # it moved the card or wrote something: progress
       [ "$col" = "$from" ] || rm -f "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true   # the card moved: stall ledger starts over
       if [ "$lane" = review ] && [ "$col" = Review ] && [ "$col" = "$from" ] && worker_ended_clean "$wlog" \
@@ -3223,8 +3349,6 @@ blocked-by: agent" >/dev/null 2>&1 || true
         # #1221 AC3: a review turn that exits 0 and comments but leaves the card in Review is a no-op in effect when it repeats (e.g. a
         # condition only a person can meet): SB_REVIEW_STALL_MAX (3) such turns inside SB_NOOP_WINDOW_S park the card in Blocked instead of
         # a fourth dispatch that ends in RUNAWAY. A turn waiting on a named condition (`blocked-by: <X>`) has its own cap (SB_REVIEW_WAIT_MAX).
-        wait_val=$(printf '%s\n' "$last_body" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
-        wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
         if [ -n "$wait_what" ] && [ "$wait_what" != "-" ]; then continue; fi
         wlimit="${SB_REVIEW_STALL_MAX:-3}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=3 ;; esac
         [ "$wlimit" -le 19 ] || wlimit=19
@@ -3248,7 +3372,7 @@ blocked-by: agent" >/dev/null 2>&1 || true
     fi
     # Pha 2 (M4): a reviewer that queued the PR (merge-queue label + approved-head at the head) rightly leaves the card in Review:
     # the queue merges it later, so this is no no-op. Checked only here, on the would-be no-op path, so a queue-off board reads nothing more.
-    if [ -z "$stall_why" ] && [ -z "$ag_fail" ] && [ "$lane" = review ] && [ "$col" = Review ] && merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; then
+    if [ -z "$over_wait" ] && [ -z "$stall_why" ] && [ -z "$ag_fail" ] && [ "$lane" = review ] && [ "$col" = Review ] && merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; then
       rm -f "$f" 2>/dev/null || true
       continue
     fi
@@ -3257,24 +3381,20 @@ blocked-by: agent" >/dev/null 2>&1 || true
     # Chỉ comment của [reviewer] mới tính (dòng đầu sau marker `<!-- -->` là `[reviewer]`, dòng cuối là `blocked-by:`).
     # Miễn có trần: thẻ nghỉ SB_REVIEW_WAIT_S (900) giữa hai lượt (review_wait_cooldown) và chỉ được miễn SB_REVIEW_WAIT_MAX (8) lượt trong
     # SB_NOOP_WINDOW_S (24 giờ), quá thì Blocked "chờ <X> quá lâu". `blocked-by: -` là chờ người: không miễn, Blocked ngay.
-    if [ -z "$stall_why" ] && [ -z "$ag_fail" ] && [ "$lane" = review ] && worker_ended_clean "$wlog"; then
-      wait_val=$(printf '%s\n' "$last_body" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
-      wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+    if [ -z "$over_wait" ] && [ -z "$stall_why" ] && [ -z "$ag_fail" ] && [ "$lane" = review ] && worker_ended_clean "$wlog"; then
+      if [ -z "$wait_val" ]; then
+        wait_val=$(printf '%s\n' "$last_body" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
+        wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+      fi
       if [ -n "$wait_val" ] && [ "$wait_what" = "-" ]; then
         eff_max=1; human_wait=1   # chờ người, không có gì để dispatch lại
       elif [ -n "$wait_what" ]; then   # `blocked-by:` rỗng không nêu điều kiện chờ: đếm no-op như thường
         now=$(date +%s)
-        wfile="$INFLIGHT_DIR/review-wait/$issue"
+        whead=$(issue_pr_head "$issue" 2>/dev/null || true); [ -n "$whead" ] || whead="-"
+        rkey=$(review_wait_reason_key "$wait_what" "$last_body")
         wlimit="${SB_REVIEW_WAIT_MAX:-8}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=8 ;; esac
         [ "${#wlimit}" -le 2 ] && [ "$wlimit" -le 19 ] || wlimit=19   # sổ chỉ giữ 20 dòng (tail 19 + dòng mới): trần cao hơn sẽ không bao giờ chạm
-        mkdir -p "$INFLIGHT_DIR/review-wait" 2>/dev/null || true
-        # Kết quả lấy từ chính lệnh ghi + mv (trong `if`, nên set -e không giết runner): ghi lỗi thì lượt này KHÔNG có bản ghi (wn=0, không miễn,
-        # fail-closed) và không suy từ việc đọc lại sổ, vì sổ cũ có thể đã có dòng cùng giây. wc chạy sau mv thành công nên sổ luôn tồn tại.
-        wn=0
-        if { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } 2>/dev/null > "$wfile.tmp" \
-          && mv "$wfile.tmp" "$wfile" 2>/dev/null; then
-          wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ' || true)
-        fi
+        wn=$(review_wait_record "$issue" "$now" "$window" "$whead" "$rkey")
         if [ "${wn:-0}" -ge 1 ] && [ "$wn" -le "$wlimit" ]; then
           continue   # miễn: sổ no-op giữ nguyên, nên kill xen kẽ lượt chờ vẫn đếm dồn tới SB_NOOP_MAX
         fi
@@ -3316,7 +3436,14 @@ blocked-by: agent" >/dev/null 2>&1 || true
     why_line="the ${lane} worker for #${issue} exited ${n} times in a row with the card still in ${col} and no new comment"
     [ -z "$human_wait" ] || { human_line="blocked-by:  -"; why_line="the reviewer for #${issue} ended its turn waiting on a person (blocked-by: -); dispatching another review turn cannot change that"; }
     [ -z "$stall_why" ] || { human_line="blocked-by:  -"; why_line="the reviewer for #${issue} ended ${stall_why} review turns in a row (exit 0, with a comment) and the card is still in Review: a condition no review turn can meet is unmet (e.g. a test edit awaiting cross-approval, a red CI, an audit the gate does not accept); another turn would repeat it until RUNAWAY"; }
-    [ -z "$over_wait" ] || why_line="the ${lane} worker for #${issue} has waited on ${over_wait} for more than ${wlimit} review turns in the last $((window / 3600)) hours with no new comment (chờ ${over_wait} quá lâu)"
+    if [ -n "$over_wait" ]; then
+      if [ "$over_wait" = "agent" ]; then
+        human_line="blocked-by:  agent"
+        why_line="the review worker for #${issue} ended ${wn} turns in a row with blocked-by: agent on PR head ${whead} (${rkey}) — chờ ${over_wait} quá lâu"
+      else
+        why_line="the ${lane} worker for #${issue} has waited on ${over_wait} for more than ${wlimit} review turns in the last $((window / 3600)) hours with no new comment (chờ ${over_wait} quá lâu)"
+      fi
+    fi
     if [ -n "$item_id" ] && set_card_status "$item_id" "Blocked"; then
       NOOP_MOVED=1
       rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true   # thẻ sang Blocked: cả hai sổ bắt đầu lại khi người kéo về
@@ -3867,12 +3994,37 @@ ${prev_rev}"
       fi
     fi
     [ "$probe_ok" -eq 1 ] || return 1
+    # #1399: Giới hạn tổng số lần sweep Antigravity tối đa SB_ANTIGRAVITY_SWEEP_MAX (2) lần / 24h theo từng thẻ.
+    local ag_sfile="$INFLIGHT_DIR/ag-sweep/$issue" ag_max="${SB_ANTIGRAVITY_SWEEP_MAX:-2}" ag_win="${SB_ANTIGRAVITY_SWEEP_WINDOW_S:-86400}" ag_cnt=0 ag_cap_ts=0
+    case "$ag_max" in ''|*[!0-9]*|0) ag_max=2 ;; esac
+    case "$ag_win" in ''|*[!0-9]*|0) ag_win=86400 ;; esac
+    if [ -s "$ag_sfile" ]; then
+      ag_cnt=$(awk -v from=$((now - ag_win)) '$1 >= from {c++} END{print c+0}' "$ag_sfile" 2>/dev/null || echo 0)
+    fi
+    if [ "${ag_cnt:-0}" -ge "$ag_max" ]; then
+      ag_cap_ts=$( { cat "${ag_sfile}.capped" 2>/dev/null || true; } | tr -dc '0-9')
+      if [ -z "$ag_cap_ts" ] || [ $((now - ag_cap_ts)) -ge "$ag_win" ]; then
+        mkdir -p "$INFLIGHT_DIR/ag-sweep" 2>/dev/null || true
+        echo "$now" > "${ag_sfile}.capped" 2>/dev/null || true
+        gh_checkpoint
+        gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ❓ Antigravity sweep đã thử ${ag_cnt}/${ag_max} lần trong $((ag_win / 3600))h
+Did: probe Antigravity OK nhưng worker vẫn lỗi sau ${ag_cnt} lần trả về Review; giữ thẻ ở Blocked để tránh lặp vô hạn
+To unblock:  [ ] Kiểm tra MCP antigravity-pm / log worker review của #${issue}
+             [ ] Kéo #${issue} về Review khi đã sửa xong nguyên nhân
+blocked-by:  -" >/dev/null 2>&1 || true
+      fi
+      log "🛑 antigravity sweep: #${issue} đạt trần ${ag_cnt}/${ag_max} lần trong $((ag_win / 3600))h — giữ Blocked chờ người"
+      continue
+    fi
     if ! set_card_status "$item_id" "Review"; then
       gh_checkpoint
       log "⚠ antigravity sweep: could not move #${issue} from Blocked to Review — retrying next tick"
       continue
     fi
-    rm -f "$INFLIGHT_DIR/noops/$issue" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true
+    mkdir -p "$INFLIGHT_DIR/ag-sweep" 2>/dev/null || true
+    { { awk -v from=$((now - ag_win)) '$1 >= from' "$ag_sfile" 2>/dev/null || true; } | tail -n 19; echo "$now"; } > "${ag_sfile}.tmp" 2>/dev/null \
+      && mv "${ag_sfile}.tmp" "$ag_sfile" 2>/dev/null || true
+    rm -f "${ag_sfile}.capped" "$INFLIGHT_DIR/noops/$issue" "$INFLIGHT_DIR/review-wait/$issue" "$INFLIGHT_DIR/review-stall/$issue" 2>/dev/null || true
     gh_checkpoint
     gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Review · Antigravity đã nối lại
 Did: đã xác nhận kết nối Antigravity language_server và sẵn sàng MCP antigravity-pm
@@ -3886,7 +4038,74 @@ EOF
   return "$moved"
 }
 
+rebuild_total_dir() {
+  if [ -n "${SB_REBUILD_TOTAL_DIR:-}" ]; then
+    printf '%s' "$SB_REBUILD_TOTAL_DIR"
+    return 0
+  fi
+  if [ -n "${INFLIGHT_DIR:-}" ] && [ "$INFLIGHT_DIR" != ".claude/super-board/inflight" ]; then
+    [ "$INFLIGHT_DIR" = "/dev/null" ] && return 0
+    printf '%s/rebuild-total' "$INFLIGHT_DIR"
+    return 0
+  fi
+  # Trong chế độ kiểm thử SB_LIB_ONLY=1 chưa chỉ định thư mục riêng, trả rỗng để tránh ghi nhầm vào .git/super-board/rebuild-total thật.
+  if [ "${_SB_LIB_ONLY_MODE:-0}" = "1" ]; then
+    return 0
+  fi
+  local common=""
+  common=$(git -C "${REPO_ROOT:-.}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  if [ -n "$common" ] && [ -d "$common" ]; then
+    printf '%s/super-board/rebuild-total' "$common"
+  else
+    printf '%s/rebuild-total' "${INFLIGHT_DIR:-.claude/super-board/inflight}"
+  fi
+}
+
+card_rebuild_total() {
+  # $1 = issue, $2 = cur (loop:rebuild-N), $3 = cap, $4 = comments JSON array.
+  # In ra "<total> <capped_flag>". Đọc từ sổ dùng chung, marker <!-- sb-rebuild-total: N --> và số lượt trả về Build trong comments.
+  local issue="$1" cur="${2:-0}" cap="${3:-2}" cj="${4:-[]}"
+  local tdir ledger_n=0 marker_n=0 bounce_n=0 capped=0 total=0
+  tdir=$(rebuild_total_dir)
+  if [ -n "$tdir" ] && [ -f "$tdir/$issue" ]; then
+    ledger_n=$(wc -l < "$tdir/$issue" 2>/dev/null | tr -d ' ' || echo 0)
+  fi
+  eval "$(printf '%s' "$cj" | python3 -I -c '
+import json, re, sys
+try:
+    cs = json.load(sys.stdin)
+except Exception:
+    cs = []
+marker_n = 0
+bounce_n = 0
+capped = 0
+for c in cs:
+    b = (c or {}).get("body") or ""
+    for m in re.finditer(r"<!--\s*sb-rebuild-total:\s*(\d+)\s*-->", b):
+        marker_n = max(marker_n, int(m.group(1)))
+    if re.search(r"^(?:\[(?:merge-queue|qa|reviewer)\] \[(?:report|blocker)\] ❌ .*back to Build|\[orchestrator\] \[report\] ↩️ back to Ready · (?:the findings changed since the last round|the reviewer\x27s finding is a code fix))", b, re.M):
+        bounce_n += 1
+    if "<!-- sb-rebuild-total-capped -->" in b:
+        capped = 1
+print(f"marker_n={marker_n} bounce_n={bounce_n} capped={capped}")
+' 2>/dev/null || echo 'marker_n=0 bounce_n=0 capped=0')"
+  total=$ledger_n
+  [ "$marker_n" -gt "$total" ] && total="$marker_n"
+  [ "$bounce_n" -gt "$total" ] && total="$bounce_n"
+  if [ "$cur" -gt "$cap" ] && [ "$cur" -gt "$total" ]; then
+    total="$cur"
+  fi
+  printf '%s %s\n' "$total" "$capped"
+}
+
 cap_progress_comments() {
+  # Trong chế độ kiểm thử SB_LIB_ONLY=1 chưa stub SB_GITHUB_READ hay fake gh: tránh gọi GitHub thật.
+  if [ "${_SB_LIB_ONLY_MODE:-0}" = "1" ] && [ -z "${SB_TEST_ALLOW_GH:-}" ] \
+     && [ "${SB_GITHUB_READ:-}" = "${_SB_DEFAULT_GITHUB_READ:-}" ]; then
+    case "$(command -v gh 2>/dev/null)" in
+      /opt/homebrew/bin/gh|/usr/local/bin/gh|/usr/bin/gh) return 1 ;;
+    esac
+  fi
   local haltf out rc=0
   haltf=$(mktemp -u "${TMPDIR:-/tmp}/sb-cap-halt.XXXXXX") || return 1
   out=$(SB_GITHUB_HALT_FILE="$haltf" python3 "$SB_GITHUB_READ" --kind json -- issue view "$1" --json comments 2>/dev/null) || rc=$?
@@ -3899,11 +4118,22 @@ cap_progress_comments() {
 # Once per distinct latest hash and at most SB_CAP_PROGRESS_MAX (3) times per card, so it can never loop forever. Never touches needs-you /
 # human-gated cards or a 💳 🔐 🧑 🙋 blocker (those are a person's decision). Returns 0 when a card moved, 1 when none.
 sweep_cap_progress() {
-  local moved=1 issue item_id cur cap max cj bodies last prev hl hp key count
+  local moved=1 issue item_id cur cap max total_cap total_n total_capped cj bodies last prev hl hp key count tdir
   cap="${REBUILD_CAP:-2}"; max="${SB_CAP_PROGRESS_MAX:-3}"
+  case "$cap" in ''|*[!0-9]*|0) cap=2 ;; esac
+  total_cap="${SB_REBUILD_TOTAL_MAX:-}"
+  case "$total_cap" in ''|*[!0-9]*|0) total_cap="${REBUILD_TOTAL_CAP:-}" ;; esac
+  case "$total_cap" in ''|*[!0-9]*|0) total_cap=$((cap + 1)) ;; esac
   while IFS=$'\t' read -r issue item_id cur; do
     [ -n "$issue" ] && [ -n "$item_id" ] || continue
     cj=$(cap_progress_comments "$issue" 2>/dev/null) || { log "cap-progress: #${issue} comments unreadable — skipped"; continue; }
+    read -r total_n total_capped <<EOF
+$(card_rebuild_total "$issue" "$cur" "$cap" "$cj")
+EOF
+    if [ "${total_capped:-0}" -eq 1 ] || [ "${total_n:-0}" -ge "$total_cap" ]; then
+      log "cap-progress: #${issue} reached total rebuild cap (${total_n}/${total_cap}) — left Blocked"
+      continue
+    fi
     bodies=$(printf '%s' "$cj" | jq -c '[.[] | select(.body | test("^\\[(reviewer|merge-queue|orchestrator)\\] \\[(blocker|report)\\]")) | .body]' 2>/dev/null) || continue
     last=$(printf '%s' "$bodies" | jq -r '.[-1] // empty' 2>/dev/null); prev=$(printf '%s' "$bodies" | jq -r '.[-2] // empty' 2>/dev/null)
     [ -n "$last" ] && [ -n "$prev" ] || continue
@@ -3917,13 +4147,19 @@ sweep_cap_progress() {
     if [ "${count:-0}" -ge "$max" ]; then log "cap-progress: #${issue} reached SB_CAP_PROGRESS_MAX=${max} — left Blocked"; continue; fi
     set_card_status "$item_id" "Ready" || { log "⚠ cap-progress: could not move #${issue} to Ready"; continue; }
     swept_add "$key"
+    tdir=$(rebuild_total_dir)
+    if [ -n "$tdir" ]; then
+      mkdir -p "$tdir" 2>/dev/null || true
+      printf '%s\t%s\tcap-progress\n' "$(date +%s)" "$hl" >> "$tdir/$issue" 2>/dev/null || true
+    fi
     gh_checkpoint
     gh_write_once label create "loop:rebuild-$((cap - 1))" --color BFD4F2 --force >/dev/null 2>&1 || true   # #1382: a repo without the label would fail the edit below and the card re-matches forever
     gh_write_once issue edit "$issue" --add-label "loop:rebuild-$((cap - 1))" --remove-label "loop:rebuild-${cur}" >/dev/null 2>&1 || log "⚠ cap-progress: could not lower the label of #${issue}"
     gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · the findings changed since the last round
 Did: the last two refusals have different root-cause hashes (${hp} → ${hl}), so the card is progressing, not looping
 ✅ Done: loop:rebuild-${cur} → loop:rebuild-$((cap - 1)), card moved Blocked → Ready
-Next: builder fixes the newest findings (cap reset $(( ${count:-0} + 1 ))/${max} for this card)" >/dev/null 2>&1 || true
+Next: builder fixes the newest findings (cap reset $(( ${count:-0} + 1 ))/${max} for this card)
+<!-- sb-rebuild-total: $((total_n + 1)) -->" >/dev/null 2>&1 || true
     log "↩ cap-progress: #${issue} Blocked → Ready (hash ${hp} → ${hl})"
     moved=0
   done <<EOF

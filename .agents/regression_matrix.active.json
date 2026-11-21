@@ -4850,6 +4850,37 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-review-wait-agent-1399",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_review_wait_agent_1399.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEW-WAIT-AGENT-1399-01",
+          "name": "#1399: sổ chung review-wait cho blocked-by: agent (cả có và không comment mới, reset khi đổi head/lý do, cooldown + Blocked ở lượt 2), sweep Antigravity tối đa 2 lần/24h, và detector nhận các câu MCP đã hụt",
+          "command": "bash tests/super-board/test_runner_review_wait_agent_1399.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-rebuild-total-cap-1400",
+      "watch_files": [
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_merge_queue_rebuild_total_cap_1400.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REBUILD-TOTAL-CAP-1400-01",
+          "name": "#1400: trần tổng số vòng rebuild mỗi thẻ ở cả merge-queue lẫn sweep_cap_progress; rebase thuần không tốn trần",
+          "command": "bash tests/super-board/test_merge_queue_rebuild_total_cap_1400.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

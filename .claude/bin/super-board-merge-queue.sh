@@ -82,6 +82,7 @@ BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 NOTIFY="$HERE/super-board-notify.py"
 posint() { case "$1" in ''|*[!0-9]*|0) echo "$2" ;; *) echo "$1" ;; esac; }
 REBUILD_CAP=$(posint "$(echo "$CONFIG_JSON" | jq -r '.rebuild_cap // empty')" 2)
+REBUILD_TOTAL_CAP=$(posint "${SB_REBUILD_TOTAL_MAX:-}" "$(posint "$(echo "$CONFIG_JSON" | jq -r '.rebuild_total_cap // empty')" "$((REBUILD_CAP + 1))")")
 # #1318 R5: a pure rebase never counts toward rebuild_cap, so it has its own ceiling per PR (the brake against Ready -> loop:rebase -> queue forever).
 REBASE_PURE_MAX=$(posint "${SB_REBASE_PURE_MAX:-}" 5)
 REPO=$(echo "$CONFIG_JSON" | jq -r '.repo.remote // ""' | sed -E 's#^https?://github\.com/##; s#\.git$##')
@@ -286,8 +287,54 @@ RETRY=0; LABEL_DONE=0; CARD_RETRY=0; CARD_UNREAD=0; CARD_UNKNOWN=0
 # head mới đếm lại từ 1; route lại (RETRY=1) không đếm thêm; lần thứ hai cùng head (RETRY=0) trả 1 để đi đường cũ.
 UNVERIFIED_F="$QDIR/merge-queue.unverified"
 REBASE_PURE_F="$QDIR/merge-queue.rebase-pure"   # "<PR> <pure rebases so far>" (#1318 R5)
+REBUILD_TOTAL_DIR="${SB_REBUILD_TOTAL_DIR:-$QDIR/rebuild-total}"
 # The ledger counts pure rebases of a PR that is still in play; a PR that merged or left the queue Blocked starts from zero if it comes back.
 rebase_pure_drop() { [ -f "$REBASE_PURE_F" ] || return 0; awk -v p="$1" '$1 != p' "$REBASE_PURE_F" > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"; }
+rebuild_total_drop() { [ -z "${1:-}" ] || rm -f "$REBUILD_TOTAL_DIR/$1"; }
+rebuild_total_info() {
+  # $1 = issue, $2 = cur (loop:rebuild-N), $3 = issue JSON. Xuất `total_n=... causes_str=...` (tab-free) qua stdout.
+  local k="$1" cur="${2:-0}" ij="$3" lf="$REBUILD_TOTAL_DIR/$1"
+  local ledger_n=0 marker_n=0 bounce_n=0 total=0 causes=""
+  if [ -f "$lf" ]; then
+    ledger_n=$(wc -l < "$lf" 2>/dev/null | tr -d ' ' || echo 0)
+  fi
+  eval "$(printf '%s' "$ij" | python3 -I -c '
+import json, re, shlex, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+marker_n = 0
+bounce_n = 0
+causes = []
+for c in (d.get("comments") or []):
+    b = (c or {}).get("body") or ""
+    for m in re.finditer(r"<!--\s*sb-rebuild-total:\s*(\d+)\s*-->", b):
+        marker_n = max(marker_n, int(m.group(1)))
+    if re.search(r"^(?:\[(?:merge-queue|qa|reviewer)\] \[(?:report|blocker)\] ❌ .*back to Build|\[orchestrator\] \[report\] ↩️ back to Ready · (?:the findings changed since the last round|the reviewer\x27s finding is a code fix))", b, re.M):
+        bounce_n += 1
+    for line in b.splitlines():
+        s = line.strip()
+        if any(tok in s for tok in ("AssertionError", "tests/", "failed", "gate-exit-", "CONFLICT")):
+            causes.append(s[:80])
+            break
+print("marker_n=" + str(marker_n))
+print("bounce_n=" + str(bounce_n))
+print("comment_causes=" + shlex.quote("; ".join(dict.fromkeys(causes))[:300]))
+' 2>/dev/null || echo "marker_n=0 bounce_n=0 comment_causes=''")"
+  if [ -f "$lf" ]; then
+    # Dùng awk nối `; ` thay cho `paste -sd '; '` (BSD paste trên macOS xen kẽ `;` và dấu cách).
+    causes=$(awk -F '\t' 'NF >= 3 && !seen[$3]++ {out = (out == "" ? $3 : out "; " $3)} END {print substr(out, 1, 300)}' "$lf" 2>/dev/null)
+  fi
+  [ -n "$causes" ] || causes="${comment_causes:-}"
+  total=$ledger_n
+  [ "$marker_n" -gt "$total" ] && total="$marker_n"
+  [ "$bounce_n" -gt "$total" ] && total="$bounce_n"
+  if [ "$cur" -gt "$REBUILD_CAP" ] && [ "$cur" -gt "$total" ]; then
+    total="$cur"
+  fi
+  printf '%s\t%s\n' "$total" "$causes"
+}
 unverified_edited_first() {
   grep -Eq 'CHƯA XÁC MINH — [0-9]+ file test đã có bị sửa|UNVERIFIED — [0-9]+ existing test files? (was|were) edited' <<<"$3" || return 1
   local n
@@ -333,6 +380,24 @@ rebuild_or_rebase() {
     prevh=$(printf '%s' "$ij" | python3 -I "$HERE/super-board-root-cause-hash.py" last --from "[merge-queue]") || prevh=""
   fi
   if [ "$kind" != rebase-pure ] && [ -n "$prevh" ] && [ -n "$rch" ] && [ "$prevh" != "$rch" ]; then cur=0; fi
+  # #1400: Trần TỔNG số vòng rebuild mỗi thẻ (mọi nguyên nhân cộng lại) để đổi hash / sweep_cap_progress không cho lặp vô hạn.
+  local total_n=0 prior_causes="" cause_one="" new_total=0
+  if [ "$kind" != rebase-pure ]; then
+    IFS=$'\t' read -r total_n prior_causes <<<"$(rebuild_total_info "$k" "$cur" "$ij")"
+    cause_one=$(printf '%s' "${det:-$why}" | tr '\n' ' ' | tr -s '[:space:]' ' ' | cut -c1-100)
+    if [ "${total_n:-0}" -ge "$REBUILD_TOTAL_CAP" ]; then
+      local all_causes="${prior_causes:+${prior_causes}; }${cause_one}"
+      [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "total rebuild cap ${REBUILD_TOTAL_CAP} reached (${total_n} rounds across all causes; latest: ${why})" \
+        "rounds=${total_n}/${REBUILD_TOTAL_CAP}; causes: ${all_causes}${det:+
+${det}}
+<!-- sb-rebuild-total-capped -->
+<!-- sb-rebuild-total: ${total_n} -->" "a person reviews all ${total_n} rebuild rounds and their causes, then drags the card to Ready"
+      card_move "$k" Blocked; local trc=$?
+      [ "$trc" -ne 0 ] || rebase_pure_drop "$p"
+      return "$trc"
+    fi
+    new_total=$((total_n + 1))
+  fi
   # #1319: only a pure rebase (`rebase-pure`: train gate-exit-2, edited-test approval stale because the base moved, no conflicting file)
   # is mechanical and never counts toward rebuild_cap: a card at the cap that only needs it still goes Ready `loop:rebase`. A real
   # conflict (`conflict`, gate-exit-5/14) stays a bounce held by the cap (the brake against Ready → loop:rebase → queue forever),
@@ -359,20 +424,30 @@ ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
     add_label "$k" "loop:rebuild-$((cur + 1))" ${rm[@]+"${rm[@]}"} || return 1
     LABEL_DONE=1
+    mkdir -p "$REBUILD_TOTAL_DIR" 2>/dev/null || true
+    printf '%s\t%s\t%s\n' "$(date +%s)" "${rch:-none}" "$cause_one" >> "$REBUILD_TOTAL_DIR/$k" 2>/dev/null || true
     [ "$CARD_RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ ${tag} · PR #${p} back to Build (loop:rebuild-$((cur + 1)))
 Did: ${did}
 ❌ Not done: ${why}${det:+; the gate / verify lines:
 ${det}}
-Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "what the merge gate ${tag} refused"), QA and Review run again${rch:+
+Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "what the merge gate ${tag} refused"), QA and Review run again
+<!-- sb-rebuild-total: ${new_total} -->${rch:+
 root-cause-hash: ${rch}}" || true
   else
     add_label "$k" "loop:rebase" || return 1
     # Count the pure rebase only now that its label is on: a failed add_label is routed again and must not count twice.
     if [ "$kind" = rebase-pure ]; then
       { awk -v p="$p" '$1 != p' "$REBASE_PURE_F" 2>/dev/null || true; echo "$p $rn"; } > "$REBASE_PURE_F.tmp" && mv -f "$REBASE_PURE_F.tmp" "$REBASE_PURE_F"
+    else
+      mkdir -p "$REBUILD_TOTAL_DIR" 2>/dev/null || true
+      printf '%s\t%s\t%s\n' "$(date +%s)" "${rch:-none}" "$cause_one" >> "$REBUILD_TOTAL_DIR/$k" 2>/dev/null || true
     fi
     # R9: a pure rebase carries no root-cause-hash line (R2); a conflict does.
-    rhl=""; { [ "$kind" != rebase-pure ] && [ -n "$rch" ]; } && rhl=$'\nroot-cause-hash: '"${rch}"
+    rhl=""
+    if [ "$kind" != rebase-pure ]; then
+      rhl=$'\n'"<!-- sb-rebuild-total: ${new_total} -->"
+      [ -z "$rch" ] || rhl="${rhl}"$'\n'"root-cause-hash: ${rch}"
+    fi
     LABEL_DONE=1
     # tag ở nhánh rebase: `conflict`, hoặc `merge refused` khi train in lời git/hook (gate-exit-5 không file xung đột, #775). Chỉ
     # `merge refused` chép train-detail (một nơi quyết định: route_one chọn tag); conflict không kèm dòng nào, như comment PR.
@@ -657,7 +732,7 @@ Next: a fresh review of the new head, then a new approved-head and the ${LABEL} 
     return 0
   fi
   unlabel "$p"; attempt_clear "$p"
-  [ "$res" != merged ] || rebase_pure_drop "$p"
+  [ "$res" != merged ] || { rebase_pure_drop "$p"; rebuild_total_drop "$k"; }
 }
 # ---- train nền theo PR (#676) -----------------------------------------------------------------------------------------------------------
 # merge-queue.inflight: "<PR> <head> <ref> <issue đóng|0> <pid> <dir>" mỗi dòng — train của PR đang chạy nền (pid = subshell phóng nó),
