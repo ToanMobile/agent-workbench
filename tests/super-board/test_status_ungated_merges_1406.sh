@@ -58,5 +58,30 @@ printf '%s\n' "$OUT" | grep -q 'line=.*ungated merges (7d): 2' && ok "dòng Heal
 printf '%s\n' "$OUT" | grep -q 'zero_line=.*ungated merges (7d): 0' && ok "0 PR ngoài gate hiển thị 0" || fail "zero_line sai: $OUT"
 printf '%s\n' "$OUT" | grep -q 'err_line=.*ungated merges (7d): ?' && ok "lỗi đọc gh hiển thị ?" || fail "err_line sai: $OUT"
 
+# Kiểm chạy qua CLI thật với gh giả (bao gồm main() và nhánh gh pr list lỗi)
+mkdir -p "$T/repo/.claude/super-board/configs" "$T/bin"
+git -C "$T/repo" init -q -b main
+cat > "$T/repo/.claude/super-board/configs/demo.json" <<'JSON'
+{
+  "project": {"owner": "o", "number": 1, "title": "Demo"},
+  "repo": {"path": ".", "remote": "https://github.com/o/r"},
+  "base_branch": "main",
+  "timezone": "Asia/Ho_Chi_Minh"
+}
+JSON
+cat > "$T/bin/gh" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *"api graphql"*) echo '{"data":{"repositoryOwner":{"projectV2":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}' ;;
+  *"pr list"*) [ "${FAIL_PR:-0}" = "1" ] && exit 1; echo '[{"number":9,"headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","mergeCommit":{"oid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},"mergedAt":"2026-11-21T01:00:00Z"}]' ;;
+  *) exit 0 ;;
+esac
+SH
+chmod +x "$T/bin/gh"
+cli_out="$(cd "$T/repo" && PATH="$T/bin:$PATH" python3 "$STATUS" demo 2>/dev/null)"
+printf '%s\n' "$cli_out" | grep -q "ungated merges (7d): 1" && ok "CLI main(): hiển thị ungated merges (7d): 1" || fail "CLI main(): $cli_out"
+cli_err="$(cd "$T/repo" && FAIL_PR=1 PATH="$T/bin:$PATH" python3 "$STATUS" demo 2>/dev/null)"
+printf '%s\n' "$cli_err" | grep -q "ungated merges (7d): ?" && ok "CLI main(): gh pr list lỗi hiển thị ?" || fail "CLI main() fail: $cli_err"
+
 [ "$FAILS" -eq 0 ] && { echo "✅ test_status_ungated_merges_1406: all passed"; exit 0; }
 echo "❌ test_status_ungated_merges_1406: $FAILS failed"; exit 1

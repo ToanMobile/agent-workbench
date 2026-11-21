@@ -156,7 +156,7 @@ def tz_object(tz_name: str) -> dt.tzinfo:
     if tz_name and ZoneInfo is not None:
         try:
             return ZoneInfo(tz_name)
-        except Exception:
+        except (KeyError, ValueError, OSError):
             pass
     return dt.timezone.utc
 
@@ -215,6 +215,8 @@ def fetch_board_items(cfg: dict, slug: str, repo_path: str) -> dict[int, dict]:
         if r.returncode != 0:
             raise RuntimeError(f"graphql project items failed: {r.stderr.strip()[:200]}")
         payload = json.loads(r.stdout)
+        if isinstance(payload, dict) and payload.get("errors"):
+            raise RuntimeError(f"graphql errors: {str(payload['errors'])[:200]}")
         sec = (((payload.get("data") or {}).get("repositoryOwner") or {}).get("projectV2") or {}).get("items") or {}
         for node in sec.get("nodes") or []:
             c = node.get("content") or {}
@@ -355,8 +357,9 @@ def sweep(args: argparse.Namespace) -> int:
         return READ_FAILED
 
     # 1 lần đọc danh sách PR merged gần nhất dùng chung cho cả Phần 1 (kiểm PR liên kết) và Phần 2 (ngoài gate).
+    pr_limit = max(200, int(args.issue_limit))
     pr_fields = "number,title,headRefName,headRefOid,baseRefName,mergeCommit,mergedAt,closingIssuesReferences,url"
-    r_pr = run(gh + ["pr", "list", "--repo", slug, "--state", "merged", "--base", base, "--limit", "100", "--json", pr_fields],
+    r_pr = run(gh + ["pr", "list", "--repo", slug, "--state", "merged", "--base", base, "--limit", str(pr_limit), "--json", pr_fields],
                cwd=repo_path)
     if r_pr.returncode != 0:
         print(f"audit-sweep: gh pr list failed: {r_pr.stderr.strip()[:200]}", file=sys.stderr)
@@ -370,8 +373,8 @@ def sweep(args: argparse.Namespace) -> int:
         return READ_FAILED
 
     issue_fields = "number,title,stateReason,body,labels,closedAt,closedByPullRequestsReferences"
-    r_iss = run(gh + ["issue", "list", "--repo", slug, "--state", "closed", "--limit", str(args.issue_limit),
-                      "--json", issue_fields], cwd=repo_path)
+    r_iss = run(gh + ["issue", "list", "--repo", slug, "--state", "closed", "--search", "sort:updated-desc",
+                      "--limit", str(args.issue_limit), "--json", issue_fields], cwd=repo_path)
     if r_iss.returncode != 0:
         print(f"audit-sweep: gh issue list failed: {r_iss.stderr.strip()[:200]}", file=sys.stderr)
         return READ_FAILED
@@ -410,6 +413,22 @@ def sweep(args: argparse.Namespace) -> int:
         has_ac_open = "ac-open" in lbs
         unticked = unticked_acs(iss.get("body") or "")
         has_closed_by_pr = bool(iss.get("closedByPullRequestsReferences")) or bool(merged_prs_by_issue.get(num))
+        # Nếu bulk PR list chưa thấy PR cho thẻ, kiểm trực tiếp nhánh issue-<N>- trước khi mở lại để tránh cắt đuôi khi >200 PR.
+        if not has_ac_open and unticked and not has_closed_by_pr:
+            r_one = run(gh + ["pr", "list", "--repo", slug, "--state", "merged", "--base", base,
+                              "--search", f"head:issue-{num}-", "--limit", "5", "--json", "number,headRefName"],
+                        cwd=repo_path)
+            if r_one.returncode != 0:
+                print(f"audit-sweep: fallback gh pr list for #{num} failed; skipping reopen", file=sys.stderr)
+                continue
+            try:
+                one_prs = json.loads(r_one.stdout)
+                if any(isinstance(p, dict) and BRANCH_CARD_RE.match(p.get("headRefName") or "")
+                       and int(BRANCH_CARD_RE.match(p.get("headRefName") or "").group(1)) == num for p in one_prs):
+                    has_closed_by_pr = True
+            except (ValueError, TypeError):
+                print(f"audit-sweep: fallback gh pr list invalid JSON for #{num}; skipping reopen", file=sys.stderr)
+                continue
 
         # Mở lại nếu: (a) mang nhãn ac-open mà đóng COMPLETED (kể cả đang ở Done),
         # hoặc (b) body còn AC `- [ ]` chưa tick và không có PR merged liên kết.
@@ -430,6 +449,16 @@ def sweep(args: argparse.Namespace) -> int:
             ed = run(gh + ["issue", "edit", str(num), "--repo", slug, "--add-label", "ac-open"], cwd=repo_path)
             if ed.returncode != 0:
                 print(f"audit-sweep: failed to label ac-open on #{num}: {ed.stderr.strip()[:200]}", file=sys.stderr)
+                write_err = True
+                continue
+
+        # Chuyển Done -> Ready TRƯỚC khi reopen để nếu move hỏng thì thẻ vẫn CLOSED (lượt sau quét lại, không kẹt OPEN ở Done).
+        if card_info.get("status") == "Done":
+            mv = run(card_cmd() + ["--config", args.config, "move", str(num), "Ready"], cwd=repo_path)
+            if mv.returncode == 0:
+                moved_ready.append(num)
+            else:
+                print(f"audit-sweep: failed to move #{num} Done -> Ready: {mv.stderr.strip()[:200]}", file=sys.stderr)
                 write_err = True
                 continue
 
@@ -458,13 +487,22 @@ def sweep(args: argparse.Namespace) -> int:
         if not post_comment(gh, slug, num, cmt, repo_path):
             print(f"audit-sweep: reopened #{num} but comment failed", file=sys.stderr)
 
-        if card_info.get("status") == "Done":
-            mv = run(card_cmd() + ["--config", args.config, "move", str(num), "Ready"], cwd=repo_path)
-            if mv.returncode == 0:
-                moved_ready.append(num)
-            else:
-                print(f"audit-sweep: failed to move #{num} Done -> Ready: {mv.stderr.strip()[:200]}", file=sys.stderr)
-                write_err = True
+    # Phòng ngừa: thẻ đã OPEN mang nhãn ac-open nhưng còn sót ở Done -> đưa về Ready
+    closed_nums = {iss.get("number") for iss in closed_issues if isinstance(iss, dict)}
+    for num, card_info in board.items():
+        if card_info.get("status") != "Done" or num in closed_nums or num in moved_ready:
+            continue
+        if "ac-open" not in label_names(card_info.get("labels")):
+            continue
+        if args.dry_run:
+            moved_ready.append(num)
+            continue
+        mv = run(card_cmd() + ["--config", args.config, "move", str(num), "Ready"], cwd=repo_path)
+        if mv.returncode == 0:
+            moved_ready.append(num)
+        else:
+            print(f"audit-sweep: failed to move open ac-open #{num} Done -> Ready: {mv.stderr.strip()[:200]}", file=sys.stderr)
+            write_err = True
 
     # ── Phần 2: PR vào trunk trong N ngày qua không có biên nhận merge gate ──
     common = git_common_dir(repo_path)

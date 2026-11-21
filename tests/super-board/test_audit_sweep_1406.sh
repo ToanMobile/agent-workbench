@@ -111,8 +111,18 @@ case "$*" in
   *"issue list"*"--state closed"*)
     cat "$FAKE_DIR/closed_issues.json"
     ;;
+  *"pr list"*"--state merged"*"head:issue-"*)
+    echo '[]'
+    ;;
   *"pr list"*"--state merged"*)
     cat "$FAKE_DIR/merged_prs.json"
+    ;;
+  *"api graphql"*)
+    if [ "${GQL_ERRORS:-0}" = "1" ]; then
+      echo '{"data":null,"errors":[{"message":"bad token"}]}'
+    else
+      cat "$FAKE_DIR/gql_items.json"
+    fi
     ;;
   *"api "*"/issues/106/comments"*)
     printf '[%s]\n' "$(cat "$FAKE_DIR/comments_106.json")"
@@ -197,10 +207,58 @@ rc2=$?
 [ "$rc2" -eq 0 ] && ok "sweep lần 2 exit 0" || fail "sweep lần 2 exit $rc2"
 ! grep -q "gh issue comment 106 " "$T/calls.log" && ok "Oracle 2: chạy lại không lặp cảnh báo trên #106" || fail "Oracle 2: chạy lại vẫn comment lặp vào #106"
 
-# Kiểm nối dây trong runner và BIN của super-board-setup.py
+# Kiểm nối dây trong runner (chạy thật hàm sweep_audit) và BIN của super-board-setup.py
 grep -q 'sweep_audit' "$RUNNER" && awk '/if sweep_closed_cards;/{a=NR} /if sweep_audit;/{b=NR} END{exit !(a&&b&&a<b)}' "$RUNNER" \
   && ok "runner: gọi sweep_audit sau sweep_closed_cards" || fail "runner: thiếu nối dây sweep_audit"
 grep -q '"super-board-audit-sweep.py"' "$SETUP" && ok "setup.py BIN có super-board-audit-sweep.py" || fail "setup.py BIN thiếu super-board-audit-sweep.py"
+
+# Kiểm move Ready hỏng trước khi reopen -> không mở lại #101 (tránh kẹt OPEN trong Done)
+cat > "$T/card_fail.sh" <<'SH'
+#!/usr/bin/env bash
+echo "card-fail $*" >> "$FAKE_DIR/calls.log"
+exit 1
+SH
+chmod +x "$T/card_fail.sh"
+: > "$T/calls.log"
+SB_CARD="$T/card_fail.sh" python3 "$SWEEP" sweep --config "$T/cfg.json" --items "$T/items.json" >/dev/null 2>"$T/err_mv.log"
+rc_mv=$?
+[ "$rc_mv" -eq 69 ] && ! grep -q "gh issue reopen 101 " "$T/calls.log" \
+  && ok "move Ready hỏng -> exit 69, không reopen #101 để tránh kẹt OPEN trong Done" || fail "move fail check: rc=$rc_mv calls=$(cat "$T/calls.log")"
+
+# Kiểm --items bỏ trống (GraphQL) + lỗi GraphQL -> exit 79
+cat > "$T/gql_items.json" <<'JSON'
+{"data":{"repositoryOwner":{"projectV2":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+  {"id":"I109","content":{"number":109,"title":"open ac-open","repository":{"nameWithOwner":"o/r"},"labels":{"nodes":[{"name":"ac-open"}]}},
+   "fieldValues":{"nodes":[{"name":"Done","field":{"name":"Status"}}]}}
+]}}}}}
+JSON
+: > "$T/calls.log"
+out_gql="$(python3 "$SWEEP" sweep --config "$T/cfg.json" 2>"$T/err_gql.log")"
+rc_gql=$?
+[ "$rc_gql" -eq 0 ] && grep -q "card .*move 109 Ready" "$T/calls.log" \
+  && ok "GraphQL fallback + thẻ OPEN mang ac-open sót ở Done -> chuyển về Ready" || fail "gql check: rc=$rc_gql out=$out_gql"
+
+GQL_ERRORS=1 python3 "$SWEEP" sweep --config "$T/cfg.json" >/dev/null 2>"$T/err_gqle.log"
+[ "$?" -eq 79 ] && ok "GraphQL errors -> exit 79 (READ_FAILED)" || fail "GraphQL errors không trả 79"
+
+# Chạy thật hàm sweep_audit của super-board-run.sh (SB_LIB_ONLY=1)
+printf 'import sys\nsys.exit(3)\n' > "$T/helper_fail.py"
+printf 'print("{\\"reopened\\":[101],\\"moved_ready\\":[101],\\"ungated_total_7d\\":1,\\"ungated_by_date\\":{\\"2026-11-21\\":1}}")\n' > "$T/helper_pass.py"
+out_run="$(SB_LIB_ONLY=1 bash -c '
+  R="$1"; D="$2"; set --
+  . "$R" >/dev/null 2>&1
+  set +e
+  CONFIG_PATH="$D/cfg.json"; RUN_MANIFEST="$D/manifest.log"; : > "$RUN_MANIFEST"
+  PROJECT_ITEMS_JSON="{\"items\":[]}"
+  log() { echo "$*" >> "$D/run.log"; }
+  audit_sweep_helper() { echo "$HELPER"; }
+  HELPER="$D/helper_fail.py"; AUDIT_SWEEP_NEXT=0
+  sweep_audit; echo "fail_rc=$? next_after_fail=${AUDIT_SWEEP_NEXT:-0}"
+  HELPER="$D/helper_pass.py"; AUDIT_SWEEP_NEXT=0
+  sweep_audit; echo "pass_rc=$? next_gt0=$([ "${AUDIT_SWEEP_NEXT:-0}" -gt 0 ] && echo 1 || echo 0)"
+' _ "$RUNNER" "$T")"
+echo "$out_run" | grep -q "fail_rc=1 next_after_fail=0" && echo "$out_run" | grep -q "pass_rc=0 next_gt0=1" \
+  && ok "sweep_audit chạy thật: fail giữ cadence=0, reopened trả rc=0 và nâng cadence" || fail "sweep_audit live: $out_run"
 
 [ "$FAILS" -eq 0 ] && { echo "✅ test_audit_sweep_1406: all passed"; exit 0; }
 echo "❌ test_audit_sweep_1406: $FAILS failed"; exit 1

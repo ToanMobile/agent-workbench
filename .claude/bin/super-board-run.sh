@@ -4144,23 +4144,27 @@ sweep_dead_sessions() {
 # #1406: hậu kiểm định kỳ: (1) mở lại thẻ đóng COMPLETED còn AC `- [ ]` chưa tick và không có PR merged liên kết (gắn ac-open,
 # chuyển Done -> Ready); (2) ghi cảnh báo một lần và tổng hợp theo ngày với PR merge vào trunk không có biên nhận merge gate.
 sweep_audit() {
-  local now items out rc=0 reopened ungated by_day
+  local now items out rc=0 reopened moved ungated by_day
   now=$(date +%s)
   [ "$now" -lt "${AUDIT_SWEEP_NEXT:-0}" ] && return 1
   items=$(mktemp "${TMPDIR:-/tmp}/sb-audit-items.XXXXXX") || { log "⚠ audit sweep: mktemp failed — retrying next tick"; return 1; }
   printf '%s' "$PROJECT_ITEMS_JSON" > "$items"
   out=$(python3 "$(audit_sweep_helper)" sweep --config "$CONFIG_PATH" --items "$items" 2>>"$RUN_MANIFEST") || rc=$?
   rm -f "$items"
-  if [ "$rc" -ne 0 ]; then log "⚠ audit sweep failed (exit ${rc}) — retrying next tick"; return 1; fi
-  AUDIT_SWEEP_NEXT=$((now + ${SB_AUDIT_SWEEP_EVERY:-300}))
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 69 ]; then
+    log "⚠ audit sweep failed (exit ${rc}) — retrying next tick"
+    return 1
+  fi
+  [ "$rc" -ne 0 ] && log "⚠ audit sweep had partial write error (exit ${rc}) — retrying next tick" || AUDIT_SWEEP_NEXT=$((now + ${SB_AUDIT_SWEEP_EVERY:-300}))
   reopened=$(printf '%s' "$out" | jq -r '[(.reopened // [])[] | "#\(.)"] | join(" ")' 2>/dev/null) || reopened=""
+  moved=$(printf '%s' "$out" | jq -r '[(.moved_ready // [])[] | "#\(.)"] | join(" ")' 2>/dev/null) || moved=""
   ungated=$(printf '%s' "$out" | jq -r '.ungated_total_7d // 0' 2>/dev/null) || ungated=0
   if [ "${ungated:-0}" -gt 0 ]; then
     by_day=$(printf '%s' "$out" | jq -r '[(.ungated_by_date // {}) | to_entries[] | "\(.key)=\(.value)"] | join(" ")' 2>/dev/null) || by_day=""
     log "⚠ audit sweep: ungated merges (7d)=${ungated}${by_day:+ (${by_day})}"
   fi
-  [ -n "$reopened" ] || return 1
-  log "audit sweep: reopened ${reopened} (completed with unticked AC and no merged PR)"
+  [ -n "$reopened" ] || [ -n "$moved" ] || return 1
+  log "audit sweep: reopened=${reopened:-none} moved_ready=${moved:-none}"
   return 0
 }
 

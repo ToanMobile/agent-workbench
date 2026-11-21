@@ -110,7 +110,7 @@ with tempfile.TemporaryDirectory() as tmp:
     g.close_proven_cards(Run(dt.datetime(2026, 11, 21, 0, 0)), "o/r", "a" * 40, pg=pg)
     check("79" not in closed_nums(), "4: chuỗi bị ngắt bởi đêm đỏ không đóng sớm")
 
-    # 5) Có commit sửa liên kết (#80) -> mới 1 đêm xanh vẫn ĐÓNG ngay
+    # 5) Có commit sửa liên kết (#80 ở subject, #81 ở commit body) -> mới 1 đêm xanh vẫn ĐÓNG ngay
     repo = os.path.join(tmp, "repo")
     subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True)
     subprocess.run(["git", "-C", repo, "config", "user.email", "t@example.invalid"], check=True)
@@ -123,14 +123,43 @@ with tempfile.TemporaryDirectory() as tmp:
         fh.write("2\n")
     subprocess.run(["git", "-C", repo, "add", "f"], check=True)
     subprocess.run(["git", "-C", repo, "commit", "-qm", "fix flaky test (#80)"], check=True)
+    with open(os.path.join(repo, "f"), "w") as fh:
+        fh.write("3\n")
+    subprocess.run(["git", "-C", repo, "add", "f"], check=True)
+    subprocess.run(["git", "-C", repo, "commit", "-qm", "fix suite (#999)", "-m", "Closes #81"], check=True)
     subprocess.run(["git", "-C", repo, "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
 
     LIST[:] = [{"number": 80, "title": g.CARD_PREFIX + " 2026-11-18: REG-FLAKY-01 đỏ",
+                "labels": [{"name": "bug"}], "body": FLAKY_BODY, "createdAt": "2026-11-18T00:05:00Z"},
+               {"number": 81, "title": g.CARD_PREFIX + " 2026-11-18: REG-FLAKY-01 đỏ",
                 "labels": [{"name": "bug"}], "body": FLAKY_BODY, "createdAt": "2026-11-18T00:05:00Z"}]
     write_hist(pg, [])
     calls.clear()
     g.close_proven_cards(Run(dt.datetime(2026, 11, 21, 0, 0)), "o/r", "a" * 40, pg=pg, repo=repo)
-    check("80" in closed_nums(), "5: có commit sửa liên kết (#80) thì 1 đêm xanh đóng ngay")
+    check("80" in closed_nums() and "81" in closed_nums(),
+          "5: có commit sửa liên kết (#80 ở subject, #81 ở body) thì 1 đêm xanh đóng ngay")
+
+    # 5b) Dòng JSON hỏng trong history.jsonl không làm mất lịch sử hợp lệ; dòng thiếu `at` dừng đếm tại cut
+    nightly_dir = os.path.join(pg, "nightly")
+    os.makedirs(nightly_dir, exist_ok=True)
+    with open(os.path.join(nightly_dir, "history.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write('{"at": "2026-11-18T00:10:00", "result": "green", "red": [], "passed": ["REG-FLAKY-01"]}\n')
+        fh.write('{"at": "", "result": "green", "red": [], "passed": ["REG-FLAKY-01"]}\n')
+        fh.write('{corrupt_json\n')
+        fh.write('{"at": "2026-11-19T00:10:00", "result": "green", "red": [], "passed": ["REG-FLAKY-01"]}\n')
+        fh.write('{"at": "2026-11-20T00:10:00", "result": "green", "red": [], "passed": ["REG-FLAKY-01"]}\n')
+    check(g._consecutive_pass_streak(pg, "REG-FLAKY-01", "2026-11-17T00:00:00Z") == 3,
+          "5b: dòng JSON hỏng bỏ qua, dòng thiếu `at` dừng chuỗi an toàn (streak=3)")
+
+    # 5c) Thẻ P1 thường có chữ 'flaky' trong subject commit nghi vấn không bị nhận nhầm thành thẻ flaky
+    normal_p1 = {
+        "number": 82,
+        "title": g.CARD_PREFIX + " 2026-11-18: REG-REAL-01 đỏ",
+        "labels": [{"name": "bug"}],
+        "body": "## Problem\nCommit nghi vấn: abc fix flaky test.\n## Risk\n🔴 High — main đỏ\n",
+    }
+    check(not g._is_flaky_card(normal_p1),
+          "5c: thẻ P1 thường nhắc chữ 'flaky' trong subject commit không bị nhận nhầm là flaky")
 
     # 6) history_row ghi trường `passed` khi result in (green, red, red-env)
     r = Run(dt.datetime(2026, 11, 21, 0, 0))

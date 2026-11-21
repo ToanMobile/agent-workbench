@@ -1140,8 +1140,8 @@ FLAKY_CLOSE_STREAK = 3
 _FLAKY_BODY_MARKS = (
     "nhóm b (thời gian thực / môi trường",
     "không tái hiện khi chạy lại ở đỉnh",
-    "flaky",
-    "chập chờn",
+    "🟡 medium — nhóm b",
+    "kit đổi hoặc flaky)",
 )
 
 
@@ -1183,16 +1183,27 @@ def _consecutive_pass_streak(pg: str, sid: str, created_at: str) -> int:
     hist_path = os.path.join(pg, "nightly", "history.jsonl")
     try:
         with open(hist_path, encoding="utf-8") as fh:
-            rows = [json.loads(ln) for ln in fh if ln.strip().startswith("{")]
-    except (OSError, ValueError):
+            lines = fh.readlines()
+    except OSError:
         return 1
+    rows = []
+    for ln in lines:
+        s = ln.strip()
+        if not s.startswith("{"):
+            continue
+        try:
+            obj = json.loads(s)
+        except ValueError:
+            continue
+        if isinstance(obj, dict):
+            rows.append(obj)
     cut = _parse_iso_ts(created_at)
     streak = 0
     for r in reversed(rows):
-        if not isinstance(r, dict) or r.get("result") not in ("green", "red", "red-env"):
+        if r.get("result") not in ("green", "red", "red-env"):
             continue
         r_dt = _parse_iso_ts(r.get("at") or "")
-        if cut is not None and r_dt is not None and r_dt < cut:
+        if cut is not None and (r_dt is None or r_dt < cut):
             break
         passed = r.get("passed") or []
         red = r.get("red") or []
@@ -1213,11 +1224,14 @@ def _has_linked_fix(repo: str, slug: str, issue_num: int, created_at: str, item:
         target_ref = ref if ref else "HEAD"
         if git(repo, "rev-parse", "--verify", "-q", target_ref)[0] != 0:
             target_ref = "HEAD"
-        rc, out = git(repo, "log", target_ref, "--format=%H %s", "--grep", "#%d" % issue_num, "-n", "20", *since_args)
-        if rc == 0 and out.strip():
+        rc, out = git(repo, "log", target_ref, "--format=%H%x00%s%n%b%x00", "--grep", "#%d" % issue_num, "-n", "20", *since_args)
+        if rc == 0 and out:
             pat = re.compile(r"(?<![A-Za-z0-9_])#%d(?!\d)" % issue_num)
-            if any(pat.search(ln) for ln in out.splitlines()):
-                return True
+            for rec in out.split("\x00\x00"):
+                parts = rec.split("\x00", 1)
+                msg = parts[1] if len(parts) == 2 else rec
+                if pat.search(msg):
+                    return True
     if slug and shutil.which("gh"):
         rc, out = sh(["gh", "pr", "list", "--repo", slug, "--state", "merged", "--search", "#%d" % issue_num,
                       "--limit", "20", "--json", "number,headRefName,mergedAt,closingIssuesReferences"], timeout=60)

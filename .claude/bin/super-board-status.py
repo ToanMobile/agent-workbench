@@ -660,7 +660,7 @@ def _tz_info(tz_name: str) -> datetime.tzinfo:
         try:
             from zoneinfo import ZoneInfo
             return ZoneInfo(tz_name)
-        except Exception:
+        except (ImportError, KeyError, ValueError, OSError):
             pass
     return datetime.timezone.utc
 
