@@ -105,7 +105,7 @@
 ## 13. UI/UX cho backend: API và DX (quy ước chi tiết ở `DESIGN.md` §7–8 của profile)
 <!-- on-demand: §13 UI/UX cho backend: lỗi, phân trang, OpenAPI, CLI, giao diện quản trị -->
 - Người dùng backend là lập trình viên client và người vận hành: thiết kế API, lỗi, tài liệu và công cụ dòng lệnh như một sản phẩm; mã lỗi ổn định, phân trang/lọc/sắp xếp một quy ước, OpenAPI có ví dụ thành công và lỗi, `Retry-After` và 202 cho việc dài, CLI có `--dry-run` cho thao tác phá huỷ: xem `DESIGN.md` §7–8.
-- Giao diện web quản trị (nếu có) theo skill `ui-ux-pro-max` và Zero-Slop của essentials; skill tự ghi bỏ qua thiết kế API, nên chỉ áp cho phần nhìn thấy.
+- Giao diện web quản trị (nếu có) theo Zero-Slop của essentials; profile backend không cài skill UI (`ui-ux-pro-max`, `taste-mobile-app`), giao diện đáng kể thì dùng profile web.
 <!-- /on-demand -->
 
 ## 14. Bộ công cụ và cách nghiệm thu
@@ -113,7 +113,7 @@
 - Công cụ sẵn có (tên thật; chỉ dùng phần áp dụng cho backend, phần Android/game/UI thuần bỏ qua):
 - Hiệu năng: skill `observability-instrumentation` (câu hỏi chẩn đoán, p95/p99, correlation), skill `verification-before-completion` (đo xen kẽ, claim cần bằng chứng), agent `database-reliability-auditor` (N+1, index, khoá bảng, phân trang, migration), council `07-performance-anr` (chỉ agent 7.1 áp dụng, theo tương tự cho event loop; 7.2–7.5 là Android).
 - Chất lượng: skill `tdd-workflow` (RED→GREEN, mutation guard), skill `qc` (phát hiện runner, bằng chứng PASS), agent `test-architect-seti` (thiết kế test, flake, orchestration CI; bỏ phần Android), agent `principal-code-reviewer` (diff nhiều file, auth, concurrency, security; bỏ lens Android và state matrix).
-- API/DX và bảo mật: skill `deep-module-design` (seam, contract nhỏ, adapter thật và test), skill `ui-ux-pro-max` (chỉ giao diện quản trị web có hình), skill `security-checklist` (dùng mục tương đương web/backend: secret, CORS, telemetry; mục Android bỏ), agent `security-penetration-auditor` (secret, PII, injection, validate biên; mục exported component và WebView bỏ).
+- API/DX và bảo mật: skill `deep-module-design` (seam, contract nhỏ, adapter thật và test), skill `security-checklist` (dùng mục tương đương web/backend: secret, CORS, telemetry; mục Android bỏ), agent `security-penetration-auditor` (secret, PII, injection, validate biên; mục exported component và WebView bỏ).
 - Ngoài kit, dự án tự cài: k6 hoặc Gatling, profiler, Pact, công cụ mutation.
 - `database-reliability-auditor` còn kiểm cột `mode` DEMO/LIVE: chỉ áp khi dự án có hai chế độ đó, nếu không ghi N/A.
 <!-- /on-demand -->

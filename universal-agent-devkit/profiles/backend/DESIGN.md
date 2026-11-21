@@ -47,7 +47,7 @@
 - Tài liệu: OpenAPI 3.x là hợp đồng; mỗi endpoint có ví dụ thành công và từng mã lỗi; CI so spec với triển khai (contract test). Sắp ngừng một endpoint: header `Sunset` (RFC 8594) và ghi vào changelog trước khi gỡ.
 - Nhất quán: một kiểu đặt tên field (§1), enum là chuỗi ổn định, `null` và vắng mặt có nghĩa khác nhau và được ghi trong spec, thời gian ISO 8601 UTC (§4).
 - CLI và công cụ quản trị: `--help` có ví dụ, `--json` cho máy đọc, dữ liệu ra stdout còn thông báo ra stderr, mã thoát khác 0 khi lỗi, thao tác phá huỷ có `--dry-run` và bước xác nhận, không in secret hay PII thô.
-- Giao diện web quản trị (nếu có): chạy skill `ui-ux-pro-max` (`--domain ux`, `--stack` theo dự án; skill chỉ dành cho phần nhìn thấy, không dùng cho thiết kế API); tương phản chữ 4.5:1 và vùng chạm tối thiểu 44 px (bảng ưu tiên của skill, essentials), phản hồi tức thì, nút thao tác đắt vô hiệu hoá ở lần bấm đầu và debounce ≥ 1000 ms (essentials). Giao diện đáng kể thì cân nhắc thêm profile web.
+- Giao diện web quản trị (nếu có): profile backend không cài skill UI (`ui-ux-pro-max` ở profile web); tương phản chữ 4.5:1 và vùng chạm tối thiểu 44 px (essentials), phản hồi tức thì, nút thao tác đắt vô hiệu hoá ở lần bấm đầu và debounce ≥ 1000 ms (essentials). Giao diện đáng kể thì cân nhắc thêm profile web.
 
 ## 8. Quy ước hiệu năng cho API
 - Mỗi route ghi p95 mục tiêu cạnh định nghĩa route (số theo `rules/backend-rules.md` §11, chưa có SLO thì dùng bảng đề xuất kèm nhãn của nó); metric RED gắn nhãn bằng `http.route` dạng template (§6).

@@ -925,7 +925,10 @@ devkit_command_skill() {
   done
   case "$f" in
     */skills/*/SKILL.md) f="${f%/SKILL.md}"; printf '%s' "${f##*/}" ;;
-    *) printf '' ;;
+    # a hand-written command follows the skill its frontmatter names (`skill: unity-gc-audit`); none = every profile
+    *) [ -f "$f" ] && awk 'NR==1 { if ($0 != "---") exit; next } /^---[[:space:]]*$/ { exit }
+         /^skill:[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*$/ { sub(/^skill:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); printf "%s", $0; exit }' "$f"
+       return 0 ;;
   esac
 }
 

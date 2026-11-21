@@ -204,7 +204,7 @@ Whenever the user asks to fix a bug, refactor code, or change behavior in a comp
 > | `automotive` | AAOS, CAN, Vehicle HAL | `unity-gc-audit` |
 > | `ios` | Swift 6, SwiftUI | Android/Unity skills |
 > | `web` | TypeScript, React/Next.js | Android/Unity skills + `taste-mobile-app` |
-> | `backend` | API services (Python/Go/Rust/Node) | Android/Unity skills + `qa-visual`, `impeccable` |
+> | `backend` | API services (Python/Go/Rust/Node) | Android/Unity skills + `qa-visual`, `impeccable`, `taste-mobile-app`, `ui-ux-pro-max` |
 > | `game` | Unity 6, Zero-GC | Android skills + `taste-mobile-app`, `impeccable` |
 > | `voice-assistant` | edge audio AI | `compose-recomp-audit`, `unity-gc-audit` |
 > | `universal` | anything else | Android/Unity skills |

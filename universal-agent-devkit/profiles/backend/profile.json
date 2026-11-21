@@ -27,6 +27,8 @@
     "deploy",
     "impeccable",
     "qa-visual",
+    "taste-mobile-app",
+    "ui-ux-pro-max",
     "unity-gc-audit"
   ],
   "exclude_agents": [
