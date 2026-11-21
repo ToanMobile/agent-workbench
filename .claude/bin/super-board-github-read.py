@@ -290,7 +290,14 @@ def _home_repo():
     return f'{m.group(1)}/{m.group(2)}'.lower() if m else None
 
 
-def halt(reason, attempts, operation=None, verify=None):
+def check_write_argv(argv):
+    """Kiểm tra argv của lệnh ghi lỗi trước khi lưu vào bản ghi halt (#1397)."""
+    if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) for arg in argv):
+        raise ValueError('--write-argv needs a non-empty JSON string array')
+    return argv
+
+
+def halt(reason, attempts, operation=None, verify=None, write_argv=None):
     # A read of ANOTHER repository (a test fixture such as o/r, run from a worktree whose git-common-dir is the real
     # checkout) must not halt this board: it halted the real board twice on 24/10. The caller still gets ReadHalted.
     target, home = _op_repo(operation), (None if os.environ.get('SB_GITHUB_HALT_FILE') else _home_repo())
@@ -308,7 +315,8 @@ def halt(reason, attempts, operation=None, verify=None):
     try:
         with path.open('x') as stream:
             json.dump({'reason': reason, 'attempts': attempts, 'at': int(time.time()), 'operation': operation,
-                       **({'verify': verify} if verify else {})}, stream)
+                       **({'verify': verify} if verify else {}),
+                       **({'write_argv': write_argv} if write_argv else {})}, stream)
     except FileExistsError:
         pass
     raise ReadHalted(reason)
@@ -795,6 +803,7 @@ def main():
     parser.add_argument('--halt', help='record an unresolved mutation outcome and stop; never retry it')
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--verify', metavar='JSON', help='with --halt: how to read the uncertain write back (see check_verify_spec)')
+    parser.add_argument('--write-argv', metavar='JSON', help='with --halt: JSON string array of the failed write argv')
     parser.add_argument('--reconcile', action='store_true', help='read the uncertain write of a halt back from GitHub: exit 0 applied (halt archived with the evidence), 10 not applied, 11 cannot tell; the halt is kept for 10/11')
     parser.add_argument('--auto-reconcile', action='store_true', help='#1038, at runner start: an op-null halt whose every inflight lock holds a dead PID is archived after read-only re-reads of those issues; anything unproven keeps the halt (exit 10)')
     parser.add_argument('--inflight', metavar='DIR', help='with --auto-reconcile: the inflight lock directory')
@@ -807,8 +816,12 @@ def main():
             raise ValueError('--reconciled needs --resume, no read command, and a non-blank reason: what was checked on GitHub')
         if args.verify is not None and not args.halt:
             raise ValueError('--verify belongs to --halt')
+        if args.write_argv is not None and not args.halt:
+            raise ValueError('--write-argv belongs to --halt')
         if args.halt:
-            halt(args.halt, 1, verify=check_verify_spec(json.loads(args.verify)) if args.verify is not None else None)
+            halt(args.halt, 1,
+                 verify=check_verify_spec(json.loads(args.verify)) if args.verify is not None else None,
+                 write_argv=check_write_argv(json.loads(args.write_argv)) if args.write_argv is not None else None)
         if args.auto_reconcile:
             require(args.inflight, '--auto-reconcile needs --inflight DIR')
             return auto_reconcile(args.inflight)
