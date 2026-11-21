@@ -12,6 +12,8 @@ trap 'term=1; [ -z "$child" ] || { kill -TERM "$child" 2>/dev/null; ( sleep 1; k
 # Vòng sửa 1 (F4): mọi worker runner phóng (build/qa/review/merge, mọi engine) đi qua wrapper này, nên cờ worker board đặt ở đây;
 # gate / merge-train dựa vào nó để từ chối đường lách hàng đợi. Không export trong runner để môi trường của runner không đổi sau lượt giao đầu.
 export SB_BOARD_WORKER=1
+# Worker dùng cùng đường discover như antigravity_probe: tránh kế thừa biến terminal/agy tạm thời từ shell cha.
+unset ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN
 ( trap - TERM INT HUP; exec "$@" ) &
 child=$!
 [ -z "$term" ] || kill -TERM "$child" 2>/dev/null

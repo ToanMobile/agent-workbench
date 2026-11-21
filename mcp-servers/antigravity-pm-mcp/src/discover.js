@@ -7,6 +7,7 @@
 // Quy tac bat buoc: khoa phien CHI nam trong bo nho, KHONG ghi ra file, KHONG tra ve cho model.
 // Cache chi luu pid + cong.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { run, homeStateDir, readJsonIfExists, writeJsonAtomic, logStderr } from './util.js';
 
@@ -16,6 +17,8 @@ export const ENV_TOKEN = 'ANTIGRAVITY_CSRF_TOKEN';
 const LS_PROC_MATCH = 'language_server';
 const CACHE_FILE = () => path.join(homeStateDir(), 'ls.json');
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+const SAFE_DIR_RE = /^[A-Za-z0-9._-]+$/;
+const TOKEN_RE = /^[A-Za-z0-9_-]{8,}$/;
 
 export class AntigravityUnavailable extends Error {
   constructor(message, hint) {
@@ -27,10 +30,13 @@ export class AntigravityUnavailable extends Error {
 
 /** Duong dan binary agentapi. */
 export function agentapiPath() {
-  const home = process.env.HOME || '';
+  const home = process.env.HOME || os.homedir() || '';
+  const exe = process.env.ANTIGRAVITY_AGENTAPI_EXE;
+  // CLI `agy` tu dat ANTIGRAVITY_AGENTAPI_EXE=.../agy, nhung `agy` khong nhan lenh `get-conversation-metadata` cua agentapi.
+  const usableExe = exe && path.basename(exe) !== 'agy' ? exe : null;
   const candidates = [
     process.env.ANTIGRAVITY_PM_AGENTAPI,
-    process.env.ANTIGRAVITY_AGENTAPI_EXE,
+    usableExe,
     path.join(home, '.gemini/antigravity/bin/agentapi'),
     path.join(home, '.gemini/antigravity-ide/bin/agentapi'),
   ].filter(Boolean);
@@ -40,15 +46,75 @@ export function agentapiPath() {
   return null;
 }
 
+/** Chi chap nhan thu muc/file that thuoc user hien tai, khong symlink va khong cho group/other ghi. */
+function safeLstat(target, expectDir) {
+  let st;
+  try { st = fs.lstatSync(target); } catch { return null; }
+  if (st.isSymbolicLink()) return null;
+  if (expectDir ? !st.isDirectory() : !st.isFile()) return null;
+  if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return null;
+  if ((st.mode & 0o022) !== 0) return null;
+  return st;
+}
+
+/** Lay ten thu muc app_data_dir an toan tu argv (chan path traversal / duong dan tuyet doi). */
+function appDataDirsFromArgs(line) {
+  const m = /--app_data_dir(?:=|\s+)([^\s]+)/.exec(line);
+  if (!m) return ['antigravity', 'antigravity-ide'];
+  const name = m[1].replace(/^['"]|['"]$/g, '');
+  if (!SAFE_DIR_RE.test(name) || name === '.' || name === '..') return [];
+  return [name];
+}
+
+/** Tim file daemon hub_<port>.json khop dung pid trong ~/.gemini/<app_data_dir>/daemon. */
+function findDaemonEntry(pid, line) {
+  const home = process.env.HOME || os.homedir() || '';
+  if (!home) return null;
+  const geminiDir = path.join(home, '.gemini');
+  if (!safeLstat(geminiDir, true)) return null;
+
+  const matches = [];
+  for (const dirName of appDataDirsFromArgs(line)) {
+    const appDir = path.join(geminiDir, dirName);
+    if (!safeLstat(appDir, true)) continue;
+    const daemonDir = path.join(appDir, 'daemon');
+    if (!safeLstat(daemonDir, true)) continue;
+    let entries;
+    try { entries = fs.readdirSync(daemonDir); } catch { continue; }
+    for (const name of entries) {
+      if (!/^hub_\d+\.json$/.test(name)) continue;
+      const filePath = path.join(daemonDir, name);
+      const st = safeLstat(filePath, false);
+      if (!st) continue;
+      let data;
+      try { data = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { continue; }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+      if (Number(data.pid) !== pid) continue;
+      if (typeof data.csrfToken !== 'string' || !TOKEN_RE.test(data.csrfToken)) continue;
+      const hintPorts = Number.isInteger(data.httpPort) && data.httpPort >= 1 && data.httpPort <= 65535
+        ? [data.httpPort]
+        : [];
+      matches.push({ pid, secret: data.csrfToken, hintPorts, mtimeMs: st.mtimeMs });
+    }
+  }
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return matches[0];
+}
+
 /** Doc process table, lay pid + khoa phien cua language_server dang chay. */
 async function findLsProcess() {
-  const ps = await run('/bin/ps', ['ax', '-o', 'pid=,command='], { timeoutMs: 15000 });
+  const psBin = process.env.ANTIGRAVITY_PM_PS || '/bin/ps';
+  const ps = await run(psBin, ['ax', '-o', 'pid=,command='], { timeoutMs: 15000 });
   if (ps.code !== 0 && !ps.stdout) throw new AntigravityUnavailable('Khong doc duoc process table (ps that bai).');
   const lines = ps.stdout.split('\n').filter((l) => l.includes(LS_PROC_MATCH) && l.includes('--standalone'));
   for (const line of lines) {
     const pid = Number(line.trim().split(/\s+/)[0]);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
     const m = /--csrf_token[= ]([0-9a-fA-F-]{8,})/.exec(line);
-    if (pid && m) return { pid, secret: m[1] };
+    if (m) return { pid, secret: m[1], hintPorts: [] };
+    const daemon = findDaemonEntry(pid, line);
+    if (daemon) return { pid: daemon.pid, secret: daemon.secret, hintPorts: daemon.hintPorts };
   }
   throw new AntigravityUnavailable(
     'Khong thay tien trinh Antigravity language_server nao dang chay.',
@@ -80,6 +146,19 @@ async function probePort(address, secret, agentapi) {
   return /"response"|NotFound|not found|InvalidArgument/i.test(blob);
 }
 
+/** Thu tung cong, tra ve ket noi dau tien tra loi agentapi va luu cache pid + cong. */
+async function tryPorts(ports, { pid, secret, agentapi }) {
+  for (const p of ports) {
+    const address = `127.0.0.1:${p}`;
+    if (await probePort(address, secret, agentapi)) {
+      writeJsonAtomic(CACHE_FILE(), { pid, address, at: new Date().toISOString() });
+      logStderr(`da noi duoc language_server tai ${address} (pid ${pid})`);
+      return { address, secret, pid, agentapi, source: 'probe' };
+    }
+  }
+  return null;
+}
+
 /**
  * Tra ve { address, secret, pid, agentapi, source }.
  * force=true: bo cache, do lai tu dau (goi khi RPC bat dau loi).
@@ -104,7 +183,7 @@ export async function discover({ force = false } = {}) {
     };
   }
 
-  const { pid, secret } = await findLsProcess();
+  const { pid, secret, hintPorts = [] } = await findLsProcess();
 
   if (!force) {
     const cached = readJsonIfExists(CACHE_FILE());
@@ -115,20 +194,20 @@ export async function discover({ force = false } = {}) {
     }
   }
 
-  const ports = await listenPorts(pid);
-  if (ports.length === 0) {
+  const hinted = await tryPorts(hintPorts, { pid, secret, agentapi });
+  if (hinted) return hinted;
+
+  const tried = new Set(hintPorts);
+  const ports = (await listenPorts(pid)).filter((p) => !tried.has(p));
+  if (ports.length === 0 && hintPorts.length === 0) {
     throw new AntigravityUnavailable(`language_server (pid ${pid}) khong mo cong LISTEN nao.`);
   }
-  for (const p of ports) {
-    const address = `127.0.0.1:${p}`;
-    if (await probePort(address, secret, agentapi)) {
-      writeJsonAtomic(CACHE_FILE(), { pid, address, at: new Date().toISOString() });
-      logStderr(`da noi duoc language_server tai ${address} (pid ${pid})`);
-      return { address, secret, pid, agentapi, source: 'probe' };
-    }
-  }
+  const found = await tryPorts(ports, { pid, secret, agentapi });
+  if (found) return found;
+
+  const allPorts = [...new Set([...hintPorts, ...ports])];
   throw new AntigravityUnavailable(
-    `Thay language_server (pid ${pid}) nhung khong cong nao trong [${ports.join(', ')}] tra loi agentapi.`,
+    `Thay language_server (pid ${pid}) nhung khong cong nao trong [${allPorts.join(', ')}] tra loi agentapi.`,
     'Antigravity co the dang khoi dong hoac vua doi phien ban. Thu lai sau vai giay, hoac khoi dong lai IDE.',
   );
 }
