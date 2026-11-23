@@ -587,9 +587,9 @@ Next: the next batch merges it" || true
             elif [ -n "$k" ] && unverified_edited_first "$p" "$head" "$det"; then
               [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ⏳ unverified · PR #${p} back to Review, no rebuild counted
 Did: the verify found an existing test edited without a cross-review (UNVERIFIED, not red)
-❌ Not done: no scoped Antigravity audit is recorded for head ${head:0:7}
-Next: pm_task_create with project = the review worktree .claude/worktrees/issue-${k}-review (at the PR head), pm_dispatch kind=audit WITHOUT message
-Next: the output must show a Pham vi: line (not Khong ghi pham vi), then pm_verdict kind=audit verdict=pass auditedHead=<sha40>, then the ${LABEL} label again
+❌ Not done: no scoped claude-verify or Antigravity audit is recorded for head ${head:0:7}
+Next: run claude_verify.py seal on the review worktree (board claude-p), or pm_task_create with project = the review worktree .claude/worktrees/issue-${k}-review (at the PR head), pm_dispatch kind=audit WITHOUT message
+Next: for Antigravity, the output must show a Pham vi: line (not Khong ghi pham vi), then pm_verdict kind=audit verdict=pass auditedHead=<sha40>; then the ${LABEL} label again
 blocked-by: agent" || true
               card_move "$k" Review || ok=1
               continue_route=0

@@ -954,6 +954,8 @@ def since_test_weakened(since: str, repo_path: str, landed=(), runner: bool = Fa
             base = sha
             if m.group(1) == "antigravity":
                 PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
+            elif m.group(1) == "claude-verify":
+                CV_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản claude-verify: pm_relaxed() xét CLAUDE_VERIFY_HOME
             break
     # A trailer commit after the rename knows only the new name; at `since` (or before the rename) the old one.
     if old_path and base != since and object_info(base, old_path) is None:
@@ -1071,18 +1073,28 @@ APPROVE_LABEL = re.compile(r"^\s*(?:duyệt|đồng ý|chấp nhận|approve[ds]
 APPROVED_BY = {}
 CROSS_REVIEW = {}            # path -> (reviewer, task_id) of the accepted cross-review entry
 PM_APPROVAL_USED = []        # --since: test whose base moved to a Test-approved-by commit (an antigravity-pm audit record)
+CV_APPROVAL_USED = []        # --since: test có mốc dời theo trailer Test-approved-by: claude-verify <CV...>
 
 
 def pm_relaxed() -> bool:
-    """Audit T0066 vòng 2 (#605): lượt có lời duyệt dựa vào biên bản antigravity-pm (CROSS_REVIEW, mốc --since dời theo trailer) đọc từ
-    ANTIGRAVITY_PM_STATE_HOME lạ (không phải ~/.antigravity-pm của user) là nới lỏng: kết luận giữ nguyên (test cần), nhưng không ghi
-    biên nhận task / merge gate và full_pass.json không là exit 0 — biên bản ở chỗ lạ agent nào cũng tự dựng được. Lỗi → True."""
-    if not CROSS_REVIEW and not PM_APPROVAL_USED:
+    """Audit T0066 vòng 2 (#605) & Hướng A: lượt có lời duyệt dựa vào biên bản antigravity-pm ở ANTIGRAVITY_PM_STATE_HOME lạ hoặc
+    biên bản claude-verify ở CLAUDE_VERIFY_HOME lạ là nới lỏng: kết luận giữ nguyên (test cần), nhưng không ghi biên nhận task / merge gate
+    và full_pass.json không là exit 0 — biên bản ở thư mục lạ agent tự dựng được. Lỗi → True (fail closed)."""
+    if not CROSS_REVIEW and not PM_APPROVAL_USED and not CV_APPROVAL_USED:
         return False
     try:
-        return bool(_push_gate().pm_home_overridden())
+        pg = _push_gate()
+        uses_pm = bool(PM_APPROVAL_USED) or any(rv == "antigravity" for rv, _ in CROSS_REVIEW.values())
+        uses_cv = bool(CV_APPROVAL_USED) or any(rv == "claude-verify" for rv, _ in CROSS_REVIEW.values())
+        if uses_pm and pg.pm_home_overridden():
+            return True
+        if uses_cv:
+            cv = pg._claude_verify_lib()
+            if cv is None or cv.home_overridden():
+                return True
+        return False
     except (ImportError, AttributeError, OSError) as e:
-        print(f"post-fix-gate: không xác định được thư mục antigravity-pm ({type(e).__name__}); coi là nới lỏng", file=sys.stderr)
+        print(f"post-fix-gate: không xác định được thư mục biên bản duyệt chéo ({type(e).__name__}); coi là nới lỏng", file=sys.stderr)
         return True
 APPROVAL_REJECTS = []        # (path, sha256 hiện tại, lý do): mục duyệt bị từ chối, cần duyệt lại
 SELF_APPROVAL_REFUSED = []   # paths an --auto-approve-tests / DEVKIT_AUTO_APPROVE_TESTS run asked to approve
@@ -1257,17 +1269,24 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
         if res.returncode != 0:
             return {}
         agents = _push_gate().session_agents()       # vòng kiểm lại H4: TẬP danh tính phiên (rỗng = không biết: không từ chối thêm)
-        audited = []                                  # (auditedHead, reviewer, task_id), mới nhất trước, chỉ commit push_gate công nhận
+        audited = []                                  # (auditedHead, reviewer, task_id, edited_set|None), mới nhất trước
         for sha in res.stdout.split():
             ok, note = _push_gate().approved(root, f"{sha}^!")
             m = _push_gate().APPROVED_VALUE.search(note or "") if ok else None
             head = _push_gate().audited_head(root, m.group(2)) if m else None
             if head and m.group(1) not in agents:
-                audited.append((head, m.group(1), m.group(2)))
+                # Hướng A: với claude-verify, ràng thêm phạm vi base..head phủ đúng file test cũ bị sửa (phòng thủ nhiều lớp).
+                if m.group(1) == "claude-verify":
+                    scope = _push_gate().audit_scope(root, m.group(2))
+                    if not scope:
+                        continue
+                    audited.append((head, m.group(1), m.group(2), set(scope[1])))
+                else:
+                    audited.append((head, m.group(1), m.group(2), None))
         # R11: an older trailer head whose test blob differs from a newer accepted head's is a replay of a weaker, superseded test.
         def _superseded(f, head):
             rc_a, mine = _git_out(root, "rev-parse", "-q", "--verify", f"{head}:{prefix}{f}")
-            for h2, _rv, _tid in audited:
+            for h2, _rv, _tid, _ed in audited:
                 if h2 != head and _is_ancestor(root, head, h2):
                     rc_b, theirs = _git_out(root, "rev-parse", "-q", "--verify", f"{h2}:{prefix}{f}")
                     if rc_a != 0 or rc_b != 0 or mine != theirs:
@@ -1275,7 +1294,9 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
             return False
         out = {}
         for f in paths if audited else []:
-            for head, rv, task_id in audited:
+            for head, rv, task_id, edited in audited:
+                if edited is not None and prefix + f not in edited:
+                    continue
                 if _superseded(f, head):
                     continue
                 if audit_covers(root, prefix, project_root, f, head)[0]:
@@ -1484,6 +1505,12 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             if pm_rv == _push_gate().normalize_reviewer(e["author"]) or pm_rv in _push_gate().session_agents():
                 APPROVAL_REJECTS.append((f, cur, f"reviewer {pm_rv} của biên bản PM trùng author (tự duyệt)"))
                 continue
+            if pm_rv == "claude-verify":
+                # Hướng A: ràng file test nằm trong phạm vi base..head của biên bản claude-verify.
+                cv_scope = _push_gate().audit_scope(git_top, tid)
+                if not cv_scope or (prefix + f) not in cv_scope[1]:
+                    APPROVAL_REJECTS.append((f, cur, f"task {tid}: file nằm ngoài phạm vi base..head của biên bản claude-verify"))
+                    continue
             if not covered:
                 APPROVAL_REJECTS.append((f, cur, why))
                 continue
@@ -10144,8 +10171,8 @@ def main():
         touched_diff = f"git diff {args.since if in_range else base_ref} -- " + " ".join(tests_touched[:3]) + (" …" if len(tests_touched) > 3 else "")
         # 04/11 (không bước người): cách chữa là audit của agent khác do PM tự chạy và tự ghi biên bản; gate tra thẳng biên bản đó
         # (_pm_audit_cross_review), audit Antigravity có phạm vi không cần json, comment hay trailer (trailer cho audit /giao).
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần duyệt chéo diff test (`{touched_diff}`) bởi agent khác; agent sửa test KHÔNG tự duyệt (--auto-approve-tests / `AUTO-APPROVE:` bị từ chối): commit cho cây sạch rồi, trên worktree của PR (dưới checkout chính, vd .claude/worktrees/<tên>), gọi antigravity-pm `pm_task_create` rồi `pm_dispatch kind=audit` (mặc định Antigravity, không `message`) cho head PR, đọc kết quả rồi `pm_verdict kind=audit verdict=pass auditedHead=<sha head PR>`, rồi `agent-kit approve-tests <task-id>` và chạy lại gate (PM ghi phạm vi merge-base(trunk, head)..head vào lượt audit, nên gate tra thẳng được biên bản đó: chỉ nhận audit mới nhất trên chuỗi first-parent của PR, reviewer khác phiên đang chạy, test nằm trong phạm vi đã audit, nội dung test hiện tại đúng cây đã audit; audit /giao: commit có trailer `Test-approved-by: antigravity <task-id>`)",
-                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: needs a cross-review of the test diff (`{touched_diff}`) by another agent; the agent that edited a test does NOT approve it (--auto-approve-tests / `AUTO-APPROVE:` are refused): commit so the tree is clean, then in the PR's worktree (under the main checkout, e.g. .claude/worktrees/<name>) call antigravity-pm `pm_task_create` then `pm_dispatch kind=audit` (Antigravity by default, no `message`) on the PR head, read the result, then `pm_verdict kind=audit verdict=pass auditedHead=<PR head sha>`, then `agent-kit approve-tests <task-id>` and re-run the gate (the PM records the merge-base(trunk, head)..head scope on the audit dispatch, so the gate reads that record directly: only the latest audit on the PR's first-parent chain counts, its reviewer must differ from the running session, the test must be in the audited scope and its current content must be the audited tree's; a /giao audit: a commit with the trailer `Test-approved-by: antigravity <task-id>`)"), YELLOW, 2
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần duyệt chéo diff test (`{touched_diff}`) bởi agent khác; agent sửa test KHÔNG tự duyệt (--auto-approve-tests / `AUTO-APPROVE:` bị từ chối): thẻ do board giao (claude-p) ở lane Review có thể chạy `claude_verify.py seal` tạo biên bản `CV…` hợp lệ (hoặc dùng Antigravity: commit cho cây sạch rồi, trên worktree của PR (dưới checkout chính, vd .claude/worktrees/<tên>), gọi antigravity-pm `pm_task_create` rồi `pm_dispatch kind=audit` (mặc định Antigravity, không `message`) cho head PR, đọc kết quả rồi `pm_verdict kind=audit verdict=pass auditedHead=<sha head PR>`, rồi `agent-kit approve-tests <task-id>` và chạy lại gate; gate tra thẳng biên bản claude-verify / PM có phạm vi merge-base(trunk, head)..head: chỉ nhận audit mới nhất trên chuỗi first-parent của PR, reviewer khác builder/phiên đang chạy, test nằm trong phạm vi đã audit, nội dung test hiện tại đúng cây đã audit; trailer: `Test-approved-by: claude-verify <CV…>` hoặc `Test-approved-by: antigravity <task-id>`)",
+                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: needs a cross-review of the test diff (`{touched_diff}`) by another agent; the agent that edited a test does NOT approve it (--auto-approve-tests / `AUTO-APPROVE:` are refused): board-dispatched claude-p cards in Review can run `claude_verify.py seal` to produce a valid `CV…` record (or use Antigravity: commit so the tree is clean, then in the PR's worktree (under the main checkout, e.g. .claude/worktrees/<name>) call antigravity-pm `pm_task_create` then `pm_dispatch kind=audit` (Antigravity by default, no `message`) on the PR head, read the result, then `pm_verdict kind=audit verdict=pass auditedHead=<PR head sha>`, then `agent-kit approve-tests <task-id>` and re-run the gate; the gate reads scoped claude-verify / PM records directly on merge-base(trunk, head)..head: only the latest audit on the PR's first-parent chain counts, its reviewer must differ from the builder/running session, the test must be in the audited scope and its current content must be the audited tree's; trailer: `Test-approved-by: claude-verify <CV…>` or `Test-approved-by: antigravity <task-id>`)"), YELLOW, 2
     elif unverified:
         exit_reason = "dry_run"
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2

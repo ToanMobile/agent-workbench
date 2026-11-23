@@ -183,10 +183,13 @@ def session_problem(top, head, issue, reviewer, recorded_builders=()):
     other = sorted({e for _, _, e in _rows(top, "build", issue) if e != "claude"})
     if other:
         return f"thẻ #{issue} có lượt build không phải Claude ({', '.join(other)}): claude-verify không kiểm được phiên đó"
-    builders = {s for s, _ in build_rows} | lock_builders(top, head) | set(recorded_builders)
-    builders.discard("")
-    if not builders:
+    # Nguồn xác thực builder phải tới từ sổ runner hoặc lock worktree thật; recorded_builders chỉ mở rộng tập cấm tự duyệt, không thay thế sổ rỗng.
+    known_builders = {s for s, _ in build_rows} | lock_builders(top, head)
+    known_builders.discard("")
+    if not known_builders:
         return f"không biết phiên builder của thẻ #{issue} (sổ builders rỗng): claude-verify chỉ dùng cho thẻ board giao"
+    builders = known_builders | set(recorded_builders)
+    builders.discard("")
     if not isinstance(reviewer, str) or not SESSION.fullmatch(reviewer):
         return "không rõ phiên reviewer"
     if reviewer in builders:
@@ -314,46 +317,81 @@ def seal(repo, head, report_path, branch):
     return (0 if verdict == "pass" else 4), None
 
 
-def check(task_id, sha, top, pr=None, branch=None):
-    """(True, lý do) khi biên bản claude-verify `task_id` hợp lệ cho head `sha` trong repo `top`; (False, lý do) mọi trường hợp khác."""
+def is_task_id(value):
+    """True khi `value` đúng khuôn mã biên bản claude-verify (CV...)."""
+    return isinstance(value, str) and bool(TASK_ID.fullmatch(value))
+
+
+def home_overridden():
+    """True khi đang đọc CLAUDE_VERIFY_HOME khác mặc định (~/.claude-verify của uid)."""
+    return bool(os.environ.get("CLAUDE_VERIFY_HOME"))
+
+
+def current_issue_branch(top):
+    """Tên nhánh hiện tại nếu khớp khuôn issue-<N>-..., ngược lại None (detached hoặc nhánh thường)."""
+    rc, out = git(top, "symbolic-ref", "-q", "--short", "HEAD")
+    br = out.strip() if rc == 0 else ""
+    return br if BRANCH.fullmatch(br) else None
+
+
+def edited_files(top, base, head):
+    """Danh sách đường dẫn đã có bị sửa/xoá/đổi kiểu (M/D/T) trong diff base..head; None khi lỗi git."""
+    rc, out = git(top, "-c", "core.quotePath=false", "diff", "--name-status", "--no-renames", "-z", base, head)
+    if rc != 0:
+        return None
+    parts = out.split("\0")
+    return [parts[i + 1] for i in range(0, len(parts) - 1, 2) if parts[i][:1] in ("M", "D", "T") and parts[i + 1]]
+
+
+def _norm_ts(ts):
+    """Chuẩn hoá mốc thời gian ISO sang UTC dạng YYYY-MM-DDTHH:MM:SS.ffffffZ để so thứ tự ổn định."""
+    if not isinstance(ts, str) or not ts.strip():
+        return ""
     try:
-        return _check(task_id, sha, top, pr, branch)
-    except Unchecked as e:
-        return False, str(e)
+        dt = datetime.datetime.fromisoformat(ts.strip().replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            return ""
+        return dt.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError:
+        return ""
 
 
-def _check(task_id, sha, top, pr, branch):
-    if not isinstance(task_id, str) or not TASK_ID.fullmatch(task_id) or not isinstance(sha, str) or not SHA40.fullmatch(sha):
-        return False, "task_id hoặc sha sai dạng"
-    top = os.path.realpath(top)
-    if pr is not None and _tree(top, sha) is None:
-        git(top, "fetch", "--quiet", "origin", f"refs/pull/{int(pr)}/head", timeout=60)
-    tree = _tree(top, sha)
-    if tree is None:
-        return False, f"head {sha[:12]} không có trong repo"
+def _read_payload(top, task_id, require_seal=True):
+    """Đọc biên bản <task_id>.json, kiểm tra chữ ký Ed25519 khi seal mode bật (nếu require_seal=True) và khuôn payload cơ bản."""
     try:
         path = os.path.join(root(top), "records", task_id + ".json")
         if os.path.getsize(path) > MAX_BYTES:
-            return False, "biên bản quá lớn"
+            return None, "biên bản quá lớn"
         with open(path, encoding="utf-8") as fh:
             rec = json.load(fh)
         payload_s, sig = rec["payload"], rec.get("sig")
         payload = json.loads(payload_s)
     except (OSError, ValueError, KeyError, TypeError, RecursionError) as e:
-        return False, f"không đọc được biên bản {task_id}: {e.__class__.__name__}"
-    vs = _load("verdict_seal")
-    on, pub = vs.trusted_pubkey(_fixture(top))
-    if on:
-        try:
-            ok = pub is not None and isinstance(sig, str) and vs.ed25519_verify(pub, payload_s.encode("utf-8"),
-                                                                                  base64.b64decode(sig, validate=True))
-        except (ValueError, TypeError):
-            ok = False
-        if not ok:
-            return False, "seal mode bật: biên bản không có chữ ký hợp lệ của pubkey tin cậy"
+        return None, f"không đọc được biên bản {task_id}: {e.__class__.__name__}"
+    if require_seal:
+        vs = _load("verdict_seal")
+        on, pub = vs.trusted_pubkey(_fixture(top))
+        if on:
+            try:
+                ok = pub is not None and isinstance(sig, str) and vs.ed25519_verify(pub, payload_s.encode("utf-8"),
+                                                                                      base64.b64decode(sig, validate=True))
+            except (ValueError, TypeError):
+                ok = False
+            if not ok:
+                return None, "seal mode bật: biên bản không có chữ ký hợp lệ của pubkey tin cậy"
     if not isinstance(payload, dict) or payload.get("v") != 1 or payload.get("kind") != "claude-verify" \
             or payload.get("task_id") != task_id:
-        return False, "biên bản sai v/kind/task_id"
+        return None, "biên bản sai v/kind/task_id"
+    return payload, None
+
+
+def _check_payload(payload, sha, top, pr, branch):
+    """Kiểm tra nội dung payload đã đọc: head/tree, verdict pass, nhánh thẻ khớp và phiên reviewer != builder."""
+    if pr is not None and _tree(top, sha) is None:
+        git(top, "fetch", "--quiet", "origin", f"refs/pull/{int(pr)}/head", timeout=60)
+    tree = _tree(top, sha)
+    if tree is None:
+        return False, f"head {sha[:12]} không có trong repo"
     if payload.get("head") != sha or payload.get("tree") != tree:
         return False, f"biên bản cho head/tree khác {sha[:12]}"
     findings = payload.get("findings")
@@ -372,6 +410,141 @@ def _check(task_id, sha, top, pr, branch):
     why = session_problem(top, sha, issue, payload.get("reviewer_session"),
                           recorded.split(",") if isinstance(recorded, str) else ())
     return (False, why) if why else (True, "claude-verify pass")
+
+
+def check(task_id, sha, top, pr=None, branch=None):
+    """(True, lý do) khi biên bản claude-verify `task_id` hợp lệ cho head `sha` trong repo `top`; (False, lý do) mọi trường hợp khác."""
+    try:
+        return _check(task_id, sha, top, pr, branch)
+    except Unchecked as e:
+        return False, str(e)
+
+
+def _check(task_id, sha, top, pr, branch):
+    if not is_task_id(task_id) or not isinstance(sha, str) or not SHA40.fullmatch(sha):
+        return False, "task_id hoặc sha sai dạng"
+    top = os.path.realpath(top)
+    payload, why = _read_payload(top, task_id, require_seal=True)
+    if payload is None:
+        return False, why
+    return _check_payload(payload, sha, top, pr, branch)
+
+
+def verified_scope(task_id, top, sha=None, pr=None, branch=None, trunk=None, require_seal=True):
+    """Xác minh biên bản claude-verify cho chốt duyệt test cũ bị sửa: qua đủ kiểm tra check(), cộng ràng buộc phạm vi
+    base == merge-base(trunk, head) và tính danh sách file đã có bị sửa/xoá (M/D/T) trong base..head.
+    Trả (payload, edited, None) khi hợp lệ, (None, None, lý do) mọi trường hợp khác (fail closed)."""
+    try:
+        return _verified_scope(task_id, top, sha, pr, branch, trunk, require_seal)
+    except Unchecked as e:
+        return None, None, str(e)
+
+
+def _verified_scope(task_id, top, sha, pr, branch, trunk, require_seal):
+    if not is_task_id(task_id):
+        return None, None, "task_id không phải mã claude-verify"
+    top = os.path.realpath(top)
+    payload, why = _read_payload(top, task_id, require_seal=require_seal)
+    if payload is None:
+        return None, None, why
+    head = sha if sha is not None else payload.get("head")
+    if not isinstance(head, str) or not SHA40.fullmatch(head):
+        return None, None, "head của biên bản sai dạng"
+    # Ràng buộc nhánh thẻ: ưu tiên nhánh truyền vào, rồi nhánh issue-<N>- hiện đang checkout; detached (scratch merge gate) dùng branch trong payload.
+    eff_branch = branch or current_issue_branch(top) or (payload.get("branch") if isinstance(payload.get("branch"), str) else None)
+    ok, why = _check_payload(payload, head, top, pr, eff_branch)
+    if not ok:
+        return None, None, why
+    base = payload.get("base")
+    if not isinstance(base, str) or not SHA40.fullmatch(base):
+        return None, None, "biên bản thiếu base sha40 hợp lệ"
+    trunk_ref = trunk or _load("push_gate")._trunk_ref(top)
+    if not trunk_ref:
+        return None, None, "không xác định được nhánh đích để kiểm phạm vi base..head"
+    rc, mb = git(top, "merge-base", trunk_ref, head)
+    if rc != 0 or mb.strip() != base:
+        return None, None, f"base của biên bản ({base[:10]}) không phải merge-base({trunk_ref}, head)"
+    edited = edited_files(top, base, head)
+    if edited is None:
+        return None, None, "git diff base..head lỗi"
+    return payload, edited, None
+
+
+def scan_records(top, require_seal=True, include_fail=False, trunk=None):
+    """Quét biên bản claude-verify thuộc repo `top` (chỉ quét khi repo có sổ reviewers/<repo-key>/).
+    Bản pass phải qua đủ verified_scope(); bản fail (khi include_fail=True) chỉ cần khớp head/tree và reviewer có trong sổ thẻ
+    để chặn replay pass cũ. Lỗi đọc / home lạ ngoài fixture → [] (fail closed)."""
+    try:
+        top = os.path.realpath(top)
+        rc, common = git(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        if rc != 0 or not common.strip():
+            return []
+        key = hashlib.sha256(os.path.realpath(common.strip()).encode()).hexdigest()[:16]
+        base_dir = root(top)
+        rev_dir = os.path.join(base_dir, "reviewers", key)
+        if not os.path.isdir(rev_dir):
+            return []
+        issues = set()
+        for fn in os.listdir(rev_dir):
+            m = re.fullmatch(r"issue-([0-9]{1,9})\.jsonl", fn)
+            if m:
+                issues.add(int(m.group(1)))
+        if not issues:
+            return []
+        rec_dir = os.path.join(base_dir, "records")
+        if not os.path.isdir(rec_dir):
+            return []
+    except (Unchecked, OSError):
+        return []
+    cur_branch = current_issue_branch(top)
+    out = []
+    try:
+        names = sorted(os.listdir(rec_dir))
+    except OSError:
+        return []
+    for fn in names:
+        if not fn.endswith(".json"):
+            continue
+        tid = fn[:-5]
+        if not is_task_id(tid):
+            continue
+        try:
+            payload, _why = _read_payload(top, tid, require_seal=False)
+        except Unchecked:
+            return []
+        if payload is None:
+            continue
+        issue = payload.get("issue")
+        head = payload.get("head")
+        if type(issue) is not int or issue not in issues or not isinstance(head, str) or not SHA40.fullmatch(head):
+            continue
+        tree = _tree(top, head)
+        if tree is None or payload.get("tree") != tree:
+            continue
+        findings = payload.get("findings")
+        is_pass = payload.get("verdict") == "pass" and isinstance(findings, list) \
+            and not any(not isinstance(f, dict) or f.get("severity") == "important" for f in findings)
+        if is_pass:
+            vp, edited, _vwhy = verified_scope(tid, top, sha=head, branch=cur_branch, trunk=trunk, require_seal=require_seal)
+            if vp is not None:
+                out.append({"task_id": tid, "head": head, "base": vp["base"], "verdict": "pass",
+                            "ts": _norm_ts(vp.get("ts")), "edited": edited, "issue": issue,
+                            "branch": vp.get("branch"), "reviewer_session": vp.get("reviewer_session")})
+        elif include_fail:
+            # Biên bản fail làm luật chặt hơn: chỉ tính khi thuộc đúng thẻ nhánh hiện tại (nếu có) và reviewer nằm trong sổ reviewers thẻ đó.
+            eff_br = cur_branch or (payload.get("branch") if isinstance(payload.get("branch"), str) else None)
+            bm = BRANCH.fullmatch(eff_br or "")
+            if not bm or int(bm.group(1)) != issue:
+                continue
+            try:
+                if payload.get("reviewer_session") not in ledger_sessions(top, "review", issue):
+                    continue
+            except Unchecked:
+                continue
+            out.append({"task_id": tid, "head": head, "base": payload.get("base") if isinstance(payload.get("base"), str) else None,
+                        "verdict": "fail", "ts": _norm_ts(payload.get("ts")), "edited": None, "issue": issue,
+                        "branch": payload.get("branch"), "reviewer_session": payload.get("reviewer_session")})
+    return out
 
 
 def main(argv):

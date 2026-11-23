@@ -70,9 +70,13 @@ INTEGRATE = ("push lên trunk / release/* chỉ qua `agent-kit integrate` (đi�
              "đúng commit đó). Đang ở worktree: `agent-kit worktree finish <đường dẫn>` trước, rồi `agent-kit integrate` (không --if-due). "
              "Repo đi PR: push nhánh PR bằng tên (`git push origin <nhánh>`), merge gate lo phần còn lại")
 APPROVED = "Test-approved-by:"
-# 13/11 (chủ repo bỏ Grok): chỉ reviewer antigravity duyệt test sửa; chữ trong trailer phải khớp audit_reviewer().
-# #1332: bỏ người duyệt `ocr` (#1258) — LLM của OCR gỡ hẳn; trailer `ocr <uuid>` giờ là giá trị lạ, bị từ chối.
-APPROVED_VALUE = re.compile(r"(antigravity)\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
+# 13/11 (chủ repo bỏ Grok): bỏ grok; #1332: bỏ ocr. Hướng A: nhận cả antigravity (task T...) và claude-verify (biên bản CV...);
+# lookahead ép ghép đúng cặp để group(1)=reviewer và group(2)=task_id giữ nguyên hợp đồng với mọi caller.
+APPROVED_VALUE = re.compile(
+    r"(?=(?:antigravity\s+T|claude-verify\s+CV))"
+    r"(antigravity|claude-verify)\s+"
+    r"(T\d{4,}-[a-z0-9-]{1,48}|CV[0-9]{8}T[0-9]{6}-[0-9a-f]{12}-[0-9a-f]{6})"
+)
 HEX_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
@@ -455,11 +459,14 @@ SHA40 = re.compile(r"[0-9a-f]{40}")
 
 
 def audited_head(top, task_id):
-    """sha40 của cây Antigravity đã audit cho task `task_id` của repo này, hoặc None (audit T0066, #605).
-    Cùng biên bản ngoài repo và cùng luật repo/checkout chính như audit_record; chỉ tính khi verdicts.audit.verdict == "pass"
-    VÀ có sha40 ở verdicts.audit.auditedHead (pm_verdict ghi) hoặc `auditedHead: <sha40>` trong notes VÀ sha đó là commit có trong repo `top`.
-    Một task_id cũ đã pass vì thế chỉ duyệt đúng nội dung nó đã audit, không duyệt nội dung sửa sau (chặn replay).
-    Thiếu auditedHead, sha lạ, lỗi git → None (fail closed)."""
+    """sha40 của cây đã audit cho task `task_id` của repo này, hoặc None (audit T0066, #605; Hướng A: nhận thêm mã CV... của claude-verify).
+    Với antigravity-pm: biên bản ngoài repo, verdicts.audit.verdict == "pass" VÀ có sha40 ở verdicts.audit.auditedHead hoặc `auditedHead:`
+    trong notes. Với claude-verify (CV...): biên bản phải qua đủ claude_verify.verified_scope (head/tree, chữ ký Ed25519 khi seal mode bật,
+    nhánh thẻ khớp, phiên reviewer != builder trong sổ runner, base == merge-base(trunk, head)). Thiếu/lỗi → None (fail closed)."""
+    cv = _claude_verify_lib()
+    if cv is not None and cv.is_task_id(task_id):
+        payload, _edited, _why = cv.verified_scope(task_id, top)
+        return payload["head"] if payload else None
     # Audit T0066 vòng 3 (#605): cùng điều kiện với approved() — pm home lạ (ANTIGRAVITY_PM_STATE_HOME tự dựng, HOME=/tmp/x) mà không
     # phải fixture test trong thư mục tạm thì biên bản không tính, ở mọi người gọi (post-fix-gate mục duyệt chéo, merge gate).
     if pm_home_overridden() and not pm_home_test_fixture():
@@ -469,6 +476,25 @@ def audited_head(top, task_id):
         if sha:
             return sha
     return None
+
+
+def _claude_verify_lib():
+    """Nạp claude_verify.py cạnh file này (đường thật, không theo env); thiếu/hỏng → None (fail closed)."""
+    global _CV_MOD
+    if _CV_MOD is None:
+        try:
+            import importlib.util  # noqa: PLC0415
+            path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "claude_verify.py")
+            spec = importlib.util.spec_from_file_location("devkit_claude_verify", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _CV_MOD = mod
+        except (OSError, ImportError, AttributeError, SyntaxError):
+            _CV_MOD = False
+    return _CV_MOD or None
+
+
+_CV_MOD = None
 
 
 def _seal_lib():
@@ -581,28 +607,31 @@ def _audit_head_unsealed(top, audit, cache=None):
 
 
 def audited_heads(top, sealed=True):
-    """[(task_id, auditedHead)] của MỌI task antigravity-pm của repo này có audit pass kèm auditedHead. Đợt 2 lane A: post-fix-gate chỉ
-    dùng audit mới nhất trên chuỗi first-parent của PR, audit cũ hơn có nội dung khác thì không duyệt (chặn replay về bản yếu).
-    Cùng điều kiện pm home với audited_head (pm home lạ không phải fixture test → [])."""
-    if pm_home_overridden() and not pm_home_test_fixture():
-        return []
+    """[(task_id, auditedHead)] của MỌI biên bản audit pass (antigravity-pm và claude-verify) của repo này kèm auditedHead.
+    Đợt 2 lane A: post-fix-gate chỉ dùng audit mới nhất trên chuỗi first-parent của PR, audit cũ hơn có nội dung khác thì không duyệt (chặn replay).
+    Mỗi nguồn tự giữ chốt home lạ / fixture test riêng (fail closed)."""
     out, checked = [], {}   # H6: một rev-parse cho mỗi sha trong cả lượt (history thường lặp lại head của verdicts.audit)
-    for task in _repo_tasks(top):
-        verdicts = task.get("verdicts") if isinstance(task.get("verdicts"), dict) else {}
-        audits = [verdicts.get("audit")]
-        # Đợt 2 F1: verdicts.auditHistory [{auditedHead, reviewer, at}] — PM nối thêm mỗi audit pass, không xoá. Một verdict fail ghi
-        # đè verdicts.audit sau đó không gỡ head pass cũ khỏi tập (audit cũ hơn của task khác không thành "mới nhất"). Thêm head chỉ
-        # làm luật chặt hơn. Biên bản cũ không có history: như trước.
-        history = verdicts.get("auditHistory")
-        for h in history if isinstance(history, list) else []:
-            if isinstance(h, dict):
-                audits.append({"verdict": "pass", "auditedHead": h.get("auditedHead")})
-        seen = set()
-        for audit in audits:
-            sha = _audit_head_of(top, audit, checked, require_seal=sealed)
-            if sha and sha not in seen:
-                seen.add(sha)
-                out.append((task["id"], sha))
+    if not (pm_home_overridden() and not pm_home_test_fixture()):
+        for task in _repo_tasks(top):
+            verdicts = task.get("verdicts") if isinstance(task.get("verdicts"), dict) else {}
+            audits = [verdicts.get("audit")]
+            # Đợt 2 F1: verdicts.auditHistory [{auditedHead, reviewer, at}] — PM nối thêm mỗi audit pass, không xoá. Một verdict fail ghi
+            # đè verdicts.audit sau đó không gỡ head pass cũ khỏi tập (audit cũ hơn của task khác không thành "mới nhất"). Thêm head chỉ
+            # làm luật chặt hơn. Biên bản cũ không có history: như trước.
+            history = verdicts.get("auditHistory")
+            for h in history if isinstance(history, list) else []:
+                if isinstance(h, dict):
+                    audits.append({"verdict": "pass", "auditedHead": h.get("auditedHead")})
+            seen = set()
+            for audit in audits:
+                sha = _audit_head_of(top, audit, checked, require_seal=sealed)
+                if sha and sha not in seen:
+                    seen.add(sha)
+                    out.append((task["id"], sha))
+    cv = _claude_verify_lib()
+    if cv is not None:
+        for rec in cv.scan_records(top, require_seal=sealed, include_fail=False):
+            out.append((rec["task_id"], rec["head"]))
     return out
 
 
@@ -655,13 +684,15 @@ def normalize_reviewer(value):
 
 
 def audit_reviewer(top, task_id, legacy=False):
-    """Reviewer đã chuẩn hoá ("antigravity") của audit pass của task `task_id`, chỉ từ biên bản PM ngoài repo; None khi không
-    xác định được. Một hàm cho post-fix-gate (mục duyệt + trailer), approved() và `agent-kit approve-tests` (đợt 2 lane A).
-    - verdicts.audit.reviewer = antigravity: chỉ tính khi lượt kind=audit GẦN NHẤT trong task.dispatches là antigravity (dispatch không
-      ghi agent là antigravity). 13/11: chủ repo bỏ Grok — biên bản reviewer grok (PM chạy grok trước 13/11) không còn duyệt gì.
-    - reviewer thiếu hoặc "pm" (recordVerdict mặc định cũ): antigravity khi lượt audit gần nhất là antigravity.
-    - legacy=True (gate, approved()): biên bản không có lượt audit nào trong dispatches vẫn là antigravity như trước (giữ hành vi gate);
-      approve-tests gọi legacy=False: thiếu bằng chứng → None (từ chối)."""
+    """Reviewer đã chuẩn hoá ("antigravity" hoặc "claude-verify") của audit pass của task `task_id`, chỉ từ biên bản ngoài repo;
+    None khi không xác định được. Một hàm cho post-fix-gate (mục duyệt + trailer), approved() và `agent-kit approve-tests` (đợt 2 lane A).
+    - Với mã CV... (claude-verify): qua đủ claude_verify.verified_scope → "claude-verify", ngược lại None.
+    - Với antigravity-pm: verdicts.audit.reviewer = antigravity, chỉ tính khi lượt kind=audit GẦN NHẤT trong task.dispatches là antigravity.
+    - legacy=True (gate, approved()): biên bản PM không có lượt audit nào trong dispatches vẫn là antigravity như trước; approve-tests gọi legacy=False."""
+    cv = _claude_verify_lib()
+    if cv is not None and cv.is_task_id(task_id):
+        payload, _edited, _why = cv.verified_scope(task_id, top)
+        return "claude-verify" if payload else None
     if pm_home_overridden() and not pm_home_test_fixture():
         return None
     for task in _repo_tasks(top, task_id):
@@ -685,10 +716,12 @@ def audit_reviewer(top, task_id, legacy=False):
 
 
 def audit_scope(top, task_id):
-    """(auditBase, edited) của lượt audit Antigravity PM giao có ghi phạm vi, cho CÙNG biên bản mà audited_head / audit_reviewer đọc (nguồn
-    duyệt tra thẳng của post-fix-gate; 13/11 thay lượt grok): lượt kind=audit gần nhất trong dispatches là antigravity, pass (pm_verdict ghi
-    vào lượt đó), auditedHead của nó == head của verdicts.audit, và nó ghi phạm vi PM đã đưa Antigravity xem — auditBase (sha40, merge-base
-    nhánh đích với head) và edited (mọi file đã có bị sửa/xoá trong auditBase..head). Lượt khác (không ghi phạm vi, grok cũ) → None."""
+    """(auditBase, edited) của lượt audit có phạm vi (antigravity-pm hoặc claude-verify), cho CÙNG biên bản mà audited_head / audit_reviewer đọc.
+    Với mã CV... (claude-verify): lấy từ claude_verify.verified_scope (base == merge-base(trunk, head), edited = diff M/D/T trong base..head)."""
+    cv = _claude_verify_lib()
+    if cv is not None and cv.is_task_id(task_id):
+        payload, edited, _why = cv.verified_scope(task_id, top)
+        return (payload["base"], list(edited)) if payload else None
     if pm_home_overridden() and not pm_home_test_fixture():
         return None
     for task in _repo_tasks(top, task_id):
@@ -725,32 +758,33 @@ def audit_scope(top, task_id):
 
 
 def scoped_audit_runs(top):
-    """[(task_id, auditedHead, verdict, at, edited, auditBase)] của MỌI lượt audit Antigravity có ghi auditedHead (dispatches kind=audit, agent
-    antigravity, auditedHead sha40) của mọi task của repo — kể cả lượt fail và lượt chưa có kết luận (verdict rỗng: tính như fail). post-fix-gate không duyệt khi lượt mới nhất cho cùng
-    nội dung test (cùng head hoặc head sau) là fail, dù fail đó nằm ở task khác (OCR vòng 6). edited = danh sách phạm vi lượt đó ghi (None
-    khi không ghi: lượt có message / thiếu merge-base — PASS như thế không được tính là pass). at = finishedAt (giờ PM ghi kết luận) khi có,
-    không thì giờ giao (review vòng 6: hai lượt chạy chồng nhau xếp theo lúc xong). Cùng điều kiện pm home với audited_heads."""
-    if pm_home_overridden() and not pm_home_test_fixture():
-        return []
+    """[(task_id, auditedHead, verdict, at, edited, auditBase)] của MỌI lượt audit (antigravity-pm và claude-verify) có ghi auditedHead —
+    kể cả lượt fail và lượt chưa có kết luận (verdict rỗng: tính như fail), để post-fix-gate không duyệt khi lượt mới nhất cho cùng nội
+    dung test là fail (chống replay)."""
     out, mode = [], seal_mode(top)
-    # OCR vòng 8: mọi task của pm home, không lọc theo project (lượt REVISE chạy từ worktree anh em ../<repo>-x vẫn phải chặn); người gọi
-    # chỉ giữ lượt có auditedHead trên chuỗi PR của mình — đó mới là bằng chứng lượt đó audit PR này.
-    for task in _repo_tasks(top, any_project=True):
-        for d in task.get("dispatches") if isinstance(task.get("dispatches"), list) else []:
-            if isinstance(d, dict) and d.get("kind") == "audit" and isinstance(d.get("auditedHead"), str) \
-                    and SHA40.fullmatch(d["auditedHead"]) \
-                    and normalize_reviewer(d.get("agent") if isinstance(d.get("agent"), str) else "") == "antigravity":
-                base = d.get("auditBase") if isinstance(d.get("auditBase"), str) and SHA40.fullmatch(d["auditBase"]) else None
-                ed = d.get("edited") if isinstance(d.get("edited"), list) and base else None
-                at = d.get("finishedAt") if isinstance(d.get("finishedAt"), str) and d["finishedAt"] else d.get("at")
-                verdict = str(d.get("verdict") or "")
-                if verdict == "pass" and mode:
-                    # #632 B: lượt pass chỉ tính khi head có seal PASS; phạm vi lấy từ seal. Lượt fail giữ nguyên (chỉ làm luật chặt hơn).
-                    signed = sealed_scope(top, d["auditedHead"])
-                    if not signed:
-                        continue
-                    base, ed = signed["base"], list(signed["edited"])
-                out.append((task["id"], d["auditedHead"], verdict, str(at or ""), ed, base))
+    if not (pm_home_overridden() and not pm_home_test_fixture()):
+        # OCR vòng 8: mọi task của pm home, không lọc theo project (lượt REVISE chạy từ worktree anh em ../<repo>-x vẫn phải chặn); người gọi
+        # chỉ giữ lượt có auditedHead trên chuỗi PR của mình — đó mới là bằng chứng lượt đó audit PR này.
+        for task in _repo_tasks(top, any_project=True):
+            for d in task.get("dispatches") if isinstance(task.get("dispatches"), list) else []:
+                if isinstance(d, dict) and d.get("kind") == "audit" and isinstance(d.get("auditedHead"), str) \
+                        and SHA40.fullmatch(d["auditedHead"]) \
+                        and normalize_reviewer(d.get("agent") if isinstance(d.get("agent"), str) else "") == "antigravity":
+                    base = d.get("auditBase") if isinstance(d.get("auditBase"), str) and SHA40.fullmatch(d["auditBase"]) else None
+                    ed = d.get("edited") if isinstance(d.get("edited"), list) and base else None
+                    at = d.get("finishedAt") if isinstance(d.get("finishedAt"), str) and d["finishedAt"] else d.get("at")
+                    verdict = str(d.get("verdict") or "")
+                    if verdict == "pass" and mode:
+                        # #632 B: lượt pass chỉ tính khi head có seal PASS; phạm vi lấy từ seal. Lượt fail giữ nguyên (chỉ làm luật chặt hơn).
+                        signed = sealed_scope(top, d["auditedHead"])
+                        if not signed:
+                            continue
+                        base, ed = signed["base"], list(signed["edited"])
+                    out.append((task["id"], d["auditedHead"], verdict, str(at or ""), ed, base))
+    cv = _claude_verify_lib()
+    if cv is not None:
+        for rec in cv.scan_records(top, require_seal=True, include_fail=True):
+            out.append((rec["task_id"], rec["head"], rec["verdict"], rec["ts"], rec["edited"], rec["base"]))
     return out
 
 
@@ -886,33 +920,50 @@ def approved(top, rng):
     for sha, value in values:
         m = APPROVED_VALUE.fullmatch(value)
         if not m:
-            whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task`)")
+            whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task` hoặc `{APPROVED} claude-verify CV...`)")
             continue
         word, task_id = m.group(1), m.group(2)
-        # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
-        # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
-        if pm_home_overridden() and not pm_home_test_fixture():
-            whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
-            continue
-        ok, why = audit_record(top, task_id)
-        if not ok:
-            whys.append(why)
-            continue
-        # Đợt 2 lane A: chữ reviewer của trailer phải đúng reviewer PM đã ghi (audit_reviewer).
-        reviewer = audit_reviewer(top, task_id, legacy=True)
-        if reviewer != word:
-            whys.append(f"{APPROVED} {word} {task_id}: biên bản PM ghi reviewer {reviewer or 'không xác định'}, khác `{word}`")
-            continue
-        # Review cuối F-1: luật H4 cho mọi đường gọi (fallback push, _covered, since_test_weakened), không chỉ _trailer_cross_review.
-        if reviewer in session_agents():
-            whys.append(f"{APPROVED} {word} {task_id}: reviewer {reviewer} thuộc danh tính phiên (tự duyệt)")
-            continue
+        if word == "claude-verify":
+            # Hướng A: đường duyệt chéo claude-verify — kiểm qua verified_scope (check + Ed25519 khi seal mode bật + base == merge-base).
+            cv = _claude_verify_lib()
+            if cv is None:
+                whys.append(f"{APPROVED} {word} {task_id}: kit thiếu claude_verify.py")
+                continue
+            payload, _edited, why_cv = cv.verified_scope(task_id, top)
+            if not payload:
+                whys.append(f"{APPROVED} {word} {task_id}: {why_cv}")
+                continue
+            if word in session_agents():
+                whys.append(f"{APPROVED} {word} {task_id}: reviewer {word} thuộc danh tính phiên (tự duyệt)")
+                continue
+            head = payload["head"]
+            src_note = "claude-verify pass"
+        else:
+            # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
+            # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
+            if pm_home_overridden() and not pm_home_test_fixture():
+                whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
+                continue
+            ok, why = audit_record(top, task_id)
+            if not ok:
+                whys.append(why)
+                continue
+            # Đợt 2 lane A: chữ reviewer của trailer phải đúng reviewer PM đã ghi (audit_reviewer).
+            reviewer = audit_reviewer(top, task_id, legacy=True)
+            if reviewer != word:
+                whys.append(f"{APPROVED} {word} {task_id}: biên bản PM ghi reviewer {reviewer or 'không xác định'}, khác `{word}`")
+                continue
+            # Review cuối F-1: luật H4 cho mọi đường gọi (fallback push, _covered, since_test_weakened), không chỉ _trailer_cross_review.
+            if reviewer in session_agents():
+                whys.append(f"{APPROVED} {word} {task_id}: reviewer {reviewer} thuộc danh tính phiên (tự duyệt)")
+                continue
+            head = audited_head(top, task_id)
+            src_note = "antigravity-pm audit pass"
         # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
-        # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
+        # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
         # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.
         # ponytail: merge main vào nhánh sau audit đổi cây đầu range → push cần audit lại; merge gate (scratch) không bị ảnh hưởng
         # vì nó duyệt theo blob từng file ở auditedHead (post-fix-gate _trailer_cross_review). Nới khi việc audit lại thành phiền.
-        head = audited_head(top, task_id)
         if tip is None:
             rc_tip, tip_out = git(top, "rev-list", "-1", rng)
             tip = tip_out.strip() if rc_tip == 0 else ""
@@ -922,7 +973,7 @@ def approved(top, rng):
         lows = range_lower_bounds(top, rng) if head else None
         after = bool(lows) and all(head_after(top, low, head) for low in lows)
         if len(got) == 3 and len(set(got)) == 1 and after:
-            return True, f"{APPROVED} {word} {task_id} (antigravity-pm audit pass)"
+            return True, f"{APPROVED} {word} {task_id} ({src_note})"
         whys.append(f"{APPROVED} {word} {task_id}: " + (
             "biên bản audit không ghi `auditedHead: <sha>` (hoặc sha không có trong repo)" if not head else
             f"auditedHead {head[:10]} không nằm sau mốc dưới của range (audit một cây cũ trước base): cần audit lại" if not after else
@@ -930,7 +981,7 @@ def approved(top, rng):
     if not whys:
         rc, body = git(top, "log", "--format=%B", rng)
         if rc == 0 and APPROVED in body:
-            whys.append(f"`{APPROVED}` chỉ tính khi là trailer cuối commit (`{APPROVED} antigravity <task-id>`)")
+            whys.append(f"`{APPROVED}` chỉ tính khi là trailer cuối commit (`{APPROVED} antigravity <task-id>` hoặc `{APPROVED} claude-verify <CV...>`)")
     return False, "; ".join(dict.fromkeys(whys[:3])) or None
 
 

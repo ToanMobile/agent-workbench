@@ -16,4 +16,4 @@ merge-queue-on path when the cross-review is claude-verify.
 
 The seal needs your session in the card's reviewer ledger and not in its builder ledger; the runner records both before the workers
 start. A manual session outside the board takes the Antigravity path or the owner's approval. The `workflow` backend records no session
-ledger, so its reviews take the Antigravity path. A claude-verify approval does not approve edited tests.
+ledger, so its reviews take the Antigravity path. A valid claude-verify pass seal also approves edited/deleted existing tests covered by its `base..head` diff (matching head/tree, `base == merge-base(trunk, head)`, reviewer != builder, valid Ed25519 signature when seal mode is on).

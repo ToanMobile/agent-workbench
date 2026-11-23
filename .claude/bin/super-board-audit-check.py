@@ -216,6 +216,11 @@ def chain_audit(sha, base, top=None):
         if not callable(overridden) or not callable(fixture) or (overridden() and not fixture()):
             print("audit-check: --chain-audit cannot check (antigravity-pm state home is not ~/.antigravity-pm)", file=sys.stderr)
             return None
+        # Hướng A: cùng nguyên tắc fail-closed cho CLAUDE_VERIFY_HOME lạ ngoài fixture test.
+        cv = claude_verify()
+        if cv is not None and os.environ.get("CLAUDE_VERIFY_HOME") and not cv._fixture(top):
+            print("audit-check: --chain-audit cannot check (CLAUDE_VERIFY_HOME is only allowed in test fixtures)", file=sys.stderr)
+            return None
         heads = gate.audited_heads(top)
         run = subprocess.run(["git", "-C", top, "rev-list", sha, "--not", base], capture_output=True, text=True, timeout=60)
         if run.returncode != 0:
@@ -233,10 +238,15 @@ def chain_audit(sha, base, top=None):
         print(f"audit-check: cannot read the audit records: {error.__class__.__name__}", file=sys.stderr)
         return None
     if not hits:
-        # #632 B: seal mode on and the PR range has audit passes with no valid seal -> cannot check (never False: False opens the
-        # tree-receipt path).
+        # #632 B & Hướng A: seal mode bật (của PM hoặc claude-verify) và phạm vi PR có biên bản pass chưa niêm phong -> không kiểm được (None,
+        # không bao giờ False vì False mở lại đường biên nhận cây).
         try:
-            raw = gate.audited_heads(top, sealed=False) if callable(getattr(gate, "seal_mode", None)) and gate.seal_mode(top) else []
+            cv_sealed = False
+            cv_mod = claude_verify()
+            if cv_mod is not None:
+                cv_sealed = bool(cv_mod._load("verdict_seal").seal_mode(cv_mod._fixture(top)))
+            seal_on = (callable(getattr(gate, "seal_mode", None)) and gate.seal_mode(top)) or cv_sealed
+            raw = gate.audited_heads(top, sealed=False) if seal_on else []
         except Exception as error:   # noqa: BLE001 - unreadable records: cannot check
             print(f"audit-check: cannot read the audit records: {error.__class__.__name__}", file=sys.stderr)
             return None

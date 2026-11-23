@@ -42,6 +42,7 @@ winning() {
   [ "$WIN_F1" = ok ] && [ "$WIN_F2" = "$SHA" ] || return 1
   case "$WIN_F3" in
     task:*) TASK_ID=${WIN_F3#task:} ;;
+    cv:*) TASK_ID=${WIN_F3#cv:} ;;
     *) return 1 ;;
   esac
   [ -n "$TASK_ID" ]
@@ -153,10 +154,11 @@ fi
 if ! winning; then
   exit 0
 fi
+BRANCH=$(jq -r '.headRefName // empty' "$META" 2>/dev/null || true)
 if [ -n "$PR" ]; then
-  python3 "$AUDIT" "$TASK_ID" "$SHA" --top "$TOP" --pr "$PR" || exit 0
+  python3 "$AUDIT" "$TASK_ID" "$SHA" --top "$TOP" --pr "$PR" ${BRANCH:+--branch "$BRANCH"} || exit 0
 else
-  python3 "$AUDIT" "$TASK_ID" "$SHA" --top "$TOP" || exit 0
+  python3 "$AUDIT" "$TASK_ID" "$SHA" --top "$TOP" ${BRANCH:+--branch "$BRANCH"} || exit 0
 fi
 export QA_INS_META="$META" QA_INS_SCRATCH="$SCRATCH" QA_INS_TASK="$TASK_ID"
 python3 -c "$(cat <<'PY'

@@ -110,7 +110,7 @@ once left a six-hour run with zero commits on `main`. In order:
 1. `gh pr ready <PR>` (idempotent).
    **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend` `"claude-p"` or `"workflow"`, without `--codex`): never call the merge gate (exit 13). After your own review passes, the cross-review is **claude-verify** ([seal steps](references/claude-verify-seal.md)).
    claude-verify only works for cards the board dispatched, and only the `claude-p` worker backend uses claude-verify.
-   edited_existing PRs (test edit/delete): Antigravity until #1331.
+   edited_existing PRs (test edit/delete): claude-verify (board claude-p) or Antigravity.
    Antigravity (`review_tiers` or `SB_REVIEW_ANTIGRAVITY=1`): audit the PR head via the antigravity-pm MCP:
    `pm_task_create` (project = this card's review worktree `.claude/worktrees/issue-<N>-review`, already at the PR head, never the main checkout; put the focus in its `brief`), `pm_dispatch kind=audit` WITHOUT `message`; the dispatch output must contain `Pham vi:` and must NOT contain `Khong ghi pham vi`, else do not `pm_verdict` (with `message`, or a project not at the PR head, the PM records no scope and the gate ignores the audit). Read its `audit-agent.json`, and only on Antigravity's
    pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR as its own comment `approved-head:<sha40>`

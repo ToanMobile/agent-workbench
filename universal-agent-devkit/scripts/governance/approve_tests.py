@@ -93,6 +93,13 @@ def main(argv):
         existed = subprocess.run(["git", "-C", top, "cat-file", "-e", f"{base}:{prefix}{f}"], capture_output=True, timeout=30)
         if existed.returncode != 0:
             continue                                   # test mới: không cần duyệt
+        if reviewer == "claude-verify":
+            # Hướng A: với biên bản claude-verify, chỉ ghi mục cho test nằm trong phạm vi base..head đã niêm phong.
+            if scope is None:
+                scope = pg.audit_scope(top, task_id) or ()
+            if not scope or (prefix + f) not in scope[1]:
+                skipped.append((f, f"nằm ngoài phạm vi base..head của biên bản claude-verify {task_id}"))
+                continue
         ok, why = gate.audit_covers(top, prefix, project, f, head)
         if not ok:
             skipped.append((f, why))
