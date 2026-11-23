@@ -10,14 +10,6 @@
         "@upstash/context7-mcp@4.4.4"
       ]
     },
-    "agentmemory": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@agentmemory/agentmemory@0.9.31",
-        "mcp"
-      ]
-    },
     "cc-switcher-mcp": {
       "command": "node",
       "args": [

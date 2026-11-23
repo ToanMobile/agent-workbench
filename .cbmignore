@@ -1,0 +1,9 @@
+# Loại bỏ dữ liệu không phải mã nguồn khỏi chỉ mục codebase-memory-mcp (cú pháp .gitignore)
+.agents/
+.claude/worktrees/
+reports/
+impact_results.log
+universal-agent-devkit/CHANGELOG.md
+**/__pycache__/
+*.db
+*.png

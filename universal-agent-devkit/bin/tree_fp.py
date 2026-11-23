@@ -438,7 +438,9 @@ OFF_SCREEN_TOP = {".agents", ".claude", ".gemini", ".github", ".githooks", ".cod
 TEST_TOP = {"test", "tests", "__tests__", "spec", "Tests"}          # first path component, or *Tests
 TEST_SOURCE_SETS = {"test", "androidTest", "androidUnitTest", "androidInstrumentedTest", "commonTest",
                     "jvmTest", "iosTest", "testDebug", "testRelease"}  # the segment right after src/
-OFF_SCREEN_NAMES = {"LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS", ".gitignore", ".editorconfig"}
+# File cấu hình gốc không chạm giao diện (gồm .cbmignore / .codebase-memory.json cho codebase-memory-mcp).
+OFF_SCREEN_NAMES = {"LICENSE", "NOTICE", "AUTHORS", "CODEOWNERS", ".gitignore", ".editorconfig",
+                    ".cbmignore", ".codebase-memory.json"}
 
 
 def _off_screen(rel, profile=""):

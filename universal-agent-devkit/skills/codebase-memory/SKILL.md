@@ -1,97 +1,58 @@
 ---
 name: codebase-memory
-description: Dùng khi khám phá code, tìm symbol, đọc implementation, trace call/data flow, ai gọi hàm này (inbound caller), hàm này gọi gì (outbound), phân tích blast radius, dead code, refactor candidates, Cypher query, hoặc xem kiến trúc dự án qua codebase knowledge graph.
+description: Dùng khi tìm symbol, đọc outline/implementation, trace call flow, blast radius, dead code, Cypher query, kiểm tra coverage hoặc tối ưu chỉ mục đồ thị codebase-memory-mcp.
 ---
 
 # Codebase Memory & Graph Navigation (SSOT)
 
-Kết hợp công cụ Đồ thị Tri thức AST (`codebase-memory-mcp`) và Quy trình Điều hướng Tinh gọn, trả về kết quả cấu trúc chính xác chỉ tiêu tốn ~500 tokens (so với ~80K tokens của brute-force grep).
+Dùng đồ thị AST (`codebase-memory-mcp`) thay cho brute-force grep để giữ context gọn (~500 tokens thay vì ~80K tokens). Tự động fallback sang Read/Grep khi thiếu node, coverage `partial`/`skipped`, hoặc index cũ.
 
-## Phạm vi
+## 1. Protocol Tiết Kiệm Context (Minimal Evidence)
 
-Use the codebase knowledge graph for structural code queries, AST navigation, and blast radius analysis. Tự động fallback về Read/Grep khi thiếu node hoặc index stale.
+1. **Xác nhận dự án & độ mới:** Gọi `list_projects` hoặc `index_status(project="...")` đầu phiên (hoặc sau `/compact`). Nếu `indexed_at` quá cũ hay `doc_links.status == "error"`, chạy `index_repository` ở checkout chính.
+2. **Định vị gọn bằng `format="tree"`:** Dùng `format="tree"` (mặc định, nhẹ token hơn `json`) + `limit` nhỏ:
+   - `search_graph(name_pattern="...")` để tìm tên hàm/class/route chính xác.
+   - `get_file_outline(file_path="...")` để xem khung symbol của file lớn trước khi đọc code.
+3. **Truy vết Blast Radius:** `trace_path(function_name="...", direction="inbound|outbound|both", risk_labels=true)` (luôn dùng tên chính xác lấy từ `search_graph`).
+4. **Đọc đúng lát cắt:** `get_code_snippet(qualified_name="...")` thay vì đọc cả file >500 dòng.
+5. **Kiểm tra độ phủ trước khi kết luận:** Gọi `check_index_coverage` với các đường dẫn bằng chứng; nếu báo `partial`/`skipped`/`stale`, đọc/grep đúng đoạn bỏ sót trước khi kết luận.
 
----
+> Không áp trần cứng số tool call — dừng ở chuỗi nhỏ nhất nhưng đủ chứng minh kết luận.
 
-## 1. Protocol Bắt Buộc (Minimal Evidence Discovery Protocol)
+## 2. Mức Bằng Chứng (Evidence Tiers)
 
-Code discovery luôn tuân thủ theo thứ tự nhỏ nhất đủ bằng chứng (evidence):
+- **Scout (Tier 1):** Tra nhanh dương tính; gắn nhãn tạm, không kết luận phủ định/đầy đủ.
+- **Verify (Tier 2 — mặc định):** Truy vấn đúng hướng call, trích snippet thật, kiểm tra `check_index_coverage` và phân trang (`has_more`/`offset`).
+- **Auditor (Tier 3):** Kiểm đầy đủ 2 chiều call, phân trang trọn bộ, đối chiếu `compare_graphs` hoặc `detect_changes` và nêu rõ mọi giới hạn coverage.
 
-1. **Resolve Symbol:** `search_graph(name_pattern="...")` để định vị chính xác tên hàm, class hoặc interface.
-2. **Truy vết Blast Radius:** `trace_path(function_name="...", direction="inbound|outbound")` để tìm callers/callees và khóa chặt phạm vi ảnh hưởng khi sửa code.
-3. **Đọc Source Chính Xác:** `get_code_snippet(qualified_name="...")` sau khi đã resolve được qualified name.
-4. **Quan Hệ Phức Tạp:** `query_graph` bằng truy vấn Cypher; `get_architecture` cho bức tranh tổng thể / module hub.
+## 3. Ma Trận Chọn Nhanh & 17 MCP Tools
 
-> **Nguyên tắc:** Không áp hard cap tool-call/token. Dừng ở chuỗi nhỏ nhất nhưng phải đủ chứng minh kết luận.
-
----
-
-## 2. Cơ Chế Fallback (Graceful Degradation)
-
-- Dùng `Read`/`Grep` trực tiếp cho string literal, error text, Gradle/config, scripts, docs, generated file, hoặc khi graph thiếu/stale node.
-- Luôn ghi rõ lý do fallback.
-- Sau khi fallback, tuyệt đối không suy diễn caller: phải đọc/trace các call site thực tế trước khi đưa ra kết luận.
-
----
-
-## 3. Quy Trình Điều Hướng Theo Tác Vụ (Task-Directed Workflows)
-
-- **Debug / Bug Fix:** Resolve frame/symbol $\rightarrow$ Trace inbound/outbound $\rightarrow$ Đọc source $\rightarrow$ Đối chiếu log/repro.
-- **Refactor / API Change:** Trace 100% inbound caller và affected flow; tìm toàn bộ unit test liên quan trước khi sửa.
-- **Code Review:** Đối chiếu git diff với inbound/outbound path; mọi finding phải có source code evidence đi kèm.
-- **Cross-module / Architecture:** Dùng `get_architecture` hoặc `query_graph`, sau đó verify dependency thực tế trong file cấu hình build (Gradle, npm, Cargo).
-- **Dead Code Detection:** Chỉ kết luận dead code sau khi cả graph inbound sạch (`max_degree=0`) VÀ kết quả tìm kiếm source/reference bằng Grep sạch 100%.
-
----
-
-## 4. Ma Trận Quyết Định Nhanh (Quick Decision Matrix)
-
-| Nhu Cầu | Lệnh Tool MCP Đồ Thị |
+| Nhu cầu | Tool MCP |
 |---|---|
-| Ai gọi hàm X? (Inbound Callers) | `trace_path(direction="inbound")` |
-| Hàm X gọi những gì? (Callees) | `trace_path(direction="outbound")` |
-| Toàn bộ ngữ cảnh gọi 2 chiều | `trace_path(direction="both")` |
-| Tìm hàm/class theo pattern | `search_graph(name_pattern="...")` |
-| Tìm code rác (Dead code) | `search_graph(max_degree=0, exclude_entry_points=true)` |
-| Quan hệ gọi qua API/Microservices | `query_graph` với cú pháp Cypher |
-| Phân tích ảnh hưởng của Git Diff | `detect_changes()` |
-| Phân loại rủi ro luồng gọi | `trace_path(risk_labels=true)` |
-| Tìm kiếm chuỗi văn bản thô | `search_code` hoặc `Grep` (fallback) |
+| Tìm hàm / class / route | `search_graph(name_pattern="...", format="tree")` |
+| Xem khung symbol của file lớn | `get_file_outline(file_path="...")` |
+| Ai gọi X / X gọi gì / cả 2 chiều | `trace_path(direction="inbound\|outbound\|both")` |
+| Đọc đúng body hàm/class | `get_code_snippet(qualified_name="...")` |
+| Kiểm tra vùng bị parse thiếu | `check_index_coverage` |
+| So sánh đồ thị / phân tích git diff | `compare_graphs`, `detect_changes()` |
+| Tìm code rác (Dead code) | `search_graph(max_degree=0, exclude_entry_points=true)` + verify bằng Grep |
+| Quan hệ phức tạp (HTTP/async/handler) | `query_graph` (Cypher, giới hạn 200 dòng) |
+| Bức tranh kiến trúc / ADR | `get_architecture`, `manage_adr` |
+| Tìm chuỗi văn bản / config / fallback | `search_code` hoặc `Grep`/`Read` trực tiếp |
 
----
+**Đủ 17 tools:** `index_repository`, `index_status`, `list_projects`, `delete_project`, `search_graph`, `search_code`, `trace_path`, `get_code_snippet`, `get_file_outline`, `get_graph_schema`, `compare_graphs`, `get_architecture`, `check_index_coverage`, `detect_changes`, `query_graph`, `manage_adr`, `ingest_traces`.
 
-## 5. Danh Mục 14 Tool MCP & Edge Types
+## 4. Vệ Sinh Chỉ Mục (`.cbmignore` & Chống Phình Graph)
 
-### 14 MCP Tools
-`index_repository`, `index_status`, `list_projects`, `delete_project`, `search_graph`, `search_code`, `trace_path`, `detect_changes`, `query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`, `manage_adr`, `ingest_traces`.
+- **Tạo `.cbmignore` ở gốc repo** (cú pháp `.gitignore`) để chặn dữ liệu không phải mã nguồn làm phình DB:
+  - Luôn loại: `.agents/`, `reports/`, log lớn, fixture JSON/WAV telemetry hàng chục nghìn file, `**/androidTest/assets/**`, plugin bên thứ ba (`Assets/Plugins/<vendor>/`, `Library/`, `Temp/`).
+  - **Không bao giờ chặn mã lõi first-party** (vd: `libs/` chứa module nội bộ như `pdf-viewer`, `office-reader`).
+- **Không bật `auto_index=true`** trên máy chạy nhiều worktree tạm (`aaf` / `super-board`) để tránh sinh DB mồ côi; định kỳ xoá DB worktree/repo đã xoá bằng `delete_project`.
+- **Không bật `hook-augment` trên `Read`/`Grep`** nếu đã tắt có chủ đích (tốn ~200 ms–1,3 s mỗi lần gọi và bơm thêm context thừa).
 
-### Edge Types
-`CALLS`, `HTTP_CALLS`, `ASYNC_CALLS`, `IMPORTS`, `DEFINES`, `DEFINES_METHOD`, `HANDLES`, `IMPLEMENTS`, `OVERRIDE`, `USAGE`, `FILE_CHANGES_WITH`, `CONTAINS_FILE`, `CONTAINS_FOLDER`, `CONTAINS_PACKAGE`.
+## 5. Rào Chắn & Gotchas
 
----
-
-## 6. Cú Pháp Truy Vấn Cypher Mẫu (`query_graph`)
-
-```cypher
-// 1. Tìm các cuộc gọi HTTP liên dịch vụ
-MATCH (a)-[r:HTTP_CALLS]->(b) RETURN a.name, b.name, r.url_path, r.confidence LIMIT 20
-
-// 2. Tìm toàn bộ hàm xử lý sự kiện (Handler)
-MATCH (f:Function) WHERE f.name =~ '.*Handler.*' RETURN f.name, f.file_path
-
-// 3. Tìm các hàm mà hàm main trực tiếp gọi
-MATCH (a)-[r:CALLS]->(b) WHERE a.name = 'main' RETURN b.name
-```
-
----
-
-## 7. Rào Chắn An Toàn (Guardrails & Gotchas)
-
-1. **Tuyệt đối không bịa đặt:** Không bịa qualified name, dòng code, fan-in, test coverage hoặc graph metric.
-2. **Source of Truth:** Graph là chỉ mục hỗ trợ discovery, không thay thế runtime evidence. Nếu graph và source mâu thuẫn, source code hiện tại thắng; ghi nhận graph stale và kích hoạt fallback.
-3. **Thư viện ngoài:** Hành vi của external library phải được xác thực bằng official docs (Context7) hoặc test thực tế.
-4. **Gotchas khi dùng tool:**
-   - `search_graph(relationship="HTTP_CALLS")` lọc node theo bậc — dùng `query_graph` với Cypher để thấy cạnh thực tế.
-   - `query_graph` giới hạn tối đa 200 dòng — dùng `search_graph` kèm filter bậc để đếm tổng số.
-   - `trace_path` đòi hỏi tên chính xác — luôn gọi `search_graph(name_pattern=...)` trước để lấy exact name.
-   - Kết quả phân trang mặc định 10 items/page — kiểm tra `has_more` và dùng `offset` khi cần duyệt tiếp.
+1. **Không bịa đặt:** Không bịa qualified name, số dòng, fan-in hay metric đồ thị.
+2. **Source code thắng graph:** Graph và source mâu thuẫn → đọc file thật, ghi nhận graph stale và fallback.
+3. **Thư viện ngoài:** Xác thực hành vi bằng Context7 hoặc test thật.
+4. **Gotchas:** `search_graph(relationship="HTTP_CALLS")` lọc theo bậc (dùng `query_graph` để thấy cạnh thật); `query_graph` giới hạn 200 dòng; mặc định phân trang 10 mục/trang (`has_more` + `offset`).
