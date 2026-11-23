@@ -769,8 +769,8 @@ export async function syncLiveQuotas(opts = {}) {
  */
 export const DEFAULT_REPOS = [
   {
-    name: 'agent-workbench',
-    path: '/Volumes/Data/Toan/agent-workbench',
+    name: 'AutoAgentFactory',
+    path: '/Volumes/Data/Toan/AutoAgentFactory',
     defaultAccount: 'finos_toan',
   },
   {

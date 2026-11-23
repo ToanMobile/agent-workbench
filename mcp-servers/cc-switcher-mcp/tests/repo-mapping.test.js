@@ -247,3 +247,10 @@ test('CLI --panel-action repo_add / repo_assign / repo_remove voi --state-dir ta
     assert.deepEqual(readSettings(a), { hooks: {} });
   } finally { t.cleanup(); }
 });
+
+test('DEFAULT_REPOS thay agent-workbench bang AutoAgentFactory (/Volumes/Data/Toan/AutoAgentFactory)', () => {
+  assert.ok(!DEFAULT_REPOS.some((r) => r.name === 'agent-workbench' || r.path.endsWith('/agent-workbench')));
+  const aaf = DEFAULT_REPOS.find((r) => r.name === 'AutoAgentFactory');
+  assert.ok(aaf, 'Thieu repo mac dinh AutoAgentFactory');
+  assert.equal(aaf.path, '/Volumes/Data/Toan/AutoAgentFactory');
+});

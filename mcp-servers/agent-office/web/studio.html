@@ -3,127 +3,172 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>AAF Studio — Điều khiển đa repo &amp; Tài khoản</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231d4ed8' stroke-width='2'%3E%3Cpath d='M12 3 3.5 7.5v9L12 21l8.5-4.5v-9L12 3Z'/%3E%3C/svg%3E" />
+  <title>AAF Studio — Kanban đa repo &amp; Tài khoản</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233567D6' stroke-width='2'%3E%3Cpath d='M12 3 3.5 7.5v9L12 21l8.5-4.5v-9L12 3Z'/%3E%3C/svg%3E" />
+  <script>
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem("agent-office-theme"); } catch (err) { console.warn("Không đọc được giao diện đã lưu:", err); }
+      var dark = saved ? saved === "dark" : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    })();
+  </script>
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
   <style>
-    /* ==================== SELF-CONTAINED SEMANTIC TOKENS (LIGHT + DARK + TELEGRAM) ====================
-       Separated fill (--c-*) and WCAG AA >= 4.5:1 text (--t-*) tokens per ui-ux-pro-max & impeccable.
-       3–5% tinted warm-cool neutrals; zero bare #808080; zero purple-blue gradients. */
+    /* ==================== SEMANTIC DESIGN TOKENS (LIGHT + DARK + TELEGRAM) ====================
+       Unified visual language with /cc-switcher & Xưởng agent (index.html), 100% self-contained
+       for both Mac local (:4317) and Telegram Mini App (:4318) strict CSP. */
     :root {
       color-scheme: light;
-      --bg: #f8f9fb;
-      --sidebar: #f2f4f8;
-      --card: #ffffff;
-      --subtle: #eef1f6;
-      --hover: rgba(15, 23, 42, 0.045);
-      --border: #dfe4ec;
-      --border-strong: #c8d1df;
-      --fg: #111827;
-      --fg-muted: #4b5563;
-      --code: #1e293b;
+      --bg: #E4E9EF;
+      --floor: #EEF1F5;
+      --floor2: #DFE5EE;
+      --panel: rgba(250, 251, 253, 0.94);
+      --sidebar: #F2F5F9;
+      --card: #FFFFFF;
+      --subtle: #EDF1F7;
+      --hover: rgba(23, 32, 46, 0.045);
+      --border: #CDD4DE;
+      --border-strong: #B4BFCE;
+      --fg: #17202E;
+      --fg-muted: #556072;
+      --fg-faint: #6B7484;
+      --code: #1E293B;
+      --shadow: 0 8px 28px rgba(20, 32, 52, 0.09);
+      --shadow-sm: 0 2px 8px rgba(20, 32, 52, 0.06);
 
-      --c-primary: #1d4ed8;
-      --t-primary: #1e40af;
-      --fg-on-primary: #ffffff;
-      --c-success: #15803d;
-      --t-success: #166534;
-      --c-warn: #b45309;
-      --t-warn: #92400e;
-      --c-err: #b91c1c;
-      --t-err: #991b1b;
+      --c-primary: #3567D6;
+      --t-primary: #254DB0;
+      --fg-on-primary: #FFFFFF;
+      --c-success: #4C9744;
+      --t-success: #266422;
+      --c-warn: #E58D0B;
+      --t-warn: #8F5200;
+      --c-err: #D63E2C;
+      --t-err: #AD291A;
+      --c-review: #0E9A8A;
+      --t-review: #06705F;
+      --c-qa: #7C3AED;
+      --t-qa: #5B21B6;
+      --c-away: #8F99A8;
 
-      --tint-primary: rgba(29, 78, 216, 0.075);
-      --tint-primary-b: rgba(29, 78, 216, 0.24);
-      --tint-success: rgba(21, 128, 61, 0.09);
-      --tint-success-b: rgba(21, 128, 61, 0.25);
-      --tint-warn: rgba(180, 83, 9, 0.095);
-      --tint-warn-b: rgba(180, 83, 9, 0.28);
-      --tint-err: rgba(185, 28, 28, 0.085);
-      --tint-err-b: rgba(185, 28, 28, 0.26);
+      --tint-primary: rgba(53, 103, 214, 0.10);
+      --tint-primary-b: rgba(53, 103, 214, 0.30);
+      --tint-success: rgba(76, 151, 68, 0.13);
+      --tint-success-b: rgba(76, 151, 68, 0.32);
+      --tint-warn: rgba(229, 141, 11, 0.13);
+      --tint-warn-b: rgba(229, 141, 11, 0.34);
+      --tint-err: rgba(214, 62, 44, 0.11);
+      --tint-err-b: rgba(214, 62, 44, 0.34);
+      --tint-review: rgba(14, 154, 138, 0.12);
+      --tint-review-b: rgba(14, 154, 138, 0.32);
+      --tint-qa: rgba(124, 58, 237, 0.11);
+      --tint-qa-b: rgba(124, 58, 237, 0.30);
 
-      --repo-0: #2563eb;
-      --repo-1: #0d9488;
-      --repo-2: #d97706;
-      --repo-3: #db2777;
-      --repo-4: #4f46e5;
-      --repo-5: #0284c7;
+      --repo-0: #2563EB;
+      --repo-1: #0D9488;
+      --repo-2: #D97706;
+      --repo-3: #DB2777;
+      --repo-4: #4F46E5;
+      --repo-5: #0284C7;
 
-      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+      --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      --font-display: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
       --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
       --app-h: 100dvh;
     }
 
     :root[data-theme="dark"] {
       color-scheme: dark;
-      --bg: #0d1016;
-      --sidebar: #121620;
-      --card: #161b26;
-      --subtle: #1c2230;
-      --hover: rgba(241, 245, 249, 0.055);
-      --border: #252d3d;
-      --border-strong: #364156;
-      --fg: #f1f5f9;
-      --fg-muted: #9aa7bd;
-      --code: #e2e8f0;
+      --bg: #0D1218;
+      --floor: #151C25;
+      --floor2: #1E2734;
+      --panel: rgba(19, 25, 33, 0.94);
+      --sidebar: #131922;
+      --card: #1A222D;
+      --subtle: #202937;
+      --hover: rgba(230, 235, 242, 0.055);
+      --border: #2B3543;
+      --border-strong: #3C495C;
+      --fg: #E6EBF2;
+      --fg-muted: #9AA5B5;
+      --fg-faint: #8490A1;
+      --code: #E2E8F0;
+      --shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+      --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.30);
 
-      --c-primary: #3b82f6;
-      --t-primary: #93c5fd;
-      --fg-on-primary: #ffffff;
-      --c-success: #22c55e;
-      --t-success: #86efac;
-      --c-warn: #f59e0b;
-      --t-warn: #fcd34d;
-      --c-err: #ef4444;
-      --t-err: #fca5a5;
+      --c-primary: #5B8BF2;
+      --t-primary: #8DB2FA;
+      --fg-on-primary: #FFFFFF;
+      --c-success: #69B35E;
+      --t-success: #86CF7B;
+      --c-warn: #F3A63A;
+      --t-warn: #F8BD63;
+      --c-err: #F05A47;
+      --t-err: #F7887A;
+      --c-review: #26B6A3;
+      --t-review: #4ED2C0;
+      --c-qa: #A27EFB;
+      --t-qa: #C1A7FD;
+      --c-away: #586375;
 
-      --tint-primary: rgba(59, 130, 246, 0.13);
-      --tint-primary-b: rgba(59, 130, 246, 0.34);
-      --tint-success: rgba(34, 197, 94, 0.13);
-      --tint-success-b: rgba(34, 197, 94, 0.32);
-      --tint-warn: rgba(245, 158, 11, 0.14);
-      --tint-warn-b: rgba(245, 158, 11, 0.34);
-      --tint-err: rgba(239, 68, 68, 0.14);
-      --tint-err-b: rgba(239, 68, 68, 0.34);
+      --tint-primary: rgba(91, 139, 242, 0.14);
+      --tint-primary-b: rgba(91, 139, 242, 0.36);
+      --tint-success: rgba(105, 179, 94, 0.14);
+      --tint-success-b: rgba(105, 179, 94, 0.34);
+      --tint-warn: rgba(243, 166, 58, 0.14);
+      --tint-warn-b: rgba(243, 166, 58, 0.36);
+      --tint-err: rgba(240, 90, 71, 0.14);
+      --tint-err-b: rgba(240, 90, 71, 0.36);
+      --tint-review: rgba(38, 182, 163, 0.14);
+      --tint-review-b: rgba(38, 182, 163, 0.36);
+      --tint-qa: rgba(162, 126, 251, 0.14);
+      --tint-qa-b: rgba(162, 126, 251, 0.34);
 
-      --repo-0: #60a5fa;
-      --repo-1: #2dd4bf;
-      --repo-2: #fbbf24;
-      --repo-3: #f472b6;
-      --repo-4: #818cf8;
-      --repo-5: #38bdf8;
+      --repo-0: #60A5FA;
+      --repo-1: #2DD4BF;
+      --repo-2: #FBBF24;
+      --repo-3: #F472B6;
+      --repo-4: #818CF8;
+      --repo-5: #38BDF8;
     }
 
     *, *::before, *::after { box-sizing: border-box; }
     html, body {
       margin: 0;
       padding: 0;
+      height: 100%;
+      overflow: hidden;
       background: var(--bg);
       color: var(--fg);
       font-family: var(--font-sans);
       font-size: 14px;
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
-      overflow-x: hidden;
     }
 
-    /* Accessibility focus rings & tactile press (transform/opacity only) */
-    button, input, textarea, select, a {
-      font: inherit;
-      color: inherit;
-    }
-    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+    button, input, textarea, select, a { font: inherit; color: inherit; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible {
       outline: 2px solid var(--c-primary);
       outline-offset: 2px;
     }
+    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .hidden { display: none !important; }
+    .tnum { font-variant-numeric: tabular-nums; }
+    .mono { font-family: var(--font-mono); }
+    .muted { color: var(--fg-muted); }
+    .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .row-gap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* Buttons (44px min touch targets) */
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 7px;
       min-height: 44px;
       min-width: 44px;
-      padding: 8px 14px;
+      padding: 8px 13px;
       border-radius: 10px;
       border: 1px solid var(--border);
       background: var(--card);
@@ -132,40 +177,70 @@
       font-weight: 500;
       cursor: pointer;
       white-space: nowrap;
-      transition: transform 140ms cubic-bezier(0.2, 0, 0, 1), background-color 140ms ease, opacity 140ms ease;
+      text-decoration: none;
+      transition: transform 130ms ease, border-color 140ms ease, background-color 140ms ease, opacity 140ms ease;
     }
-    .btn:hover:not(:disabled) { background: var(--hover); }
+    .btn:hover:not(:disabled) { border-color: var(--border-strong); background: var(--floor); }
     .btn:active:not(:disabled) { transform: scale(0.98); }
     .btn:disabled { opacity: 0.48; cursor: not-allowed; }
     .btn-primary {
       background: var(--c-primary);
       border-color: var(--c-primary);
       color: var(--fg-on-primary);
+      font-weight: 600;
     }
-    .btn-primary:hover:not(:disabled) { opacity: 0.92; background: var(--c-primary); }
+    .btn-primary:hover:not(:disabled) { opacity: 0.92; background: var(--c-primary); border-color: var(--c-primary); }
     .btn-danger {
       background: var(--tint-err);
       border-color: var(--tint-err-b);
       color: var(--t-err);
     }
+    .btn-danger:hover:not(:disabled) { background: rgba(214, 62, 44, 0.18); border-color: var(--c-err); }
     .btn-danger-solid {
       background: var(--c-err);
       border-color: var(--c-err);
-      color: var(--fg-on-primary);
+      color: #FFFFFF;
+      font-weight: 600;
     }
-    .btn-ghost {
-      border-color: transparent;
-      background: transparent;
-    }
+    .btn-ghost { border-color: transparent; background: transparent; }
+    .btn-ghost:hover:not(:disabled) { background: var(--hover); border-color: transparent; }
+    .btn-sm { min-height: 44px; padding: 6px 11px; font-size: 12.5px; }
     .btn-full { width: 100%; }
 
-    .tnum { font-variant-numeric: tabular-nums; }
-    .mono { font-family: var(--font-mono); }
-    .muted { color: var(--fg-muted); }
-    .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    /* Chips & Badges */
+    .chip, .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      background: var(--subtle);
+      color: var(--fg-muted);
+      white-space: nowrap;
+    }
+    .chip-primary, .b-primary { background: var(--tint-primary); border-color: var(--tint-primary-b); color: var(--t-primary); }
+    .chip-success, .b-active { background: var(--tint-success); border-color: var(--tint-success-b); color: var(--t-success); }
+    .chip-warn, .b-fallback { background: var(--tint-warn); border-color: var(--tint-warn-b); color: var(--t-warn); }
+    .chip-err, .b-frozen { background: var(--tint-err); border-color: var(--tint-err-b); color: var(--t-err); }
+    .chip-review, .b-parallel { background: var(--tint-review); border-color: var(--tint-review-b); color: var(--t-review); }
+    .chip-qa, .b-prio { background: var(--tint-qa); border-color: var(--tint-qa-b); color: var(--t-qa); }
+    .b-ready { background: var(--floor2); color: var(--fg-muted); }
+    .b-group { background: var(--floor2); color: var(--fg-muted); font-weight: 500; font-size: 11.5px; }
 
-    /* Shell Architecture (100dvh, visualViewport IME responsive) */
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-success); flex: none; display: inline-block; }
+    .dot.warn { background: var(--c-warn); }
+    .dot.err { background: var(--c-err); }
+    .dot.off { background: var(--c-away); }
+    .dot.live { animation: livepulse 1.5s ease-in-out infinite; }
+    @keyframes livepulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.88); } }
+
+    /* Shell */
     .app-shell {
+      position: fixed;
+      inset: 0;
       display: flex;
       flex-direction: column;
       height: var(--app-h);
@@ -173,17 +248,20 @@
       overflow: hidden;
     }
 
-    /* Top Header */
+    /* Sticky Frosted Topbar */
     .topbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      min-height: 56px;
+      min-height: 60px;
       padding: calc(8px + env(safe-area-inset-top, 0px)) 16px 8px;
-      background: var(--sidebar);
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
+      z-index: 15;
     }
     .topbar-left, .topbar-right {
       display: flex;
@@ -195,37 +273,89 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      font-weight: 600;
-      font-size: 14px;
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 15px;
       letter-spacing: -0.02em;
     }
-    .nav-tabs {
-      display: flex;
+    .back-office {
+      display: inline-flex;
       align-items: center;
-      gap: 8px;
+      min-height: 44px;
+      padding: 0 8px;
+      font-size: 12.5px;
+      color: var(--fg-muted);
+      text-decoration: none;
+      border-radius: 8px;
+    }
+    .back-office:hover { color: var(--fg); background: var(--hover); }
+
+    .nav-tabs {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px;
+      border-radius: 12px;
+      background: var(--floor2);
+      border: 1px solid var(--border);
     }
     .nav-tab {
       min-height: 44px;
       min-width: 44px;
-      padding: 0 12px;
-      border-radius: 10px;
+      padding: 0 14px;
+      border-radius: 9px;
       border: 1px solid transparent;
       background: transparent;
       color: var(--fg-muted);
       font-size: 13px;
-      font-weight: 500;
+      font-weight: 600;
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
       cursor: pointer;
     }
+    .nav-tab:hover { color: var(--fg); }
     .nav-tab[aria-selected="true"] {
       background: var(--card);
       border-color: var(--border);
       color: var(--fg);
+      box-shadow: var(--shadow-sm);
     }
+    .nav-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 6px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      background: var(--floor2);
+      color: var(--fg-muted);
+    }
+    .nav-count.alert { background: var(--c-err); color: #fff; }
+    .nav-count.live { background: var(--tint-success); color: var(--t-success); }
 
-    /* Stale Banner (> 15s) */
+    /* Active Account Pill in Topbar */
+    .acc-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 44px;
+      padding: 4px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      cursor: pointer;
+      font-size: 12.5px;
+      max-width: 290px;
+    }
+    .acc-pill:hover { border-color: var(--c-primary); }
+    .acc-pill-name { font-weight: 600; color: var(--fg); }
+    .acc-pill-quota { color: var(--fg-muted); font-size: 12px; }
+
+    /* Stale / Warning Banners */
     .stale-banner {
       display: flex;
       align-items: center;
@@ -243,156 +373,356 @@
       border-color: var(--tint-err-b);
       color: var(--t-err);
     }
-    .hidden { display: none !important; }
 
-    /* Status chips (ALWAYS icon + label) */
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 3px 8px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-weight: 500;
-      border: 1px solid var(--border);
-      background: var(--subtle);
-      color: var(--fg-muted);
-      white-space: nowrap;
-    }
-    .chip-primary { background: var(--tint-primary); border-color: var(--tint-primary-b); color: var(--t-primary); }
-    .chip-success { background: var(--tint-success); border-color: var(--tint-success-b); color: var(--t-success); }
-    .chip-warn { background: var(--tint-warn); border-color: var(--tint-warn-b); color: var(--t-warn); }
-    .chip-err { background: var(--tint-err); border-color: var(--tint-err-b); color: var(--t-err); }
-
-    /* Main Workspace Grid (>= 1024px 3-pane hairline) */
-    .workspace {
-      flex: 1;
-      min-height: 0;
-      display: grid;
-      grid-template-columns: 300px minmax(0, 1fr) 410px;
-      overflow: hidden;
-    }
-    .pane {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-    }
-    .pane-rail { background: var(--sidebar); border-right: 1px solid var(--border); }
-    .pane-center { background: var(--bg); border-right: 1px solid var(--border); }
-    .pane-right { background: var(--card); }
-    .pane-scroll {
-      flex: 1;
-      min-height: 0;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    /* Left Rail Sections */
-    .rail-controls {
-      padding: 12px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      flex-shrink: 0;
-    }
-    .row-gap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    /* Form Fields */
     .field {
       width: 100%;
       min-height: 44px;
-      padding: 10px 12px;
+      padding: 9px 12px;
       border-radius: 10px;
       border: 1px solid var(--border);
       background: var(--card);
       color: var(--fg);
       font-size: 14px;
     }
+    .field.dirty { border-color: var(--c-primary); box-shadow: 0 0 0 1px var(--c-primary) inset; }
     textarea.field { min-height: 88px; resize: vertical; line-height: 1.5; }
     .field-label {
       display: block;
       font-size: 12px;
-      font-weight: 500;
+      font-weight: 600;
       color: var(--fg-muted);
-      margin-bottom: 6px;
+      margin-bottom: 5px;
     }
-    .field-err {
-      margin: 6px 0 0;
-      font-size: 12px;
-      color: var(--t-err);
+    .field-err { margin: 6px 0 0; font-size: 12.5px; color: var(--t-err); font-weight: 500; }
+
+    /* ==================== PAGE 1: WORKSPACE (KANBAN-FIRST + DRAWER) ==================== */
+    .work-shell {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
 
-    /* Filter Pills */
-    .pill-row {
+    .work-toolbar {
       display: flex;
       align-items: center;
-      gap: 8px;
-      overflow-x: auto;
-      padding-bottom: 2px;
-    }
-    .pill {
-      min-height: 44px;
-      min-width: 44px;
-      padding: 0 12px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: var(--card);
-      color: var(--fg-muted);
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      white-space: nowrap;
+      flex-wrap: wrap;
+      gap: 8px 10px;
+      padding: 12px 16px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
-    .pill[aria-pressed="true"] {
+    .work-search { flex: 1 1 210px; max-width: 300px; }
+    .work-repo-sel { width: auto; min-width: 165px; max-width: 240px; }
+    .seg-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--card);
+    }
+    .seg-toggle button {
+      border: 0;
+      background: transparent;
+      min-height: 44px;
+      min-width: 44px;
+      padding: 0 13px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--fg-muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .seg-toggle button + button { border-left: 1px solid var(--border); }
+    .seg-toggle button[aria-pressed="true"] {
       background: var(--c-primary);
-      border-color: var(--c-primary);
       color: var(--fg-on-primary);
+      font-weight: 600;
     }
 
-    /* Hairline List Items (Zero card-in-card) */
-    .sec-hdr {
+    /* 6-Stage Workflow Pipeline KPI Strip */
+    .work-kpis {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px 14px 4px;
+      flex-shrink: 0;
+    }
+    .wkpi {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      padding: 10px 14px 6px;
+      padding: 8px 11px;
+      min-height: 48px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      box-shadow: var(--shadow-sm);
+      cursor: pointer;
+      text-align: left;
+      transition: border-color 140ms ease, transform 120ms ease;
+    }
+    .wkpi:hover { border-color: var(--border-strong); }
+    .wkpi[aria-pressed="true"] { border-color: var(--c-primary); box-shadow: 0 0 0 1px var(--c-primary) inset; }
+    .wkpi-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .wkpi-sw { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+    .wkpi-lbl { font-size: 13px; font-weight: 700; color: var(--fg); line-height: 1.2; }
+    .wkpi-sub { font-size: 11px; color: var(--fg-muted); line-height: 1.2; margin-top: 2px; }
+    .wkpi-val { font-family: var(--font-display); font-size: 19px; font-weight: 700; flex: none; }
+
+    /* /btw inline drawer */
+    .btw-box {
+      margin: 10px 14px 0;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--tint-primary-b);
+      background: var(--card);
+      box-shadow: var(--shadow-sm);
+      flex-shrink: 0;
+    }
+
+    /* Main Work Area: 6-Column Kanban / List + Optional Slide-Over Detail Drawer */
+    .work-stage {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+    .work-canvas {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      overflow: auto;
+      padding: 10px 14px 18px;
+    }
+
+    /* 6-Column Workflow Kanban Board */
+    .kanban-board {
+      display: grid;
+      grid-template-columns: repeat(var(--col-n, 6), minmax(194px, 1fr));
+      align-items: start;
+      gap: 10px;
+      min-height: 100%;
+      width: 100%;
+    }
+    .kanban-board.single-col {
+      grid-template-columns: minmax(280px, 520px);
+    }
+    .kanban-col {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      max-height: calc(var(--app-h) - 204px);
+      background: var(--floor);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .kanban-col-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 10px 11px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      border-top: 3px solid var(--col-accent, var(--border-strong));
+      flex-shrink: 0;
+    }
+    .kanban-col-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+      font-size: 13px;
+      min-width: 0;
+    }
+    .kanban-col-sub {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--fg-muted);
+    }
+    .kanban-col-sw { width: 9px; height: 9px; border-radius: 3px; background: var(--col-accent, var(--c-away)); flex: none; }
+    .kanban-col-count {
+      font-size: 11.5px;
+      font-weight: 700;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: var(--floor2);
+      color: var(--fg-muted);
+      flex: none;
+    }
+    .kanban-col-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .kanban-empty {
+      padding: 18px 10px;
+      text-align: center;
+      color: var(--fg-muted);
       font-size: 12px;
+      border: 1px dashed var(--border-strong);
+      border-radius: 10px;
+      background: var(--hover);
+    }
+
+    /* Kanban Card */
+    .k-card {
+      width: 100%;
+      text-align: left;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 11px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      cursor: pointer;
+      box-shadow: var(--shadow-sm);
+      transition: transform 120ms ease, border-color 140ms ease, box-shadow 140ms ease;
+    }
+    .k-card:hover { border-color: var(--c-primary); transform: translateY(-1px); }
+    .k-card.active {
+      border-color: var(--c-primary);
+      box-shadow: 0 0 0 2px var(--tint-primary-b), var(--shadow-sm);
+    }
+    .k-card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      font-size: 12px;
+    }
+    .k-card-repo {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
       font-weight: 600;
       color: var(--fg-muted);
+    }
+    .repo-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+    .k-card-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--fg);
+      line-height: 1.38;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    .k-card-desc {
+      font-size: 12px;
+      color: var(--fg-muted);
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    .k-card-why {
+      font-size: 12px;
+      color: var(--t-err);
+      background: var(--tint-err);
+      border-left: 3px solid var(--c-err);
+      padding: 5px 8px;
+      border-radius: 0 7px 7px 0;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .k-card-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding-top: 6px;
+      border-top: 1px solid var(--floor2);
+      font-size: 11.5px;
+      color: var(--fg-muted);
+    }
+    .k-card-meta { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+    .k-card-quick {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 2px;
+    }
+
+    /* List View (alternative to Kanban) */
+    .list-view {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .list-group {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+    .list-group-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--floor);
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 700;
     }
     .task-row {
       width: 100%;
       min-height: 58px;
-      padding: 10px 14px;
+      padding: 11px 14px;
       border: 0;
       border-bottom: 1px solid var(--border);
       background: transparent;
       text-align: left;
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) auto auto;
+      align-items: center;
+      gap: 12px;
       cursor: pointer;
-      transition: background-color 140ms ease;
     }
+    .task-row:last-child { border-bottom: 0; }
     .task-row:hover { background: var(--hover); }
-    .task-row.active {
-      background: var(--tint-primary);
-      box-shadow: inset 3px 0 0 0 var(--c-primary);
-    }
-    .repo-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      flex-shrink: 0;
-      margin-top: 6px;
-    }
+    .task-row.active { background: var(--tint-primary); box-shadow: inset 3px 0 0 0 var(--c-primary); }
 
-    /* Center Task Header & Timeline */
-    .task-hero {
-      padding: 16px 20px;
+    /* Slide-Over / Docked Detail Drawer */
+    .detail-drawer {
+      width: min(560px, 46vw);
+      min-width: 390px;
+      background: var(--card);
+      border-left: 1px solid var(--border);
+      box-shadow: -8px 0 28px rgba(20, 32, 52, 0.10);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      flex-shrink: 0;
+      z-index: 8;
+    }
+    .detail-drawer.closed { display: none; }
+    .drawer-hero {
+      padding: 14px 16px;
       border-bottom: 1px solid var(--border);
+      background: var(--sidebar);
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -400,34 +730,72 @@
     }
     .task-title {
       margin: 0;
+      font-family: var(--font-display);
       font-size: 16px;
-      font-weight: 600;
+      font-weight: 700;
       letter-spacing: -0.02em;
       line-height: 1.35;
+      overflow-wrap: anywhere;
     }
     .meta-strip {
       display: flex;
       align-items: center;
       flex-wrap: wrap;
-      gap: 8px 14px;
+      gap: 6px 12px;
       font-size: 12px;
       color: var(--fg-muted);
     }
-    .timeline-wrap {
-      padding: 16px 20px;
-      position: relative;
+    .inspector-tabs {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--card);
+      overflow-x: auto;
+      flex-shrink: 0;
     }
+    .itab {
+      min-height: 44px;
+      min-width: 44px;
+      padding: 0 12px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--fg-muted);
+      font-size: 13px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .itab[aria-selected="true"] { border-bottom-color: var(--c-primary); color: var(--fg); }
+    .drawer-scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 16px; }
+    .drawer-foot {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--sidebar);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    /* Timeline & Structured Spec */
     .timeline-item {
       position: relative;
       padding-left: 20px;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
     }
     .timeline-item::before {
       content: "";
       position: absolute;
       left: 6px;
       top: 18px;
-      bottom: -10px;
+      bottom: -8px;
       width: 1px;
       background: var(--border);
     }
@@ -440,16 +808,16 @@
       height: 9px;
       border-radius: 999px;
       border: 2px solid var(--border-strong);
-      background: var(--bg);
+      background: var(--card);
     }
-    .timeline-dot.live { border-color: var(--c-primary); background: var(--c-primary); }
+    .timeline-dot.live { border-color: var(--c-success); background: var(--c-success); }
     .timeline-btn {
       width: 100%;
       min-height: 44px;
       padding: 8px 10px;
-      border-radius: 8px;
-      border: 1px solid transparent;
-      background: transparent;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--floor);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -457,70 +825,54 @@
       text-align: left;
       cursor: pointer;
     }
-    .timeline-btn:hover { background: var(--hover); }
+    .timeline-btn:hover { border-color: var(--border-strong); }
     .timeline-out {
       margin-top: 6px;
       padding: 10px 12px;
-      border-radius: 8px;
+      border-radius: 10px;
       border: 1px solid var(--border);
-      background: var(--subtle);
+      background: var(--floor);
       font-family: var(--font-mono);
       font-size: 12px;
       color: var(--code);
       white-space: pre-wrap;
       word-break: break-word;
     }
-
-    /* Composer & Sticky Action Footer */
-    .composer {
-      padding: 12px 20px;
-      border-top: 1px solid var(--border);
-      background: var(--bg);
-      flex-shrink: 0;
+    .spec-card {
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--floor);
+      font-size: 13.5px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
-    .inspector-tabs {
+    .accept-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
       display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 0 16px;
-      border-bottom: 1px solid var(--border);
-      overflow-x: auto;
-      flex-shrink: 0;
-    }
-    .itab {
-      min-height: 44px;
-      min-width: 44px;
-      padding: 0 10px;
-      border: 0;
-      border-bottom: 2px solid transparent;
-      background: transparent;
-      color: var(--fg-muted);
-      font-size: 13px;
-      font-weight: 500;
-      display: inline-flex;
-      align-items: center;
+      flex-direction: column;
       gap: 6px;
-      cursor: pointer;
-      white-space: nowrap;
-      flex-shrink: 0;
     }
-    .itab[aria-selected="true"] {
-      border-bottom-color: var(--c-primary);
-      color: var(--fg);
+    .accept-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      font-size: 13px;
     }
-    .inspector-body { padding: 16px; }
-    .inspector-foot {
-      padding: 12px 16px;
-      border-top: 1px solid var(--border);
-      background: var(--sidebar);
-      flex-shrink: 0;
-    }
+    .accept-ic { color: var(--c-success); font-weight: 700; flex: none; }
 
-    /* Diff Viewer (single-gutter & wrap toggle for 390px) */
+    /* Diff Viewer */
     .diff-box {
       border: 1px solid var(--border);
       border-radius: 10px;
-      background: var(--bg);
+      background: var(--floor);
       overflow-x: auto;
       font-family: var(--font-mono);
       font-size: 12px;
@@ -541,47 +893,176 @@
     .diff-del { background: var(--tint-err); color: var(--t-err); }
     .diff-hdr { background: var(--tint-primary); color: var(--t-primary); font-weight: 600; }
 
-    /* Accounts (CC-Switcher) Page */
+    /* ==================== PAGE 2: ACCOUNTS (100% CC-SWITCHER PARITY) ==================== */
     .accounts-page {
       flex: 1;
       min-height: 0;
       overflow-y: auto;
-      padding: 20px;
+      padding: 18px 16px 48px;
     }
     .accounts-inner {
-      max-width: 1120px;
+      max-width: 1180px;
       margin: 0 auto;
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      gap: 18px;
     }
-    .hairline-box {
-      border: 1px solid var(--border);
-      border-radius: 12px;
+    .acc-sec-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 10px;
+    }
+    .acc-sec-head h3 {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 15.5px;
+      font-weight: 700;
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+    .acc-sec-head small { color: var(--fg-muted); font-weight: 400; font-size: 12.5px; }
+
+    .grid { display: grid; gap: 12px; }
+    .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    @media (max-width: 1023px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 640px) { .g4, .g2 { grid-template-columns: 1fr; } }
+
+    .card {
       background: var(--card);
-      overflow: hidden;
-    }
-    .acc-row {
+      border: 1px solid var(--border);
+      border-radius: 14px;
       padding: 14px 16px;
-      border-bottom: 1px solid var(--border);
+      min-width: 0;
+      box-shadow: var(--shadow-sm);
+    }
+    .card.active {
+      border-color: var(--c-success);
+      box-shadow: 0 0 0 1px var(--c-success) inset, var(--shadow-sm);
+    }
+    .card.frozen { border-color: var(--tint-err-b); }
+
+    .kpi .label { color: var(--fg-muted); font-size: 12.5px; }
+    .kpi .value {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 700;
+      margin-top: 3px;
+      font-variant-numeric: tabular-nums;
+      overflow-wrap: anywhere;
+    }
+    .kpi .sub { color: var(--fg-muted); font-size: 12.5px; margin-top: 3px; line-height: 1.4; }
+
+    /* Account Cards (equal height blocks like /cc-switcher) */
+    .acc-card { display: flex; flex-direction: column; }
+    .acc-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 8px;
+      align-items: flex-start;
+      justify-content: flex-end;
+    }
+    .acc-head-info { order: 2; flex: 1 1 100%; min-width: 0; }
+    .acc-head-badges { order: 1; display: inline-flex; gap: 5px; flex-wrap: wrap; }
+    .acc-name { font-weight: 700; font-size: 14.5px; line-height: 1.3; }
+    .acc-mail { color: var(--fg-muted); font-size: 12.5px; overflow-wrap: anywhere; margin-top: 2px; }
+    .claude-grid .acc-mail { min-height: 2.8em; }
+    .acc-note { min-height: calc(2 * 3.7em + 12px); margin-top: 12px; color: var(--t-warn); font-size: 12.5px; line-height: 1.45; }
+
+    .meter { margin-top: 12px; }
+    .meter .row { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--fg-muted); }
+    .meter .row b { color: var(--fg); font-variant-numeric: tabular-nums; }
+    .meter .sub { font-size: 12px; color: var(--fg-muted); min-height: 1.45em; font-variant-numeric: tabular-nums; }
+    .bar { height: 8px; border-radius: 999px; background: var(--floor2); overflow: hidden; margin-top: 4px; }
+    .bar > i { display: block; height: 100%; border-radius: inherit; background: var(--c-success); transition: width 0.35s ease; }
+    .bar > i.mid { background: var(--c-warn); }
+    .bar > i.low { background: var(--c-err); }
+
+    .facts {
+      margin: 12px 0 0;
       display: grid;
-      grid-template-columns: minmax(0, 1.6fr) minmax(190px, 250px) auto;
-      align-items: center;
-      gap: 14px;
+      grid-template-columns: auto 1fr;
+      gap: 4px 12px;
+      font-size: 12.5px;
     }
-    .acc-row.repo-row { grid-template-columns: minmax(0, 1fr) auto; }
-    @media (max-width: 900px) {
-      .acc-row, .acc-row.repo-row { grid-template-columns: 1fr; }
-    }
-    .acc-row:last-child { border-bottom: 0; }
-    .acc-row.is-active { background: var(--tint-primary); }
-    .meter-track {
-      height: 6px;
-      border-radius: 999px;
-      background: var(--border);
+    .facts dt { color: var(--fg-muted); }
+    .facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .facts dd.two { white-space: pre-line; min-height: 2.8em; }
+    .acc-actions { margin-top: auto; padding-top: 12px; display: flex; gap: 8px; }
+    .acc-actions .btn { flex: 1; }
+
+    /* Quick Actions & Cooldown */
+    .cd-seg {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 10px;
       overflow: hidden;
+      background: var(--card);
     }
-    .meter-fill { height: 100%; border-radius: 999px; }
+    .cd-seg button {
+      border: 0;
+      background: transparent;
+      padding: 7px 12px;
+      cursor: pointer;
+      min-height: 44px;
+      min-width: 44px;
+      font-size: 13px;
+    }
+    .cd-seg button + button { border-left: 1px solid var(--border); }
+    .cd-seg button[aria-pressed="true"] { background: var(--c-primary); color: #fff; font-weight: 600; }
+    .cd-custom { display: inline-flex; gap: 8px; align-items: center; }
+    .cd-custom input { width: 102px; min-height: 44px; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); }
+
+    /* Repo <-> Account Summary + Table + Add Form */
+    ul.repos-mini { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    ul.repos-mini li {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      padding: 7px 10px;
+      background: var(--floor);
+      border-radius: 10px;
+      font-size: 12.5px;
+    }
+    .tag { font-size: 11.5px; color: var(--fg-muted); }
+    .tag.warn { color: var(--t-warn); font-weight: 600; }
+
+    .tablewrap { overflow-x: auto; }
+    table.cc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.cc-table th, table.cc-table td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    table.cc-table th { color: var(--fg-muted); font-weight: 600; font-size: 12px; white-space: nowrap; }
+    table.cc-table tr:last-child td { border-bottom: 0; }
+    table.cc-table tr.differs td { background: var(--tint-warn); }
+    .rp-name { font-weight: 600; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .rp-path { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-muted); overflow-wrap: anywhere; max-width: 340px; margin-top: 2px; }
+    .rp-note { font-size: 12px; color: var(--t-warn); margin-top: 4px; max-width: 300px; }
+    .rp-note.muted { color: var(--fg-muted); }
+    .rp-assign { display: flex; gap: 8px; align-items: center; }
+    .rp-assign select { min-width: 165px; width: auto; }
+
+    .addform {
+      display: grid;
+      grid-template-columns: minmax(220px, 2fr) minmax(140px, 1fr) minmax(150px, auto) auto;
+      gap: 10px;
+      align-items: end;
+      margin-top: 12px;
+    }
+    @media (max-width: 820px) { .addform { grid-template-columns: 1fr; } }
+
+    .warn-box {
+      padding: 11px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--tint-warn-b);
+      background: var(--tint-warn);
+      color: var(--t-warn);
+      font-size: 13px;
+    }
 
     /* Mobile Bottom Nav + Safe Area */
     .mob-bottom-nav {
@@ -589,7 +1070,7 @@
       grid-template-columns: repeat(3, 1fr);
       gap: 8px;
       padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
-      background: var(--sidebar);
+      background: var(--panel);
       border-top: 1px solid var(--border);
       flex-shrink: 0;
     }
@@ -609,11 +1090,11 @@
       gap: 4px;
       cursor: pointer;
     }
-    .mob-nav-btn[aria-current="page"] { color: var(--t-primary); font-weight: 600; }
+    .mob-nav-btn[aria-current="page"] { color: var(--t-primary); font-weight: 700; }
 
-    /* Native <dialog> Modal (Automatic Focus Trap + Esc + Backdrop) */
+    /* Native <dialog> Modal */
     dialog {
-      width: min(500px, calc(100vw - 24px));
+      width: min(520px, calc(100vw - 24px));
       max-height: 88dvh;
       padding: 0;
       border: 1px solid var(--border);
@@ -633,76 +1114,78 @@
       border-bottom: 1px solid var(--border);
       background: var(--sidebar);
     }
-    .dlg-title { margin: 0; font-size: 15px; font-weight: 600; }
-    .dlg-body { padding: 16px; overflow-y: auto; max-height: 70dvh; display: flex; flex-direction: column; gap: 14px; }
+    .dlg-title { margin: 0; font-size: 15.5px; font-weight: 700; }
+    .dlg-body { padding: 16px; overflow-y: auto; max-height: 72dvh; display: flex; flex-direction: column; gap: 14px; }
 
-    /* Mounted Live-Region Toast (Never toggled via display:none) */
+    /* Toast */
     .toast {
       position: fixed;
       left: 50%;
       bottom: calc(20px + env(safe-area-inset-bottom, 0px));
       transform: translate(-50%, 12px);
       padding: 10px 16px;
-      border-radius: 10px;
+      border-radius: 12px;
       background: var(--fg);
-      color: var(--bg);
+      color: var(--card);
       font-size: 13px;
       font-weight: 500;
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
       z-index: 60;
+      max-width: min(560px, calc(100vw - 32px));
       transition: opacity 180ms ease, transform 180ms ease, visibility 180ms ease;
     }
     .toast.show { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
 
-    /* Skeleton & Spinner */
     @keyframes pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .skel { border-radius: 10px; background: var(--subtle); animation: pulse 1.4s ease-in-out infinite; }
+    .skel { border-radius: 14px; background: var(--floor2); animation: pulse 1.3s ease-in-out infinite; }
     .spin { animation: spin 0.8s linear infinite; }
 
     /* ==================== RESPONSIVE MOBILE (< 1024px — 390px Telegram Mini App / PWA) ==================== */
     @media (max-width: 1023px) {
       .desktop-only { display: none !important; }
-      .field, input, textarea, select { font-size: 16px !important; } /* Prevents iOS Safari auto-zoom */
-      .workspace {
-        display: block;
-        position: relative;
+      .field, input, textarea, select { font-size: 16px !important; }
+      .work-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 10px 12px 2px; gap: 8px; }
+      .work-toolbar { padding: 10px 12px; }
+      .work-canvas { padding: 10px 12px 16px; }
+      .kanban-col { min-width: 286px; max-height: calc(var(--app-h) - 270px); }
+      .detail-drawer {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        min-width: 0;
+        border-left: 0;
       }
-      .pane-rail, .pane-center, .pane-right {
-        border-right: 0;
-        height: 100%;
-      }
-      .app-shell[data-mob-view="list"] .pane-center,
-      .app-shell[data-mob-view="list"] .pane-right { display: none; }
-      .app-shell[data-mob-view="detail"] .pane-rail { display: none; }
-      .app-shell[data-mob-view="detail"][data-mob-sub="stream"] .pane-right { display: none; }
-      .app-shell[data-mob-view="detail"][data-mob-sub="inspect"] .pane-center { display: none; }
+      .app-shell[data-mob-view="list"] .detail-drawer { display: none; }
+      .app-shell[data-mob-view="detail"] .work-toolbar,
+      .app-shell[data-mob-view="detail"] .work-kpis,
+      .app-shell[data-mob-view="detail"] .work-canvas { display: none; }
       .mob-bottom-nav { display: grid; }
       .app-shell.ime-open .mob-bottom-nav { display: none !important; }
-      .diff-old-col { display: none; } /* Single gutter on 390px */
-      .accounts-page { padding: 12px; }
-      .task-hero { padding: 12px 14px; }
-      .timeline-wrap { padding: 12px 14px; }
-      .composer { padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px)); }
-      .inspector-foot { padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px)); }
+      .diff-old-col { display: none; }
+      .accounts-page { padding: 12px 12px 28px; }
+      .task-row { grid-template-columns: 1fr; gap: 6px; }
+    }
+    @media (max-width: 640px) {
+      .work-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (min-width: 1024px) {
       .mobile-only { display: none !important; }
     }
     @media (prefers-reduced-motion: reduce) {
-      .skel, .spin { animation: none !important; }
-      .btn, .toast, .task-row { transition: none !important; }
+      .skel, .spin, .dot.live { animation: none !important; }
+      .btn, .toast, .k-card, .bar > i { transition: none !important; }
     }
   </style>
 </head>
 <body>
-  <div id="app" class="app-shell" data-mob-view="list" data-mob-sub="stream">
+  <div id="app" class="app-shell" data-mob-view="list">
     <!-- ==================== TOP HEADER ==================== -->
     <header class="topbar">
       <div class="topbar-left">
-        <button id="btnMobBack" class="btn btn-ghost mobile-only hidden" data-act="mob-back" aria-label="Quay lại danh sách">
+        <button id="btnMobBack" class="btn btn-ghost mobile-only hidden" data-act="mob-back" aria-label="Quay lại bảng công việc">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
           <span>Quay lại</span>
         </button>
@@ -713,20 +1196,30 @@
           </svg>
           <span>AAF Studio</span>
         </div>
+        <a id="linkOffice" class="back-office desktop-only" href="/" title="Mở Xưởng 3D Agent Office">← Xưởng 3D</a>
 
         <nav class="nav-tabs desktop-only" role="tablist" aria-label="Điều hướng chính">
-          <button id="navWork" class="nav-tab" role="tab" aria-selected="true" aria-controls="panelWork" data-act="page" data-page="work">Công việc</button>
-          <button id="navAccounts" class="nav-tab" role="tab" aria-selected="false" aria-controls="panelAccounts" data-act="page" data-page="accounts">Tài khoản</button>
+          <button id="navWork" class="nav-tab" role="tab" aria-selected="true" aria-controls="panelWork" data-act="page" data-page="work">
+            <span>Công việc</span>
+            <span id="navWorkBadge" class="nav-count tnum hidden">0</span>
+          </button>
+          <button id="navAccounts" class="nav-tab" role="tab" aria-selected="false" aria-controls="panelAccounts" data-act="page" data-page="accounts">
+            <span>Tài khoản</span>
+            <span id="navAccDot" class="dot off"></span>
+          </button>
         </nav>
       </div>
 
       <div class="topbar-right">
+        <button id="topAccPill" class="acc-pill desktop-only" data-act="page" data-page="accounts" title="Xem chi tiết quota 5 giờ & 7 ngày">
+          <span id="topAccDot" class="dot off"></span>
+          <span id="topAccName" class="acc-pill-name trunc">Đang tải tài khoản…</span>
+          <span id="topAccQuota" class="acc-pill-quota tnum"></span>
+        </button>
         <span id="connChip" class="chip chip-success tnum">Mac Online</span>
         <span id="slotChip" class="chip tnum desktop-only">Slots 0/3</span>
         <button id="btnAutoRun" class="btn desktop-only" data-act="toggle-autorun" aria-pressed="false">Tự chạy: TẮT</button>
-        <button id="btnTheme" class="btn btn-ghost" data-act="toggle-theme" aria-label="Đổi giao diện Sáng / Tối">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-        </button>
+        <button id="btnTheme" class="btn btn-ghost" data-act="toggle-theme" aria-label="Đổi giao diện Sáng / Tối">Ca đêm</button>
       </div>
     </header>
 
@@ -736,93 +1229,76 @@
       <button class="btn" data-act="refresh-now">Làm mới</button>
     </div>
 
-    <!-- ==================== PAGE 1: WORKSPACE (3-PANE DESKTOP / PUSH MOBILE) ==================== -->
-    <div id="panelWork" class="workspace" role="tabpanel">
-      <!-- LEFT RAIL -->
-      <aside class="pane pane-rail">
-        <div class="rail-controls">
-          <div class="row-gap">
-            <button class="btn btn-primary" style="flex:1" data-act="open-add">Tạo task</button>
-            <button class="btn" data-act="toggle-btw">/btw</button>
+    <!-- ==================== PAGE 1: WORKSPACE (KANBAN-FIRST + DRAWER) ==================== -->
+    <div id="panelWork" class="work-shell" role="tabpanel">
+      <!-- Compact Toolbar -->
+      <div class="work-toolbar">
+        <button class="btn btn-primary" data-act="open-add">+ Tạo task</button>
+        <button class="btn" data-act="toggle-btw">/btw Hỏi nhanh</button>
+        <input id="searchInput" class="field work-search" type="search" placeholder="Tìm task, ID, repo, nhánh… (⌘K)" autocomplete="off" aria-label="Tìm task hoặc repo" />
+        <select id="repoFilter" class="field work-repo-sel" aria-label="Lọc theo repo">
+          <option value="all">Tất cả repo</option>
+        </select>
+        <button id="btnToggleCancelled" class="btn" data-act="toggle-cancelled" aria-pressed="false">Hiện Đã huỷ (0)</button>
+        <div class="seg-toggle desktop-only" role="group" aria-label="Chế độ xem" style="margin-left:auto;">
+          <button type="button" id="btnViewKanban" data-act="view-mode" data-view="kanban" aria-pressed="true">Kanban</button>
+          <button type="button" id="btnViewList" data-act="view-mode" data-view="list" aria-pressed="false">Danh sách</button>
+        </div>
+      </div>
+
+      <!-- 4 Mini KPI Summary Tiles -->
+      <div id="workKpis" class="work-kpis"></div>
+
+      <!-- Inline Read-Only /btw Drawer -->
+      <div id="btwDrawer" class="btw-box hidden">
+        <div class="row-gap" style="justify-content:space-between;margin-bottom:8px;">
+          <strong style="font-size:13.5px;color:var(--t-primary)">/btw — Hỏi nhanh codebase (Read-only, không mở worktree)</strong>
+          <button class="btn btn-ghost btn-sm" data-act="toggle-btw">Đóng</button>
+        </div>
+        <div class="row-gap">
+          <select id="btwRepo" class="field" style="width:auto;min-width:190px;"></select>
+          <input id="btwInput" class="field" style="flex:1;min-width:220px;" type="text" placeholder="vd: Hàm mở PDF từ Zalo nằm ở đâu?" />
+          <button id="btnBtwSend" class="btn btn-primary" data-act="send-btw">Hỏi</button>
+        </div>
+        <p id="btwErr" class="field-err hidden"></p>
+        <div id="btwAns" class="timeline-out hidden" style="margin-top:10px;"></div>
+      </div>
+
+      <!-- Main Stage: Kanban / List + Docked Detail Drawer -->
+      <div class="work-stage">
+        <main id="workCanvas" class="work-canvas" aria-label="Bảng công việc"></main>
+
+        <aside id="detailDrawer" class="detail-drawer closed" aria-label="Chi tiết task">
+          <div id="taskHero" class="drawer-hero"></div>
+          <div class="inspector-tabs" role="tablist" aria-label="Tab chi tiết task">
+            <button class="itab" role="tab" id="tabStream" aria-selected="true" data-act="dtab" data-tab="stream">Diễn biến</button>
+            <button class="itab" role="tab" id="tabDiff" aria-selected="false" data-act="dtab" data-tab="diff">Diff</button>
+            <button class="itab" role="tab" id="tabPlan" aria-selected="false" data-act="dtab" data-tab="plan">Kế hoạch</button>
+            <button class="itab" role="tab" id="tabProof" aria-selected="false" data-act="dtab" data-tab="proof">Nghiệm thu</button>
           </div>
-          <div>
-            <label for="searchInput" class="field-label">Tìm task / repo (⌘K)</label>
-            <input id="searchInput" class="field" type="search" placeholder="Lọc theo tiêu đề, ID, repo..." autocomplete="off" />
+          <div id="drawerScroll" class="drawer-scroll">
+            <div id="drawerBody"></div>
           </div>
-          <div class="pill-row" id="stateFilters" role="group" aria-label="Lọc trạng thái">
-            <button class="pill" data-act="filter-st" data-st="all" aria-pressed="true">Tất cả</button>
-            <button class="pill" data-act="filter-st" data-st="urgent" aria-pressed="false">Cần xử lý</button>
-            <button class="pill" data-act="filter-st" data-st="running" aria-pressed="false">Đang chạy</button>
-            <button class="pill" data-act="filter-st" data-st="ready" aria-pressed="false">Chờ slot</button>
-            <button class="pill" data-act="filter-st" data-st="done" aria-pressed="false">Xong</button>
+          <div id="jumpLatestWrap" class="hidden" style="padding:6px 16px;border-top:1px solid var(--border);background:var(--card);text-align:center;">
+            <button class="btn btn-sm" data-act="jump-latest">Về dòng mới nhất ↓</button>
           </div>
-        </div>
-        <div id="railBody" class="pane-scroll"></div>
-      </aside>
-
-      <!-- CENTER CANVAS (Task Hero + /btw + Live Stream + Steer Composer) -->
-      <main class="pane pane-center">
-        <!-- Mobile Sub-View Switcher (Diễn biến vs Diff/Plan/Proof) -->
-        <div class="inspector-tabs mobile-only" role="tablist" aria-label="Chế độ xem chi tiết">
-          <button class="itab" role="tab" id="mobSubStream" aria-selected="true" data-act="mob-sub" data-sub="stream">Diễn biến</button>
-          <button class="itab" role="tab" id="mobSubDiff" aria-selected="false" data-act="mob-sub" data-sub="diff">Diff</button>
-          <button class="itab" role="tab" id="mobSubPlan" aria-selected="false" data-act="mob-sub" data-sub="plan">Kế hoạch</button>
-          <button class="itab" role="tab" id="mobSubProof" aria-selected="false" data-act="mob-sub" data-sub="proof">Nghiệm thu</button>
-        </div>
-
-        <div id="taskHero" class="task-hero"></div>
-
-        <!-- Inline Read-Only /btw Drawer -->
-        <div id="btwDrawer" class="hidden" style="padding:14px 20px;border-bottom:1px solid var(--border);background:var(--tint-primary);">
-          <div class="row-gap" style="justify-content:space-between;margin-bottom:8px;">
-            <strong style="font-size:13px;color:var(--t-primary)">/btw — Hỏi nhanh codebase (Read-only, không mở worktree)</strong>
-            <button class="btn btn-ghost" data-act="toggle-btw">Đóng</button>
+          <div id="drawerFoot" class="drawer-foot">
+            <div id="contextActions"></div>
+            <div id="composerWrap">
+              <label for="steerInput" id="steerLabel" class="field-label">Gửi chỉ dẫn Steer (áp dụng ở lượt chạy kế tiếp · ⌘↵)</label>
+              <div class="row-gap">
+                <input id="steerInput" class="field" style="flex:1" type="text" placeholder="Nhập ghi chú điều hướng cho agent…" />
+                <button id="btnSteerSend" class="btn btn-primary" data-act="send-steer">Gửi steer</button>
+              </div>
+              <p id="steerErr" class="field-err hidden"></p>
+              <p id="steerLockedNote" class="muted hidden" style="margin:0;font-size:12.5px;"></p>
+            </div>
           </div>
-          <label for="btwRepo" class="field-label">Repo hỏi nhanh</label>
-          <select id="btwRepo" class="field" style="margin-bottom:8px;"></select>
-          <label for="btwInput" class="field-label">Câu hỏi kỹ thuật</label>
-          <div class="row-gap">
-            <input id="btwInput" class="field" style="flex:1" type="text" placeholder="vd: Hàm mở PDF từ Zalo nằm ở đâu?" />
-            <button id="btnBtwSend" class="btn btn-primary" data-act="send-btw">Hỏi</button>
-          </div>
-          <p id="btwErr" class="field-err hidden"></p>
-          <div id="btwAns" class="timeline-out hidden" style="margin-top:10px;"></div>
-        </div>
-
-        <div id="streamScroll" class="pane-scroll">
-          <div id="streamBody" class="timeline-wrap"></div>
-        </div>
-
-        <div id="jumpLatestWrap" class="hidden" style="padding:6px 20px;border-top:1px solid var(--border);background:var(--card);text-align:center;">
-          <button class="btn" data-act="jump-latest">Về dòng mới nhất ↓</button>
-        </div>
-
-        <div id="composerWrap" class="composer">
-          <label for="steerInput" id="steerLabel" class="field-label">Gửi chỉ dẫn Steer (áp dụng ở lượt chạy kế tiếp · ⌘↵)</label>
-          <div class="row-gap">
-            <input id="steerInput" class="field" style="flex:1" type="text" placeholder="Nhập ghi chú điều hướng cho agent..." />
-            <button id="btnSteerSend" class="btn btn-primary" data-act="send-steer">Gửi steer</button>
-          </div>
-          <p id="steerErr" class="field-err hidden"></p>
-          <p id="steerLockedNote" class="muted hidden" style="margin:0;font-size:13px;"></p>
-        </div>
-      </main>
-
-      <!-- RIGHT INSPECTOR (Diff / Plan / Proof + Context Actions) -->
-      <aside class="pane pane-right">
-        <div class="inspector-tabs desktop-only" role="tablist" aria-label="Chi tiết kỹ thuật">
-          <button class="itab" role="tab" id="tabDiff" aria-selected="true" aria-controls="inspectorBody" data-act="rtab" data-tab="diff">Diff</button>
-          <button class="itab" role="tab" id="tabPlan" aria-selected="false" aria-controls="inspectorBody" data-act="rtab" data-tab="plan">Kế hoạch</button>
-          <button class="itab" role="tab" id="tabProof" aria-selected="false" aria-controls="inspectorBody" data-act="rtab" data-tab="proof">Nghiệm thu</button>
-        </div>
-        <div id="inspectorScroll" class="pane-scroll">
-          <div id="inspectorBody" class="inspector-body"></div>
-        </div>
-        <div id="inspectorFoot" class="inspector-foot"></div>
-      </aside>
+        </aside>
+      </div>
     </div>
 
-    <!-- ==================== PAGE 2: ACCOUNTS & CC-SWITCHER ==================== -->
+    <!-- ==================== PAGE 2: ACCOUNTS (FULL CC-SWITCHER PARITY) ==================== -->
     <section id="panelAccounts" class="accounts-page hidden" role="tabpanel">
       <div id="accountsInner" class="accounts-inner"></div>
     </section>
@@ -834,14 +1310,14 @@
           <button id="mobAskTabAdd" class="btn btn-primary" style="flex:1" role="tab" aria-selected="true" data-act="mob-ask-mode" data-mode="add">Giao task AAF</button>
           <button id="mobAskTabBtw" class="btn" style="flex:1" role="tab" aria-selected="false" data-act="mob-ask-mode" data-mode="btw">Hỏi nhanh /btw</button>
         </div>
-        <div id="mobAskForm" class="hairline-box" style="padding:16px;display:flex;flex-direction:column;gap:12px;"></div>
+        <div id="mobAskForm" class="card" style="display:flex;flex-direction:column;gap:12px;"></div>
       </div>
     </section>
 
     <!-- ==================== MOBILE 3-TAB BOTTOM NAV ==================== -->
     <nav class="mob-bottom-nav" aria-label="Điều hướng di động">
       <button id="mnavWork" class="mob-nav-btn" aria-current="page" data-act="mob-tab" data-tab="work">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m12 2 9 4.5-9 4.5-9-4.5L12 2Z"/><path d="m3 12 9 4.5 9-4.5M3 17.5 12 22l9-4.5"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="18" rx="1.5"/><rect x="14" y="3" width="7" height="11" rx="1.5"/></svg>
         <span>Công việc</span>
       </button>
       <button id="mnavAccounts" class="mob-nav-btn" aria-current="false" data-act="mob-tab" data-tab="accounts">
@@ -855,48 +1331,69 @@
     </nav>
   </div>
 
-  <!-- Native Accessible <dialog> for Create Task / Confirm / Proof Lightbox -->
+  <!-- Native Accessible <dialog> -->
   <dialog id="mainDialog" aria-labelledby="dlgTitle">
     <div class="dlg-hdr">
       <h2 id="dlgTitle" class="dlg-title">Hộp thoại</h2>
-      <button class="btn btn-ghost" data-act="close-dlg">Đóng</button>
+      <button class="btn btn-ghost btn-sm" data-act="close-dlg">Đóng</button>
     </div>
     <div id="dlgBody" class="dlg-body"></div>
   </dialog>
 
-  <!-- Always-mounted live region for VoiceOver / Screen Reader announcements -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script>
     (() => {
       "use strict";
 
-      /* ==================== STATE & PERSISTENT DRAFTS ==================== */
+      const TZ = "Asia/Ho_Chi_Minh";
+      const REASONS = {
+        web_ui_switch: "Web",
+        web_ui_force_switch: "Web (ép chuyển)",
+        web_ui_rotate: "Web: xoay vòng",
+        web_ui_limit_429: "Web: báo 429",
+        log_detected_429: "Tự động: phát hiện 429 trong log",
+        auto_rotate: "Tự động xoay",
+        manual_switch: "MCP / CLI",
+        mcp_tool_switch: "MCP Tool",
+        telegram_ui_switch: "Telegram (cũ)",
+        telegram_ui_force_switch: "Telegram (cũ, ép)",
+        telegram_ui_rotate: "Telegram (cũ)",
+        telegram_ui_limit_429: "Telegram (cũ): báo 429",
+        telegram_remote_switch: "Telegram (cũ)",
+        telegram_rotate: "Telegram (cũ)",
+        telegram_reported_429: "Telegram (cũ): báo 429",
+      };
+
       const state = {
         page: "work",          // work | accounts | ask (mobile)
+        viewMode: "kanban",    // kanban | list
         mobView: "list",       // list | detail
-        mobSub: "stream",      // stream | diff | plan | proof
         mobAskMode: "add",     // add | btw
-        rtab: "diff",          // diff | plan | proof
-        filterSt: "all",
+        dtab: "stream",        // stream | diff | plan | proof
+        filterBucket: "all",   // all | urgent | running | ready | done
+        repoFilter: "all",
+        showCancelled: false,
         search: "",
         diffWrap: false,
         studio: null,
         detail: null,
         accounts: null,
+        accountsLoadedAt: 0,
         selectedId: "",
+        drawerOpen: false,
         expandedSteps: new Set(),
-        drafts: new Map(),     // Preserves typed text across polling updates
+        drafts: new Map(),
         lastSyncedMs: 0,
         lastError: "",
         loadingStudio: true,
         loadingAccounts: false,
         inFlightStudio: null,
+        inFlightAccounts: null,
         sessionToken: "",
         pinnedBottom: true,
-        pendingRepoAssign: new Map(), // Explicit Save + Confirm (never instant onchange write)
+        pendingRepoAssign: new Map(),
         reworkOpen: false,
-        stopConfirmRun: "",
         lastFocused: null,
       };
 
@@ -906,7 +1403,143 @@
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
       }[ch]));
 
+      /* ==================== TIME & FORMAT HELPERS ==================== */
+      function fmtTime(ms, withDate = false) {
+        if (!ms || !Number.isFinite(Number(ms))) return "—";
+        const o = { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false };
+        if (withDate) { o.day = "2-digit"; o.month = "2-digit"; }
+        try {
+          return new Intl.DateTimeFormat("vi-VN", o).format(new Date(Number(ms)));
+        } catch (err) {
+          console.warn("fmtTime failed:", err);
+          return "—";
+        }
+      }
+
+      function fmtClockSec(ms) {
+        if (!ms) return "—";
+        try {
+          return new Intl.DateTimeFormat("vi-VN", {
+            timeZone: TZ, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+          }).format(new Date(Number(ms)));
+        } catch (err) {
+          console.warn("fmtClockSec failed:", err);
+          return "—";
+        }
+      }
+
+      function fmtDur(sec) {
+        sec = Math.max(0, Math.round(Number(sec) || 0));
+        const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+        if (h) return `${h} giờ ${m} phút`;
+        if (m) return `${m} phút ${s < 10 ? "0" : ""}${s} giây`;
+        return `${s} giây`;
+      }
+
+      function ago(ms) {
+        if (!ms) return "chưa có";
+        const d = Math.max(0, (Date.now() - Number(ms)) / 1000);
+        if (d < 60) return "vừa xong";
+        if (d < 3600) return `${Math.floor(d / 60)} phút trước`;
+        if (d < 86400) return `${Math.floor(d / 3600)} giờ trước`;
+        return fmtTime(ms, true);
+      }
+
+      function splitName(name) {
+        const parts = String(name || "").split(" — ");
+        return { title: parts[0] || "", detail: parts.slice(1).join(" — ") };
+      }
+
+      function accDriftMs() {
+        return state.accountsLoadedAt ? (Date.now() - state.accountsLoadedAt) : 0;
+      }
+
+      function cooldownLeftSec() {
+        const ab = state.accounts && state.accounts.antiBan;
+        if (!ab) return 0;
+        return Math.max(0, (Number(ab.claudeCooldownRemainSec) || 0) - accDriftMs() / 1000);
+      }
+
+      /* ==================== STRUCTURED PARSERS (NO RAW JSON LEAKS) ==================== */
+      function parseSpec(raw) {
+        if (!raw) return { description: "", acceptance: [], extra: null };
+        const txt = String(raw).trim();
+        if (txt.startsWith("{")) {
+          try {
+            const obj = JSON.parse(txt);
+            if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+              const description = String(obj.description || obj.summary || obj.goal || "").trim();
+              const accRaw = obj.acceptance || obj.criteria || obj.checks || [];
+              const acceptance = Array.isArray(accRaw) ? accRaw.map(x => String(x)).filter(Boolean) : (accRaw ? [String(accRaw)] : []);
+              const extra = {};
+              Object.keys(obj).forEach(k => {
+                if (!["description", "summary", "goal", "acceptance", "criteria", "checks"].includes(k)) {
+                  extra[k] = obj[k];
+                }
+              });
+              return { description, acceptance, extra: Object.keys(extra).length ? extra : null };
+            }
+          } catch (err) {
+            console.warn("Spec JSON parse fallback to text:", err);
+          }
+        }
+        return { description: txt, acceptance: [], extra: null };
+      }
+
+      function parseNotes(raw) {
+        if (!raw) return [];
+        const txt = String(raw).trim();
+        if (!txt || txt === "[]") return [];
+        if (txt.startsWith("[")) {
+          try {
+            const arr = JSON.parse(txt);
+            if (Array.isArray(arr)) {
+              return arr.map(item => typeof item === "string" ? item : (item && (item.note || item.text || item.message) ? String(item.note || item.text || item.message) : JSON.stringify(item))).filter(Boolean);
+            }
+          } catch (err) {
+            console.warn("Notes JSON parse fallback:", err);
+          }
+        }
+        return [txt];
+      }
+
+      function formatStreamEvent(ev, idx) {
+        const rawTs = ev && (ev.ts || ev.timestamp || ev.time);
+        const tsMs = rawTs ? (Number(rawTs) < 1e12 ? Number(rawTs) * 1000 : Number(rawTs)) : 0;
+        const clock = tsMs ? fmtClockSec(tsMs) : "";
+        const type = String((ev && ev.type) || "").toLowerCase();
+        const tool = String((ev && (ev.tool || ev.tool_name)) || "");
+        let label = ev && ev.title ? String(ev.title) : "";
+        if (!label) {
+          if (type === "start" && tool) label = `Khởi chạy ${tool}`;
+          else if (type === "assistant") label = "Phản hồi của agent";
+          else if (type === "result") label = "Kết thúc lượt chạy";
+          else if (type === "tool_use" && tool) label = `Dùng công cụ: ${tool}`;
+          else if (tool) label = tool;
+          else if (type) label = ev.subtype ? `${type}: ${ev.subtype}` : type;
+          else label = `Bước ${idx + 1}`;
+        }
+        let summary = "";
+        if (typeof ev.text === "string" && ev.text.trim()) summary = ev.text.trim();
+        else if (typeof ev.message === "string" && ev.message.trim()) summary = ev.message.trim();
+        else if (typeof ev.result === "string" && ev.result.trim()) summary = ev.result.trim();
+        else if (typeof ev.out === "string" && ev.out.trim()) summary = ev.out.trim();
+        else if (typeof ev.output === "string" && ev.output.trim()) summary = ev.output.trim();
+        else if (ev && ev.message && Array.isArray(ev.message.content)) {
+          summary = ev.message.content.map(c => (c && (c.text || c.name)) || "").filter(Boolean).join(" ").trim();
+        }
+        const dur = ev && (ev.dur || ev.duration_ms) ? String(ev.dur || (ev.duration_ms + "ms")) : "";
+        const detail = summary || JSON.stringify(ev, null, 2);
+        return { label, clock, dur, preview: summary.slice(0, 120), detail };
+      }
+
       /* ==================== THEME + TELEGRAM WEBAPP BRIDGE ==================== */
+      function syncThemeBtn() {
+        const dark = document.documentElement.getAttribute("data-theme") === "dark";
+        const btn = $("btnTheme");
+        if (btn) btn.textContent = dark ? "Ca ngày" : "Ca đêm";
+      }
+
       function applyTheme(mode) {
         const dark = mode === "dark";
         document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
@@ -915,40 +1548,7 @@
         } catch (err) {
           console.warn("theme storage unavailable:", err);
         }
-      }
-
-      function initThemeAndTelegram() {
-        let saved = "";
-        try {
-          saved = localStorage.getItem("agent-office-theme") || "";
-        } catch (err) {
-          console.warn("read theme failed:", err);
-        }
-        const tg = window.Telegram && window.Telegram.WebApp;
-        if (tg) {
-          try {
-            tg.ready();
-            tg.expand();
-            applyTelegramTheme(tg);
-            tg.onEvent("themeChanged", () => applyTelegramTheme(tg));
-            tg.onEvent("viewportChanged", syncViewportHeight);
-            if (tg.BackButton) {
-              tg.BackButton.onClick(() => {
-                if ($("mainDialog").open) { closeDialog(); return; }
-                if (state.mobView === "detail") {
-                  state.mobView = "list";
-                  syncMobileShell();
-                }
-              });
-            }
-          } catch (err) {
-            console.warn("Telegram WebApp init warning:", err);
-          }
-        } else if (saved === "dark" || saved === "light") {
-          applyTheme(saved);
-        } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-          applyTheme("dark");
-        }
+        syncThemeBtn();
       }
 
       function applyTelegramTheme(tg) {
@@ -964,6 +1564,30 @@
         if (tp.button_text_color) root.setProperty("--fg-on-primary", tp.button_text_color);
       }
 
+      function initThemeAndTelegram() {
+        syncThemeBtn();
+        const tg = window.Telegram && window.Telegram.WebApp;
+        if (tg && tg.initData) {
+          try {
+            tg.ready();
+            tg.expand();
+            applyTelegramTheme(tg);
+            tg.onEvent("themeChanged", () => applyTelegramTheme(tg));
+            tg.onEvent("viewportChanged", syncViewportHeight);
+            if (tg.BackButton) {
+              tg.BackButton.onClick(() => {
+                if ($("mainDialog").open) { closeDialog(); return; }
+                if (state.drawerOpen || state.mobView === "detail") {
+                  closeDetailDrawer();
+                }
+              });
+            }
+          } catch (err) {
+            console.warn("Telegram WebApp init warning:", err);
+          }
+        }
+      }
+
       function syncViewportHeight() {
         const vv = window.visualViewport;
         const tg = window.Telegram && window.Telegram.WebApp;
@@ -973,14 +1597,14 @@
         $("app").classList.toggle("ime-open", imeOpen);
       }
 
-      /* ==================== CENTRALIZED AUTH & FETCH ==================== */
+      /* ==================== AUTH, FETCH & LOCKED BUTTONS ==================== */
       let _toastTimer = null;
       function showToast(msg) {
         const el = $("toast");
         el.textContent = msg;
         el.classList.add("show");
         clearTimeout(_toastTimer);
-        _toastTimer = setTimeout(() => el.classList.remove("show"), 2800);
+        _toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
       }
 
       async function ensureRemoteSession() {
@@ -1023,7 +1647,8 @@
         const fetchOpts = {
           method,
           headers,
-          signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined,
+          cache: "no-store",
+          signal: AbortSignal.timeout ? AbortSignal.timeout(35000) : undefined,
         };
         if (method !== "GET" && opts.body !== undefined) {
           headers["Content-Type"] = "application/json";
@@ -1038,7 +1663,7 @@
           console.warn("Non-JSON response:", err);
           data = { ok: false, error: text.slice(0, 200) || `HTTP ${res.status}` };
         }
-        if (!res.ok) {
+        if (!res.ok && !data.needsForce) {
           const e = new Error(data.error || `HTTP ${res.status}`);
           e.status = res.status;
           e.data = data;
@@ -1047,13 +1672,12 @@
         return data;
       }
 
-      /* Real async debounce guard (ui-ux-pro-max #2: immediate lock + >= 1000ms floor) */
       async function runLockedButton(btn, fn) {
         if (!btn || btn.disabled) return;
         const origHtml = btn.innerHTML;
         btn.disabled = true;
         btn.setAttribute("aria-busy", "true");
-        btn.innerHTML = `<svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg><span>Đang xử lý...</span>`;
+        btn.innerHTML = `<svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg><span>Đang xử lý…</span>`;
         try {
           await Promise.all([Promise.resolve().then(fn), sleep(1000)]);
         } finally {
@@ -1090,19 +1714,42 @@
         }
       }
 
-      /* ==================== STATUS GLYPHS (NEVER COLOR ALONE) ==================== */
-      function statusChipHtml(st) {
+      /* ==================== STATUS HELPERS (6-STAGE GITHUB / AAF WORKFLOW) ==================== */
+      function taskBucket(t) {
+        const st = String(t.state || "").toLowerCase();
+        if (st === "cancelled") return "cancelled";
+        if (st === "blocked" || t.frozen) return "blocked";
+        if (st === "done") return "done";
+        if (st === "review") return "review";
+        if (st === "gating" || st === "qa") return "qa";
+        if (st === "running" || st === "building") return "building";
+        return "ready"; // ready | backlog
+      }
+
+      function statusChipHtml(st, kind) {
+        if (kind === "manual" && st === "running") {
+          return `<span class="chip chip-warn"><span class="dot live" style="background:var(--c-warn)"></span><span>Terminal</span></span>`;
+        }
         const map = {
-          blocked: ["chip-err", "Bị chặn", `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`],
-          review: ["chip-warn", "Cần duyệt", `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`],
-          running: ["chip-primary", "Đang chạy", `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke-dasharray="14 6"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>`],
-          gating: ["chip-warn", "QA Gate", `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>`],
-          done: ["chip-success", "Hoàn tất", `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>`],
-          cancelled: ["", "Đã huỷ", `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg>`],
-          ready: ["", "Chờ slot", `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>`],
+          blocked: ["chip-err", "Blocked", `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`],
+          review: ["chip-review", "Review", `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`],
+          running: ["chip-warn", "Building", `<span class="dot live" style="background:var(--c-warn)"></span>`],
+          building: ["chip-warn", "Building", `<span class="dot live" style="background:var(--c-warn)"></span>`],
+          gating: ["chip-qa", "QA Gate", `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>`],
+          qa: ["chip-qa", "QA", `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>`],
+          done: ["chip-success", "Done", `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>`],
+          cancelled: ["", "Đã huỷ", `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg>`],
+          backlog: ["", "Backlog", `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>`],
+          ready: ["chip-primary", "Ready", `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>`],
         };
-        const [cls, lbl, ic] = map[st] || ["", st || "Chờ slot", map.ready[2]];
+        const [cls, lbl, ic] = map[st] || ["", st || "Ready", map.ready[2]];
         return `<span class="chip ${cls}">${ic}<span>${lbl}</span></span>`;
+      }
+
+      function priorityBadgeHtml(pri) {
+        if (!pri || pri === "—") return "";
+        const cls = pri === "P0" ? "chip-err" : pri === "P1" ? "chip-warn" : "";
+        return `<span class="chip ${cls} mono" style="padding:1px 7px;font-size:11px;">${esc(pri)}</span>`;
       }
 
       function repoColor(repoId) {
@@ -1116,7 +1763,7 @@
         if (state.inFlightStudio) return state.inFlightStudio;
         if (!silent) {
           state.loadingStudio = true;
-          renderRail();
+          renderWorkArea();
         }
         state.inFlightStudio = (async () => {
           try {
@@ -1127,24 +1774,23 @@
             state.lastError = "";
             state.loadingStudio = false;
             const tasks = data.tasks || [];
-            if (!state.selectedId || !tasks.some(t => t.id === state.selectedId)) {
-              state.selectedId = (data.attention && data.attention[0] && data.attention[0].id) || (tasks[0] && tasks[0].id) || "";
+            if (state.selectedId && !tasks.some(t => t.id === state.selectedId)) {
+              state.selectedId = "";
+              state.drawerOpen = false;
+              state.detail = null;
             }
             populateRepoSelects();
             renderHeader();
-            renderRail();
-            if (state.selectedId) {
+            renderWorkArea();
+            if (state.drawerOpen && state.selectedId) {
               await loadTaskDetail(state.selectedId, true);
-            } else {
-              state.detail = null;
-              renderCenterAndRight();
             }
           } catch (err) {
             console.warn("loadStudio error:", err);
             state.lastError = err.message || "Không kết nối được AAF Hub";
             state.loadingStudio = false;
             renderHeader();
-            if (!state.studio) renderRail();
+            if (!state.studio) renderWorkArea();
           } finally {
             state.inFlightStudio = null;
           }
@@ -1155,15 +1801,22 @@
       async function loadTaskDetail(taskId, silent = false) {
         if (!taskId || taskId.startsWith("manual-")) {
           const manual = ((state.studio && state.studio.tasks) || []).find(t => t.id === taskId) || null;
-          state.detail = manual ? { ok: true, task: manual, stream: { events: [] }, diff: { available: false, reason: "Phiên mở tay Terminal (chỉ đọc)" }, handover: { available: false }, proof: { available: false, images: [] } } : null;
-          renderCenterAndRight();
+          state.detail = manual ? {
+            ok: true,
+            task: manual,
+            stream: { events: [] },
+            diff: { available: false, reason: "Phiên mở tay Terminal (chỉ đọc)" },
+            handover: { available: false },
+            proof: { available: false, images: [] },
+          } : null;
+          renderDetailDrawer();
           return;
         }
         try {
           const det = await apiFetch(`/api/aaf/task/detail?id=${encodeURIComponent(taskId)}`);
           if (state.selectedId === taskId) {
             state.detail = det;
-            renderCenterAndRight();
+            renderDetailDrawer();
           }
         } catch (err) {
           console.warn("loadTaskDetail error:", err);
@@ -1171,23 +1824,33 @@
         }
       }
 
-      async function loadAccounts(refresh = false) {
-        state.loadingAccounts = true;
-        renderAccounts();
-        try {
-          await ensureRemoteSession();
-          const url = refresh ? "/api/aaf/accounts?refresh=1" : "/api/aaf/accounts";
-          state.accounts = await apiFetch(url);
-        } catch (err) {
-          console.warn("loadAccounts error:", err);
-          state.accounts = { ok: false, error: err.message };
-        } finally {
-          state.loadingAccounts = false;
-          renderAccounts();
+      async function loadAccounts(refresh = false, silent = false) {
+        if (state.inFlightAccounts && !refresh) return state.inFlightAccounts;
+        if (!silent) {
+          state.loadingAccounts = true;
+          if (state.page === "accounts") renderAccounts();
         }
+        state.inFlightAccounts = (async () => {
+          try {
+            await ensureRemoteSession();
+            const url = refresh ? "/api/aaf/accounts?refresh=1" : "/api/aaf/accounts";
+            state.accounts = await apiFetch(url);
+            state.accountsLoadedAt = Date.now();
+          } catch (err) {
+            console.warn("loadAccounts error:", err);
+            if (!state.accounts) state.accounts = { ok: false, error: err.message };
+            else showToast(`Không làm mới được quota: ${err.message}`);
+          } finally {
+            state.loadingAccounts = false;
+            state.inFlightAccounts = null;
+            renderHeader();
+            if (state.page === "accounts") renderAccounts();
+          }
+        })();
+        return state.inFlightAccounts;
       }
 
-      /* ==================== RENDER: HEADER & STALE CHECK ==================== */
+      /* ==================== RENDER: HEADER & TOP ACCOUNT PILL ==================== */
       function renderHeader() {
         const s = state.studio;
         const conn = $("connChip");
@@ -1210,38 +1873,111 @@
           stale.className = "stale-banner hidden";
         }
 
+        if (s) {
+          const isRemote = Boolean(s.capabilities && s.capabilities.isRemote);
+          $("linkOffice").classList.toggle("hidden", isRemote);
+        }
+
         if (s && s.summary) {
           $("slotChip").textContent = `Slots ${s.summary.slotsHeld}/${s.summary.slotsMax}`;
           const ar = $("btnAutoRun");
           const on = Boolean(s.summary.autoRunEnabled);
           ar.setAttribute("aria-pressed", String(on));
           ar.textContent = on ? "Tự chạy: BẬT" : "Tự chạy: TẮT";
+
+          const tasks = s.tasks || [];
+          const urgentN = tasks.filter(t => { const b = taskBucket(t); return b === "blocked" || b === "review"; }).length;
+          const activeN = tasks.filter(t => { const b = taskBucket(t); return b === "building" || b === "qa"; }).length;
+          const badge = $("navWorkBadge");
+          if (urgentN > 0) {
+            badge.textContent = String(urgentN);
+            badge.className = "nav-count alert tnum";
+          } else if (activeN > 0) {
+            badge.textContent = String(activeN);
+            badge.className = "nav-count live tnum";
+          } else {
+            badge.className = "nav-count hidden";
+          }
+        }
+
+        // Topbar active account + 5h/7d pill
+        const acc = state.accounts;
+        const dotTop = $("topAccDot");
+        const dotNav = $("navAccDot");
+        if (acc && acc.ok !== false && acc.activeProfile) {
+          const ap = acc.activeProfile;
+          const title = splitName(ap.name).title || ap.id;
+          $("topAccName").textContent = title;
+          const qParts = [];
+          if (ap.vendor === "anthropic") {
+            if (ap.remainingPct != null) qParts.push(`5h ${ap.remainingPct}%`);
+            if (ap.weeklyRemainingPct != null) qParts.push(`7d ${ap.weeklyRemainingPct}%`);
+          } else {
+            qParts.push("Chọn tay");
+          }
+          $("topAccQuota").textContent = qParts.join(" · ");
+          const low = ap.isFrozen || (ap.remainingPct != null && ap.remainingPct <= 15) || (ap.weeklyRemainingPct != null && ap.weeklyRemainingPct <= 15);
+          const warn = !low && ((ap.remainingPct != null && ap.remainingPct <= 40) || (ap.weeklyRemainingPct != null && ap.weeklyRemainingPct <= 40) || (acc.health && !acc.health.daemon.running));
+          const cls = "dot" + (low ? " err" : warn ? " warn" : "");
+          dotTop.className = cls;
+          dotNav.className = cls;
+        } else if (acc && acc.ok === false) {
+          $("topAccName").textContent = "Lỗi CC-Switcher";
+          $("topAccQuota").textContent = "";
+          dotTop.className = "dot err";
+          dotNav.className = "dot err";
         }
       }
 
       function populateRepoSelects() {
         const repos = (state.studio && state.studio.repos) || [];
-        const sel = $("btwRepo");
-        if (!sel || !repos.length) return;
-        const prev = sel.value;
-        sel.innerHTML = repos.map(r => `<option value="${esc(r.id)}">${esc(r.id)}</option>`).join("");
-        if (prev && repos.some(r => r.id === prev)) sel.value = prev;
+        const tasks = (state.studio && state.studio.tasks) || [];
+        const btwSel = $("btwRepo");
+        if (btwSel && repos.length) {
+          const prev = btwSel.value;
+          btwSel.innerHTML = repos.map(r => `<option value="${esc(r.id)}">${esc(r.id)}</option>`).join("");
+          if (prev && repos.some(r => r.id === prev)) btwSel.value = prev;
+        }
+        const rf = $("repoFilter");
+        if (rf) {
+          const counts = new Map();
+          tasks.forEach(t => {
+            if (!state.showCancelled && t.state === "cancelled") return;
+            counts.set(t.repo, (counts.get(t.repo) || 0) + 1);
+          });
+          const repoIds = Array.from(new Set([...repos.map(r => r.id), ...tasks.map(t => t.repo)])).filter(Boolean);
+          const opts = [`<option value="all">Tất cả repo (${repoIds.length})</option>`]
+            .concat(repoIds.map(id => {
+              const n = counts.get(id) || 0;
+              return `<option value="${esc(id)}"${state.repoFilter === id ? " selected" : ""}>${esc(id)}${n ? ` (${n})` : ""}</option>`;
+            }));
+          rf.innerHTML = opts.join("");
+          if (state.repoFilter !== "all" && !repoIds.includes(state.repoFilter)) state.repoFilter = "all";
+          rf.value = state.repoFilter;
+        }
       }
 
-      /* ==================== RENDER: LEFT RAIL (4 MANDATORY STATES) ==================== */
-      function renderRail() {
-        const body = $("railBody");
+      /* ==================== RENDER: WORKSPACE (KANBAN + LIST + KPI) ==================== */
+      function getFilteredTasks() {
+        const tasks = (state.studio && state.studio.tasks) || [];
+        const q = state.search.trim().toLowerCase();
+        return tasks.filter(t => {
+          if (state.repoFilter !== "all" && t.repo !== state.repoFilter) return false;
+          if (q && !`${t.id} ${t.repo} ${t.title} ${t.branch} ${t.account}`.toLowerCase().includes(q)) return false;
+          return true;
+        });
+      }
+
+      function renderWorkArea() {
+        const canvas = $("workCanvas");
         if (state.loadingStudio && !state.studio) {
-          body.innerHTML = `<div style="padding:14px;display:flex;flex-direction:column;gap:10px;">
-            <div class="skel" style="height:54px"></div>
-            <div class="skel" style="height:54px"></div>
-            <div class="skel" style="height:54px"></div>
-            <div class="skel" style="height:54px"></div>
-          </div>`;
+          $("workKpis").innerHTML = Array(6).fill('<div class="skel" style="height:50px"></div>').join("");
+          canvas.innerHTML = `<div class="kanban-board" style="--col-n:6">${Array(6).fill('<div class="skel" style="height:360px"></div>').join("")}</div>`;
           return;
         }
         if (state.lastError && !state.studio) {
-          body.innerHTML = `<div style="padding:28px 16px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center;">
+          $("workKpis").innerHTML = "";
+          canvas.innerHTML = `<div class="card" style="max-width:480px;margin:40px auto;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center;">
             <strong>Không kết nối được AAF Hub</strong>
             <span class="muted">${esc(state.lastError)}</span>
             <button class="btn btn-primary" data-act="refresh-now">Thử kết nối lại</button>
@@ -1249,126 +1985,326 @@
           return;
         }
 
-        const tasks = (state.studio && state.studio.tasks) || [];
-        const attention = (state.studio && state.studio.attention) || [];
-        if (!tasks.length) {
-          body.innerHTML = `<div style="padding:32px 16px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center;">
-            <strong>Chưa có task nào trên 6 repo</strong>
-            <span class="muted">Hàng đợi aaf.db đang trống. Giao việc đầu tiên hoặc dùng /btw để hỏi nhanh codebase.</span>
-            <button class="btn btn-primary" data-act="open-add">Tạo task đầu tiên</button>
+        const all = getFilteredTasks();
+        const buckets = { ready: [], building: [], qa: [], review: [], blocked: [], done: [], cancelled: [] };
+        all.forEach(t => buckets[taskBucket(t)].push(t));
+
+        // Update cancelled toggle label
+        const btnCan = $("btnToggleCancelled");
+        btnCan.textContent = state.showCancelled ? `Ẩn Đã huỷ (${buckets.cancelled.length})` : `Hiện Đã huỷ (${buckets.cancelled.length})`;
+        btnCan.setAttribute("aria-pressed", String(state.showCancelled));
+
+        // 6-Stage Workflow Pipeline KPI Tiles (matches GitHub Project Board & AAF TaskState)
+        const kpiDefs = [
+          { key: "ready", lbl: "Ready", sub: "Chờ slot", color: "var(--c-primary)", n: buckets.ready.length },
+          { key: "building", lbl: "Building", sub: "Đang build", color: "var(--c-warn)", n: buckets.building.length },
+          { key: "qa", lbl: "QA", sub: "QA Gate", color: "var(--c-qa)", n: buckets.qa.length },
+          { key: "review", lbl: "Review", sub: "Cần duyệt", color: "var(--c-review)", n: buckets.review.length },
+          { key: "blocked", lbl: "Blocked", sub: "Bị chặn", color: "var(--c-err)", n: buckets.blocked.length },
+          { key: "done", lbl: "Done", sub: "Hoàn tất", color: "var(--c-success)", n: buckets.done.length },
+        ];
+        $("workKpis").innerHTML = kpiDefs.map(k => {
+          const pressed = state.filterBucket === k.key;
+          return `<button type="button" class="wkpi" data-act="filter-bucket" data-bucket="${k.key}" aria-pressed="${pressed}">
+            <div class="wkpi-left">
+              <span class="wkpi-sw" style="background:${k.color}"></span>
+              <div style="min-width:0;">
+                <div class="wkpi-lbl trunc">${k.lbl}</div>
+                <div class="wkpi-sub trunc">${k.sub}</div>
+              </div>
+            </div>
+            <div class="wkpi-val tnum">${k.n}</div>
+          </button>`;
+        }).join("");
+
+        // Empty DB state
+        const rawTotal = ((state.studio && state.studio.tasks) || []).length;
+        if (!rawTotal) {
+          canvas.innerHTML = `<div class="card" style="max-width:520px;margin:36px auto;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center;padding:28px;">
+            <strong style="font-size:16px;">Chưa có task nào trong hàng đợi</strong>
+            <span class="muted">Giao task đầu tiên để đưa lên bảng Kanban hoặc dùng <code>/btw</code> để hỏi nhanh codebase.</span>
+            <div class="row-gap">
+              <button class="btn btn-primary" data-act="open-add">+ Tạo task đầu tiên</button>
+              <button class="btn" data-act="toggle-btw">/btw Hỏi nhanh</button>
+            </div>
           </div>`;
           return;
         }
 
-        const q = state.search.trim().toLowerCase();
-        const match = t => {
-          if (state.filterSt === "urgent" && !(t.state === "blocked" || t.state === "review" || t.frozen)) return false;
-          if (state.filterSt !== "all" && state.filterSt !== "urgent" && t.state !== state.filterSt) return false;
-          if (q && !`${t.id} ${t.repo} ${t.title} ${t.branch}`.toLowerCase().includes(q)) return false;
-          return true;
-        };
+        const isMob = window.innerWidth < 1024;
+        const effectiveMode = isMob ? "list" : state.viewMode;
+        $("btnViewKanban").setAttribute("aria-pressed", String(state.viewMode === "kanban"));
+        $("btnViewList").setAttribute("aria-pressed", String(state.viewMode === "list"));
 
-        // Prevent duplicate double-highlight: pinned urgent tasks stay in Attention section only when filter === "all"
-        const pinnedIds = new Set(state.filterSt === "all" && !q ? attention.map(a => a.id) : []);
-        const attFiltered = state.filterSt === "all" && !q ? attention : [];
-        const rest = tasks.filter(t => !pinnedIds.has(t.id) && match(t));
-
-        let html = "";
-        if (attFiltered.length) {
-          html += `<div class="sec-hdr"><span>Cần xử lý ngay</span><span class="chip chip-err tnum">${attFiltered.length}</span></div>`;
-          html += attFiltered.map(renderTaskRow).join("");
+        if (effectiveMode === "kanban") {
+          renderKanbanBoard(buckets);
+        } else {
+          renderListView(buckets);
         }
-        html += `<div class="sec-hdr"><span>Phiên theo dự án</span><span class="tnum">${rest.length}</span></div>`;
-        html += rest.length
-          ? rest.map(renderTaskRow).join("")
-          : `<div style="padding:20px 14px;" class="muted">Không có task khớp bộ lọc.</div>`;
-
-        body.innerHTML = html;
       }
 
-      function renderTaskRow(t) {
-        const active = t.id === state.selectedId ? " active" : "";
-        return `<button class="task-row${active}" data-act="select-task" data-id="${esc(t.id)}">
-          <span class="repo-dot" style="background:${repoColor(t.repo)}"></span>
-          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;">
-            <div class="row-gap" style="justify-content:space-between;flex-wrap:nowrap;">
-              <span class="trunc" style="font-size:12px;color:var(--fg-muted);font-weight:500;">${esc(t.repo)} · <span class="mono">${esc(t.id)}</span></span>
-              ${statusChipHtml(t.state)}
-            </div>
-            <div class="trunc" style="font-size:13px;font-weight:500;color:var(--fg);">${esc(t.title)}</div>
-            <div class="trunc mono muted" style="font-size:12px;">
-              ${esc(t.account || "auto")} · ${esc(t.elapsed || "—")}${t.kind === "manual" ? " · Manual" : ""}${t.parentLabel ? " · " + esc(t.parentLabel) : ""}
+      function renderKanbanCard(t) {
+        const active = t.id === state.selectedId && state.drawerOpen ? " active" : "";
+        const specParsed = parseSpec(t.spec);
+        const snippet = t.blockedReason
+          ? `<div class="k-card-why">${esc(t.blockedReason)}</div>`
+          : (specParsed.description ? `<div class="k-card-desc">${esc(specParsed.description)}</div>` : "");
+        const quickActs = [];
+        if (t.state === "blocked" && t.needsPlanApproval) {
+          quickActs.push(`<button type="button" class="btn btn-primary btn-sm" data-act="approve-plan" data-id="${esc(t.id)}">Duyệt kế hoạch</button>`);
+        }
+        if (t.state === "blocked") {
+          quickActs.push(`<button type="button" class="btn btn-sm" data-act="unblock" data-id="${esc(t.id)}">Unblock</button>`);
+        }
+        return `<article class="k-card${active}" data-act="select-task" data-id="${esc(t.id)}" tabindex="0" role="button" aria-label="${esc(t.repo)} ${esc(t.title)}">
+          <div class="k-card-top">
+            <span class="k-card-repo">
+              <span class="repo-dot" style="background:${repoColor(t.repo)}"></span>
+              <span class="trunc" title="${esc(t.repo)}">${esc(t.repo)}</span>
+            </span>
+            <div class="row-gap" style="gap:4px;flex-wrap:nowrap;">
+              ${priorityBadgeHtml(t.priority)}
+              ${statusChipHtml(t.state, t.kind)}
             </div>
           </div>
-        </button>`;
+          <div class="k-card-title">${esc(t.title)}</div>
+          ${snippet}
+          ${quickActs.length ? `<div class="k-card-quick">${quickActs.join("")}</div>` : ""}
+          <div class="k-card-foot mono tnum">
+            <span class="k-card-meta">
+              <span class="trunc" style="max-width:110px;" title="${esc(t.account || "auto")}">${esc(t.account || "auto")}</span>
+              <span>·</span>
+              <span class="trunc" title="${esc(t.id)}">${esc(t.id)}</span>
+            </span>
+            <span style="flex:none;">${esc(t.elapsed || "—")}${t.tokens ? ` · ${Math.round(t.tokens / 1000)}k` : ""}</span>
+          </div>
+        </article>`;
       }
 
-      /* ==================== RENDER: CENTER & RIGHT INSPECTOR ==================== */
-      function renderCenterAndRight() {
+      function renderKanbanBoard(buckets) {
+        const cols = [
+          { key: "ready", title: "Ready", sub: "Chờ slot", accent: "var(--c-primary)", items: buckets.ready, empty: "Chưa có task Ready." },
+          { key: "building", title: "Building", sub: "Đang build", accent: "var(--c-warn)", items: buckets.building, empty: "Chưa có agent đang build." },
+          { key: "qa", title: "QA", sub: "QA Gate", accent: "var(--c-qa)", items: buckets.qa, empty: "Chưa có task đang chạy QA." },
+          { key: "review", title: "Review", sub: "Cần duyệt", accent: "var(--c-review)", items: buckets.review, empty: "Chưa có task chờ duyệt." },
+          { key: "blocked", title: "Blocked", sub: "Bị chặn", accent: "var(--c-err)", items: buckets.blocked, empty: "Không có task bị chặn." },
+          { key: "done", title: "Done", sub: "Hoàn tất", accent: "var(--c-success)", items: buckets.done, empty: "Chưa có task hoàn tất." },
+        ];
+        if (state.showCancelled) {
+          cols.push({ key: "cancelled", title: "Đã huỷ", sub: "Cancelled", accent: "var(--c-away)", items: buckets.cancelled, empty: "Không có task đã huỷ." });
+        }
+        const visibleCols = state.filterBucket === "all" ? cols : cols.filter(c => c.key === state.filterBucket);
+        const activeTotal = buckets.ready.length + buckets.building.length + buckets.qa.length + buckets.review.length + buckets.blocked.length + buckets.done.length;
+        const hiddenCancelledBanner = !state.showCancelled && buckets.cancelled.length > 0 && activeTotal <= 2
+          ? `<div class="row-gap" style="margin-bottom:10px;justify-content:space-between;padding:8px 12px;border-radius:10px;background:var(--card);border:1px solid var(--border);font-size:12.5px;">
+              <span class="muted">Đang ẩn <strong>${buckets.cancelled.length}</strong> task đã huỷ để 6 cột workflow gọn gàng.</span>
+              <button type="button" class="btn btn-sm" data-act="toggle-cancelled">Hiện task đã huỷ</button>
+            </div>`
+          : "";
+
+        const singleCls = visibleCols.length === 1 ? " single-col" : "";
+        $("workCanvas").innerHTML = `${hiddenCancelledBanner}<div class="kanban-board${singleCls}" style="--col-n:${visibleCols.length}">
+          ${visibleCols.map(c => `<section class="kanban-col" style="--col-accent:${c.accent}" aria-label="${c.title}">
+            <div class="kanban-col-hdr">
+              <span class="kanban-col-title">
+                <span class="kanban-col-sw"></span>
+                <span class="trunc">${c.title}</span>
+                <span class="kanban-col-sub trunc">${c.sub}</span>
+              </span>
+              <span class="kanban-col-count tnum">${c.items.length}</span>
+            </div>
+            <div class="kanban-col-list">
+              ${c.items.length ? c.items.map(renderKanbanCard).join("") : `<div class="kanban-empty">${c.empty}</div>`}
+            </div>
+          </section>`).join("")}
+        </div>`;
+      }
+
+      function renderListView(buckets) {
+        const groups = [
+          { key: "blocked", title: "Blocked · Bị chặn", items: buckets.blocked },
+          { key: "review", title: "Review · Cần duyệt", items: buckets.review },
+          { key: "building", title: "Building · Đang build", items: buckets.building },
+          { key: "qa", title: "QA · QA Gate", items: buckets.qa },
+          { key: "ready", title: "Ready · Chờ slot", items: buckets.ready },
+          { key: "done", title: "Done · Hoàn tất", items: buckets.done },
+        ];
+        if (state.showCancelled) groups.push({ key: "cancelled", title: "Đã huỷ · Cancelled", items: buckets.cancelled });
+
+        const visible = state.filterBucket === "all" ? groups : groups.filter(g => g.key === state.filterBucket);
+        const nonEmpty = visible.filter(g => g.items.length > 0);
+        if (!nonEmpty.length) {
+          $("workCanvas").innerHTML = `<div class="card" style="max-width:480px;margin:24px auto;text-align:center;">
+            <p class="muted" style="margin:0 0 12px;">Không có task nào khớp bộ lọc hiện tại.</p>
+            ${!state.showCancelled && buckets.cancelled.length ? `<button class="btn" data-act="toggle-cancelled">Hiện ${buckets.cancelled.length} task đã huỷ</button>` : ""}
+          </div>`;
+          return;
+        }
+
+        $("workCanvas").innerHTML = `<div class="list-view">
+          ${nonEmpty.map(g => `<div class="list-group">
+            <div class="list-group-hdr"><span>${g.title}</span><span class="tnum muted">${g.items.length}</span></div>
+            ${g.items.map(t => {
+              const active = t.id === state.selectedId && state.drawerOpen ? " active" : "";
+              return `<button type="button" class="task-row${active}" data-act="select-task" data-id="${esc(t.id)}">
+                <div style="min-width:0;display:flex;align-items:flex-start;gap:10px;">
+                  <span class="repo-dot" style="background:${repoColor(t.repo)};margin-top:6px;"></span>
+                  <div style="min-width:0;">
+                    <div style="font-weight:600;font-size:13.5px;overflow-wrap:anywhere;">${esc(t.title)}</div>
+                    <div class="muted mono" style="font-size:12px;margin-top:2px;">${esc(t.repo)} · ${esc(t.id)} · ${esc(t.branch || "—")}</div>
+                  </div>
+                </div>
+                <div class="mono muted tnum" style="font-size:12px;">${esc(t.account || "auto")} · ${esc(t.elapsed || "—")}</div>
+                <div class="row-gap" style="justify-content:flex-end;">${priorityBadgeHtml(t.priority)}${statusChipHtml(t.state, t.kind)}</div>
+              </button>`;
+            }).join("")}
+          </div>`).join("")}
+        </div>`;
+      }
+
+      /* ==================== RENDER: SLIDE-OVER DETAIL DRAWER ==================== */
+      function closeDetailDrawer() {
+        state.drawerOpen = false;
+        state.mobView = "list";
+        state.reworkOpen = false;
+        $("detailDrawer").classList.add("closed");
+        syncMobileShell();
+        renderWorkArea();
+      }
+
+      function renderDetailDrawer() {
+        const drawer = $("detailDrawer");
+        if (!state.drawerOpen || !state.selectedId) {
+          drawer.classList.add("closed");
+          return;
+        }
+        drawer.classList.remove("closed");
+
         const tasks = (state.studio && state.studio.tasks) || [];
         const baseTask = tasks.find(t => t.id === state.selectedId) || null;
         const det = state.detail;
         const t = (det && det.task) ? Object.assign({}, baseTask || {}, det.task) : baseTask;
-
         if (!t) {
-          $("taskHero").innerHTML = `<div class="muted">Chọn một task bên trái để xem diễn biến, Diff và Nghiệm thu.</div>`;
-          $("streamBody").innerHTML = "";
-          $("inspectorBody").innerHTML = "";
-          $("inspectorFoot").innerHTML = "";
+          closeDetailDrawer();
           return;
         }
 
-        // 1. Task Hero (with copy ID/branch buttons)
+        // Sync tabs aria-selected
+        ["tabStream", "tabDiff", "tabPlan", "tabProof"].forEach(id => {
+          const el = $(id);
+          if (el) el.setAttribute("aria-selected", String(el.getAttribute("data-tab") === state.dtab));
+        });
+
         $("taskHero").innerHTML = `
-          <div class="row-gap" style="justify-content:space-between;">
-            <div class="row-gap" style="min-width:0;">
-              <span class="repo-dot" style="background:${repoColor(t.repo)};margin-top:0;"></span>
-              <strong style="font-size:13px;">${esc(t.repo)}</strong>
+          <div class="row-gap" style="justify-content:space-between;flex-wrap:nowrap;">
+            <div class="row-gap" style="min-width:0;flex-wrap:nowrap;">
+              <span class="repo-dot" style="background:${repoColor(t.repo)}"></span>
+              <strong class="trunc" style="font-size:13px;">${esc(t.repo)}</strong>
               <span class="muted">/</span>
               <span class="mono" style="font-size:12px;">${esc(t.id)}</span>
+              ${priorityBadgeHtml(t.priority)}
             </div>
-            ${statusChipHtml(t.state)}
+            <div class="row-gap" style="flex-wrap:nowrap;">
+              ${statusChipHtml(t.state, t.kind)}
+              <button type="button" class="btn btn-ghost btn-sm desktop-only" data-act="close-drawer" aria-label="Đóng chi tiết">✕</button>
+            </div>
           </div>
           <h2 class="task-title">${esc(t.title)}</h2>
           <div class="meta-strip mono tnum">
             <span>Nhánh: ${esc(t.branch || "—")}</span>
             <span>Acc: ${esc(t.account || "auto")}</span>
-            <span>${t.tokens ? Math.round(t.tokens / 1000) + "k tok" : "0 tok"}</span>
-            <button class="btn btn-ghost" style="min-height:44px;padding:0 8px;font-size:12px;" data-act="copy-val" data-val="${esc(t.branch || t.id)}">Copy nhánh</button>
+            <span>${t.tokens ? `${Math.round(t.tokens / 1000)}k tok` : "0 tok"}</span>
+            <button type="button" class="btn btn-ghost btn-sm" style="padding:0 8px;" data-act="copy-val" data-val="${esc(t.branch || t.id)}">Copy nhánh</button>
           </div>
-          ${t.blockedReason ? `<div class="chip chip-err" style="white-space:normal;padding:8px 10px;">${esc(t.blockedReason)}</div>` : ""}
+          ${t.blockedReason ? `<div class="k-card-why">${esc(t.blockedReason)}</div>` : ""}
         `;
 
-        // 2. Live Execution Stream (preserves scroll position unless pinned to bottom)
-        const streamEl = $("streamScroll");
-        const prevScroll = streamEl.scrollTop;
-        const events = (det && det.stream && det.stream.events) || [];
-        if (!events.length) {
-          $("streamBody").innerHTML = `<div class="muted" style="padding:20px 0;">Chưa có log công cụ cho phiên này${t.contextNotes ? `<div class="timeline-out" style="margin-top:12px;">Ghi chú Steer:\n${esc(t.contextNotes)}</div>` : ""}.</div>`;
-        } else {
-          $("streamBody").innerHTML = events.map((ev, idx) => {
-            const key = `${t.id}:${idx}`;
-            const open = state.expandedSteps.has(key);
-            const title = ev.title || ev.tool || ev.tool_name || (ev.type && ev.subtype ? `${ev.type}: ${ev.subtype}` : ev.type) || ev.kind || `Bước ${idx + 1}`;
-            const dur = ev.dur || ev.duration_ms ? `${ev.dur || ev.duration_ms + "ms"}` : "";
-            const out = ev.out || ev.output || ev.text || JSON.stringify(ev, null, 2);
-            return `<div class="timeline-item">
-              <span class="timeline-dot${idx === events.length - 1 && t.state === "running" ? " live" : ""}"></span>
-              <button class="timeline-btn" aria-expanded="${open}" data-act="toggle-step" data-key="${esc(key)}">
-                <span class="trunc" style="font-size:13px;font-weight:500;">${esc(title)}</span>
-                <span class="mono muted tnum" style="font-size:12px;flex-shrink:0;">${esc(dur)} ${open ? "▾" : "▸"}</span>
-              </button>
-              ${open ? `<div class="timeline-out">${esc(out)}</div>` : ""}
+        // Body per selected tab
+        const scrollEl = $("drawerScroll");
+        const prevScroll = scrollEl.scrollTop;
+        const body = $("drawerBody");
+        $("jumpLatestWrap").classList.add("hidden");
+
+        if (state.dtab === "stream") {
+          const events = (det && det.stream && det.stream.events) || [];
+          const notes = parseNotes(t.contextNotes);
+          if (!events.length) {
+            body.innerHTML = `<div class="card" style="text-align:center;padding:24px;">
+              <div class="muted">${t.kind === "manual" ? "Phiên Terminal mở tay — log nằm trực tiếp trong terminal của bạn." : "Chưa có log công cụ cho phiên này."}</div>
+              ${notes.length ? `<div class="timeline-out" style="text-align:left;margin-top:12px;">Ghi chú Steer:\n${esc(notes.join("\n"))}</div>` : ""}
             </div>`;
-          }).join("");
-        }
-        if (state.pinnedBottom) {
-          streamEl.scrollTop = streamEl.scrollHeight;
+          } else {
+            body.innerHTML = events.map((ev, idx) => {
+              const key = `${t.id}:${idx}`;
+              const open = state.expandedSteps.has(key);
+              const f = formatStreamEvent(ev, idx);
+              return `<div class="timeline-item">
+                <span class="timeline-dot${idx === events.length - 1 && t.state === "running" ? " live" : ""}"></span>
+                <button type="button" class="timeline-btn" aria-expanded="${open}" data-act="toggle-step" data-key="${esc(key)}">
+                  <div style="min-width:0;flex:1;">
+                    <div class="trunc" style="font-size:13px;font-weight:600;">${esc(f.label)}</div>
+                    ${f.preview ? `<div class="trunc muted" style="font-size:12px;margin-top:2px;">${esc(f.preview)}</div>` : ""}
+                  </div>
+                  <span class="mono muted tnum" style="font-size:11.5px;flex:none;">${esc([f.clock, f.dur].filter(Boolean).join(" · "))} ${open ? "▾" : "▸"}</span>
+                </button>
+                ${open ? `<div class="timeline-out">${esc(f.detail)}</div>` : ""}
+              </div>`;
+            }).join("");
+            if (state.pinnedBottom) scrollEl.scrollTop = scrollEl.scrollHeight;
+            else scrollEl.scrollTop = prevScroll;
+          }
+        } else if (state.dtab === "diff") {
+          renderDiffTab(body, det);
+        } else if (state.dtab === "plan") {
+          const sp = parseSpec(t.spec);
+          const notes = parseNotes(t.contextNotes);
+          body.innerHTML = `<div style="display:flex;flex-direction:column;gap:14px;">
+            <div>
+              <div class="field-label">Mô tả đặc tả (Spec)</div>
+              <div class="spec-card">${sp.description ? esc(sp.description) : `<span class="muted">Chưa có đặc tả.</span>`}</div>
+            </div>
+            ${sp.acceptance.length ? `<div>
+              <div class="field-label">Tiêu chí nghiệm thu (${sp.acceptance.length})</div>
+              <ul class="accept-list">
+                ${sp.acceptance.map(a => `<li><span class="accept-ic">✓</span><span>${esc(a)}</span></li>`).join("")}
+              </ul>
+            </div>` : ""}
+            ${sp.extra ? `<div>
+              <div class="field-label">Thông số bổ sung</div>
+              <div class="timeline-out">${esc(JSON.stringify(sp.extra, null, 2))}</div>
+            </div>` : ""}
+            <div>
+              <div class="field-label">Ghi chú Steer đã gửi</div>
+              ${notes.length
+                ? `<ul class="accept-list">${notes.map(n => `<li><span class="accept-ic" style="color:var(--c-primary)">→</span><span>${esc(n)}</span></li>`).join("")}</ul>`
+                : `<div class="muted" style="font-size:13px;">Chưa có ghi chú Steer nào.</div>`}
+            </div>
+          </div>`;
         } else {
-          streamEl.scrollTop = prevScroll;
+          const ho = (det && det.handover) || {};
+          const pf = (det && det.proof) || { images: [] };
+          const imgs = pf.images || [];
+          body.innerHTML = `<div style="display:flex;flex-direction:column;gap:14px;">
+            <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+              <div>
+                <strong>Biên nhận aaf handover</strong>
+                <div class="muted" style="font-size:12.5px;margin-top:2px;">${esc(ho.verdict || ho.status || ho.note || "Chưa có biên nhận")}</div>
+              </div>
+              <div class="tnum" style="font-size:22px;font-weight:700;">${ho.score != null ? `${esc(ho.score)}/100` : "—"}</div>
+            </div>
+            ${imgs.length ? `<div style="display:flex;flex-direction:column;gap:10px;">
+              <div class="field-label">Ảnh nghiệm thu thật (${imgs.length})</div>
+              ${imgs.map(img => `<button type="button" class="btn" style="flex-direction:column;height:auto;padding:8px;" data-act="open-proof" data-url="${esc(img.url)}" data-name="${esc(img.name)}">
+                <img src="${esc(img.url)}" alt="${esc(img.name)}" loading="lazy" style="max-width:100%;max-height:240px;border-radius:8px;border:1px solid var(--border);" />
+                <span class="mono muted" style="font-size:12px;">${esc(img.name)}</span>
+              </button>`).join("")}
+            </div>` : `<div class="muted" style="font-size:13px;">Chưa có ảnh proof PNG gắn cho task này.</div>`}
+          </div>`;
         }
 
-        // 3. Composer lock state (WITHOUT wiping user's in-progress steer input!)
+        renderContextActions(t);
+
+        // Composer lock state (preserves draft)
         const locked = t.kind === "manual" || t.state === "done" || t.state === "cancelled";
         $("steerInput").classList.toggle("hidden", locked);
         $("btnSteerSend").classList.toggle("hidden", locked);
@@ -1381,118 +2317,64 @@
               ? "Task đã huỷ — tạo task mới nếu muốn chạy lại."
               : "Task đã hoàn tất — muốn làm tiếp hãy tạo task mới.";
         }
-
-        // 4. Right Inspector Tab Body
-        renderInspectorTab(t, det);
-
-        // 5. Bottom Context Actions (strictly matching real AAF CLI contract)
-        renderContextActions(t);
       }
 
-      function renderInspectorTab(t, det) {
-        const body = $("inspectorBody");
-        if (state.rtab === "diff") {
-          const diff = (det && det.diff) || { available: false, reason: "Đang tải..." };
-          if (!diff.available || !diff.patch) {
-            body.innerHTML = `<div class="muted" style="padding:24px 0;text-align:center;">${esc(diff.reason || "Chưa có thay đổi git diff.")}</div>`;
-            return;
-          }
-          const filesHtml = (diff.files || []).map(f => {
-            const parts = String(f.path || "").split("/");
-            const base = parts.pop() || f.path;
-            const dir = parts.join("/");
-            return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:8px;align-items:center;">
-              <div style="min-width:0;">
-                <div class="mono trunc" style="font-size:13px;font-weight:600;">${esc(base)}</div>
-                ${dir ? `<div class="mono muted trunc" style="font-size:12px;">${esc(dir)}</div>` : ""}
-              </div>
-              <span class="mono tnum" style="font-size:12px;flex-shrink:0;"><span style="color:var(--t-success)">+${f.add}</span> <span style="color:var(--t-err)">-${f.del}</span></span>
-            </div>`;
-          }).join("");
-
-          let oldLn = 0, newLn = 0;
-          const rows = diff.patch.split("\n").slice(0, 600).map(ln => {
-            let cls = "";
-            let n1 = "", n2 = "";
-            if (ln.startsWith("@@")) {
-              cls = "diff-hdr";
-              const m = /@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(ln);
-              if (m) { oldLn = parseInt(m[1], 10); newLn = parseInt(m[2], 10); }
-            } else if (ln.startsWith("+") && !ln.startsWith("+++")) {
-              cls = "diff-add"; n2 = String(newLn++);
-            } else if (ln.startsWith("-") && !ln.startsWith("---")) {
-              cls = "diff-del"; n1 = String(oldLn++);
-            } else if (!ln.startsWith("diff ") && !ln.startsWith("index ") && !ln.startsWith("---") && !ln.startsWith("+++")) {
-              n1 = String(oldLn++); n2 = String(newLn++);
-            }
-            return `<tr class="${cls}">
-              <td class="diff-ln diff-old-col tnum">${n1}</td>
-              <td class="diff-ln tnum">${n2}</td>
-              <td class="diff-code">${esc(ln)}</td>
-            </tr>`;
-          }).join("");
-
-          body.innerHTML = `
-            <div class="row-gap" style="justify-content:space-between;margin-bottom:10px;">
-              <span class="muted" style="font-size:12px;">${(diff.files || []).length} file${diff.truncated ? " (đã cắt ở 200KB)" : ""}</span>
-              <button class="btn" data-act="toggle-wrap" aria-pressed="${state.diffWrap}">${state.diffWrap ? "Tắt xuống dòng" : "Xuống dòng (Wrap)"}</button>
-            </div>
-            ${filesHtml ? `<div style="margin-bottom:12px;">${filesHtml}</div>` : ""}
-            <div class="diff-box${state.diffWrap ? " diff-wrap" : ""}">
-              <table class="diff-table"><tbody>${rows}</tbody></table>
-            </div>`;
+      function renderDiffTab(body, det) {
+        const diff = (det && det.diff) || { available: false, reason: "Đang tải…" };
+        if (!diff.available || !diff.patch) {
+          body.innerHTML = `<div class="card" style="text-align:center;padding:24px;"><span class="muted">${esc(diff.reason || "Chưa có thay đổi git diff.")}</span></div>`;
           return;
         }
-
-        if (state.rtab === "plan") {
-          body.innerHTML = `<div style="display:flex;flex-direction:column;gap:14px;">
-            <div>
-              <div class="field-label">Đặc tả (Spec)</div>
-              <div class="timeline-out">${esc(t.spec || "Chưa có đặc tả.")}</div>
+        const filesHtml = (diff.files || []).map(f => {
+          const parts = String(f.path || "").split("/");
+          const base = parts.pop() || f.path;
+          const dir = parts.join("/");
+          return `<div style="padding:7px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:8px;align-items:center;">
+            <div style="min-width:0;">
+              <div class="mono trunc" style="font-size:12.5px;font-weight:600;">${esc(base)}</div>
+              ${dir ? `<div class="mono muted trunc" style="font-size:11.5px;">${esc(dir)}</div>` : ""}
             </div>
-            <div>
-              <div class="field-label">Ghi chú Steer / Kế hoạch đã gửi</div>
-              <div class="timeline-out">${esc(t.contextNotes || "Chưa có ghi chú bổ sung.")}</div>
-            </div>
+            <span class="mono tnum" style="font-size:12px;flex:none;"><span style="color:var(--t-success)">+${f.add}</span> <span style="color:var(--t-err)">-${f.del}</span></span>
           </div>`;
-          return;
-        }
+        }).join("");
 
-        // Tab: Nghiệm thu (Handover + Real Proof PNGs)
-        const ho = (det && det.handover) || {};
-        const pf = (det && det.proof) || { images: [] };
-        const imgs = pf.images || [];
-        body.innerHTML = `<div style="display:flex;flex-direction:column;gap:14px;">
-          <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--border);padding-bottom:12px;">
-            <div>
-              <strong>Biên nhận aaf handover</strong>
-              <div class="muted" style="font-size:12px;">${esc(ho.verdict || ho.status || ho.note || "Chưa có biên nhận")}</div>
-            </div>
-            <div class="tnum" style="font-size:20px;font-weight:700;">${ho.score != null ? esc(ho.score) + "/100" : "—"}</div>
+        let oldLn = 0, newLn = 0;
+        const rows = diff.patch.split("\n").slice(0, 600).map(ln => {
+          let cls = "", n1 = "", n2 = "";
+          if (ln.startsWith("@@")) {
+            cls = "diff-hdr";
+            const m = /@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(ln);
+            if (m) { oldLn = parseInt(m[1], 10); newLn = parseInt(m[2], 10); }
+          } else if (ln.startsWith("+") && !ln.startsWith("+++")) {
+            cls = "diff-add"; n2 = String(newLn++);
+          } else if (ln.startsWith("-") && !ln.startsWith("---")) {
+            cls = "diff-del"; n1 = String(oldLn++);
+          } else if (!ln.startsWith("diff ") && !ln.startsWith("index ") && !ln.startsWith("---") && !ln.startsWith("+++")) {
+            n1 = String(oldLn++); n2 = String(newLn++);
+          }
+          return `<tr class="${cls}"><td class="diff-ln diff-old-col tnum">${n1}</td><td class="diff-ln tnum">${n2}</td><td class="diff-code">${esc(ln)}</td></tr>`;
+        }).join("");
+
+        body.innerHTML = `
+          <div class="row-gap" style="justify-content:space-between;margin-bottom:10px;">
+            <span class="muted" style="font-size:12px;">${(diff.files || []).length} file${diff.truncated ? " (đã cắt ở 200KB)" : ""}</span>
+            <button type="button" class="btn btn-sm" data-act="toggle-wrap" aria-pressed="${state.diffWrap}">${state.diffWrap ? "Tắt xuống dòng" : "Xuống dòng (Wrap)"}</button>
           </div>
-          ${imgs.length ? `<div style="display:flex;flex-direction:column;gap:10px;">
-            <div class="field-label">Ảnh nghiệm thu thật (${imgs.length})</div>
-            ${imgs.map(img => `<button class="btn" style="flex-direction:column;height:auto;padding:8px;" data-act="open-proof" data-url="${esc(img.url)}" data-name="${esc(img.name)}">
-              <img src="${esc(img.url)}" alt="${esc(img.name)}" loading="lazy" style="max-width:100%;max-height:240px;border-radius:8px;border:1px solid var(--border);" />
-              <span class="mono muted" style="font-size:12px;">${esc(img.name)}</span>
-            </button>`).join("")}
-          </div>` : `<div class="muted" style="font-size:13px;">Chưa có ảnh proof PNG gắn cho task này.</div>`}
-        </div>`;
+          ${filesHtml ? `<div style="margin-bottom:12px;">${filesHtml}</div>` : ""}
+          <div class="diff-box${state.diffWrap ? " diff-wrap" : ""}"><table class="diff-table"><tbody>${rows}</tbody></table></div>
+        `;
       }
 
       function renderContextActions(t) {
-        const foot = $("inspectorFoot");
-        if (t.kind === "manual") {
-          foot.innerHTML = `<div class="muted" style="font-size:13px;">Phiên chạy tay trong Terminal — chỉ xem trạng thái.</div>`;
-          return;
-        }
+        const box = $("contextActions");
+        if (t.kind === "manual") { box.innerHTML = ""; return; }
         if (t.state === "blocked") {
-          foot.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px;">
+          box.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px;">
             ${t.isHeadLock && t.ttyHint ? `<div class="timeline-out" style="margin:0;">${esc(t.ttyHint)}</div>` : ""}
             <div class="row-gap">
-              ${t.isHeadLock && t.ttyHint ? `<button class="btn btn-primary" style="flex:1" data-act="copy-val" data-val="${esc(t.ttyHint)}">Copy lệnh TTY</button>` : ""}
-              ${t.needsPlanApproval ? `<button class="btn btn-primary" style="flex:1" data-act="approve-plan" data-id="${esc(t.id)}">Duyệt kế hoạch</button>` : ""}
-              <button class="btn" style="flex:1" data-act="unblock" data-id="${esc(t.id)}">Unblock → Ready</button>
+              ${t.isHeadLock && t.ttyHint ? `<button type="button" class="btn btn-primary" style="flex:1" data-act="copy-val" data-val="${esc(t.ttyHint)}">Copy lệnh TTY</button>` : ""}
+              ${t.needsPlanApproval ? `<button type="button" class="btn btn-primary" style="flex:1" data-act="approve-plan" data-id="${esc(t.id)}">Duyệt kế hoạch</button>` : ""}
+              <button type="button" class="btn" style="flex:1" data-act="unblock" data-id="${esc(t.id)}">Unblock → Ready</button>
             </div>
           </div>`;
           return;
@@ -1500,144 +2382,429 @@
         if (t.state === "review") {
           if (state.reworkOpen) {
             const draft = state.drafts.get("rework:" + t.id) || "";
-            foot.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px;">
+            box.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px;">
               <label for="reworkInput" class="field-label">Lý do yêu cầu sửa (--reason bắt buộc)</label>
               <div class="row-gap">
-                <input id="reworkInput" class="field" style="flex:1" type="text" value="${esc(draft)}" placeholder="Mô tả điểm cần sửa..." />
-                <button class="btn btn-primary" data-act="submit-rework" data-id="${esc(t.id)}">Gửi</button>
-                <button class="btn" data-act="cancel-rework">Huỷ</button>
+                <input id="reworkInput" class="field" style="flex:1" type="text" value="${esc(draft)}" placeholder="Mô tả điểm cần sửa…" />
+                <button type="button" class="btn btn-primary" data-act="submit-rework" data-id="${esc(t.id)}">Gửi</button>
+                <button type="button" class="btn" data-act="cancel-rework">Huỷ</button>
               </div>
             </div>`;
             return;
           }
-          foot.innerHTML = `<div class="row-gap">
-            <button class="btn" style="flex:1" data-act="open-rework">Yêu cầu sửa (Rework)</button>
-          </div>`;
+          box.innerHTML = `<div class="row-gap"><button type="button" class="btn" style="flex:1" data-act="open-rework">Yêu cầu sửa (Rework)</button></div>`;
           return;
         }
         if (t.state === "running" && t.latestRunId) {
-          foot.innerHTML = `<div class="row-gap" style="justify-content:space-between;">
-            <span class="muted" style="font-size:12px;">Đang chạy trong worktree</span>
-            <button class="btn btn-danger" data-act="confirm-stop" data-run="${esc(t.latestRunId)}" data-id="${esc(t.id)}">Dừng khẩn cấp</button>
+          box.innerHTML = `<div class="row-gap" style="justify-content:space-between;">
+            <span class="muted" style="font-size:12.5px;">Đang chạy trong worktree</span>
+            <button type="button" class="btn btn-danger" data-act="confirm-stop" data-run="${esc(t.latestRunId)}" data-id="${esc(t.id)}">Dừng khẩn cấp</button>
           </div>`;
           return;
         }
-        foot.innerHTML = `<div class="muted" style="font-size:13px;">Trạng thái hiện tại: <strong>${esc(t.state)}</strong></div>`;
+        box.innerHTML = "";
       }
 
-      /* ==================== RENDER: REAL CC-SWITCHER ACCOUNTS PAGE ==================== */
+      /* ==================== RENDER: ACCOUNTS TAB (100% CC-SWITCHER PARITY) ==================== */
+      function accBadgeHtml(p) {
+        if (p.isFrozen) return `<span class="badge b-frozen">Đóng băng</span>`;
+        if (p.isActive) return `<span class="badge b-active">Đang dùng</span>`;
+        if (p.isParallelActive) return `<span class="badge b-parallel">Chạy song song</span>`;
+        return `<span class="badge b-ready">Sẵn sàng</span>`;
+      }
+
+      function meterHtml(label, pct, extra) {
+        const v = Math.max(0, Math.min(100, Number(pct) || 0));
+        const cls = v <= 15 ? "low" : v <= 40 ? "mid" : "";
+        return `<div class="meter">
+          <div class="row"><span>${esc(label)}</span><b>Còn ${v}%</b></div>
+          <div class="sub">${extra ? esc(extra) : "&nbsp;"}</div>
+          <div class="bar" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${v}">
+            <i class="${cls}" style="width:${v}%"></i>
+          </div>
+        </div>`;
+      }
+
+      function issueText(reason, mm, idle) {
+        if (reason === "token_expired" && idle) return 'chưa dùng gần đây nên token đã hết hạn (bình thường). Bấm "Đăng nhập lại" khi muốn chuyển sang tài khoản này.';
+        if (reason === "wrong_account") return `sai tài khoản: thư mục đang đăng nhập ${mm ? mm.actual : "?"}, cần ${mm ? mm.expected : "?"}. Bấm "Đăng nhập lại" bên dưới.`;
+        if (reason === "token_expired") return 'token hết hạn. Bấm "Đăng nhập lại" bên dưới.';
+        if (reason === "throttled") return "endpoint quota đang giới hạn (429), sẽ thử lại sau.";
+        if (reason === "network") return "lỗi mạng khi lấy quota, sẽ thử lại sau.";
+        if (reason === "no_credentials") return 'chưa có đăng nhập trong Keychain. Bấm "Đăng nhập lại" bên dưới.';
+        return "chưa làm mới được.";
+      }
+
+      function needsLogin(p) {
+        return p.vendor === "anthropic" && (p.quotaStale || Boolean(p.accountMismatch)) && p.quotaIssue !== "throttled" && p.quotaIssue !== "network";
+      }
+
+      function factsHtml(rows) {
+        return `<dl class="facts">${rows.filter(Boolean).map(r => {
+          const val = r[2] === "two" ? String(r[1]).replace(" · ", "\n") : String(r[1]);
+          return `<dt>${esc(r[0])}</dt><dd class="${r[2] === "two" ? "two" : ""}">${esc(val)}</dd>`;
+        }).join("")}</dl>`;
+      }
+
+      function pShort(id, profiles) {
+        const p = (profiles || []).find(x => x.id === id);
+        return p ? (p.shortLabel || splitName(p.name).title) : id;
+      }
+
+      function effBadgeHtml(r, profiles) {
+        const e = r.effective || {};
+        if (e.kind === "assigned") return `<span class="badge b-active">${esc(pShort(e.account, profiles))}</span>`;
+        if (e.kind === "unpinned") return `<span class="badge b-ready">~/.claude mặc định</span>`;
+        if (e.kind === "missing") return `<span class="badge b-frozen">Không thấy repo</span>`;
+        if (e.kind === "blocked") return `<span class="badge b-frozen">Tạm dừng</span>`;
+        return `<span class="badge b-frozen">Không rõ</span>`;
+      }
+
       function renderAccounts() {
         const root = $("accountsInner");
         if (state.loadingAccounts && !state.accounts) {
-          root.innerHTML = `<div class="skel" style="height:80px"></div><div class="skel" style="height:240px"></div>`;
+          root.innerHTML = `<div class="grid g4"><div class="skel" style="height:96px"></div><div class="skel" style="height:96px"></div><div class="skel" style="height:96px"></div><div class="skel" style="height:96px"></div></div>
+            <div class="grid g4"><div class="skel" style="height:310px"></div><div class="skel" style="height:310px"></div><div class="skel" style="height:310px"></div><div class="skel" style="height:310px"></div></div>`;
           return;
         }
+
         const d = state.accounts;
         if (!d || d.ok === false) {
-          root.innerHTML = `<div class="hairline-box" style="padding:24px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center;">
+          root.innerHTML = `<div class="card" style="padding:28px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center;">
             <strong>Không đọc được trạng thái CC-Switcher</strong>
             <span class="muted">${esc((d && d.error) || "Chưa có dữ liệu")}</span>
-            <button class="btn btn-primary" data-act="acc-refresh">Thử lại</button>
+            <button type="button" class="btn btn-primary" data-act="acc-refresh">Thử lại</button>
           </div>`;
           return;
         }
 
         const caps = d.capabilities || { allowOAuthLogin: true, isRemote: false };
         const profiles = d.profiles || [];
+        const claudeProfiles = profiles.filter(p => p.vendor === "anthropic");
+        const backupOrder = d.backupOrder || [];
+        const backupProfiles = backupOrder.length
+          ? backupOrder.map(id => profiles.find(p => p.id === id)).filter(Boolean)
+          : profiles.filter(p => p.vendor !== "anthropic");
+        const claudeIds = d.claudeAccounts || claudeProfiles.map(p => p.id);
         const repos = d.repoAssignments || [];
         const history = d.history || [];
+        const active = d.activeProfile || profiles.find(p => p.isActive) || profiles[0] || {};
+        const ab = d.antiBan || { cooldownMinutes: 15, claudeCooldownRemainSec: 0, rateLimitFreezeSec: 18000 };
+        const usage = d.usage || { totalCostUsd: 0, totalRequests: 0 };
+        const health = d.health || { daemon: { running: true }, telegram: { configured: false }, ccSwitchDb: { exists: true } };
+
+        const probs = [];
+        if (health.daemon && !health.daemon.running) probs.push("daemon tắt");
+        if (health.telegram && !health.telegram.configured) probs.push("Telegram chưa cấu hình");
+        if (health.ccSwitchDb && !health.ccSwitchDb.exists) probs.push("thiếu cc-switch.db");
+        if (health.quotaSyncError) probs.push("lỗi đọc quota");
+
+        const cl = cooldownLeftSec();
+        const frozenTag = id => {
+          const p = profiles.find(x => x.id === id);
+          return p && p.isFrozen ? " (đóng băng 429)" : "";
+        };
+
+        // Build Repo grouped by Account cards
+        const repoByAccCards = claudeIds.map(id => {
+          const p = profiles.find(x => x.id === id) || { id, name: id };
+          const items = repos.filter(x => x.pinnedInFile && x.account === id);
+          const listHtml = items.length
+            ? items.map(x => {
+                const e = x.effective || {};
+                const tagText = e.kind === "blocked" ? "tạm dừng tới giờ reset"
+                  : e.kind === "missing" ? "không thấy thư mục"
+                  : x.source === "app" ? "app"
+                  : x.lastUsedAtMs ? `dùng ${ago(x.lastUsedAtMs)}` : "chưa dùng";
+                return `<li><span>${esc(x.name)}</span><span class="tag${x.differs ? " warn" : ""}">${esc(tagText)}</span></li>`;
+              }).join("")
+            : `<li class="muted" style="justify-content:center;">Chưa có repo nào gán</li>`;
+          const subLine = p.isFrozen
+            ? `Đang khóa 429${p.resetTimeFormatted ? ` tới ${p.resetTimeFormatted}` : ""}`
+            : `Còn ${p.remainingPct != null ? p.remainingPct : "—"}% quota 5 giờ${p.weeklyRemainingPct != null ? ` · tuần ${p.weeklyRemainingPct}%` : ""}`;
+          return `<div class="card${p.isFrozen ? " frozen" : ""}">
+            <div class="acc-head">
+              <div class="acc-head-info">
+                <div class="acc-name">${esc(pShort(id, profiles))}</div>
+                <div class="acc-mail">${esc(subLine)}</div>
+              </div>
+              <div class="acc-head-badges"><span class="badge ${items.length ? "b-parallel" : "b-ready"}">${items.length} repo</span></div>
+            </div>
+            <ul class="repos-mini">${listHtml}</ul>
+          </div>`;
+        });
+
+        const looseRepos = repos.filter(x => !x.pinnedInFile || claudeIds.indexOf(x.account) < 0);
+        if (looseRepos.length) {
+          repoByAccCards.push(`<div class="card">
+            <div class="acc-head">
+              <div class="acc-head-info"><div class="acc-name">Chưa ghim tài khoản</div></div>
+              <div class="acc-head-badges"><span class="badge b-fallback">${looseRepos.length} repo</span></div>
+            </div>
+            <ul class="repos-mini">${looseRepos.map(x => `<li><span>${esc(x.name)}</span><span class="tag warn">${esc(x.pinnedInFile ? `account lạ: ${x.account}` : "chưa ghim → ~/.claude")}</span></li>`).join("")}</ul>
+          </div>`);
+        }
+
+        // Build Claude account cards
+        const claudeCardsHtml = claudeProfiles.map(p => {
+          const n = splitName(p.name);
+          const resetLeft = p.resetAtMs ? (p.resetAtMs - Date.now()) / 1000 : 0;
+          const soft = !p.isActive && !p.isParallelActive && p.quotaIssue === "token_expired";
+          const qObj = p.quota || {};
+          const meters = p.quotaStale
+            ? `<div class="acc-note" role="${soft ? "status" : "alert"}">Số liệu cũ (${esc(ago(qObj.updatedAtMs))}) — ${esc(issueText(p.quotaIssue, p.accountMismatch, soft))}</div>`
+            : `${meterHtml("Quota 5 giờ", p.remainingPct, p.resetAtMs ? `reset ${fmtTime(p.resetAtMs)}` : "")}
+               ${p.weeklyRemainingPct !== null && p.weeklyRemainingPct !== undefined
+                 ? meterHtml("Quota 7 ngày", p.weeklyRemainingPct, p.weeklyResetFormatted ? `reset ${p.weeklyResetFormatted}` : "")
+                 : ""}`;
+
+          const factBlock = factsHtml([
+            ["Đã dùng (5 giờ)", p.usedPct == null ? "—" : `${p.usedPct}%`],
+            ["Reset tuần", p.weeklyResetAtMs ? `${p.weeklyResetFormatted} · còn ${fmtDur((p.weeklyResetAtMs - Date.now()) / 1000)}` : "—", "two"],
+            ["Reset / mở khóa", p.resetAtMs ? `${fmtTime(p.resetAtMs)} · còn ${fmtDur(resetLeft)}` : "Chưa có mốc", "two"],
+            p.isFrozen && p.frozenUntilMs ? ["Đóng băng tới", fmtTime(p.frozenUntilMs, true)] : null,
+            ["Repo đang gán", String(p.assignedRepoCount || 0)],
+            ["Số liệu quota", qObj.live ? `live · ${ago(qObj.updatedAtMs)}` : (qObj.source ? `${qObj.source} · ${ago(qObj.updatedAtMs)}` : "chưa có số liệu live")],
+          ]);
+
+          const loginButton = needsLogin(p)
+            ? (caps.allowOAuthLogin
+                ? `<button type="button" class="btn" data-act="acc-login" data-profile="${esc(p.id)}">Đăng nhập lại</button>`
+                : `<button type="button" class="btn" disabled title="OAuth chỉ mở trên Mac :4317">OAuth (:4317)</button>`)
+            : "";
+
+          const swDisabled = p.isActive || Boolean(p.accountMismatch);
+          const swTitle = p.accountMismatch ? "Profile đang đăng nhập sai tài khoản, đăng nhập lại trước khi chuyển" : "";
+          const switchButton = `<button type="button" class="btn${p.isActive ? "" : " btn-primary"}" ${swDisabled ? "disabled" : ""} title="${esc(swTitle)}" data-act="acc-switch" data-profile="${esc(p.id)}">${p.isActive ? "Đang dùng" : "Chuyển sang"}</button>`;
+
+          return `<article class="card acc-card${p.isActive ? " active" : ""}${p.isFrozen ? " frozen" : ""}" aria-label="${esc(n.title)}">
+            <div class="acc-head">
+              <div class="acc-head-info">
+                <div class="acc-name">${esc(n.title)}</div>
+                <div class="acc-mail">${esc(n.detail)}</div>
+              </div>
+              <div class="acc-head-badges">${accBadgeHtml(p)}</div>
+            </div>
+            ${meters}
+            ${factBlock}
+            <div class="acc-actions">${loginButton}${switchButton}</div>
+          </article>`;
+        }).join("");
+
+        // Build Antigravity backup cards
+        const backupCardsHtml = backupProfiles.map(p => {
+          const n = splitName(p.name);
+          const factBlock = factsHtml([
+            ["Hãng", p.vendor === "google" ? "Google (Antigravity)" : (p.vendor || "—")],
+            ["Trạng thái", p.isFrozen ? `Đóng băng, mở ${p.resetTimeFormatted || `${p.freezeRemainMin} phút`}` : "Đổi ngay, không cần chờ"],
+            p.isFrozen && p.frozenUntilMs ? ["Đóng băng tới", fmtTime(p.frozenUntilMs, true)] : null,
+          ]);
+          return `<article class="card acc-card${p.isActive ? " active" : ""}${p.isFrozen ? " frozen" : ""}" aria-label="${esc(n.title)}">
+            <div class="acc-head">
+              <div class="acc-head-info">
+                <div class="acc-name">${esc(n.title)}</div>
+                <div class="acc-mail">${esc(n.detail)}</div>
+              </div>
+              <div class="acc-head-badges"><span class="badge b-prio">Chọn tay</span>${accBadgeHtml(p)}</div>
+            </div>
+            ${factBlock}
+            <div class="acc-actions">
+              <button type="button" class="btn${p.isActive ? "" : " btn-primary"}" ${p.isActive ? "disabled" : ""} data-act="acc-switch" data-profile="${esc(p.id)}">${p.isActive ? "Đang dùng" : "Chuyển sang"}</button>
+            </div>
+          </article>`;
+        }).join("");
+
+        // Build Repo Assignment Table rows (FIXED: uses r.pinnedInFile ? r.account : "")
+        const repoRowsHtml = repos.map((r, idx) => {
+          const cur = r.pinnedInFile ? (r.account || "") : "";
+          const pending = state.pendingRepoAssign.has(r.path) ? state.pendingRepoAssign.get(r.path) : cur;
+          const dirty = pending !== cur;
+          const e = r.effective || {};
+          const optList = [
+            !r.pinnedInFile ? `<option value=""${pending === "" ? " selected" : ""}>— chưa ghim —</option>` : "",
+            ...claudeIds.map(id => `<option value="${esc(id)}"${pending === id ? " selected" : ""}>${esc(pShort(id, profiles) + frozenTag(id))}</option>`),
+            (r.pinnedInFile && claudeIds.indexOf(r.account) < 0) ? `<option value="${esc(r.account)}"${pending === r.account ? " selected" : ""}>${esc(r.account)} (lạ)</option>` : "",
+          ].join("");
+          const canRemove = caps.allowOAuthLogin && r.source !== "app";
+          return `<tr class="${r.differs ? "differs" : ""}">
+            <td>
+              <div class="rp-name"><span>${esc(r.name || r.path.split("/").pop())}</span>${r.group ? `<span class="badge b-group">${esc(r.group)}</span>` : ""}</div>
+              <div class="rp-path" title="${esc(r.path)}">${esc(r.path)}</div>
+              ${r.worktrees && r.worktrees.length ? `<div class="tag" title="${esc(r.worktrees.join("\n"))}">${r.worktrees.length} git worktree dùng chung tài khoản</div>` : ""}
+            </td>
+            <td>
+              <div class="rp-assign">
+                <select id="ra-${idx}" class="field${dirty ? " dirty" : ""}" aria-label="Tài khoản cho ${esc(r.name)}" data-act="ra-pick" data-repo="${esc(r.path)}" ${!r.pathExists ? "disabled" : ""}>${optList}</select>
+                <button type="button" class="btn btn-primary btn-sm${dirty ? "" : " hidden"}" data-act="ra-save" data-repo="${esc(r.path)}">Lưu</button>
+              </div>
+              ${!r.settingsExists && r.pathExists ? `<div class="tag warn" style="margin-top:4px;">chưa có settings.local.json</div>` : ""}
+            </td>
+            <td>
+              ${effBadgeHtml(r, profiles)}
+              ${e.note ? `<div class="rp-note${e.kind === "unpinned" ? " muted" : ""}">${esc(e.note)}</div>` : ""}
+            </td>
+            <td style="white-space:nowrap;">
+              <div>${r.lastUsedAtMs ? esc(ago(r.lastUsedAtMs)) : "chưa dùng"}</div>
+              ${r.lastUsedAtMs ? `<div class="tag">${esc(fmtTime(r.lastUsedAtMs, true))} · ${esc(pShort(r.lastUsedAccount, profiles))}</div>` : ""}
+              ${r.lastUsedAtMs && r.pinnedInFile && r.lastUsedAccount && r.lastUsedAccount !== r.account
+                ? `<div class="tag warn" title="Phiên Claude Code gần nhất nằm trong ${esc(pShort(r.lastUsedAccount, profiles))}, khác tài khoản gán.">phiên cuối chạy tài khoản khác</div>` : ""}
+            </td>
+            <td>${canRemove ? `<button type="button" class="btn btn-ghost btn-sm" data-act="ra-remove" data-repo="${esc(r.path)}" aria-label="Gỡ ${esc(r.name)}">Gỡ</button>` : ""}</td>
+          </tr>`;
+        }).join("");
+
+        // Build clean 3-column History Table (NEVER JSON.stringify)
+        const historyHtml = history.length
+          ? `<table class="cc-table">
+              <thead><tr><th scope="col">Thời gian</th><th scope="col">Chuyển</th><th scope="col">Nguồn</th></tr></thead>
+              <tbody>${history.slice(0, 50).map(h => `<tr>
+                <td class="mono" style="white-space:nowrap;">${esc(fmtTime(Date.parse(h.at), true))}</td>
+                <td>${esc(pShort(h.from, profiles))} → <strong>${esc(pShort(h.to, profiles))}</strong></td>
+                <td class="muted">${esc(REASONS[h.reason] || h.reason || "—")}</td>
+              </tr>`).join("")}</tbody>
+            </table>`
+          : `<div class="muted" style="padding:18px;text-align:center;">Chưa có lần chuyển tài khoản nào.</div>`;
+
+        const activeSub = (active.remainingPct == null ? "Số liệu cũ" : `Còn ${active.remainingPct}%`)
+          + (active.resetAtMs ? ` · reset ${fmtTime(active.resetAtMs)}` : "")
+          + (active.weeklyResetFormatted ? ` · tuần reset ${active.weeklyResetFormatted}` : "");
 
         root.innerHTML = `
-          <div class="row-gap" style="justify-content:space-between;">
+          <!-- Header Strip -->
+          <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
             <div>
-              <h2 style="margin:0;font-size:18px;letter-spacing:-0.02em;">Quản lý Tài khoản (CC-Switcher)</h2>
-              <p class="muted" style="margin:4px 0 0;font-size:13px;">${profiles.length} tài khoản thực · đồng bộ với <code>cc-switcher-mcp</code> &amp; <code>aaf accounts</code></p>
+              <h2 style="margin:0;font-family:var(--font-display);font-size:19px;letter-spacing:-0.02em;">CC Switcher — Tài khoản AI &amp; Quota</h2>
+              <p class="muted" style="margin:3px 0 0;font-size:13px;">${profiles.length} tài khoản · quota 5 giờ &amp; 7 ngày (weekly) · chống ban · cách ly theo repo</p>
             </div>
             <div class="row-gap">
-              <button class="btn" data-act="acc-refresh">Làm mới hạn mức</button>
-              <button class="btn btn-primary" data-act="acc-confirm" data-cc="rotate">Xoay vòng Claude</button>
-              <button class="btn" data-act="acc-confirm" data-cc="balance" data-mode="even">Cân bằng đều</button>
-              <button class="btn" data-act="acc-confirm" data-cc="balance" data-mode="swap">Hoán đổi</button>
+              <span class="muted tnum" style="font-size:12.5px;display:inline-flex;align-items:center;gap:6px;">
+                <span class="dot"></span>
+                <span>Cập nhật lúc ${esc(fmtClockSec(state.accountsLoadedAt || Date.now()))}</span>
+              </span>
+              <button type="button" class="btn" data-act="acc-refresh" title="Đọc lại % quota thật từ Anthropic">Làm mới quota</button>
+              ${!caps.isRemote ? `<a class="btn btn-ghost" href="/cc-switcher" target="_blank" rel="noopener">Mở trang riêng ↗</a>` : ""}
             </div>
           </div>
 
-          ${!caps.allowOAuthLogin ? `<div class="chip chip-warn" style="padding:10px 12px;white-space:normal;">
-            Chế độ từ xa (:4318): OAuth đăng nhập lại &amp; thêm/xoá repo được khoá để bảo vệ phiên — chỉ mở trên máy Mac (:4317).
-          </div>` : ""}
+          ${!caps.allowOAuthLogin ? `<div class="warn-box">Chế độ từ xa (:4318): OAuth đăng nhập lại &amp; thêm/gỡ repo được khoá để bảo vệ phiên — chỉ thao tác trên máy Mac (:4317).</div>` : ""}
+          ${probs.length ? `<div class="warn-box" role="alert">Cần xem: ${esc(probs.join(", "))}.${health.daemon && !health.daemon.running ? " Daemon tự đổi tài khoản khi gặp 429 và gửi cảnh báo Telegram: bật bằng launchd asia.finos.cc-switcher-daemon." : ""}</div>` : ""}
 
-          <div class="hairline-box">
-            ${profiles.map(p => {
-              const rem = typeof p.remainingPct === "number" ? p.remainingPct : null;
-              const used = typeof p.usedPct === "number" ? p.usedPct : (rem != null ? 100 - rem : 0);
-              const barColor = p.isFrozen ? "var(--c-err)" : used > 80 ? "var(--c-warn)" : "var(--c-primary)";
-              const needLogin = Boolean(p.quotaStale || p.accountMismatch || p.quotaIssue);
-              return `<div class="acc-row${p.isActive ? " is-active" : ""}">
-                <div style="min-width:0;">
-                  <div class="row-gap" style="flex-wrap:nowrap;">
-                    <strong class="mono trunc">${esc(p.name || p.id)}</strong>
-                    ${p.isActive ? `<span class="chip chip-primary">Mặc định</span>` : ""}
-                    ${p.isFrozen ? `<span class="chip chip-err">Đóng băng ${p.freezeRemainMin ? p.freezeRemainMin + "p" : ""}</span>` : `<span class="chip chip-success">Sẵn sàng</span>`}
-                  </div>
-                  <div class="muted trunc" style="font-size:12px;margin-top:4px;">
-                    ${esc(p.vendor || "")} · Reset 5h: ${esc(p.resetTimeFormatted || "—")} · Tuần: ${p.weeklyRemainingPct != null ? p.weeklyRemainingPct + "% còn" : "—"}
-                  </div>
-                  ${p.quotaIssue ? `<div style="font-size:12px;color:var(--t-warn);margin-top:4px;">${esc(p.quotaIssue)}</div>` : ""}
-                </div>
-
-                <div style="min-width:0;">
-                  <div class="row-gap tnum" style="justify-content:space-between;font-size:12px;margin-bottom:6px;">
-                    <span class="muted">Cửa sổ 5h</span>
-                    <strong class="mono">${rem != null ? (100 - rem) + "% (" + rem + "% còn)" : "—"}</strong>
-                  </div>
-                  <div class="meter-track"><div class="meter-fill" style="width:${Math.min(100, Math.max(0, used))}%;background:${barColor}"></div></div>
-                </div>
-
-                <div class="row-gap" style="justify-content:flex-end;">
-                  <button class="btn btn-primary" ${p.isActive ? "disabled" : ""} data-act="acc-switch" data-profile="${esc(p.id)}">${p.isActive ? "Đang dùng" : "Đặt mặc định"}</button>
-                  ${p.isFrozen
-                    ? `<button class="btn" data-act="acc-simple" data-cc="unfreeze" data-profile="${esc(p.id)}">Gỡ đóng băng</button>`
-                    : `<button class="btn" data-act="acc-confirm" data-cc="limit" data-profile="${esc(p.id)}">Đánh dấu 429</button>`}
-                  ${needLogin ? (caps.allowOAuthLogin
-                    ? `<button class="btn" data-act="acc-simple" data-cc="login" data-profile="${esc(p.id)}">Đăng nhập lại</button>`
-                    : `<button class="btn" disabled title="OAuth chỉ mở trên Mac :4317">OAuth khoá (:4318)</button>`) : ""}
-                </div>
-              </div>`;
-            }).join("")}
-          </div>
-
-          ${repos.length ? `
-          <div style="display:flex;flex-direction:column;gap:10px;">
-            <h3 style="margin:0;font-size:15px;">Phân bổ tài khoản cho từng Repo (bấm Lưu để xác nhận)</h3>
-            <div class="hairline-box">
-              ${repos.map((r, idx) => {
-                const curAcc = (r.effective && r.effective.account) || r.pinnedInFile || "";
-                const pending = state.pendingRepoAssign.get(r.path) || curAcc;
-                const changed = pending !== curAcc;
-                const claudeOnly = profiles.filter(p => (p.vendor || "").toLowerCase().includes("anthropic") || (p.vendor || "").toLowerCase().includes("claude"));
-                const opts = claudeOnly.length ? claudeOnly : profiles;
-                return `<div class="acc-row repo-row">
-                  <div style="min-width:180px;">
-                    <label for="ra-${idx}" style="font-weight:600;display:block;">${esc(r.name || r.path.split("/").pop())}</label>
-                    <div class="mono muted trunc" style="font-size:12px;">${esc(r.path)}</div>
-                  </div>
-                  <div class="row-gap">
-                    <select id="ra-${idx}" class="field" style="width:auto;min-width:160px;" data-act="ra-pick" data-repo="${esc(r.path)}">
-                      ${opts.map(p => `<option value="${esc(p.id)}" ${pending === p.id ? "selected" : ""}>${esc(p.name || p.id)}</option>`).join("")}
-                    </select>
-                    <button class="btn btn-primary" ${changed ? "" : "disabled"} data-act="ra-save" data-repo="${esc(r.path)}">Lưu</button>
-                  </div>
-                </div>`;
-              }).join("")}
+          <!-- 4 KPI Cards -->
+          <section aria-label="Tổng quan tài khoản">
+            <div class="grid g4">
+              <div class="card kpi">
+                <div class="label">Đang dùng</div>
+                <div class="value">${esc(splitName(active.name).title || "—")}</div>
+                <div class="sub">${esc(activeSub)}</div>
+              </div>
+              <div class="card kpi">
+                <div class="label">Chống ban (Claude ↔ Claude)</div>
+                <div class="value" id="cdLive">${cl > 0 ? `Chờ ${esc(fmtDur(cl))}` : "Đổi ngay được"}</div>
+                <div class="sub">Nghỉ ${esc(ab.cooldownMinutes)} phút · đóng băng 429: ${Math.round((ab.rateLimitFreezeSec || 18000) / 3600 * 10) / 10} giờ</div>
+              </div>
+              <div class="card kpi">
+                <div class="label">Chi phí CC Switch</div>
+                <div class="value">$${Number(usage.totalCostUsd || 0).toFixed(2)}</div>
+                <div class="sub">${Number(usage.totalRequests || 0).toLocaleString("vi-VN")} request</div>
+              </div>
+              <div class="card kpi">
+                <div class="label">Sức khỏe</div>
+                <div class="value">${probs.length ? `${probs.length} cảnh báo` : "Ổn định"}</div>
+                <div class="sub">Daemon ${health.daemon && health.daemon.running ? "đang chạy" : "không chạy"} · Telegram ${health.telegram && health.telegram.configured ? "bật" : "tắt"} · quota ${esc(ago(health.quotaFetchedAtMs))}</div>
+              </div>
             </div>
-          </div>` : ""}
+          </section>
 
-          ${history.length ? `
-          <div style="display:flex;flex-direction:column;gap:10px;">
-            <h3 style="margin:0;font-size:15px;">Lịch sử đổi tài khoản gần đây</h3>
-            <div class="hairline-box" style="padding:12px 16px;">
-              ${history.slice(0, 8).map(h => `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;" class="mono muted">${esc(h.time || h.at || "")} · ${esc(h.summary || h.action || JSON.stringify(h))}</div>`).join("")}
+          <!-- Claude Accounts (4-col equal height cards with 5h + 7d Weekly bars) -->
+          <section aria-label="Tài khoản Claude">
+            <div class="acc-sec-head">
+              <h3>Tài khoản Claude <small>quota 5 giờ · quota 7 ngày (weekly) · cách ly theo repo · khóa nhảy chéo</small></h3>
             </div>
-          </div>` : ""}
+            <div class="grid g4 claude-grid">${claudeCardsHtml}</div>
+          </section>
+
+          <!-- Antigravity Backup Accounts (2-col) -->
+          ${backupProfiles.length ? `<section aria-label="Antigravity">
+            <div class="acc-sec-head">
+              <h3>Antigravity <small>chỉ chọn tay · Claude hết limit thì repo tạm dừng tới giờ reset, không tự đổi sang</small></h3>
+            </div>
+            <div class="grid g2">${backupCardsHtml}</div>
+          </section>` : ""}
+
+          <!-- Quick Actions & Anti-Ban Cooldown -->
+          <section aria-label="Thao tác nhanh">
+            <div class="acc-sec-head"><h3>Thao tác nhanh &amp; Chống ban</h3></div>
+            <div class="card">
+              <div class="row-gap">
+                <button type="button" class="btn" data-act="acc-confirm" data-cc="rotate">Đổi sang tài khoản kế tiếp</button>
+                <button type="button" class="btn btn-danger" data-act="acc-confirm" data-cc="limit">Báo chạm 429 (đóng băng &amp; đổi ngay)</button>
+                <button type="button" class="btn" data-act="acc-confirm" data-cc="unfreeze">Mở khóa 429 &amp; xóa cooldown</button>
+              </div>
+              <div class="row-gap" style="margin-top:12px;">
+                <span class="muted" style="font-size:13px;">Nghỉ giữa 2 tài khoản Claude:</span>
+                <div class="cd-seg" role="group" aria-label="Thời gian nghỉ chống ban">
+                  ${[15, 5, 0].map(m => `<button type="button" data-act="acc-cooldown" data-min="${m}" aria-pressed="${Number(ab.cooldownMinutes) === m}">${m === 0 ? "Tắt" : `${m} phút`}</button>`).join("")}
+                </div>
+                <form id="cdCustomForm" class="cd-custom">
+                  <label for="cdInput" class="sr">Số phút tùy chọn</label>
+                  <input id="cdInput" type="number" min="0" max="1440" step="1" inputmode="numeric" placeholder="${esc(ab.cooldownMinutes)} phút" />
+                  <button type="submit" class="btn">Đặt</button>
+                </form>
+              </div>
+              <p class="muted" style="font-size:12.5px;margin:10px 0 0;">Đổi giữa hai tài khoản Claude phải chờ hết thời gian nghỉ (chống quét nhiều tài khoản). Đổi sang Antigravity không cần chờ.</p>
+            </div>
+          </section>
+
+          <!-- Repo <-> Account Mapping -->
+          <section aria-label="Repo và Tài khoản">
+            <div class="acc-sec-head">
+              <h3>Repo ↔ Tài khoản <small>repo nào dùng tài khoản Claude nào · .claude/settings.local.json → "account" · worktree dùng chung tài khoản repo gốc</small></h3>
+            </div>
+            <div class="grid g4">${repoByAccCards.join("")}</div>
+            <div class="card tablewrap" style="margin-top:12px;">
+              ${repos.length
+                ? `<table class="cc-table">
+                    <thead><tr>
+                      <th scope="col">Repo · nhóm · đường dẫn</th>
+                      <th scope="col">Tài khoản gán</th>
+                      <th scope="col">Đang dùng thực tế</th>
+                      <th scope="col">Lần dùng cuối</th>
+                      <th scope="col"></th>
+                    </tr></thead>
+                    <tbody>${repoRowsHtml}</tbody>
+                  </table>`
+                : `<div class="muted" style="padding:18px;text-align:center;">Chưa có repo nào được gán trong cc-switcher.</div>`}
+            </div>
+            <div class="card" style="margin-top:12px;">
+              <div class="row-gap">
+                <button type="button" class="btn" data-act="acc-confirm" data-cc="balance" data-mode="even">Chia đều mặc định (FinOS / FinOS Team)</button>
+                <button type="button" class="btn" data-act="acc-confirm" data-cc="balance" data-mode="swap">Đảo nhóm FinOS ↔ Team</button>
+              </div>
+              ${caps.allowOAuthLogin ? `<form id="repoAddForm" class="addform" autocomplete="off">
+                <div>
+                  <label for="raPath" class="field-label">Thêm repo (đường dẫn tuyệt đối tới thư mục Git)</label>
+                  <input id="raPath" class="field" type="text" placeholder="/Volumes/Data/Toan/ten-repo" spellcheck="false" required />
+                </div>
+                <div>
+                  <label for="raName" class="field-label">Tên hiển thị (tuỳ chọn)</label>
+                  <input id="raName" class="field" type="text" maxlength="80" placeholder="mặc định: tên thư mục" />
+                </div>
+                <div>
+                  <label for="raAcc" class="field-label">Tài khoản</label>
+                  <select id="raAcc" class="field">${claudeIds.map(id => `<option value="${esc(id)}">${esc(pShort(id, profiles) + frozenTag(id))}</option>`).join("")}</select>
+                </div>
+                <button type="submit" class="btn btn-primary">Thêm repo</button>
+              </form>` : `<p class="muted" style="font-size:12.5px;margin:10px 0 0;">Thêm / gỡ repo chỉ thực hiện trực tiếp trên máy Mac (:4317).</p>`}
+            </div>
+          </section>
+
+          <!-- Clean Switch History Table -->
+          <section aria-label="Lịch sử chuyển tài khoản">
+            <div class="acc-sec-head">
+              <h3>Lịch sử chuyển tài khoản <small>50 lần gần nhất</small></h3>
+            </div>
+            <div class="card tablewrap">${historyHtml}</div>
+          </section>
         `;
       }
 
@@ -1652,41 +2819,23 @@
 
         if (state.mobAskMode === "add") {
           $("mobAskForm").innerHTML = `
-            <div>
-              <label for="mAddRepo" class="field-label">Dự án đích</label>
-              <select id="mAddRepo" class="field">${repoOpts}</select>
-            </div>
-            <div>
-              <label for="mAddTitle" class="field-label">Tiêu đề task</label>
-              <input id="mAddTitle" class="field" type="text" placeholder="vd: Chặn crash mở PDF trên Android 15" value="${esc(state.drafts.get("mAddTitle") || "")}" />
-            </div>
-            <div>
-              <label for="mAddSpec" class="field-label">Mô tả chi tiết / Log lỗi</label>
-              <textarea id="mAddSpec" class="field" placeholder="Dán Crashlytics log hoặc mô tả yêu cầu...">${esc(state.drafts.get("mAddSpec") || "")}</textarea>
-            </div>
-            <div>
-              <label for="mAddAccept" class="field-label">Tiêu chí nghiệm thu (Accept)</label>
-              <input id="mAddAccept" class="field" type="text" placeholder="vd: Unit test ĐỎ→XANH và không crash" value="${esc(state.drafts.get("mAddAccept") || "")}" />
-            </div>
+            <div><label for="mAddRepo" class="field-label">Dự án đích</label><select id="mAddRepo" class="field">${repoOpts}</select></div>
+            <div><label for="mAddTitle" class="field-label">Tiêu đề task</label><input id="mAddTitle" class="field" type="text" placeholder="vd: Chặn crash mở PDF trên Android 15" value="${esc(state.drafts.get("mAddTitle") || "")}" /></div>
+            <div><label for="mAddSpec" class="field-label">Mô tả chi tiết / Log lỗi</label><textarea id="mAddSpec" class="field" placeholder="Dán Crashlytics log hoặc mô tả yêu cầu…">${esc(state.drafts.get("mAddSpec") || "")}</textarea></div>
+            <div><label for="mAddAccept" class="field-label">Tiêu chí nghiệm thu (Accept)</label><input id="mAddAccept" class="field" type="text" placeholder="vd: Unit test ĐỎ→XANH và không crash" value="${esc(state.drafts.get("mAddAccept") || "")}" /></div>
             <p id="mAddErr" class="field-err hidden"></p>
-            <button class="btn btn-primary btn-full" data-act="mob-submit-add">Đẩy vào hàng đợi Ready</button>`;
+            <button type="button" class="btn btn-primary btn-full" data-act="mob-submit-add">Đẩy vào hàng đợi Ready</button>`;
         } else {
           $("mobAskForm").innerHTML = `
-            <div>
-              <label for="mBtwRepo" class="field-label">Dự án cần hỏi</label>
-              <select id="mBtwRepo" class="field">${repoOpts}</select>
-            </div>
-            <div>
-              <label for="mBtwQ" class="field-label">Câu hỏi read-only (/btw)</label>
-              <textarea id="mBtwQ" class="field" placeholder="Hỏi nhanh codebase — không mở worktree, không sửa file...">${esc(state.drafts.get("mBtwQ") || "")}</textarea>
-            </div>
+            <div><label for="mBtwRepo" class="field-label">Dự án cần hỏi</label><select id="mBtwRepo" class="field">${repoOpts}</select></div>
+            <div><label for="mBtwQ" class="field-label">Câu hỏi read-only (/btw)</label><textarea id="mBtwQ" class="field" placeholder="Hỏi nhanh codebase — không mở worktree, không sửa file…">${esc(state.drafts.get("mBtwQ") || "")}</textarea></div>
             <p id="mBtwErr" class="field-err hidden"></p>
-            <button class="btn btn-primary btn-full" data-act="mob-submit-btw">Hỏi ngay (Read-only)</button>
+            <button type="button" class="btn btn-primary btn-full" data-act="mob-submit-btw">Hỏi ngay (Read-only)</button>
             <div id="mBtwAns" class="timeline-out hidden"></div>`;
         }
       }
 
-      /* ==================== DIALOGS (NATIVE <dialog> WITH FOCUS RESTORE) ==================== */
+      /* ==================== NATIVE <dialog> MODALS ==================== */
       function openDialog(title, html, focusSelector = null) {
         state.lastFocused = document.activeElement;
         $("dlgTitle").textContent = title;
@@ -1708,10 +2857,10 @@
       function openConfirmDialog(title, message, confirmLabel, danger, onConfirm) {
         openDialog(
           title,
-          `<p style="margin:0;font-size:14px;">${esc(message)}</p>
+          `<p style="margin:0;font-size:14px;white-space:pre-line;color:var(--fg-muted);">${esc(message)}</p>
            <div class="row-gap" style="justify-content:flex-end;">
-             <button id="dlgCancelBtn" class="btn" data-act="close-dlg">Huỷ</button>
-             <button id="dlgConfirmBtn" class="btn ${danger ? "btn-danger-solid" : "btn-primary"}">${esc(confirmLabel)}</button>
+             <button type="button" id="dlgCancelBtn" class="btn" data-act="close-dlg">Huỷ</button>
+             <button type="button" id="dlgConfirmBtn" class="btn ${danger ? "btn-danger-solid" : "btn-primary"}">${esc(confirmLabel)}</button>
            </div>`,
           danger ? "#dlgCancelBtn" : "#dlgConfirmBtn"
         );
@@ -1728,34 +2877,16 @@
         const repoOpts = repos.map(r => `<option value="${esc(r.id)}">${esc(r.id)}</option>`).join("");
         openDialog(
           "Tạo task mới cho AAF",
-          `<div>
-             <label for="dAddRepo" class="field-label">Dự án đích</label>
-             <select id="dAddRepo" class="field">${repoOpts}</select>
-           </div>
+          `<div><label for="dAddRepo" class="field-label">Dự án đích</label><select id="dAddRepo" class="field">${repoOpts}</select></div>
            <div class="row-gap">
-             <div style="flex:1">
-               <label for="dAddPri" class="field-label">Ưu tiên</label>
-               <select id="dAddPri" class="field"><option value="P1">P1 · Cao</option><option value="P0">P0 · Khẩn</option><option value="P2">P2 · Thường</option></select>
-             </div>
-             <div style="flex:1">
-               <label for="dAddScope" class="field-label">Phạm vi (tuỳ chọn)</label>
-               <input id="dAddScope" class="field" type="text" placeholder="vd: libs/pdf-viewer" />
-             </div>
+             <div style="flex:1"><label for="dAddPri" class="field-label">Ưu tiên</label><select id="dAddPri" class="field"><option value="P1">P1 · Cao</option><option value="P0">P0 · Khẩn</option><option value="P2">P2 · Thường</option></select></div>
+             <div style="flex:1"><label for="dAddScope" class="field-label">Phạm vi (tuỳ chọn)</label><input id="dAddScope" class="field" type="text" placeholder="vd: libs/pdf-viewer" /></div>
            </div>
-           <div>
-             <label for="dAddTitle" class="field-label">Tiêu đề task</label>
-             <input id="dAddTitle" class="field" type="text" placeholder="Ngắn gọn, rõ mục tiêu..." />
-           </div>
-           <div>
-             <label for="dAddSpec" class="field-label">Mô tả kỹ thuật / Crashlytics log</label>
-             <textarea id="dAddSpec" class="field" placeholder="Dán stack trace hoặc yêu cầu chi tiết..."></textarea>
-           </div>
-           <div>
-             <label for="dAddAccept" class="field-label">Tiêu chí nghiệm thu (Accept)</label>
-             <input id="dAddAccept" class="field" type="text" placeholder="vd: Unit test ĐỎ→XANH và aaf gate CLEAR" />
-           </div>
+           <div><label for="dAddTitle" class="field-label">Tiêu đề task</label><input id="dAddTitle" class="field" type="text" placeholder="Ngắn gọn, rõ mục tiêu…" /></div>
+           <div><label for="dAddSpec" class="field-label">Mô tả kỹ thuật / Crashlytics log</label><textarea id="dAddSpec" class="field" placeholder="Dán stack trace hoặc yêu cầu chi tiết…"></textarea></div>
+           <div><label for="dAddAccept" class="field-label">Tiêu chí nghiệm thu (Accept)</label><input id="dAddAccept" class="field" type="text" placeholder="vd: Unit test ĐỎ→XANH và aaf gate CLEAR" /></div>
            <p id="dAddErr" class="field-err hidden"></p>
-           <button id="dAddSubmit" class="btn btn-primary btn-full">Đẩy vào hàng đợi Ready</button>`,
+           <button type="button" id="dAddSubmit" class="btn btn-primary btn-full">Đẩy vào hàng đợi Ready</button>`,
           "#dAddTitle"
         );
         $("dAddSubmit").addEventListener("click", async e => {
@@ -1790,6 +2921,19 @@
         });
       }
 
+      /* ==================== ACCOUNT ACTION RUNNER ==================== */
+      async function runAccountAction(body) {
+        const res = await apiFetch("/api/aaf/accounts/action", { method: "POST", body });
+        if (res && res.state) {
+          const caps = (state.accounts && state.accounts.capabilities) || { allowOAuthLogin: true, isRemote: false };
+          state.accounts = Object.assign({}, res.state, { capabilities: caps });
+          state.accountsLoadedAt = Date.now();
+          renderHeader();
+          if (state.page === "accounts") renderAccounts();
+        }
+        return res;
+      }
+
       /* ==================== PAGE & MOBILE SHELL SYNC ==================== */
       function syncPages() {
         const isMob = window.innerWidth < 1024;
@@ -1803,7 +2947,10 @@
         $("mnavAccounts").setAttribute("aria-current", state.page === "accounts" ? "page" : "false");
         $("mnavAsk").setAttribute("aria-current", state.page === "ask" ? "page" : "false");
 
-        if (state.page === "accounts" && !state.accounts) loadAccounts(false);
+        if (state.page === "accounts") {
+          if (!state.accounts) loadAccounts(false);
+          else renderAccounts();
+        }
         if (state.page === "ask") renderMobAsk();
         syncMobileShell();
       }
@@ -1811,7 +2958,6 @@
       function syncMobileShell() {
         const app = $("app");
         app.setAttribute("data-mob-view", state.mobView);
-        app.setAttribute("data-mob-sub", state.mobSub === "stream" ? "stream" : "inspect");
         const inDet = window.innerWidth < 1024 && state.page === "work" && state.mobView === "detail";
         $("btnMobBack").classList.toggle("hidden", !inDet);
         $("brandWrap").classList.toggle("hidden", inDet);
@@ -1826,11 +2972,16 @@
         }
       }
 
-      /* ==================== DELEGATED EVENT HANDLER (ZERO INLINE HANDLERS) ==================== */
+      /* ==================== DELEGATED EVENT HANDLERS (ZERO INLINE HANDLERS) ==================== */
       document.addEventListener("click", async e => {
         const btn = e.target.closest("[data-act]");
         if (!btn) return;
         const act = btn.getAttribute("data-act");
+
+        // Prevent card select when clicking quick action button inside card
+        if (["approve-plan", "unblock"].includes(act)) {
+          e.stopPropagation();
+        }
 
         if (act === "toggle-theme") {
           const cur = document.documentElement.getAttribute("data-theme") || "light";
@@ -1842,47 +2993,42 @@
           state.page = btn.getAttribute("data-tab");
           state.mobView = "list";
           syncPages();
-        } else if (act === "mob-back") {
-          state.mobView = "list";
-          syncMobileShell();
-        } else if (act === "mob-sub") {
-          state.mobSub = btn.getAttribute("data-sub");
-          ["mobSubStream", "mobSubDiff", "mobSubPlan", "mobSubProof"].forEach(id => {
-            $(id).setAttribute("aria-selected", String($(id).getAttribute("data-sub") === state.mobSub));
-          });
-          if (state.mobSub !== "stream") state.rtab = state.mobSub;
-          syncMobileShell();
-          renderCenterAndRight();
-        } else if (act === "rtab") {
-          state.rtab = btn.getAttribute("data-tab");
-          ["tabDiff", "tabPlan", "tabProof"].forEach(id => {
-            $(id).setAttribute("aria-selected", String($(id).getAttribute("data-tab") === state.rtab));
-          });
-          renderCenterAndRight();
-        } else if (act === "filter-st") {
-          state.filterSt = btn.getAttribute("data-st");
-          document.querySelectorAll("#stateFilters .pill").forEach(p => {
-            p.setAttribute("aria-pressed", String(p.getAttribute("data-st") === state.filterSt));
-          });
-          renderRail();
+        } else if (act === "mob-back" || act === "close-drawer") {
+          closeDetailDrawer();
+        } else if (act === "view-mode") {
+          state.viewMode = btn.getAttribute("data-view") || "kanban";
+          renderWorkArea();
+        } else if (act === "toggle-cancelled") {
+          state.showCancelled = !state.showCancelled;
+          populateRepoSelects();
+          renderWorkArea();
+        } else if (act === "filter-bucket") {
+          const b = btn.getAttribute("data-bucket");
+          state.filterBucket = state.filterBucket === b ? "all" : b;
+          renderWorkArea();
+        } else if (act === "dtab") {
+          state.dtab = btn.getAttribute("data-tab");
+          renderDetailDrawer();
         } else if (act === "select-task") {
           state.selectedId = btn.getAttribute("data-id");
+          state.drawerOpen = true;
           state.reworkOpen = false;
           state.pinnedBottom = true;
           if (window.innerWidth < 1024) state.mobView = "detail";
-          renderRail();
+          renderWorkArea();
+          renderDetailDrawer();
           syncMobileShell();
           await loadTaskDetail(state.selectedId);
         } else if (act === "toggle-step") {
           const k = btn.getAttribute("data-key");
           if (state.expandedSteps.has(k)) state.expandedSteps.delete(k); else state.expandedSteps.add(k);
-          renderCenterAndRight();
+          renderDetailDrawer();
         } else if (act === "toggle-wrap") {
           state.diffWrap = !state.diffWrap;
-          renderCenterAndRight();
+          renderDetailDrawer();
         } else if (act === "jump-latest") {
           state.pinnedBottom = true;
-          $("streamScroll").scrollTop = $("streamScroll").scrollHeight;
+          $("drawerScroll").scrollTop = $("drawerScroll").scrollHeight;
           $("jumpLatestWrap").classList.add("hidden");
         } else if (act === "copy-val") {
           await copyText(btn.getAttribute("data-val"), "Đã copy vào clipboard");
@@ -1970,11 +3116,11 @@
           });
         } else if (act === "open-rework") {
           state.reworkOpen = true;
-          renderCenterAndRight();
+          renderDetailDrawer();
           if ($("reworkInput")) $("reworkInput").focus();
         } else if (act === "cancel-rework") {
           state.reworkOpen = false;
-          renderCenterAndRight();
+          renderDetailDrawer();
         } else if (act === "submit-rework") {
           const tid = btn.getAttribute("data-id");
           const reason = ($("reworkInput") && $("reworkInput").value.trim()) || "";
@@ -2010,79 +3156,132 @@
           const name = btn.getAttribute("data-name");
           openDialog(name || "Ảnh nghiệm thu", `<img src="${esc(url)}" alt="${esc(name)}" style="width:100%;border-radius:10px;border:1px solid var(--border);" />`);
         } else if (act === "acc-refresh") {
-          await runLockedButton(btn, () => loadAccounts(true));
+          await runLockedButton(btn, () => loadAccounts(true, true));
         } else if (act === "acc-switch") {
           const profile = btn.getAttribute("data-profile");
-          await runLockedButton(btn, async () => {
-            try {
-              const res = await apiFetch("/api/aaf/accounts/action", { method: "POST", body: { action: "switch", account: profile } });
-              if (res && res.needsForce) {
-                openConfirmDialog(
-                  `Cưỡng bức chuyển sang ${profile}?`,
-                  res.error || "Tài khoản đang có phiên hoạt động hoặc chưa hết anti-ban cooldown.",
-                  "Chuyển cưỡng bức (force)",
-                  true,
-                  async () => {
-                    await apiFetch("/api/aaf/accounts/action", { method: "POST", body: { action: "switch", account: profile, force: true } });
-                    showToast(`Đã chuyển sang ${profile}`);
-                    await loadAccounts(false);
-                  }
-                );
-              } else {
-                showToast(`Đã đặt ${profile} làm mặc định`);
-                await loadAccounts(false);
+          const pName = pShort(profile, (state.accounts && state.accounts.profiles) || []);
+          openConfirmDialog(
+            `Chuyển sang ${pName}?`,
+            "CC Switch sẽ dùng tài khoản này cho phiên Claude Code / Antigravity mới. Phiên đang mở giữ nguyên tài khoản cũ.",
+            "Chuyển",
+            false,
+            async () => {
+              try {
+                const res = await runAccountAction({ action: "switch", target: profile });
+                if (res && res.needsForce) {
+                  const cl = res.code === "CLAUDE_COOLDOWN_ACTIVE";
+                  setTimeout(() => {
+                    openConfirmDialog(
+                      `Ép chuyển sang ${pName}?`,
+                      `${cl ? "Đang trong thời gian nghỉ chống ban giữa hai tài khoản Claude." : "Tài khoản này đang đóng băng vì chạm 429."}\n\n${res.hint || res.error || ""}\n\nÉp chuyển ngay sẽ bỏ qua bảo vệ này.`,
+                      "Ép chuyển ngay",
+                      true,
+                      async () => {
+                        await runAccountAction({ action: "switch", target: profile, force: true });
+                        showToast(`Đã chuyển sang ${pName}`);
+                        await loadAccounts(false, true);
+                      }
+                    );
+                  }, 50);
+                } else {
+                  showToast((res && res.message) || `Đã chuyển sang ${pName}`);
+                  await loadAccounts(false, true);
+                }
+              } catch (err) {
+                console.warn("switch failed:", err);
+                showToast(`Lỗi đổi tài khoản: ${err.message}`);
               }
-            } catch (err) {
-              console.warn("switch failed:", err);
-              showToast(`Lỗi đổi tài khoản: ${err.message}`);
             }
-          });
-        } else if (act === "acc-simple") {
-          const cc = btn.getAttribute("data-cc");
+          );
+        } else if (act === "acc-login") {
           const profile = btn.getAttribute("data-profile");
           await runLockedButton(btn, async () => {
             try {
-              const payload = cc === "login" ? { action: "login", target: profile } : { action: cc, account: profile };
-              await apiFetch("/api/aaf/accounts/action", { method: "POST", body: payload });
-              showToast(`Đã thực hiện ${cc} cho ${profile}`);
-              await loadAccounts(false);
+              const res = await runAccountAction({ action: "login", target: profile });
+              showToast((res && res.message) || `Đã mở đăng nhập cho ${profile}`);
+              await loadAccounts(false, true);
             } catch (err) {
-              console.warn("cc action failed:", err);
-              showToast(`Lỗi: ${err.message}`);
+              console.warn("login failed:", err);
+              showToast(`Lỗi đăng nhập: ${err.message}`);
+            }
+          });
+        } else if (act === "acc-cooldown") {
+          const minutes = Number(btn.getAttribute("data-min"));
+          await runLockedButton(btn, async () => {
+            try {
+              const res = await runAccountAction({ action: "cooldown", minutes });
+              showToast((res && res.message) || (minutes === 0 ? "Đã tắt thời gian nghỉ chống ban" : `Đã đặt thời gian nghỉ ${minutes} phút`));
+            } catch (err) {
+              console.warn("cooldown failed:", err);
+              showToast(`Lỗi đặt cooldown: ${err.message}`);
             }
           });
         } else if (act === "acc-confirm") {
           const cc = btn.getAttribute("data-cc");
           const mode = btn.getAttribute("data-mode");
-          const profile = btn.getAttribute("data-profile");
-          openConfirmDialog(
-            `Xác nhận thao tác ${cc}?`,
-            mode ? `Cân bằng lại danh sách repo theo chế độ "${mode}".` : `Thực thi thao tác "${cc}" trên pool CC-Switcher.`,
-            "Xác nhận",
-            cc === "limit",
-            async () => {
-              const body = { action: cc };
-              if (mode) body.mode = mode;
-              if (profile) body.account = profile;
-              await apiFetch("/api/aaf/accounts/action", { method: "POST", body });
-              showToast(`Hoàn tất ${cc}`);
-              await loadAccounts(false);
+          const activeName = state.accounts && state.accounts.activeProfile ? splitName(state.accounts.activeProfile.name).title : "";
+          const freezeHrs = state.accounts && state.accounts.antiBan ? Math.round((state.accounts.antiBan.rateLimitFreezeSec || 18000) / 3600 * 10) / 10 : 5;
+          const cfg = {
+            rotate: ["Đổi sang tài khoản kế tiếp?", "Xoay vòng qua các tài khoản Claude theo thứ tự 1 → 2 → 3 → 7 (không sang Antigravity), bỏ qua tài khoản đang đóng băng.", "Đổi", false],
+            limit: ["Báo tài khoản hiện tại chạm 429?", `Đóng băng "${activeName}" ${freezeHrs} giờ và chuyển ngay sang tài khoản an toàn kế tiếp.`, "Đóng băng & đổi", true],
+            unfreeze: ["Mở khóa toàn bộ?", "Xóa mọi đóng băng 429 và đặt lại thời gian nghỉ chống ban về 0. Chỉ làm khi chắc quota đã hồi.", "Mở khóa", true],
+            balance: mode === "swap"
+              ? ["Đảo nhóm repo?", "Repo đang gán FinOS chuyển sang FinOS Team và ngược lại; repo gán tài khoản khác giữ nguyên.", "Đảo nhóm", false]
+              : ["Chia đều repo 3/3?", "Gán lại 3 repo cho FinOS và 3 repo cho FinOS Team theo mặc định.", "Chia đều", false],
+          }[cc];
+          if (!cfg) return;
+          openConfirmDialog(cfg[0], cfg[1], cfg[2], cfg[3], async () => {
+            try {
+              const body = mode ? { action: cc, mode } : { action: cc };
+              const res = await runAccountAction(body);
+              showToast((res && res.message) || `Hoàn tất ${cc}`);
+              await loadAccounts(false, true);
+            } catch (err) {
+              console.warn("cc action failed:", err);
+              showToast(`Lỗi: ${err.message}`);
             }
-          );
+          });
         } else if (act === "ra-save") {
           const repo = btn.getAttribute("data-repo");
           const account = state.pendingRepoAssign.get(repo);
           if (!account) return;
+          const rp = ((state.accounts && state.accounts.repoAssignments) || []).find(x => x.path === repo);
+          const profiles = (state.accounts && state.accounts.profiles) || [];
           openConfirmDialog(
-            "Lưu gán tài khoản cho repo?",
-            `Gán repo ${repo.split("/").pop()} dùng tài khoản ${account}.`,
-            "Lưu thay đổi",
+            `Gán ${(rp && rp.name) || repo.split("/").pop()} → ${pShort(account, profiles)}?`,
+            `${repo}\n\nGhi "account" vào .claude/settings.local.json (giữ nguyên các khóa khác). Phiên mới trong repo và worktree sẽ dùng tài khoản này.`,
+            "Gán tài khoản",
             false,
             async () => {
-              await apiFetch("/api/aaf/accounts/action", { method: "POST", body: { action: "repo_assign", repo, account } });
-              state.pendingRepoAssign.delete(repo);
-              showToast(`Đã gán ${account}`);
-              await loadAccounts(false);
+              try {
+                const res = await runAccountAction({ action: "repo_assign", repo, account });
+                state.pendingRepoAssign.delete(repo);
+                showToast((res && res.message) || `Đã gán ${pShort(account, profiles)}`);
+                await loadAccounts(false, true);
+              } catch (err) {
+                console.warn("repo_assign failed:", err);
+                showToast(`Lỗi gán repo: ${err.message}`);
+              }
+            }
+          );
+        } else if (act === "ra-remove") {
+          const repo = btn.getAttribute("data-repo");
+          const rp = ((state.accounts && state.accounts.repoAssignments) || []).find(x => x.path === repo);
+          openConfirmDialog(
+            `Gỡ ${(rp && rp.name) || repo.split("/").pop()} khỏi cc-switcher?`,
+            `${repo}\n\nBỏ repo khỏi danh sách và xóa khóa "account" trong .claude/settings.local.json (quay về ~/.claude mặc định).`,
+            "Gỡ repo",
+            true,
+            async () => {
+              try {
+                const res = await runAccountAction({ action: "repo_remove", repo });
+                state.pendingRepoAssign.delete(repo);
+                showToast((res && res.message) || "Đã gỡ repo");
+                await loadAccounts(false, true);
+              } catch (err) {
+                console.warn("repo_remove failed:", err);
+                showToast(`Lỗi gỡ repo: ${err.message}`);
+              }
             }
           );
         } else if (act === "mob-ask-mode") {
@@ -2139,12 +3338,67 @@
         }
       });
 
-      /* Delegated input/change listeners (draft preservation + explicit repo assign pick) */
+      document.addEventListener("submit", async e => {
+        if (e.target && e.target.id === "cdCustomForm") {
+          e.preventDefault();
+          const inp = $("cdInput");
+          const v = inp.value.trim();
+          const n = Number(v);
+          if (v === "" || !Number.isInteger(n) || n < 0 || n > 1440) {
+            showToast("Nhập số phút nguyên từ 0 đến 1440.");
+            inp.focus();
+            return;
+          }
+          const subBtn = e.submitter || e.target.querySelector('button[type="submit"]');
+          await runLockedButton(subBtn, async () => {
+            try {
+              const res = await runAccountAction({ action: "cooldown", minutes: n });
+              inp.value = "";
+              showToast((res && res.message) || `Đã đặt thời gian nghỉ ${n} phút`);
+            } catch (err) {
+              console.warn("custom cooldown failed:", err);
+              showToast(`Lỗi: ${err.message}`);
+            }
+          });
+        } else if (e.target && e.target.id === "repoAddForm") {
+          e.preventDefault();
+          const path = $("raPath").value.trim().replace(/\/+$/, "");
+          const name = $("raName").value.trim();
+          const acc = $("raAcc").value;
+          if (!path.startsWith("/")) {
+            showToast("Nhập đường dẫn tuyệt đối, bắt đầu bằng /.");
+            $("raPath").focus();
+            return;
+          }
+          const profiles = (state.accounts && state.accounts.profiles) || [];
+          openConfirmDialog(
+            `Thêm repo → ${pShort(acc, profiles)}?`,
+            `${path}${name ? `\nTên: ${name}` : ""}\n\nThêm vào danh sách cc-switcher và ghi "account": "${acc}" vào .claude/settings.local.json.`,
+            "Thêm repo",
+            false,
+            async () => {
+              try {
+                const body = { action: "repo_add", repo: path, account: acc };
+                if (name) body.name = name;
+                const res = await runAccountAction(body);
+                $("raPath").value = "";
+                $("raName").value = "";
+                showToast((res && res.message) || "Đã thêm repo");
+                await loadAccounts(false, true);
+              } catch (err) {
+                console.warn("repo_add failed:", err);
+                showToast(`Lỗi thêm repo: ${err.message}`);
+              }
+            }
+          );
+        }
+      });
+
       document.addEventListener("input", e => {
         const el = e.target;
         if (el.id === "searchInput") {
           state.search = el.value;
-          renderRail();
+          renderWorkArea();
         } else if (el.id === "reworkInput") {
           state.drafts.set("rework:" + state.selectedId, el.value);
         } else if (["mAddTitle", "mAddSpec", "mAddAccept", "mBtwQ"].includes(el.id)) {
@@ -2154,13 +3408,20 @@
 
       document.addEventListener("change", e => {
         const el = e.target;
-        if (el.getAttribute("data-act") === "ra-pick") {
-          state.pendingRepoAssign.set(el.getAttribute("data-repo"), el.value);
+        if (el.id === "repoFilter") {
+          state.repoFilter = el.value;
+          renderWorkArea();
+        } else if (el.getAttribute("data-act") === "ra-pick") {
+          const repo = el.getAttribute("data-repo");
+          const rp = ((state.accounts && state.accounts.repoAssignments) || []).find(x => x.path === repo);
+          const cur = rp && rp.pinnedInFile ? (rp.account || "") : "";
+          if (el.value === cur) state.pendingRepoAssign.delete(repo);
+          else state.pendingRepoAssign.set(repo, el.value);
           renderAccounts();
         }
       });
 
-      /* Keyboard shortcuts (⌘K = search, ⌘↵ = steer, WAI-ARIA tablist ArrowLeft/Right/Home/End) */
+      /* Keyboard shortcuts (⌘K search, ⌘↵ steer, Esc close drawer, Enter on Kanban card, Tablist arrows) */
       document.addEventListener("keydown", e => {
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
           e.preventDefault();
@@ -2170,6 +3431,11 @@
         } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && document.activeElement === $("steerInput")) {
           e.preventDefault();
           $("btnSteerSend").click();
+        } else if (e.key === "Escape" && !$("mainDialog").open && state.drawerOpen) {
+          closeDetailDrawer();
+        } else if ((e.key === "Enter" || e.key === " ") && e.target && e.target.classList && e.target.classList.contains("k-card")) {
+          e.preventDefault();
+          e.target.click();
         } else if (e.target && e.target.getAttribute("role") === "tab") {
           const list = e.target.closest('[role="tablist"]');
           if (!list) return;
@@ -2188,42 +3454,55 @@
         }
       });
 
-      /* Stream auto-scroll tracking */
-      $("streamScroll").addEventListener("scroll", () => {
-        const el = $("streamScroll");
+      $("drawerScroll").addEventListener("scroll", () => {
+        if (state.dtab !== "stream") return;
+        const el = $("drawerScroll");
         state.pinnedBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 36;
         $("jumpLatestWrap").classList.toggle("hidden", state.pinnedBottom);
       });
 
-      /* VisualViewport IME & resize sync */
       if (window.visualViewport) {
         window.visualViewport.addEventListener("resize", syncViewportHeight);
       }
-      window.addEventListener("resize", () => { syncViewportHeight(); syncPages(); });
+      window.addEventListener("resize", () => { syncViewportHeight(); syncPages(); renderWorkArea(); });
 
-      /* Lifecycle-aware polling (pauses when hidden, immediate refresh on return) */
-      let pollId = setInterval(() => {
+      /* Lifecycle-aware polling + live 1s anti-ban countdown */
+      const pollStudioId = setInterval(() => {
         if (document.hidden) return;
         renderHeader();
         loadStudio(true);
-      }, 5000);
-      let staleTickId = setInterval(() => {
-        if (!document.hidden) renderHeader();
-      }, 3000);
+      }, 6000);
+      const pollAccId = setInterval(() => {
+        if (document.hidden) return;
+        loadAccounts(false, true);
+      }, 20000);
+      const cdTickId = setInterval(() => {
+        if (document.hidden) return;
+        const n = $("cdLive");
+        if (n && state.accounts && state.accounts.antiBan) {
+          const cl = cooldownLeftSec();
+          n.textContent = cl > 0 ? `Chờ ${fmtDur(cl)}` : "Đổi ngay được";
+        }
+      }, 1000);
 
       document.addEventListener("visibilitychange", () => {
-        if (!document.hidden) loadStudio(true);
+        if (!document.hidden) {
+          loadStudio(true);
+          loadAccounts(false, true);
+        }
       });
       window.addEventListener("beforeunload", () => {
-        clearInterval(pollId);
-        clearInterval(staleTickId);
+        clearInterval(pollStudioId);
+        clearInterval(pollAccId);
+        clearInterval(cdTickId);
       });
 
-      /* Boot */
+      /* Boot: load both Studio tasks and CC-Switcher accounts (for header pill & instant tab switch) */
       initThemeAndTelegram();
       syncViewportHeight();
       syncPages();
       loadStudio(false);
+      loadAccounts(false, true);
     })();
   </script>
 </body>

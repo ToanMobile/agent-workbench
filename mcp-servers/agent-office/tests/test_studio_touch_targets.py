@@ -45,6 +45,71 @@ class TestStudioUiStandards(unittest.TestCase):
         self.assertIn("repoAssignments", html)
         self.assertIn("allowOAuthLogin", html)
 
+    def test_studio_switch_uses_target_and_fixes_account_bugs(self):
+        with open(STUDIO_HTML, encoding="utf-8") as f:
+            html = f.read()
+        # Bug fix: switch action must send `target` (server.py cc_switcher_args rejects `account`)
+        self.assertNotIn('{ action: "switch", account:', html)
+        self.assertIn('action: "switch", target:', html)
+        # Bug fix: repo assignment must NOT fallback to boolean r.pinnedInFile as account id
+        self.assertNotIn("|| r.pinnedInFile ||", html)
+        # Bug fix: history must format from/to/reason cleanly, never JSON.stringify(h)
+        self.assertNotIn("JSON.stringify(h)", html)
+
+    def test_studio_accounts_parity_with_cc_switcher(self):
+        with open(STUDIO_HTML, encoding="utf-8") as f:
+            html = f.read()
+        # Weekly (7-day) & 5-hour quota meters + reset countdown
+        self.assertIn("Quota 5 giờ", html)
+        self.assertIn("Quota 7 ngày", html)
+        self.assertIn("weeklyRemainingPct", html)
+        self.assertIn("weeklyResetFormatted", html)
+        self.assertIn("weeklyResetAtMs", html)
+        # 4 KPI cards & anti-ban cooldown controls
+        self.assertIn("Chống ban", html)
+        self.assertIn("Chi phí CC Switch", html)
+        self.assertIn("Sức khỏe", html)
+        self.assertIn('action: "cooldown"', html)
+        # Provider separation (Claude vs Antigravity)
+        self.assertIn("Tài khoản Claude", html)
+        self.assertIn("Antigravity", html)
+        self.assertIn("Chọn tay", html)
+        # Repo <-> Account grouped summary, add/remove support
+        self.assertIn("Repo ↔ Tài khoản", html)
+        self.assertIn("repo_add", html)
+        self.assertIn("repo_remove", html)
+
+    def test_studio_kanban_board_and_structured_inspector(self):
+        with open(STUDIO_HTML, encoding="utf-8") as f:
+            html = f.read()
+        # Kanban board default view + List switcher + Repo filter + Cancelled toggle
+        self.assertIn("kanban-board", html)
+        self.assertIn("kanban-col", html)
+        self.assertIn('data-view="kanban"', html)
+        self.assertIn('data-view="list"', html)
+        self.assertIn("repoFilter", html)
+        self.assertIn("showCancelled", html)
+        # Structured Spec JSON parsing (acceptance list) instead of raw JSON dump
+        self.assertIn("parseSpec", html)
+        self.assertIn("acceptance", html)
+
+    def test_studio_has_six_column_github_workflow_kanban(self):
+        with open(STUDIO_HTML, encoding="utf-8") as f:
+            html = f.read()
+        for col in ('key: "ready"', 'key: "building"', 'key: "qa"', 'key: "review"', 'key: "blocked"', 'key: "done"'):
+            self.assertIn(col, html, f"Missing workflow Kanban column {col}")
+        for label in ("Ready", "Building", "QA", "Review", "Blocked", "Done"):
+            self.assertIn(label, html, f"Missing workflow label {label}")
+
+    def test_agent_office_config_uses_auto_agent_factory_instead_of_agent_workbench(self):
+        import json
+        cfg_path = os.path.join(os.path.dirname(HERE), "config.json")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertNotIn("agent-workbench", cfg.get("repos", []))
+        self.assertIn("AutoAgentFactory", cfg.get("repos", []))
+        self.assertEqual(cfg.get("repoPaths", {}).get("AutoAgentFactory"), "/Volumes/Data/Toan/AutoAgentFactory")
+
 
 if __name__ == "__main__":
     unittest.main()

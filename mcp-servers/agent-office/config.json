@@ -16,7 +16,7 @@
   },
   "root": "/Volumes/Data/Toan",
   "repos": [
-    "agent-workbench",
+    "AutoAgentFactory",
     "GeelyEx2",
     "OfficeReader",
     "Goods-Triple-Shelf-Match-3D",
@@ -24,6 +24,7 @@
     "Humans-vs.-UFOs"
   ],
   "repoPaths": {
+    "AutoAgentFactory": "/Volumes/Data/Toan/AutoAgentFactory",
     "OfficeReader": "/Volumes/Data/Toan/OfficeReader/OfficeReader",
     "Goods-Triple-Shelf-Match-3D": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D",
     "Idle-Plaza-3D": "/Volumes/Data/Toan/Game/Idle-Plaza-3D",
