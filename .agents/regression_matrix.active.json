@@ -796,7 +796,11 @@
       "component": "mcp-servers/agent-office",
       "watch_files": [
         "mcp-servers/agent-office/server.py",
+        "mcp-servers/agent-office/aaf_hub.py",
+        "mcp-servers/agent-office/aaf_supervisor.py",
+        "mcp-servers/agent-office/aaf_telegram_bot.py",
         "mcp-servers/agent-office/web/index.html",
+        "mcp-servers/agent-office/web/studio.html",
         "mcp-servers/agent-office/web/pathing.js",
         "mcp-servers/agent-office/web/vendor/*",
         "mcp-servers/agent-office/*.sh",
