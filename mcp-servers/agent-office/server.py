@@ -54,6 +54,7 @@ DEFAULTS = {
         "view": 2,
         "maxItems": 600,
         "includeArchived": False,
+        "enabled": True,
     },
     "root": "/Volumes/Data/Toan",
     "repos": ["agent-workbench", "GeelyEx2", "OfficeReader", "Goods-Triple", "Idle-Plaza"],
@@ -67,6 +68,8 @@ DEFAULTS = {
     "host": "127.0.0.1",
     "allowedHosts": ["ai-factory.test", "ai-factory.localhost"],
     "port": 4317,
+    "remotePort": 0,
+    "remoteAllowedHosts": [],
     "eventsFile": "~/.agent-office/events.jsonl",
     "macNotify": True,
 }
@@ -2657,7 +2660,8 @@ class App:
                     time.sleep(5)
             threading.Thread(target=demo_loop, daemon=True).start()
             return
-        threading.Thread(target=self.github_loop, daemon=True).start()
+        if self.cfg.get("github", {}).get("enabled", True):
+            threading.Thread(target=self.github_loop, daemon=True).start()
         threading.Thread(target=self.local_loop, daemon=True).start()
 
 
@@ -2680,8 +2684,25 @@ def host_ok(header, allowed) -> bool:
     return host_name(header) in allowed
 
 
-# cloudflared adds these to every request it forwards: a request carrying one came from outside this Mac
-TUNNEL_HEADERS = ("Cf-Connecting-Ip", "Cf-Ray")
+# cloudflared, Tailscale Funnel và reverse proxy gắn các header này khi chuyển tiếp request từ bên ngoài
+TUNNEL_HEADERS = (
+    "Cf-Connecting-Ip",
+    "Cf-Ray",
+    "X-Forwarded-For",
+    "Forwarded",
+    "X-Real-Ip",
+    "Tailscale-Funnel-Request",
+    "Tailscale-User-Login",
+    "X-Tailscale-User",
+)
+_NON_CF_PROXY_HEADERS = (
+    "X-Forwarded-For",
+    "Forwarded",
+    "X-Real-Ip",
+    "Tailscale-Funnel-Request",
+    "Tailscale-User-Login",
+    "X-Tailscale-User",
+)
 _key_cache = {"path": None, "mtime": None, "key": ""}
 
 
@@ -2889,6 +2910,9 @@ def make_handler(app: App):
         headers = handler.headers
         if from_mac(handler):
             return None  # this Mac itself
+        # Block Tailscale Funnel & generic reverse-proxy headers on :4317 unconditionally (never allow bypass)
+        if not headers.get("Cf-Ray") and any(headers.get(h) for h in _NON_CF_PROXY_HEADERS):
+            return 403
         host = host_name(headers.get("Host"))
         key = remote_key(key_file)
         if not key or not (host in allowed or host.endswith(".trycloudflare.com")):
@@ -2939,6 +2963,50 @@ def make_handler(app: App):
             if path == "/api/refresh":
                 app.refresh_evt.set()
                 return self.send(200, b'{"ok":true}', CTYPES[".json"])
+            if path in ("/studio", "/studio/", "/studio.html") or path.startswith("/api/aaf/"):
+                if not from_mac(self):
+                    return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+                if path.startswith("/api/aaf/"):
+                    if self.headers.get("X-Agent-Office") != "1" and self.headers.get("X-AAF-Studio") != "1":
+                        return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+                    try:
+                        import aaf_hub
+                    except ImportError:
+                        return self.send(503, b'{"ok":false,"error":"aaf_hub unavailable"}', CTYPES[".json"])
+                    rpaths = app.gate_repo_paths()
+                    q = parse_qs(urlparse(self.path).query)
+                    if path == "/api/aaf/studio":
+                        st = aaf_hub.read_studio_state(
+                            repo_paths=rpaths,
+                            capabilities={"allowOAuthLogin": True, "isRemote": False, "canOpenTerminal": True},
+                        )
+                        return self.send(200, json.dumps(st, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                    if path == "/api/aaf/task/detail":
+                        det = aaf_hub.read_task_detail((q.get("id") or [""])[0], repo_paths=rpaths)
+                        return self.send(200 if det.get("ok") else 404, json.dumps(det, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                    if path == "/api/aaf/proof-image":
+                        tid = (q.get("task_id") or [""])[0]
+                        idx_s = (q.get("idx") or ["0"])[0]
+                        if not idx_s.isdigit():
+                            return self.send(400, b'{"ok":false,"error":"invalid idx"}', CTYPES[".json"])
+                        det = aaf_hub.read_task_detail(tid, repo_paths=rpaths)
+                        imgs = ((det.get("proof") or {}).get("raw") or {}).get("images") or []
+                        idx = int(idx_s)
+                        if not isinstance(imgs, list) or idx >= len(imgs):
+                            return self.send(404, b'{"ok":false,"error":"proof not found"}', CTYPES[".json"])
+                        data, perr = aaf_hub.read_proof_png(str((imgs[idx] or {}).get("path") or ""), aaf_hub._allowed_worktree_roots(rpaths))
+                        if data is None:
+                            return self.send(403, json.dumps({"ok": False, "error": perr}, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                        return self.send(200, data, CTYPES[".png"], {"X-Content-Type-Options": "nosniff"})
+                    if path == "/api/aaf/accounts":
+                        args = ["--panel-json"] + (["--refresh"] if (q.get("refresh") or [""])[0] == "1" else [])
+                        code, res = cc_switcher_call(args)
+                        if isinstance(res, dict):
+                            res = dict(res)
+                            res["capabilities"] = {"allowOAuthLogin": True, "isRemote": False}
+                        return self.send(code, json.dumps(res, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                    return self.send(404, b'{"ok":false,"error":"not found"}', CTYPES[".json"])
+                path = "/studio.html"
             if path in ("/cc-switcher", "/cc-switcher/", "/cc-switcher.html", "/api/cc-switcher/state"):
                 if not from_mac(self):
                     return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
@@ -2956,19 +3024,19 @@ def make_handler(app: App):
             full = os.path.realpath(os.path.join(WEB_DIR, rel))
             if not full.startswith(os.path.realpath(WEB_DIR) + os.sep) or not os.path.isfile(full):
                 return self.send(404, b"not found", "text/plain")
-            if os.path.basename(full).lower() == "cc-switcher.html" and not from_mac(self):
-                return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])  # any spelling of the panel file (./, case, trailing /)
+            if os.path.basename(full).lower() in ("cc-switcher.html", "studio.html") and not from_mac(self):
+                return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])  # any spelling of local-only panels
             with open(full, "rb") as f:
                 data = f.read()
             if rel == "index.html":
                 data = fill_models_version(data, models_version())
             extra = {"X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'"} \
-                if os.path.basename(full).lower() == "cc-switcher.html" else None  # the panel can switch accounts: never framed
+                if os.path.basename(full).lower() in ("cc-switcher.html", "studio.html") else None  # local panels never framed
             return self.send(200, data, CTYPES.get(os.path.splitext(full)[1], "application/octet-stream"), extra)
 
         def do_POST(self):
             path = urlparse(self.path).path
-            if self.headers.get("X-Agent-Office") != "1":
+            if self.headers.get("X-Agent-Office") != "1" and not (path.startswith("/api/aaf/") and self.headers.get("X-AAF-Studio") == "1"):
                 return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
             code = refusal(self, True)
             if code:
@@ -2994,6 +3062,35 @@ def make_handler(app: App):
                     raise ValueError("body")
             except ValueError:
                 return self.send(400, b'{"ok":false,"error":"bad json"}', CTYPES[".json"])
+            if path.startswith("/api/aaf/"):
+                if not from_mac(self):
+                    return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+                try:
+                    import aaf_hub
+                except ImportError:
+                    return self.send(503, b'{"ok":false,"error":"aaf_hub unavailable"}', CTYPES[".json"])
+                rpaths = app.gate_repo_paths()
+                if path == "/api/aaf/action":
+                    sc, res = aaf_hub.execute_aaf_action(body, repo_paths=rpaths)
+                    return self.send(sc, json.dumps(res, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                if path == "/api/aaf/ask":
+                    sc, res = aaf_hub.run_read_only_ask(str(body.get("repo") or ""), str(body.get("question") or ""), repo_paths=rpaths)
+                    return self.send(sc, json.dumps(res, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                if path == "/api/aaf/accounts/action":
+                    try:
+                        args = cc_switcher_args(body)
+                    except ValueError as e:
+                        return self.send(400, json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                    if not _cc_lock.acquire(timeout=30):
+                        return self.send(409, '{"ok":false,"error":"Đang có thao tác khác, thử lại sau vài giây"}'.encode("utf-8"), CTYPES[".json"])
+                    try:
+                        sc, res = cc_switcher_call(args)
+                    finally:
+                        _cc_lock.release()
+                    if sc == 200 and isinstance(res, dict) and res.get("ok"):
+                        aaf_hub.sync_cooldown_to_aaf(body)
+                    return self.send(sc, json.dumps(res, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                return self.send(404, b'{"ok":false,"error":"not found"}', CTYPES[".json"])
             if path == "/api/cc-switcher/action":
                 if not from_mac(self):
                     return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
@@ -3116,13 +3213,39 @@ def main():
     app.start()
     srv = ThreadingHTTPServer((cfg["host"], int(cfg["port"])), make_handler(app))
     url = f"http://{cfg['host']}:{cfg['port']}/"
-    print(f"Agent Office đang chạy: {url}" + ("  (demo)" if args.demo else ""), flush=True)
+    print(f"Agent Office đang chạy: {url}  (AAF Studio: {url}studio)" + ("  (demo)" if args.demo else ""), flush=True)
+    remote_srv = None
+    remote_port = int(cfg.get("remotePort") or 0)
+    if remote_port > 0 and not args.demo:
+        try:
+            import aaf_hub
+
+            bot_token, owner_id, _, env_err = aaf_hub.load_telegram_env()
+            if not env_err and bot_token and owner_id:
+                r_handler = aaf_hub.make_remote_handler(
+                    cfg=cfg,
+                    bot_token=bot_token,
+                    owner_id=owner_id,
+                    web_dir=WEB_DIR,
+                    cc_switcher_fn=cc_switcher_call,
+                    cc_args_fn=cc_switcher_args,
+                )
+                remote_srv = ThreadingHTTPServer((cfg["host"], remote_port), r_handler)
+                threading.Thread(target=remote_srv.serve_forever, daemon=True).start()
+                print(f"AAF Studio Remote (Telegram Mini App HMAC): http://{cfg['host']}:{remote_port}/studio", flush=True)
+            else:
+                print(f"[aaf-remote] Cổng :{remote_port} chưa mở ({env_err or 'thiếu telegram.env'})", flush=True)
+        except Exception as exc:  # noqa: BLE001 — fail-closed: remote stays off if setup fails
+            warn("aaf-remote", exc)
     if args.open:
         webbrowser.open(url)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         warn("server", "dừng theo Ctrl+C")
+    finally:
+        if remote_srv:
+            remote_srv.shutdown()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 {
   "github": {
+    "enabled": false,
     "owner": "ToanMobile",
     "ownerType": "user",
     "project": 1,
@@ -38,6 +39,8 @@
   "localSeconds": 3,
   "host": "127.0.0.1",
   "port": 4317,
+  "remotePort": 4318,
+  "remoteAllowedHosts": [],
   "eventsFile": "~/.agent-office/events.jsonl",
   "macNotify": true,
   "allowedHosts": [

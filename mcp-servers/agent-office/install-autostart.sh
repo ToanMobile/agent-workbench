@@ -11,6 +11,9 @@ if [ -z "$PY" ]; then echo "Không thấy python3. Cài Xcode Command Line Tools
 mkdir -p "$HOME/Library/LaunchAgents" "$APP"
 rm -rf "$APP/web"
 cp -R "$SRC/server.py" "$SRC/inbox_hook.py" "$SRC/gate_full_runner.py" "$SRC/config.json" "$SRC/web" "$APP/"
+for opt_f in aaf_hub.py aaf_supervisor.py aaf_telegram_bot.py; do
+  [ -f "$SRC/$opt_f" ] && cp "$SRC/$opt_f" "$APP/$opt_f"
+done
 chmod 700 "$HOME/.agent-office" "$APP"
 # Bản chép không nằm trong repo: chỉ cho server đường dẫn ai-factory.sh thật (nút "Tạo mã mới" của menu Điện thoại gọi nó).
 FACTORY="$(cd "$SRC/../.." && pwd)/ai-factory.sh"
@@ -32,7 +35,7 @@ plist = {
     "RunAtLoad": True,
     "KeepAlive": {"SuccessfulExit": False},
     "ThrottleInterval": 20,
-    "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "EnvironmentVariables": {"PATH": home + "/.cargo/bin:" + home + "/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
                              "AGENT_OFFICE_FACTORY_SCRIPT": factory,
                              "AGENT_OFFICE_CC_SWITCHER": cc_switcher},
     "StandardOutPath": home + "/.agent-office/server.log",
